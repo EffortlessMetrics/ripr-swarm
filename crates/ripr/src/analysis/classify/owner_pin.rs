@@ -535,7 +535,12 @@ impl OwnerPinSyntax {
         })
     }
 
-    fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
+    pub(in crate::analysis) fn admits(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
         self.refusal(test, assertion, index).is_none()
     }
 

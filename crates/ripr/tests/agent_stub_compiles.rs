@@ -690,6 +690,19 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
+/// #7390: under `--json` a not-found refusal leads stderr with the typed
+/// `rust_test_stub` `state: "refused"` envelope (pretty-printed), followed by
+/// the prose refusal line; stdout stays empty. Returns the parsed envelope
+/// and the prose tail.
+fn split_not_found_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
+    let prose_at = stderr
+        .find("ripr: agent stub: ")
+        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
+    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
+        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stderr}"))?;
+    Ok((envelope, &stderr[prose_at..]))
+}
+
 #[test]
 fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
@@ -726,17 +739,28 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (envelope, prose) = split_not_found_envelope(&stderr)?;
+    assert_eq!(envelope["kind"], "rust_test_stub");
+    assert_eq!(envelope["state"], "refused");
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     assert!(
-        stderr.starts_with(
+        envelope["refusal"]["reason"]
+            .as_str()
+            .map(|reason| reason.starts_with("no error_path seam"))
+            .unwrap_or(false),
+        "the envelope must echo the requested probe family: {stderr}"
+    );
+    assert!(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "the refusal must echo the requested probe family: {stderr}"
     );
     assert!(
-        !stderr.contains("no error_variant "),
+        !prose.contains("no error_variant "),
         "the internal seam kind is not the requested family: {stderr}"
     );
     scratch.cleanup()
@@ -877,10 +901,12 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (envelope, prose) = split_not_found_envelope(&stderr)?;
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -973,10 +999,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (envelope, prose) = split_not_found_envelope(&stderr)?;
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -987,7 +1015,7 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
-        stderr.starts_with(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "{stderr}"

@@ -86,7 +86,7 @@ pub(super) struct PythonNoBehaviorContext {
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
 /// the position of a new `def` header makes it a changed declaration, however
 /// few tokens the two share (#7556).
-fn is_python_declaration_line(text: &str) -> bool {
+pub(super) fn is_python_declaration_line(text: &str) -> bool {
     let trimmed = text.trim_start();
     ["def ", "async def ", "class ", "@"]
         .iter()
@@ -168,6 +168,35 @@ pub(super) fn classify_change_with_context(
         return None;
     }
     let owner = owner_for_changed_line(file, line, owners)?;
+    classify_change_for_owner(
+        ChangeSite { file, line, owner },
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+    )
+}
+
+/// Where a change is classified: its file, the line its evidence names, and
+/// the owner that holds it. A deleted line (#7587) names its own projected
+/// line while its owner is resolved from a live neighbour.
+pub(super) struct ChangeSite<'a> {
+    pub(super) file: &'a Path,
+    pub(super) line: usize,
+    pub(super) owner: &'a PythonOwner,
+}
+
+/// Classify a change at a resolved owner.
+pub(super) fn classify_change_for_owner(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+) -> Option<Finding> {
+    let ChangeSite { file, line, owner } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
     // module-scope annotated-variable change that touches ONLY the annotation
@@ -741,6 +770,9 @@ pub(super) fn classify_change_with_context(
             "suggested_test_name: {}",
             placement.suggested_test_name
         ));
+        if let Some(line) = placement.suggested_test_line {
+            evidence.push(format!("suggested_test_line: {line}"));
+        }
         if let Some(node_id) = &placement.suggested_test_node_id {
             evidence.push(format!("suggested_test_node_id: {node_id}"));
         }

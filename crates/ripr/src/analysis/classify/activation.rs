@@ -3122,7 +3122,7 @@ pub(in crate::analysis) fn has_observed_boundary_equality(activation: &Activatio
         .any(|fact| fact.value.contains(" == "))
 }
 
-fn sort_value_facts(facts: &mut Vec<ValueFact>) {
+pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     facts.sort_by(|left, right| {
         left.line
             .cmp(&right.line)

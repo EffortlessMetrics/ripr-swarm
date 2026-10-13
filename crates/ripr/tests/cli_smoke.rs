@@ -42,6 +42,9 @@ mod output_leaf_identity;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_unittest_selectors.rs"]
+mod python_unittest_selectors;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
@@ -22973,6 +22976,209 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
             return Err(format!(
                 "{command} --worktree --from must fail with the named conflict:\n{}",
                 String::from_utf8_lossy(&conflict.stderr)
+            ));
+        }
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7328: a finding id copied from `ripr check --worktree` output dead-ends
+/// against the committed-history re-run — the miss message's own listing
+/// command analyzes committed content only and lists nothing. When the
+/// selected root has uncommitted tracked changes, the miss message must
+/// name the worktree retry; once the edits are committed (clean tree), the
+/// clause must stay silent.
+#[test]
+fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() -> Result<(), String>
+{
+    let root = unique_temp_workspace("worktree-miss-hint");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    let write_lib = |body: &str| -> Result<(), String> {
+        std::fs::write(root.join("src/lib.rs"), body).map_err(|err| format!("write lib.rs: {err}"))
+    };
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"worktree-miss-hint\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v1"])?;
+    // v2 changes no probe-worthy boundary, so the committed-history
+    // listing the miss message suggests stays empty of the worktree
+    // finding — the dead-end premise of #7328.
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n",
+    )?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v2"])?;
+    // The uncommitted edit: only `check --worktree` can see this finding.
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n",
+    )?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let listed = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD~1",
+        "--worktree",
+        "--json",
+    ]);
+    assert_success(&listed);
+    let finding_id = first_finding_id(&listed.stdout)?;
+
+    // Premise of the dead-end: the committed-history listing the miss
+    // message suggests names zero occurrences of the worktree finding.
+    // `--committed` pins committed content: plain `ripr check` would
+    // default to worktree analysis on this dirty repository and see the
+    // uncommitted finding.
+    let committed = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD~1",
+        "--committed",
+        "--json",
+    ]);
+    assert_success(&committed);
+    if String::from_utf8_lossy(&committed.stdout).contains(&finding_id) {
+        return Err("the committed listing must not contain the worktree finding".to_string());
+    }
+
+    // The copied-id miss on a repository with uncommitted tracked edits:
+    // the message names the scope-bound worktree retry (same root and base
+    // as the failed run, #7328 review) and the worktree listing.
+    for (command, retry) in [
+        (
+            "explain",
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
+        ),
+        (
+            "context",
+            format!("ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"),
+        ),
+    ] {
+        let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push(finding_id.as_str());
+        let miss = run_ripr(&args);
+        if miss.status.success() || !miss.stdout.is_empty() {
+            return Err(format!(
+                "{command} miss changed the CLI failure contract: {miss:?}"
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("not analyzed without `--worktree`")
+            || !stderr.contains("Uncommitted tracked edits exist")
+        {
+            return Err(format!(
+                "{command} miss must disclose the uncommitted-edits cause:\n{stderr}"
+            ));
+        }
+        if !stderr.contains(&retry) {
+            return Err(format!(
+                "{command} miss must name the working retry `{retry}`:\n{stderr}"
+            ));
+        }
+        if !stderr.contains(&format!(
+            "ripr check --root {root_str} --base 'HEAD~1' --worktree --json"
+        )) {
+            return Err(format!(
+                "{command} miss must name the worktree listing for this run's root/base:\n{stderr}"
+            ));
+        }
+    }
+
+    // Control: with the edits committed the tree is clean, and the clause
+    // must stay silent — the plain committed-history advice is sound there.
+    // The selector must stay unmatched after v3: v3 itself contains the
+    // flip, so reusing the worktree finding id can match and let the run
+    // succeed, passing the silence assertions vacuously.
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v3"])?;
+    let absent_selector = format!("{finding_id}f00d");
+    for (command, retry) in [
+        (
+            "explain",
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {absent_selector}"),
+        ),
+        (
+            "context",
+            format!(
+                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {absent_selector}"
+            ),
+        ),
+    ] {
+        let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push(absent_selector.as_str());
+        let miss = run_ripr(&args);
+        if miss.status.success() {
+            return Err(format!(
+                "{command} with an absent selector must miss, not succeed"
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("no finding matched") {
+            return Err(format!(
+                "{command} miss must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
+            ));
+        }
+        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
+            return Err(format!(
+                "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
+            ));
+        }
+    }
+
+    // Control: a `--diff` run analyzes the supplied patch, not committed
+    // history — with a dirty checkout the uncommitted edits were never the
+    // analyzed input, so the clause must stay silent for a supplied scope
+    // even though the same selector would trigger it on a `--base` run
+    // (#7328 review).
+    let diff_text = common::fixture_git::fixture_git_output(&root, &["diff", "HEAD~1", "HEAD"])?;
+    let diff_path = root.join("supplied-scope.diff");
+    std::fs::write(&diff_path, diff_text).map_err(|err| format!("write supplied diff: {err}"))?;
+    let diff_str = diff_path.to_string_lossy().into_owned();
+    std::fs::write(root.join("src/lib.rs"), "pub fn dirty_marker() {}\n")
+        .map_err(|err| format!("dirty the tracked tree: {err}"))?;
+    for command in ["explain", "context"] {
+        let mut args = vec![
+            command,
+            "--root",
+            root_str.as_str(),
+            "--diff",
+            diff_str.as_str(),
+        ];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push("probe:src/lib.rs:error_path:deadbeef");
+        let miss = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("no finding matched") {
+            return Err(format!(
+                "{command} supplied-scope control must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
+            ));
+        }
+        if stderr.contains("Uncommitted tracked edits exist") {
+            return Err(format!(
+                "{command} miss on a supplied scope must not claim the uncommitted edits were excluded:\n{stderr}"
             ));
         }
     }
