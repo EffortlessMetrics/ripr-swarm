@@ -656,3 +656,58 @@ fn a_module_file_compiled_out_by_an_inner_cfg_names_no_arm() -> Result<(), Strin
     );
     Ok(())
 }
+
+/// The wildcard arm changed in `src/lib.rs`, which imports `Kind` from
+/// `src/kinds.rs`, beside a `src/main.rs` holding `main`.
+fn imported_wildcard_beside(main: &str) -> Result<Vec<String>, String> {
+    let lib = format!(
+        "mod kinds;\npub use kinds::Kind;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    changed_wildcard(
+        &lib,
+        &[("src/kinds.rs", ENUM), ("src/main.rs", main)],
+        WILDCARD_TEST,
+        "src/lib.rs",
+    )
+}
+
+#[test]
+fn a_sibling_root_that_may_expand_unread_items_names_no_arm() -> Result<(), String> {
+    // #7686 review: a macro from a crate the index never reads, in the
+    // library root, declares `pub mod main;`, so `src/main.rs` is also a
+    // module of the library whose `crate::kinds` is `constants` renamed.
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}\nfn main() {{}}\n",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let root = "pub mod constants;\npub use constants as kinds;\ndep::decl!();\n";
+    let files = [
+        ("src/main.rs", owner.as_str()),
+        ("src/constants.rs", CONSTANTS),
+        ("src/kinds.rs", ENUM),
+        ("src/main/kinds.rs", ENUM),
+    ];
+    let test = "use uncased_variant::{kinds::Kind, main::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(root, &files, test, "src/main.rs")?,
+        Vec::<String>::new()
+    );
+    // A proc-macro attribute on the sibling's `main` may emit any item; a
+    // plain or builtin-derive sibling still reads the import.
+    for main in [
+        "#[dep::entry]\nfn main() {}\n",
+        "#[derive(serde::Serialize)]\nstruct S;\nfn main() {}\n",
+    ] {
+        assert_eq!(
+            imported_wildcard_beside(main)?,
+            Vec::<String>::new(),
+            "{main}"
+        );
+    }
+    assert_eq!(
+        imported_wildcard_beside("#[derive(Debug, Clone)]\nstruct S;\n\nfn main() {}\n")?,
+        vec!["_"]
+    );
+    Ok(())
+}

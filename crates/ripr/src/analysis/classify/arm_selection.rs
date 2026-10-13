@@ -1519,7 +1519,9 @@ fn imported_enum_variants(
         .unwrap_or_default();
     // The root's sibling target root (`src/main.rs` beside `src/lib.rs`)
     // reaches it with a plain `mod lib;`, which an external macro can
-    // spell from an argument; any mention of the stem there refuses.
+    // spell from an argument; any mention of the stem there refuses, and so
+    // does any item macro or non-builtin attribute there, whose expansion
+    // the index never reads (#7686 review).
     let sibling = root.with_file_name(if stem == "lib" { "main.rs" } else { "lib.rs" });
     let crate_root = matches!(
         components.as_slice(),
@@ -1553,7 +1555,8 @@ fn imported_enum_variants(
                 .into_iter()
                 .any(|offset| !declares_named_module(&masked[offset + 3..]))
             || (path.as_path() == sibling.as_path()
-                && !whole_word_offsets(&facts.source, stem).is_empty())
+                && (!whole_word_offsets(&facts.source, stem).is_empty()
+                    || may_expand_items(&facts.source)))
             || whole_word_offsets(&masked, stem).into_iter().any(|offset| {
                 let before = masked[..offset].trim_end();
                 let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
@@ -1628,6 +1631,75 @@ fn imported_enum_variants(
         return None;
     }
     declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
+}
+
+/// Whether a file may hold items the index never reads: an item-level
+/// macro call, or an attribute other than a compiler builtin (a proc-macro
+/// attribute or custom derive may emit any item). An unparsable file may.
+fn may_expand_items(source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    const BUILTIN_ATTRIBUTES: &[&str] = &[
+        "allow",
+        "cfg",
+        "cfg_attr",
+        "cold",
+        "deny",
+        "deprecated",
+        "derive",
+        "doc",
+        "expect",
+        "forbid",
+        "ignore",
+        "inline",
+        "must_use",
+        "no_mangle",
+        "non_exhaustive",
+        "repr",
+        "should_panic",
+        "test",
+        "track_caller",
+        "warn",
+    ];
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "Eq",
+        "Hash",
+        "Ord",
+        "PartialEq",
+        "PartialOrd",
+    ];
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            return call.syntax().parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            });
+        }
+        let Some(attr) = ast::Attr::cast(node) else {
+            return false;
+        };
+        let text = attr.syntax().text().to_string();
+        let inner = text.trim_start_matches(|ch: char| {
+            ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
+        });
+        let name_end = inner
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(inner.len());
+        let (name, rest) = inner.split_at(name_end);
+        if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
+            return true;
+        }
+        name == "derive"
+            && rest
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .filter(|word| !word.is_empty())
+                .any(|word| !BUILTIN_DERIVES.contains(&word))
+    })
 }
 
 /// Whether `rest`, the text after a `mod` keyword, starts a plain module

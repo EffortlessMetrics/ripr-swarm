@@ -360,7 +360,10 @@ implies but does not spell out:
   plain `mod name;` or `mod name {` (macro input such as `mod $name;` or
   `m!(mod, lib)`), call or name `include!`, or carry a `#[path]`, which
   reaches anywhere; the sibling root (`src/main.rs` beside `src/lib.rs`)
-  may not mention the stem at all; and no package file may sit outside
+  may not mention the stem at all, call an item macro, or carry an
+  attribute other than a compiler builtin (a derive only of the standard
+  derivable traits), since an unread macro or proc macro there may declare
+  the root a module; and no package file may sit outside
   `src/`, `tests/`, `benches/`, `examples/` and `build.rs`. Each path step
   must be the one `mod` of that name in its parent file, declared out of
   line at the file's top level, and its file may carry no inner
@@ -482,7 +485,9 @@ the diff changes `None => 1` to `None => 0`.
   nested module step beside a renamed import, a moved library root that
   declares `mod lib` through a macro (`mod $name;` or a passed `mod`
   token) or an included file, a module file compiled out by an inner
-  `#![cfg]`, and a statement macro in the owner, including one shadowing
+  `#![cfg]`, a sibling root whose unread macro, proc-macro attribute or
+  custom derive may declare the owner a module, and a statement macro in
+  the owner, including one shadowing
   `assert!`, that may declare a local `Kind`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
