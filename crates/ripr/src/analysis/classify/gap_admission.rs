@@ -19,6 +19,8 @@
 
 use super::decision::confidence_score;
 use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
+use crate::analysis::facts::TestFact;
+use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
 
 /// Classifier-to-post-pass marker: every refused related `assert_eq!` was
@@ -42,6 +44,27 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     if !(marked && gap_rests_on_refusal(finding)) {
         return false;
     }
+    let judged = judged_tests(finding);
+    withhold_gap(
+        finding,
+        LIMIT,
+        FIRST_UNRESOLVED_EDGE,
+        next_step(&judged),
+        &judged,
+    );
+    true
+}
+
+/// Rewrite a gap finding to `static_unknown` under the named `limit`:
+/// rescore, record the stop reason and the limitation edges, and drop the
+/// absence claims that would feed repair routes.
+fn withhold_gap(
+    finding: &mut Finding,
+    limit: StaticLimitKind,
+    first_unresolved_edge: &str,
+    next_step: String,
+    judged: &[String],
+) {
     let withheld_class = finding.class.as_str();
     finding.class = ExposureClass::StaticUnknown;
     // The classifier scored this finding as a gap, and a gap class earns a
@@ -56,24 +79,23 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
         &ripr.reveal.discriminate,
         &finding.class,
     ));
-    finding.static_limit_kind = Some(LIMIT);
+    finding.static_limit_kind = Some(limit);
     if !finding
         .stop_reasons
         .contains(&StopReason::GapEvidenceUnresolved)
     {
         finding.stop_reasons.push(StopReason::GapEvidenceUnresolved);
     }
-    let judged = judged_tests(finding);
     finding.evidence.push(format!(
-        "gap_withheld: {withheld_class} is not claimed; {FIRST_UNRESOLVED_EDGE} ({})",
-        LIMIT.as_str()
+        "gap_withheld: {withheld_class} is not claimed; {first_unresolved_edge} ({})",
+        limit.as_str()
     ));
     finding.evidence.extend([
         format!(
             "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}{}",
-            last_established_edge(finding, &judged)
+            last_established_edge(finding, judged)
         ),
-        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{FIRST_UNRESOLVED_EDGE}"),
+        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{first_unresolved_edge}"),
         format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classify/gap-admission"),
         format!(
             "{LIMITATION_NON_CLAIM_PREFIX}no missing test, no weak oracle, and no test adequacy is established"
@@ -82,10 +104,208 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     // The absence lines ("no assertion observes ...") and the missing
     // discriminators are the unestablished claim itself. Keeping them would
     // feed repair placement and agent packets a gap this policy withheld.
-    finding.missing = vec![LIMIT.describe().to_string()];
+    finding.missing = vec![limit.describe().to_string()];
     finding.activation.missing_discriminators.clear();
-    finding.recommended_next_step = Some(next_step(&judged));
+    finding.recommended_next_step = Some(next_step);
+}
+
+const LOG_LIMIT: StaticLimitKind = StaticLimitKind::RustLogCaptureUnresolved;
+const LOG_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the captured log record carries the changed value the test asserts";
+const LOG_MACROS: [&str; 5] = ["trace", "debug", "info", "warn", "error"];
+
+/// #7133: withhold the gap on a changed `log::`/`tracing::` record when a
+/// related test installs a capturing logger before it calls the owner and
+/// asserts exactly on a value read from that logger's store. ripr reads
+/// neither the logger nor the format template, so the comparison may well
+/// discriminate; it is a named limit, never credit. Only a free-function
+/// owner (`owner_name`) counts: a bare `owner(` call cannot name a method.
+/// Returns `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_log_capture_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+    owner_name: Option<&str>,
+) -> bool {
+    let Some(owner) = owner_name else {
+        return false;
+    };
+    if finding.static_limit_kind.is_some()
+        || finding.class != ExposureClass::WeaklyExposed
+        || !matches!(
+            finding.probe.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        )
+        || !is_qualified_log_macro(&finding.probe.expression)
+    {
+        return false;
+    }
+    let capturing: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            index.tests().iter().any(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test_asserts_captured_log(test, owner, index)
+            })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if capturing.is_empty() {
+        return false;
+    }
+    let next_step = format!(
+        "{} installs a capturing logger and asserts on the captured records, which ripr does not resolve, so it does not report a gap. Check that the assertion compares the changed log record; add a test only if none does.",
+        capturing.join(", ")
+    );
+    withhold_gap(
+        finding,
+        LOG_LIMIT,
+        LOG_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &capturing,
+    );
     true
+}
+
+/// `log::info!(..)`, `tracing::warn!(..)` and the other level macros, by
+/// their qualified path only: a bare `info!` may be any macro.
+fn is_qualified_log_macro(expression: &str) -> bool {
+    let trimmed = expression.trim();
+    ["log::", "tracing::"].iter().any(|crate_path| {
+        trimmed.strip_prefix(crate_path).is_some_and(|rest| {
+            LOG_MACROS.iter().any(|level| {
+                rest.strip_prefix(level)
+                    .is_some_and(|after| after.trim_start().starts_with('!'))
+            })
+        })
+    })
+}
+
+/// Whether `test` installs a capturing logger (`log::set_logger`,
+/// `log::set_boxed_logger`, directly or through a helper in the same file
+/// whose body calls one), then calls `owner`, then asserts with an exact
+/// oracle on the logger's binding or on a binding read from it later in the
+/// test (`let lines = logger.0.lock()..;`).
+fn test_asserts_captured_log(test: &TestFact, owner: &str, index: &RustIndex) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let Some(call_at) = free_call_offsets(&masked, owner).into_iter().next() else {
+        return false;
+    };
+    let call_line = test.start_line + masked[..call_at].matches('\n').count();
+    let mut stores: Vec<String> = Vec::new();
+    for install in ["log::set_logger(", "log::set_boxed_logger("] {
+        for (at, call) in masked[..call_at].match_indices(install) {
+            stores.extend(let_binding_at(&masked, at));
+            let argument = masked[at + call.len()..]
+                .split([')', ','])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_start_matches('&');
+            if is_ident(argument) {
+                stores.push(argument.to_string());
+            }
+        }
+    }
+    for helper in index
+        .functions()
+        .iter()
+        .filter(|function| function.file == test.file && installs_logger(function.body.as_str()))
+    {
+        for at in free_call_offsets(&masked[..call_at], &helper.name) {
+            stores.extend(let_binding_at(&masked, at));
+        }
+    }
+    if stores.is_empty() {
+        return false;
+    }
+    // One hop: a binding read from the store after the owner call.
+    let after_call = &masked[call_at..];
+    let mut read_from_store = Vec::new();
+    for statement in after_call.split(';') {
+        let Some(binding) = let_binding_at(statement, statement.len()) else {
+            continue;
+        };
+        let initializer = statement.split_once('=').map_or("", |(_, rest)| rest);
+        if stores.iter().any(|store| names(initializer, store)) {
+            read_from_store.push(binding);
+        }
+    }
+    stores.extend(read_from_store);
+    test.assertions.iter().any(|assertion| {
+        assertion.line > call_line
+            && matches!(
+                assertion.kind,
+                OracleKind::ExactValue | OracleKind::WholeObjectEquality
+            )
+            && stores.iter().any(|store| {
+                names(
+                    &crate::analysis::extract::mask_comments_and_strings(&assertion.text),
+                    store,
+                )
+            })
+    })
+}
+
+fn installs_logger(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains("set_logger(") || masked.contains("set_boxed_logger(")
+}
+
+/// Offsets of `name(` calls in masked `code` that are not method calls or
+/// part of a longer identifier.
+fn free_call_offsets(code: &str, name: &str) -> Vec<usize> {
+    let call = format!("{name}(");
+    code.match_indices(&call)
+        .filter(|(at, _)| {
+            !code[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| before.is_alphanumeric() || before == '_' || before == '.')
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// The binding of the `let [mut] binding = ..` statement that contains
+/// offset `at` of masked `code`.
+fn let_binding_at(code: &str, at: usize) -> Option<String> {
+    let before = code.get(..at)?;
+    let start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+    let statement = before[start..].trim_start();
+    let rest = statement.strip_prefix("let ")?.trim_start();
+    let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+    let end = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    let binding = &rest[..end];
+    (is_ident(binding) && rest[end..].trim_start().starts_with(['=', ':']))
+        .then(|| binding.to_string())
+}
+
+fn is_ident(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_alphanumeric() || ch == '_')
+        && text != "_"
+}
+
+fn names(text: &str, ident: &str) -> bool {
+    text.match_indices(ident).any(|(at, name)| {
+        let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
+        text[..at].chars().next_back().is_none_or(boundary)
+            && text[at + name.len()..].chars().next().is_none_or(boundary)
+    })
 }
 
 fn gap_rests_on_refusal(finding: &Finding) -> bool {
@@ -336,5 +556,190 @@ mod tests {
             finding.stop_reasons,
             vec![StopReason::GapEvidenceUnresolved]
         );
+    }
+
+    const LOG_SOURCE: &str = r#"
+pub fn audit(amount: u32) {
+    log::info!("audited {}", amount * 7);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Capture(std::sync::Mutex<Vec<String>>);
+
+    fn capture() -> &'static Capture {
+        let logger: &'static Capture = Box::leak(Box::new(Capture(Default::default())));
+        log::set_logger(logger).unwrap();
+        logger
+    }
+
+    #[test]
+    fn audit_logs_the_scaled_amount() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, vec!["audited 42".to_string()]);
+    }
+
+    #[test]
+    fn audit_runs() {
+        audit(6);
+    }
+
+    #[test]
+    fn audit_then_capture() {
+        audit(6);
+        let logger = capture();
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, vec!["audited 42".to_string()]);
+    }
+
+    #[test]
+    fn audit_asserts_elsewhere() {
+        let _logger = capture();
+        audit(6);
+        let total = 6 * 7;
+        assert_eq!(total, 42);
+    }
+
+    static LOGGER: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+
+    #[test]
+    fn audit_direct_install() {
+        log::set_logger(&LOGGER).unwrap();
+        audit(6);
+        assert_eq!(*LOGGER.0.lock().unwrap(), vec!["audited 42".to_string()]);
+    }
+}
+"#;
+
+    fn log_index() -> RustIndex {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            LOG_SOURCE.to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from("src/lib.rs"), facts);
+        index
+    }
+
+    /// The cell-0096 shape: a weakly exposed `log::info!` record with one
+    /// related test of the given name.
+    fn log_finding(test: &str, expression: &str) -> Finding {
+        let mut finding = marked();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.family = ProbeFamily::SideEffect;
+        finding.probe.expression = expression.to_string();
+        finding.evidence.clear();
+        finding.related_tests = vec![related(test)];
+        finding
+    }
+
+    const AUDIT_LOG: &str = "log::info!(\"audited {}\", amount * 7);";
+
+    #[test]
+    fn a_captured_log_assertion_withholds_the_gap_under_its_own_limit() {
+        let index = log_index();
+        for test in ["audit_logs_the_scaled_amount", "audit_direct_install"] {
+            let mut finding = log_finding(test, AUDIT_LOG);
+            assert!(
+                withhold_log_capture_gap(&mut finding, &index, Some("audit")),
+                "{test}"
+            );
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{test}");
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(StaticLimitKind::RustLogCaptureUnresolved),
+                "{test}"
+            );
+            assert_eq!(
+                finding.stop_reasons,
+                vec![StopReason::GapEvidenceUnresolved],
+                "{test}"
+            );
+            assert!(finding.activation.missing_discriminators.is_empty());
+            assert!(
+                finding
+                    .recommended_next_step
+                    .as_deref()
+                    .is_some_and(|step| step.contains(&format!("`{test}`"))),
+                "{test}: {:?}",
+                finding.recommended_next_step
+            );
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains(LOG_FIRST_UNRESOLVED_EDGE)),
+                "{test}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_uncaptured_or_misordered_log_test_keeps_the_gap() {
+        let index = log_index();
+        for test in [
+            "audit_runs",
+            "audit_then_capture",
+            "audit_asserts_elsewhere",
+        ] {
+            let mut finding = log_finding(test, AUDIT_LOG);
+            assert!(
+                !withhold_log_capture_gap(&mut finding, &index, Some("audit")),
+                "{test}"
+            );
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{test}");
+            assert_eq!(finding.static_limit_kind, None, "{test}");
+        }
+    }
+
+    #[test]
+    fn only_a_qualified_log_record_on_a_free_owner_is_withheld() {
+        let index = log_index();
+        let test = "audit_logs_the_scaled_amount";
+        let mut bare = log_finding(test, "info!(\"audited {}\", amount * 7);");
+        assert!(!withhold_log_capture_gap(&mut bare, &index, Some("audit")));
+        let mut println = log_finding(test, "log::println!(\"{}\", amount * 7);");
+        assert!(!withhold_log_capture_gap(
+            &mut println,
+            &index,
+            Some("audit")
+        ));
+        let mut method = log_finding(test, AUDIT_LOG);
+        assert!(!withhold_log_capture_gap(&mut method, &index, None));
+        let mut other_owner = log_finding(test, AUDIT_LOG);
+        assert!(!withhold_log_capture_gap(
+            &mut other_owner,
+            &index,
+            Some("report")
+        ));
+        let mut predicate = log_finding(test, AUDIT_LOG);
+        predicate.probe.family = ProbeFamily::Predicate;
+        assert!(!withhold_log_capture_gap(
+            &mut predicate,
+            &index,
+            Some("audit")
+        ));
+        let mut gap = log_finding(test, AUDIT_LOG);
+        gap.class = ExposureClass::ReachableUnrevealed;
+        assert!(!withhold_log_capture_gap(&mut gap, &index, Some("audit")));
+        let mut limited = log_finding(test, AUDIT_LOG);
+        limited.static_limit_kind = Some(StaticLimitKind::Metaprogramming);
+        assert!(!withhold_log_capture_gap(
+            &mut limited,
+            &index,
+            Some("audit")
+        ));
+        let mut tracing = log_finding(test, "tracing::warn!(\"audited {}\", amount * 7);");
+        assert!(withhold_log_capture_gap(
+            &mut tracing,
+            &index,
+            Some("audit")
+        ));
     }
 }

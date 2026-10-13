@@ -347,8 +347,11 @@ Two pattern terms are used below.
    - The grade is classification input, not confirmation: reveal's token
      and effect-observer rules still decide whether a strong oracle
      observes the changed sink, so an admitted assertion on an
-     unconfirmed probe keeps its gap (as `cell-0096-log-info-captured`
-     does until a confirmation rule covers captured-sink membership).
+     unconfirmed probe keeps its gap. `cell-0096-log-info-captured` no
+     longer does: since #7133 a captured-log assertion withholds the gap as
+     `static_unknown` under `rust_log_capture_unresolved` (see
+     `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
+     the log format.
 
 ### Decisions
 
@@ -433,8 +436,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
   `cargo xtask check-evidence-promotion-honesty` passes. In particular
-  `cell-0096-log-info-captured` keeps its gap verdict while the
-  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  `cell-0096-log-info-captured` kept its gap verdict (it abstains as
+  `limited` since #7133) while the golden fixture `exact_any_membership_oracle` pins the fixed grade
   (`exact_value` / strong in `related_tests[]`): the grade is fixed,
   and the remaining gap is reveal observation confirmation, owned
   outside this spec.
