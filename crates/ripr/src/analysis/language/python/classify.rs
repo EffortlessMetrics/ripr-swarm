@@ -25,6 +25,7 @@ use super::{
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
+use crate::analysis::diff::lines_look_alike;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -125,13 +126,15 @@ pub(super) fn classify_change_with_context(
     {
         return None;
     }
-    // New-declaration guard: an unpaired `def` header that opens a NEW owner
-    // whose body carries its own added lines has no behavior of its own — the
-    // body lines are the probes. Crediting `exposed` here would claim a
-    // discriminator for a line with nothing to discriminate. Fails closed on a
-    // changed header (paired old line), a default value (runtime behavior), a
-    // one-line `def f(x): return x`, and a multi-line header.
-    if old_line_text.is_none()
+    // New-declaration guard: a `def` header that opens a NEW owner whose body
+    // carries its own added lines has no behavior of its own — the body lines
+    // are the probes. Crediting `exposed` here would claim a discriminator for
+    // a line with nothing to discriminate. A replacement block pairs the header
+    // with whatever old line stood in its position, so only an old line that
+    // looks like it marks a changed header (#7556). Fails closed on a changed
+    // header, a default value (runtime behavior), a one-line
+    // `def f(x): return x`, and a multi-line header.
+    if old_line_text.is_none_or(|old| !lines_look_alike(old, line_text))
         && no_behavior.opens_owner_with_added_body
         && is_new_def_header_without_defaults(line_text)
     {
