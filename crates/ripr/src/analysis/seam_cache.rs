@@ -421,7 +421,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#7125).
 /// `1.62`: returned mutable-ledger partial witness and precise observer limit (#3215).
 /// `1.63`: exact fallible literal-check receipt and dependency/config validity (#4478).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.63";
+/// `1.64`: trait-dispatch reach for `Display`, `Debug`, comparison, `Hash`,
+/// `Clone`, `Default`, `FromStr`, serde and `Arbitrary` impls needs that
+/// trait's syntax in test-reached code, and a signature is no longer a call
+/// to itself (#5577). Old entries would keep those seams `opaque`.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.64";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -527,7 +531,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.63";
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
 /// `0.68`: same partial returned-ledger evidence as full `1.62`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
+/// `0.69`: same literal-check receipt transition as full `1.63` (#4478).
+/// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.70";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -635,7 +641,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
 /// `0.68`: same partial returned-ledger evidence as full `1.62`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
+/// `0.69`: same literal-check receipt transition as full `1.63` (#4478).
+/// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.70";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4325,7 +4333,9 @@ mod tests {
         // 1.60 -> 1.61: Production integration helpers without assert_eq!
         // stay uncredited (#7125).
         // 1.61 -> 1.62: returned-ledger witness and observer limitation.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.63");
+        // 1.62 -> 1.63: exact fallible literal-check receipt (#4478).
+        // 1.63 -> 1.64: trait-dispatch reach scoped per trait (#5577).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.64");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4381,8 +4391,10 @@ mod tests {
         // 0.66 -> 0.67: same assert_eq!-only Production helper gate as
         // full 1.61.
         // 0.67 -> 0.68: same partial returned-ledger evidence as full 1.62.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
+        // 0.68 -> 0.69: same literal-check receipt as full 1.63.
+        // 0.69 -> 0.70: same trait-dispatch scoping as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.70");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.70");
     }
 
     #[test]

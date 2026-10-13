@@ -143,7 +143,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output);
+    let mut out = render_header_summary(output, config);
     render_analysis_outcome_disclosure(&mut out, output);
     render_suppression_policy_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
@@ -191,7 +191,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output);
+    let mut out = render_header_summary(output, config);
 
     render_analysis_outcome_disclosure(&mut out, output);
     render_suppression_policy_block(&mut out, output);
@@ -315,13 +315,22 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
     }
 }
 
-fn render_header_summary(output: &CheckOutput) -> String {
+fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
+    // the header CI logs keep. Absence is the explicit built-in-defaults
+    // signal — never a fake path.
+    if let Some(path) = config.source_path() {
+        out.push_str(&format!(
+            "config: {}\n",
+            crate::output::path::human_path(path)
+        ));
+    }
     render_analyzed_revisions(&mut out, output);
     out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
@@ -950,9 +959,10 @@ pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_finding, terminal_safe};
+    use super::{render, render_finding, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
+    use crate::config::RiprConfig;
     use crate::domain::{
         ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
         Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
@@ -1012,6 +1022,9 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("mode: draft"));
+        // RIPR-SPEC-0255 (#7536): built-in defaults are an explicit absence —
+        // no config line, never a fake path.
+        assert!(!rendered.contains("\nconfig:"));
         // #4322: canonical class tokens, unknown classes kept separate, and an
         // unsuppressed/total denominator.
         assert!(rendered.contains(
@@ -1019,6 +1032,41 @@ mod tests {
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    /// RIPR-SPEC-0255 (#7536): a run that loaded a `ripr.toml` names it in
+    /// the header, directly after `root:`; the named file is the one that
+    /// governed, so a different loaded file names a different path.
+    #[test]
+    fn header_names_the_loaded_config_path() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let loaded = RiprConfig {
+            source_path: Some(PathBuf::from("repo/ripr.toml")),
+            ..RiprConfig::default()
+        };
+
+        let rendered = render_with_config(&output, &loaded);
+
+        assert!(rendered.contains("root: repo\nconfig: repo/ripr.toml\n"));
     }
 
     /// #5258: when the unanalyzed working-tree state is untracked files, the
@@ -1548,6 +1596,38 @@ mod tests {
             finding.activation.missing_discriminators.clear();
         }
         finding
+    }
+
+    /// #7587: a deleted or moved Python line is base-side evidence and names
+    /// a line the candidate no longer has, so it gets no repair card, while
+    /// the same finding on the candidate side keeps its card.
+    #[test]
+    fn base_side_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = carded.clone();
+            base_side.source_currentness = currentness;
+            assert!(
+                crate::output::python_repair_card::python_repair_card(&base_side).is_none(),
+                "{currentness:?}"
+            );
+        }
+    }
+
+    /// #7587 review: without a card the full render falls back to the
+    /// placement evidence, which a base-side finding must not reach either.
+    #[test]
+    fn base_side_python_finding_gets_no_repair_placement() {
+        let mut base_side = python_preview_finding(11, true);
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(crate::output::python_repair_card::python_repair_card(&base_side).is_none());
+        let rendered = render_finding(&base_side);
+        assert!(!rendered.contains("Repair placement"), "{rendered}");
+        assert!(!rendered.contains("suggested file:"), "{rendered}");
     }
 
     /// rc rehearsal (py-pricing): Start here picked the card-less constant

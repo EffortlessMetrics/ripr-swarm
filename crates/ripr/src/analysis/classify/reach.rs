@@ -293,9 +293,13 @@ pub(in crate::analysis) fn invokes_opaque_macro(body: &str) -> bool {
         if !matches!(opener, Some(b'(' | b'[' | b'{')) {
             return false;
         }
+        // Step past the whole separator: `→assert!(` must not slice inside
+        // the arrow.
         let start = body[..bang]
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+            .map_or(0, |(index, c)| index + c.len_utf8());
         let name = &body[start..bang];
         !name.is_empty() && !TRANSPARENT_TEST_MACROS.contains(&name)
     })
@@ -498,6 +502,9 @@ mod tests {
         assert!(invokes_opaque_macro("assert_eq!(case!(1), 2);"));
         assert!(invokes_opaque_macro("proptest! { }"));
         assert!(invokes_opaque_macro("check_all![1, 2];"));
+        // A multi-byte character before the name must not split a slice.
+        assert!(!invokes_opaque_macro("x→assert!(ok);"));
+        assert!(invokes_opaque_macro("x→case!(1);"));
     }
 
     #[test]

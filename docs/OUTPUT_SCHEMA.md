@@ -463,7 +463,7 @@ references refuse success. There is no success JSON for incomplete export. Requi
 exit zero before consuming the directory. Failures after output creation name the
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
-The live cache is unchanged. See [RIPR-SPEC-0255](specs/RIPR-SPEC-0255-current-cache-export.md).
+The live cache is unchanged. See [RIPR-SPEC-0256](specs/RIPR-SPEC-0256-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 
@@ -586,6 +586,17 @@ invent a committed-source default or executable route. Per-finding
 `suggested_next_action` advice stays compatible and is not this object.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
+
+Top-level `config_path` (RIPR-SPEC-0255, #7536) names the `ripr.toml` that
+governed the run, in the lossless stable path spelling used for `root`. It
+is present exactly when a worktree config file was actually loaded; a
+defaults-only run omits the member — absence is the explicit
+built-in-defaults signal, never a placeholder path. A bound
+`--candidate-tree` subject also omits it: the governing file lives in the
+immutable tree, not the worktree, so no worktree path may be claimed for it
+(#3279); that run's config provenance is the `identity.config_identity`
+fingerprint. The human header prints the same worktree fact as
+`config: <path>` after `root:` under the same condition.
 
 Top-level `base` records the base ref the diff loader actually used (#3940):
 the explicit `--base` when one was given, the resolved default base
@@ -17743,7 +17754,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.62",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.64",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18454,7 +18465,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.63",
+      "schema_version": "1.64",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

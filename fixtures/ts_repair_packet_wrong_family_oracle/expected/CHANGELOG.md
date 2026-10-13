@@ -203,3 +203,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (18)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (19)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
