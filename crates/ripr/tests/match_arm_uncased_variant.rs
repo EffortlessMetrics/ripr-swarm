@@ -8,7 +8,9 @@
 //! their missing discriminators with single-letter variants, and a `Kind`
 //! that may be a struct with constants names none.
 
-use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, ProbeFamily, check_workspace};
+use ripr::{
+    CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -710,6 +712,74 @@ fn a_sibling_root_that_may_expand_unread_items_names_no_arm() -> Result<(), Stri
     assert_eq!(
         imported_wildcard_beside("#[derive(Debug, Clone)]\nstruct S;\n\nfn main() {}\n")?,
         vec!["_"]
+    );
+    Ok(())
+}
+
+/// The class of the arm narrowed from `Kind::A | Kind::B => 1` to
+/// `Kind::A => 1` beside a later `Kind::B => 2` arm, with `Kind` declared
+/// in the owner's file, under `test`.
+fn narrowed_arm_class(test: &str) -> Result<ExposureClass, String> {
+    let enum_abc =
+        "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum Kind {\n    A,\n    B,\n    C,\n}\n";
+    narrowed_arm_class_in(enum_abc, "        Kind::B => 2,\n", test)
+}
+
+fn narrowed_arm_class_in(kind: &str, later: &str, test: &str) -> Result<ExposureClass, String> {
+    let arms = format!("        Kind::A => 1,\n{later}        _ => 0,\n");
+    let lib = format!("{kind}\n{}", body(&arms, "i32"));
+    let (diff, line) = diff_at(
+        "src/lib.rs",
+        &lib,
+        "        Kind::A => 1,",
+        "        Kind::A | Kind::B => 1,",
+    )?;
+    let repo = TempRepo::create(&lib, &[], test, &diff)?;
+    let output = repo.check()?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::MatchArm && finding.probe.location.line == line
+        })
+        .ok_or_else(|| format!("missing the narrowed match arm at line {line}"))?;
+    Ok(finding.class.clone())
+}
+
+#[test]
+fn an_input_moved_onto_a_later_uncased_arm_exposes_the_narrowed_arm() -> Result<(), String> {
+    // #7670: `Kind::B` ran this arm (1) before the narrowing and now runs
+    // the later `Kind::B => 2` arm, so the assertion notices the change.
+    let moved = "use uncased_variant::{Kind, f};\n\n#[test]\nfn b_is_two() {\n    assert_eq!(f(Kind::B), 2);\n}\n";
+    let stayed = "use uncased_variant::{Kind, f};\n\n#[test]\nfn c_is_zero() {\n    assert_eq!(f(Kind::C), 0);\n}\n";
+    let moved_class = narrowed_arm_class(moved)?;
+    let stayed_class = narrowed_arm_class(stayed)?;
+    assert_eq!(moved_class, ExposureClass::Exposed);
+    assert_ne!(stayed_class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_later_arm_naming_an_associated_constant_earns_no_moved_input_credit() -> Result<(), String> {
+    // #7670: `Kind::B` is an associated constant here, not a variant, so
+    // the later arm's pattern is unknown and the narrowing earns no credit.
+    let kind = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum Kind {\n    A,\n    C,\n}\n\nimpl Kind {\n    pub const B: Kind = Kind::C;\n}\n";
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn b_is_two() {\n    assert_eq!(f(Kind::B), 2);\n}\n";
+    assert_ne!(
+        narrowed_arm_class_in(kind, "        Kind::B => 2,\n", test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_later_struct_constant_arm_earns_no_moved_input_credit() -> Result<(), String> {
+    // #7670: a struct's uppercase constants are never variants.
+    let kind = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct Kind(u8);\n\nimpl Kind {\n    pub const A: Kind = Kind(0);\n    pub const B: Kind = Kind(1);\n}\n";
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn b_is_two() {\n    assert_eq!(f(Kind::B), 2);\n}\n";
+    assert_ne!(
+        narrowed_arm_class_in(kind, "        Kind::B => 2,\n", test)?,
+        ExposureClass::Exposed
     );
     Ok(())
 }
