@@ -1199,6 +1199,9 @@ fn is_test_file_recognizes_file_and_directory_conventions() {
     assert!(is_test_file(Path::new("src/test_thing.py")));
     assert!(is_test_file(Path::new("src/thing_test.py")));
     assert!(is_test_file(Path::new("nested/tests/sub/utility.py")));
+    assert!(is_test_file(Path::new("blog/tests.py")));
+    assert!(is_test_file(Path::new("tests.py")));
+    assert!(is_test_file(Path::new("blog/test.py")));
     assert!(!is_test_file(Path::new("src/pricing.py")));
     assert!(!is_test_file(Path::new("src/testing.py")));
 }

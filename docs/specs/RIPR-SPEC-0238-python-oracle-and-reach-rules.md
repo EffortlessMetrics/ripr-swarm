@@ -283,8 +283,9 @@ as strong for one credit branch only; its table row is unchanged.
 
 ### Reach order
 
-A test file is a file whose name starts with `test_` or ends with
-`_test.py`, or any path component is `tests` or `test`. A test file
+A test file is a file whose name starts with `test_`, ends with
+`_test.py`, or is exactly `tests.py` or `test.py` (the Django `startapp`
+convention), or any path component is `tests` or `test`. A test file
 contributes only tests and any other file only owners, so `conftest.py`
 and helper modules under `tests/` are never owners. Fixture bodies are
 never resolved. The changed line belongs to the narrowest enclosing owner.
