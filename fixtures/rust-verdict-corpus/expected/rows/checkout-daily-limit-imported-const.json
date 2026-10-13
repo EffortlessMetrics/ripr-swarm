@@ -4,7 +4,7 @@
   "origin": "authored",
   "anchor": "src/limits.rs:12",
   "behavior_family": "predicate_boundary",
-  "test_shape": "boundary_via_imported_const",
+  "test_shape": "boundary_via_module_path_const",
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",
