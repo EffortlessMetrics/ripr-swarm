@@ -418,6 +418,13 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
         ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
         ("assert!(matches!(r, Ok(_)));", &smoke),
+        // `prop_assert!` reads its pattern like `assert!` does.
+        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
+        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
+        // A self-comparison pins nothing, so it does not exempt the chain.
+        ("assert!(value == value && matches!(r, Ok(_)));", &weak),
+        ("ensure!(value == value && ready);", &weak),
     ] {
         require_classification(text, expected)?;
     }
