@@ -470,15 +470,18 @@ fn source_preservation_closes_stable_crate_metadata_without_cfg_credit() {
     for spelling in [
         "#![crate_name = \"metadata\"]",
         "#![crate_name = r#\"metadata\"#]",
+        "#![crate_name = \"métadata\"]",
         "#![crate_name = \"metad\\u{61}ta\"]",
         "#![crate_type = \"lib\"]",
         "#![windows_subsystem = \"windows\"]",
         "#![windows_subsystem = r#\"console\"#]",
+        "#![windows_subsystem = \"cons\\u{6f}le\"]",
         "#![no_builtins]",
         "#![no_implicit_prelude]",
         "#![debugger_visualizer(natvis_file = \"visualizer.natvis\")]",
         "#[debugger_visualizer(natvis_file = \"visualizer.natvis\")]",
         "#![debugger_visualizer(gdb_script_file = \"visualizer.py\",)]",
+        "#![cfg_attr(test, debugger_visualizer(gdb_script_file = r#\"cfg,crate_type,test.py\"#))]",
         "#![cfg_attr(test, no_builtins)]",
         "#![cfg_attr(feature = \"test\", windows_subsystem = \"windows\")]",
     ] {

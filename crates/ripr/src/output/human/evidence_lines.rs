@@ -17,37 +17,124 @@ const MAX_RELATED_TESTS_SHOWN: usize = 5;
 /// unmarked cap can hide the one boundary value the reader needs.
 const MAX_OBSERVED_VALUES_SHOWN: usize = 8;
 
-pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
+/// #7476: which wording the evidence-window truncation pointers use for the
+/// fuller machine-readable list. `ripr check` accepts `--format json`, so its
+/// pointer names the flag; `ripr explain` rejects that flag, so its pointer
+/// names check in prose instead of a command the reader cannot run there.
+/// The wording is selected while the lines are built, so quoted source
+/// fragments and evidence text are never rewritten after rendering.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JsonPointerWording {
+    /// `ripr check` / `human-full`: the pointer names the accepted flag.
+    CheckFlag,
+    /// `ripr explain`: the pointer names `ripr check` as prose, so a
+    /// printed-command paste does not try to run it under explain.
+    ExplainNamesCheck,
+}
+
+/// Exact producer facts accompany the existing display projection. Window
+/// disclosures stay local. Serialization is used only by CLI sharing; legacy
+/// rendering does not pay for a second projection or serialized finding copies.
+#[derive(serde::Serialize)]
+enum EvidenceSource<'a> {
+    Stage(&'static str, &'a crate::domain::StageEvidence),
+    Discriminator(
+        &'a crate::domain::StageEvidence,
+        &'a crate::domain::ExposureClass,
+        &'a [crate::domain::MissingDiscriminatorFact],
+    ),
+    Flow(&'a crate::domain::FlowSinkFact),
+    Related(
+        &'a crate::domain::RelatedTest,
+        &'a [crate::domain::MissingDiscriminatorFact],
+    ),
+    Value(&'a crate::domain::ValueFact),
+    Literal(&'a str),
+    Window,
+}
+
+pub(super) struct EvidenceEntry {
+    pub text: String,
+    pub key: Option<Vec<u8>>,
+}
+
+pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
+    evidence_path(finding, wording, |text, _| text)
+}
+
+pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
+    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
+        // Multi-line literals retain their existing rendering locally and cannot
+        // forge a catalogue definition or generated reference.
+        let key = if !with_keys
+            || matches!(source, EvidenceSource::Window)
+            || text.contains(['\n', '\r'])
+        {
+            None
+        } else {
+            serde_json::to_vec(&(source, &text)).ok()
+        };
+        EvidenceEntry { text, key }
+    })
+}
+
+fn evidence_path<T>(
+    finding: &Finding,
+    wording: JsonPointerWording,
+    mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
+) -> Vec<T> {
     let mut lines = vec![
-        format!(
-            "reach {}: {}",
-            finding.ripr.reach.state.as_str(),
-            finding.ripr.reach.summary
+        project(
+            format!(
+                "reach {}: {}",
+                finding.ripr.reach.state.as_str(),
+                finding.ripr.reach.summary
+            ),
+            EvidenceSource::Stage("reach", &finding.ripr.reach),
         ),
-        format!(
-            "infection {}: {}",
-            finding.ripr.infect.state.as_str(),
-            finding.ripr.infect.summary
+        project(
+            format!(
+                "infection {}: {}",
+                finding.ripr.infect.state.as_str(),
+                finding.ripr.infect.summary
+            ),
+            EvidenceSource::Stage("infection", &finding.ripr.infect),
         ),
-        format!(
-            "propagation {}: {}",
-            finding.ripr.propagate.state.as_str(),
-            finding.ripr.propagate.summary
+        project(
+            format!(
+                "propagation {}: {}",
+                finding.ripr.propagate.state.as_str(),
+                finding.ripr.propagate.summary
+            ),
+            EvidenceSource::Stage("propagation", &finding.ripr.propagate),
         ),
-        format!(
-            "observation {}: {}",
-            finding.ripr.reveal.observe.state.as_str(),
-            finding.ripr.reveal.observe.summary
+        project(
+            format!(
+                "observation {}: {}",
+                finding.ripr.reveal.observe.state.as_str(),
+                finding.ripr.reveal.observe.summary
+            ),
+            EvidenceSource::Stage("observation", &finding.ripr.reveal.observe),
         ),
-        crate::output::discriminator_line::discriminator_evidence_line(finding),
+        project(
+            crate::output::discriminator_line::discriminator_evidence_line(finding),
+            EvidenceSource::Discriminator(
+                &finding.ripr.reveal.discriminate,
+                &finding.class,
+                &finding.activation.missing_discriminators,
+            ),
+        ),
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(format!(
-            "local flow reaches {}: {} (line {})",
-            sink.kind.label(),
-            sink.text,
-            sink.line
+        lines.push(project(
+            format!(
+                "local flow reaches {}: {} (line {})",
+                sink.kind.label(),
+                sink.text,
+                sink.line
+            ),
+            EvidenceSource::Flow(sink),
         ));
     }
 
@@ -73,7 +160,19 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ));
             }
-            lines.push(line);
+            lines.push(project(
+                line,
+                EvidenceSource::Related(
+                    test,
+                    match test.miss {
+                        Some(
+                            crate::domain::RelatedTestMiss::MissingInput
+                            | crate::domain::RelatedTestMiss::MissingExactAssertion,
+                        ) => &finding.activation.missing_discriminators,
+                        _ => &[],
+                    },
+                ),
+            ));
             continue;
         }
         let oracle_kind = display_label(test.oracle_kind.as_str());
@@ -98,19 +197,36 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
                 crate::output::related_test_miss::related_test_miss_label(test)
             ));
         }
-        lines.push(line);
+        lines.push(project(
+            line,
+            EvidenceSource::Related(
+                test,
+                match test.miss {
+                    Some(
+                        crate::domain::RelatedTestMiss::MissingInput
+                        | crate::domain::RelatedTestMiss::MissingExactAssertion,
+                    ) => &finding.activation.missing_discriminators,
+                    _ => &[],
+                },
+            ),
+        ));
     }
     let related_tests_total = finding.related_tests_total();
     let related_tests_shown = finding.related_tests.len().min(MAX_RELATED_TESTS_SHOWN);
     if related_tests_total > related_tests_shown {
         let json_pointer = if finding.related_tests.len() > related_tests_shown {
-            "; more in --format json"
+            match wording {
+                JsonPointerWording::CheckFlag => "; more in --format json",
+                JsonPointerWording::ExplainNamesCheck => {
+                    "; more via ripr check, using its JSON format"
+                }
+            }
         } else {
             ""
         };
-        lines.push(format!(
+        lines.push(project(format!(
             "related tests (showing {related_tests_shown} of {related_tests_total}{json_pointer})"
-        ));
+        ), EvidenceSource::Window));
     }
 
     let observed_values_total = finding.activation.observed_values.len();
@@ -120,8 +236,9 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
     {
-        lines.push(crate::output::observed_values::source_value_evidence_line(
-            value,
+        lines.push(project(
+            crate::output::observed_values::source_value_evidence_line(value),
+            EvidenceSource::Value(value),
         ));
     }
     if observed_values_total > MAX_OBSERVED_VALUES_SHOWN {
@@ -130,14 +247,25 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         // ranked cap of 32; beyond that, both formats are windows and the
         // wording says so instead of claiming a full list.
         let json_cap = crate::output::observed_values::MAX_OBSERVED_VALUES_PER_FINDING;
-        let json_window = if observed_values_total > json_cap {
-            format!("--format json keeps a ranked {json_cap}")
-        } else {
-            "full list in --format json".to_string()
+        let json_window = match wording {
+            JsonPointerWording::CheckFlag => {
+                if observed_values_total > json_cap {
+                    format!("--format json keeps a ranked {json_cap}")
+                } else {
+                    "full list in --format json".to_string()
+                }
+            }
+            JsonPointerWording::ExplainNamesCheck => {
+                if observed_values_total > json_cap {
+                    format!("ripr check, using its JSON format, keeps a ranked {json_cap}")
+                } else {
+                    "full list via ripr check, using its JSON format".to_string()
+                }
+            }
         };
-        lines.push(format!(
+        lines.push(project(format!(
             "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
-        ));
+        ), EvidenceSource::Window));
     }
 
     if lines.len() == 5 && !finding.evidence.is_empty() {
@@ -146,7 +274,7 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
                 .evidence
                 .iter()
                 .filter(|line| !is_preview_actionability_evidence_line(line))
-                .cloned(),
+                .map(|line| project(line.clone(), EvidenceSource::Literal(line))),
         );
     }
 

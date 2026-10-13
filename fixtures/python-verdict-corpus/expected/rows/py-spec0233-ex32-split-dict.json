@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex32-split-dict",
+  "subject_id": "authored-py-pytest-spec0233",
+  "origin": "authored",
+  "anchor": "src/subject.py:109",
+  "behavior_family": "collection_element",
+  "test_shape": "pytest_field_and_whole_value_gates_in_two_tests",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

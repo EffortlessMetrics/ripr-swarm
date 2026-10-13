@@ -1,0 +1,47 @@
+{
+  "case_id": "py-pytest-quote-shipping-term",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-quote-shipping-term.diff",
+  "anchor": {
+    "file": "pricing/core.py",
+    "line": 71
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "pytest_dict_field_one_branch",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"tier\": tier, \"total_cents\": total}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: quote(1000, 0) totals 1000 instead of 1499"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_quote_for_a_large_bronze_order asserts total_cents exactly, but for a 6000-cent order that ships free, so dropping the shipping term passes. ripr credits the dict construction exposed, a false exposed verdict; this is the Python twin of pricing-quote-total-field. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#40"
+  ]
+}

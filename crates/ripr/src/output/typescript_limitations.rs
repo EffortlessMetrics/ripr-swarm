@@ -95,6 +95,17 @@ pub(crate) fn build_typescript_limitation_leaderboard_report(
         }
     };
 
+    if parsed && summary.findings_total > 0 && summary.typescript_family_findings_total == 0 {
+        warnings.push(format!(
+            "check output contained {} finding{}, but none were TypeScript-family findings; \
+             no limitation signals were derived from them. Point --check-output at a check run \
+             that analyzed TypeScript/JavaScript sources, or use `ripr reports gap-ledger \
+             --check-output` for the Python/TypeScript/Perl gap-record route.",
+            summary.findings_total,
+            if summary.findings_total == 1 { "" } else { "s" }
+        ));
+    }
+
     let limitations = entries_from_aggregates(aggregates);
     summary.limitations_total = limitations.iter().map(|entry| entry.count).sum();
     summary.distinct_limitations_total = limitations.len();
@@ -466,6 +477,37 @@ mod tests {
             markdown.contains("Gate-decision and badge artifacts keep their existing authority")
         );
         Ok(())
+    }
+
+    #[test]
+    fn typescript_limitation_leaderboard_warns_when_no_typescript_family_findings() {
+        let report =
+            build_typescript_limitation_leaderboard_report(TypeScriptLimitationLeaderboardInput {
+                root: ".".to_string(),
+                generated_at: "123".to_string(),
+                check_output_path: "check.json".to_string(),
+                check_output_json: Ok(r#"{
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:33333333",
+      "language": "rust",
+      "probe": {"file": "src/lib.rs", "line": 1},
+      "evidence": []
+    }
+  ]
+}"#
+                .to_string()),
+            });
+
+        assert_eq!(report.status, "advisory");
+        assert_eq!(report.summary.findings_total, 1);
+        assert_eq!(report.summary.typescript_family_findings_total, 0);
+        assert_eq!(report.summary.limitations_total, 0);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0]
+                .contains("check output contained 1 finding, but none were TypeScript-family")
+        );
     }
 
     #[test]

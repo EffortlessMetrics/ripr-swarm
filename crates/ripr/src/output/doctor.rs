@@ -28,7 +28,7 @@ use crate::output::path::{
 };
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// The closing line of a failing `ripr doctor` run.
@@ -1215,6 +1215,232 @@ fn evaluate_doctor_core_with_probe(
     evaluate_doctor_core_with_probe_for_profile(root, detected, DoctorProfile::Analysis, probe_tool)
 }
 
+/// Directories a nested Cargo.toml walk never enters. These are never a
+/// project root; walking them would credit `target/` scratch with a false
+/// manifest or stall doctor on a diagnostic command.
+const NESTED_CARGO_TOML_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".direnv",
+    ".venv",
+    "vendor",
+    "fixtures",
+    ".ripr",
+];
+const NESTED_CARGO_TOML_MAX_DEPTH: usize = 8;
+/// Cap on directories visited during the nested walk so doctor cannot stall
+/// from `$HOME` or a large tree that has no Cargo.toml.
+const NESTED_CARGO_TOML_MAX_DIRS: usize = 512;
+
+/// Where doctor found a Cargo.toml for the `cargo_toml` check (#7466).
+enum CargoTomlFound {
+    AtSelectedRoot(PathBuf),
+    /// Ancestor of the selected root, bounded by `.git`, preferring
+    /// `[workspace]` the way `resolve_project_root` prefers a workspace
+    /// manifest when walking up.
+    Ancestor {
+        manifest: PathBuf,
+        workspace: bool,
+    },
+    /// Nested under the selected root. Prefers a `[workspace]` manifest over
+    /// a package-only one; check's `resolve_project_root` does not walk down,
+    /// so this arm is doctor-only.
+    Nested {
+        manifest: PathBuf,
+        workspace: bool,
+    },
+}
+
+fn manifest_declares_workspace(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
+        .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
+}
+
+/// Locate the Cargo.toml the `cargo_toml` check should credit.
+///
+/// `resolve_project_root` is not this check: it walks up and can return a git
+/// top level or a JS/Python workspace marker that is not a Cargo.toml. Doctor
+/// keeps the selected-root `exists()` test, then the cargo-relevant ancestor
+/// walk (bounded by `.git`), then a breadth-first nested walk (depth 8, 512
+/// directories, skip list) for `rust/`-style git-root layouts. It does not
+/// rebind doctor's `--root` (#7468).
+fn locate_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
+    let at_root = root.join("Cargo.toml");
+    if at_root.exists() {
+        return Some(CargoTomlFound::AtSelectedRoot(at_root));
+    }
+    ancestor_cargo_toml(root).or_else(|| nested_cargo_toml(root))
+}
+
+fn git_top_level(start: &Path) -> Option<PathBuf> {
+    let start = std::fs::canonicalize(start).ok()?;
+    start
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
+fn ancestor_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
+    let bound = git_top_level(root)?;
+    let start = std::fs::canonicalize(root).ok()?;
+    let mut package: Option<PathBuf> = None;
+    for ancestor in start.ancestors() {
+        if ancestor != start.as_path() {
+            let manifest = ancestor.join("Cargo.toml");
+            if manifest.is_file() {
+                if manifest_declares_workspace(&manifest) {
+                    return Some(CargoTomlFound::Ancestor {
+                        manifest,
+                        workspace: true,
+                    });
+                }
+                if package.is_none() {
+                    package = Some(manifest);
+                }
+            }
+        }
+        if ancestor == bound.as_path() {
+            break;
+        }
+    }
+    package.map(|manifest| CargoTomlFound::Ancestor {
+        manifest,
+        workspace: false,
+    })
+}
+
+fn nested_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
+    let mut workspaces = Vec::new();
+    let mut packages = Vec::new();
+    collect_nested_cargo_tomls(root, &mut workspaces, &mut packages);
+    pick_shallowest_manifest(root, workspaces)
+        .map(|manifest| CargoTomlFound::Nested {
+            manifest,
+            workspace: true,
+        })
+        .or_else(|| {
+            pick_shallowest_manifest(root, packages).map(|manifest| CargoTomlFound::Nested {
+                manifest,
+                workspace: false,
+            })
+        })
+}
+
+fn pick_shallowest_manifest(root: &Path, mut manifests: Vec<PathBuf>) -> Option<PathBuf> {
+    manifests.sort_by(|left, right| {
+        nested_manifest_depth(root, left)
+            .cmp(&nested_manifest_depth(root, right))
+            .then_with(|| left.cmp(right))
+    });
+    manifests.into_iter().next()
+}
+
+fn nested_manifest_depth(root: &Path, manifest: &Path) -> usize {
+    manifest
+        .strip_prefix(root)
+        .map(|relative| relative.components().count())
+        .unwrap_or(usize::MAX)
+}
+
+fn collect_nested_cargo_tomls(
+    root: &Path,
+    workspaces: &mut Vec<PathBuf>,
+    packages: &mut Vec<PathBuf>,
+) {
+    let mut current = vec![root.to_path_buf()];
+    let mut depth = 0;
+    let mut dirs_visited = 0;
+    while depth < NESTED_CARGO_TOML_MAX_DEPTH && !current.is_empty() {
+        let mut next = Vec::new();
+        for dir in current {
+            if dirs_visited >= NESTED_CARGO_TOML_MAX_DIRS {
+                break;
+            }
+            dirs_visited += 1;
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                // Skip every symlink: directory links can hang (#4457) or
+                // credit a tree outside the selected root, and a file link
+                // named Cargo.toml has the same outside-tree risk. Fail-closed.
+                if file_type.is_symlink() {
+                    continue;
+                }
+                if file_type.is_dir() {
+                    let name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    if NESTED_CARGO_TOML_SKIP_DIRS.contains(&name) {
+                        continue;
+                    }
+                    next.push(path);
+                    continue;
+                }
+                if file_type.is_file() && path.file_name().is_some_and(|name| name == "Cargo.toml")
+                {
+                    if manifest_declares_workspace(&path) {
+                        workspaces.push(path);
+                    } else {
+                        packages.push(path);
+                    }
+                }
+            }
+        }
+        // A workspace at this depth beats any deeper workspace; finish the
+        // level for path-stable sibling pick, then stop.
+        if !workspaces.is_empty() {
+            return;
+        }
+        current = next;
+        depth += 1;
+    }
+}
+
+fn path_under_root(root: &Path, path: &Path) -> PathBuf {
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return path.to_path_buf();
+    };
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return path.to_path_buf();
+    };
+    path.strip_prefix(&root)
+        .map(Path::to_path_buf)
+        .unwrap_or(path)
+}
+
+fn cargo_toml_evidence(root: &Path, found: CargoTomlFound) -> String {
+    match found {
+        CargoTomlFound::AtSelectedRoot(manifest) => {
+            format!("Cargo.toml found at {}", human_path(&manifest))
+        }
+        CargoTomlFound::Ancestor {
+            manifest,
+            workspace,
+        }
+        | CargoTomlFound::Nested {
+            manifest,
+            workspace,
+        } => {
+            let kind = if workspace { "workspace" } else { "package" };
+            let project = manifest.parent().unwrap_or(root);
+            format!(
+                "Cargo.toml found at {} via {kind} root {}",
+                human_path(&path_under_root(root, &manifest)),
+                human_path(&path_under_root(root, project))
+            )
+        }
+    }
+}
+
 fn evaluate_doctor_core_with_probe_for_profile(
     root: &Path,
     detected: &[LanguageId],
@@ -1234,14 +1460,11 @@ fn evaluate_doctor_core_with_probe_for_profile(
         // #5252 item 3: a root that is not there cannot have a manifest;
         // fail only `root_directory` and skip here like the tool checks.
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
-    } else if root.join("Cargo.toml").exists() {
+    } else if let Some(found) = locate_cargo_toml(root) {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Pass,
-            Some(format!(
-                "Cargo.toml found at {}",
-                human_path(&root.join("Cargo.toml"))
-            )),
+            Some(cargo_toml_evidence(root, found)),
         );
     } else {
         report.add_check(
@@ -1342,6 +1565,15 @@ fn evaluate_doctor_core_with_probe_for_profile(
             && status == DoctorStatus::Fail
         {
             report.add_advisory_check(&name, analysis_advisory_toolchain_evidence(tool, &evidence));
+        } else if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+            && profile == DoctorProfile::SourceBuild
+            && status == DoctorStatus::Fail
+        {
+            report.add_check(
+                &name,
+                status,
+                Some(source_build_toolchain_failure_evidence(tool, &evidence)),
+            );
         } else {
             report.add_check(&name, status, Some(evidence));
         }
@@ -1463,16 +1695,88 @@ fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
     RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
 }
 
+/// Bare missing-tool state shared by spawn-not-found and wait/pipe-reader
+/// failure. The source-build profile appends an install route only for
+/// spawn-not-found and this exact sentence; wait stays this sentence without
+/// the install suffix. Analysis keeps this state so its advisory wrapping
+/// does not change.
+fn rust_toolchain_missing_state(tool: &str) -> String {
+    format!("{tool} not available")
+}
+
+/// Install route named on a source-build `!` line when cargo or rustc is
+/// missing. Distinct from the below-minimum path, which already names
+/// `rustup update stable`.
+fn rust_toolchain_install_fix() -> String {
+    format!(
+        "install Rust via rustup (https://rustup.rs) or your OS package manager; the source build requires Rust {MINIMUM_RUSTC_VERSION}+"
+    )
+}
+
+fn rust_toolchain_missing_with_install_fix(tool: &str) -> String {
+    format!(
+        "{}; {}",
+        rust_toolchain_missing_state(tool),
+        rust_toolchain_install_fix()
+    )
+}
+
+/// Evidence for a tool that never launched. Cargo and rustc name the
+/// source-build install route; git keeps its own PATH/saved-diff message at
+/// the spawn site, and other tools stay a bare "not available".
+fn doctor_tool_unavailable_evidence(tool: &str) -> String {
+    if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
+        rust_toolchain_missing_with_install_fix(tool)
+    } else {
+        rust_toolchain_missing_state(tool)
+    }
+}
+
+/// Wait/pipe-reader failure after the probe started. Cargo and rustc must not
+/// reuse the missing-tool sentence: source-build projection would then name
+/// an install route for a tool that may already be running. Git keeps the
+/// pre-existing `{tool} not available` message.
+fn doctor_wait_failure_evidence(tool: &str) -> String {
+    if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
+        format!("{tool} could not be waited on")
+    } else {
+        rust_toolchain_missing_state(tool)
+    }
+}
+
+/// Source-build projection of a failed cargo/rustc check. Only the missing-tool
+/// state gets the install route; timeout, below-minimum, path-pin, wait, and
+/// launch-failure evidence already name their own fix.
+fn source_build_toolchain_failure_evidence(tool: &str, evidence: &str) -> String {
+    if evidence == rust_toolchain_missing_state(tool) {
+        rust_toolchain_missing_with_install_fix(tool)
+    } else {
+        evidence.to_string()
+    }
+}
+
 /// Evidence for an unavailable Cargo/rustc capability under the analysis
 /// profile. The installed binary's static analysis does not compile the
 /// workspace, but it does read `cargo metadata` for the custom test-harness
 /// target inventory, so a missing `cargo` withholds that evidence (the
 /// harness verdict fails closed as `manifest_unavailable`). Doctor names that
 /// degradation instead of implying analysis is unaffected.
+///
+/// A source-build install suffix on the same missing-tool state is stripped
+/// here so the analysis profile's advisory text stays the analysis effect,
+/// not a build-from-source install walk.
 fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
     if evidence.contains(RUSTC_ANALYSIS_SCOPE) {
         return evidence.to_string();
     }
+    let missing_state = rust_toolchain_missing_state(tool);
+    let evidence = if evidence == rust_toolchain_missing_with_install_fix(tool)
+        || evidence == doctor_wait_failure_evidence(tool)
+    {
+        missing_state.as_str()
+    } else {
+        evidence
+    };
     let analysis_effect = if tool == "cargo" {
         "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
     } else {
@@ -1537,7 +1841,9 @@ fn doctor_tool_run_result(
             ))
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
-        _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
+        Err(DoctorToolRunError::Wait) => {
+            DoctorToolCheckResult::failure(doctor_wait_failure_evidence(tool))
+        }
     }
 }
 
@@ -1606,7 +1912,7 @@ fn doctor_spawn_failure(tool: &str, kind: std::io::ErrorKind) -> DoctorToolCheck
         evidence: if kind == std::io::ErrorKind::NotFound && tool == "git" {
             crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string()
         } else if kind == std::io::ErrorKind::NotFound {
-            format!("{tool} not available")
+            doctor_tool_unavailable_evidence(tool)
         } else {
             format!("{tool} could not be launched: {kind:?}")
         },
@@ -2138,6 +2444,19 @@ mod tests {
                 "a missing rustc still needs the analysis scope: {missing:?}"
             ));
         }
+        let spawn_missing = doctor_spawn_failure("rustc", std::io::ErrorKind::NotFound);
+        let from_spawn = analysis_advisory_toolchain_evidence("rustc", &spawn_missing.evidence);
+        let expected_missing = analysis_advisory_toolchain_evidence("rustc", "rustc not available");
+        if from_spawn != expected_missing {
+            return Err(format!(
+                "analysis wrapping of spawn-missing rustc must keep the analysis advisory, not the source-build install route: {from_spawn:?}"
+            ));
+        }
+        if from_spawn.contains("https://rustup.rs") {
+            return Err(format!(
+                "analysis advisory must not carry the source-build install URL: {from_spawn:?}"
+            ));
+        }
         Ok(())
     }
 
@@ -2395,6 +2714,13 @@ mod tests {
             std::fs::write(&path, contents).map_err(|err| format!("write {relative}: {err}"))?;
         }
         Ok(root)
+    }
+
+    /// Bound ancestor Cargo.toml discovery at this fixture. Tests live under
+    /// the ripr work tree (`target/`), so without a local `.git` the walk
+    /// would credit `/workspace/Cargo.toml`.
+    fn isolate_as_git_root(root: &Path) -> Result<(), String> {
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))
     }
 
     /// Evaluate a root with a probe where every tool except `git` is
@@ -2862,6 +3188,7 @@ mod tests {
             "scope-rust-no-manifest",
             &[("src/lib.rs", "pub fn f() {}\n")],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
         let _ = std::fs::remove_dir_all(&root);
         let cargo_toml = check(&report, "cargo_toml")?;
@@ -2921,13 +3248,178 @@ mod tests {
             .evidence
             .clone()
             .unwrap_or_default();
-        if !cargo.contains("`cargo metadata`")
-            || !cargo.contains("is withheld")
-            || rustc.contains("cargo metadata")
-            || !rustc.contains("does not run rustc")
+        if cargo
+            != "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld; project verification and source builds require their own toolchain"
+            || rustc
+                != "rustc not available; the installed binary's static analysis does not run rustc; project verification and source builds require their own toolchain"
+            || cargo.contains("https://rustup.rs")
+            || rustc.contains("https://rustup.rs")
         {
             return Err(format!(
-                "cargo advisory must disclose the cargo-metadata limitation: {cargo:?} / {rustc:?}"
+                "cargo advisory must disclose the cargo-metadata limitation without a source-build install walk: {cargo:?} / {rustc:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #7435: source-build missing cargo/rustc names an install route; other
+    /// failure evidence (below-minimum rustc, timeout, permission denied) keeps
+    /// its own fix, including `rustup update stable`.
+    #[test]
+    fn source_build_missing_toolchain_names_install_fix_and_keeps_other_failures()
+    -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-source-build-missing",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let missing_probe = |tool: &str, _root: &Path| {
+            if tool == "git" {
+                (DoctorStatus::Pass, "git version 2.43.0".to_string())
+            } else {
+                (DoctorStatus::Fail, format!("{tool} not available"))
+            }
+        };
+        let missing = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &missing_probe,
+        )
+        .report;
+        let cargo = check(&missing, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&missing, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo != rust_toolchain_missing_with_install_fix("cargo")
+            || rustc != rust_toolchain_missing_with_install_fix("rustc")
+            || cargo.contains("rustup update stable")
+            || rustc.contains("rustup update stable")
+            || missing.status != DoctorStatus::Fail
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "source-build missing cargo/rustc must name the install route: {cargo:?} / {rustc:?} {:?}",
+                missing.status
+            ));
+        }
+
+        let below = below_minimum_rustc_output()?;
+        let mixed_probe = |tool: &str, _root: &Path| match tool {
+            "git" => (DoctorStatus::Pass, "git version 2.43.0".to_string()),
+            "cargo" => (DoctorStatus::Fail, "cargo timed out after 5s".to_string()),
+            "rustc" => doctor_tool_check_success(tool, below.as_bytes()).into_public(),
+            other => (DoctorStatus::Fail, format!("{other} not available")),
+        };
+        let mixed = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &mixed_probe,
+        )
+        .report;
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_timeout = check(&mixed, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc_below = check(&mixed, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo_timeout != "cargo timed out after 5s"
+            || cargo_timeout.contains("https://rustup.rs")
+            || !rustc_below.contains("rustup update stable")
+            || rustc_below.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "timeout and below-minimum evidence must keep their own fix: {cargo_timeout:?} / {rustc_below:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_wait_failure_stays_off_the_source_build_install_route() -> Result<(), String> {
+        let cargo_wait =
+            doctor_tool_run_result("cargo", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
+        if cargo_wait.evidence != doctor_wait_failure_evidence("cargo")
+            || cargo_wait.evidence == rust_toolchain_missing_state("cargo")
+            || cargo_wait.evidence.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "cargo wait must be distinct from missing-tool evidence: {:?}",
+                cargo_wait.evidence
+            ));
+        }
+        let projected = source_build_toolchain_failure_evidence("cargo", &cargo_wait.evidence);
+        if projected != cargo_wait.evidence || projected.contains("https://rustup.rs") {
+            return Err(format!(
+                "source-build projection must not add an install route to wait evidence: {projected:?}"
+            ));
+        }
+        let analysis = analysis_advisory_toolchain_evidence("cargo", &cargo_wait.evidence);
+        let analysis_missing =
+            analysis_advisory_toolchain_evidence("cargo", &rust_toolchain_missing_state("cargo"));
+        if analysis != analysis_missing || analysis.contains("https://rustup.rs") {
+            return Err(format!(
+                "analysis wrapping of cargo wait must keep the missing-tool advisory: {analysis:?}"
+            ));
+        }
+        let git_wait =
+            doctor_tool_run_result("git", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
+        if git_wait.evidence != "git not available"
+            || git_wait.evidence.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "git wait must keep the pre-existing message: {:?}",
+                git_wait.evidence
+            ));
+        }
+
+        let root = doctor_scope_root(
+            "scope-source-build-wait",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let wait_probe = |tool: &str, _root: &Path| {
+            if tool == "git" {
+                (DoctorStatus::Pass, "git version 2.43.0".to_string())
+            } else {
+                (DoctorStatus::Fail, doctor_wait_failure_evidence(tool))
+            }
+        };
+        let waited = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &wait_probe,
+        )
+        .report;
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo = check(&waited, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&waited, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo != doctor_wait_failure_evidence("cargo")
+            || rustc != doctor_wait_failure_evidence("rustc")
+            || cargo.contains("https://rustup.rs")
+            || rustc.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "source-build projected wait checks must not name the install route: {cargo:?} / {rustc:?}"
             ));
         }
         Ok(())
@@ -3056,6 +3548,7 @@ mod tests {
     #[test]
     fn empty_root_with_default_config_keeps_the_cargo_toml_failure() -> Result<(), String> {
         let root = doctor_scope_root("scope-empty", &[])?;
+        isolate_as_git_root(&root)?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
         let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Fail
@@ -3064,6 +3557,341 @@ mod tests {
             return Err(format!(
                 "empty root must fail Cargo.toml: {:?}",
                 report.checks
+            ));
+        }
+        Ok(())
+    }
+
+    fn assert_cargo_toml_pass(report: &DoctorReport, needle: &str) -> Result<(), String> {
+        let cargo_toml = check(report, "cargo_toml")?;
+        let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
+        if cargo_toml.status != DoctorCheckStatus::Pass || !evidence.contains(needle) {
+            return Err(format!(
+                "cargo_toml must pass naming {needle:?}: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #7466: git root with the Cargo workspace in `rust/` must not fail
+    /// `cargo_toml`. `ripr check` from the same cwd analyzes that nested tree.
+    #[test]
+    fn nested_workspace_under_git_root_passes_cargo_toml() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-nested-workspace",
+            &[
+                ("README.md", "docs\n"),
+                ("website/index.md", "# site\n"),
+                ("rust/Cargo.toml", "[workspace]\nmembers = [\"crates/x\"]\n"),
+                (
+                    "rust/crates/x/Cargo.toml",
+                    "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+                ),
+                ("rust/crates/x/src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_cargo_toml_pass(
+            &report,
+            &format!(
+                "Cargo.toml found at {} via workspace root {}",
+                human_path(Path::new("rust/Cargo.toml")),
+                human_path(Path::new("rust"))
+            ),
+        )
+    }
+
+    /// A nested package-only crate (no `[workspace]`) is still a Cargo
+    /// project `check` would analyze from the git root.
+    #[test]
+    fn nested_package_under_git_root_passes_cargo_toml() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-nested-package",
+            &[
+                ("README.md", "docs\n"),
+                (
+                    "app/Cargo.toml",
+                    "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+                ),
+                ("app/src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_cargo_toml_pass(
+            &report,
+            &format!(
+                "Cargo.toml found at {} via package root {}",
+                human_path(Path::new("app/Cargo.toml")),
+                human_path(Path::new("app"))
+            ),
+        )
+    }
+
+    /// `target/` is cargo scratch, not a project root. A manifest there must
+    /// not satisfy `cargo_toml`.
+    #[test]
+    fn cargo_toml_inside_target_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-target-manifest",
+            &[(
+                "target/Cargo.toml",
+                "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n",
+            )],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a target/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `.venv/` is an interpreter tree, not a project root. Same skip as
+    /// `target/`.
+    #[test]
+    fn cargo_toml_inside_venv_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-venv-manifest",
+            &[(
+                ".venv/Cargo.toml",
+                "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n",
+            )],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a .venv/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `fixtures/` is analysis evidence, not a project root. Same skip as
+    /// `target/` (`analysis/workspace/discover.rs`).
+    #[test]
+    fn cargo_toml_inside_fixtures_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-fixtures-manifest",
+            &[
+                ("src/lib.rs", "pub fn f() {}\n"),
+                (
+                    "fixtures/example/Cargo.toml",
+                    "[package]\nname = \"example\"\nversion = \"0.1.0\"\n",
+                ),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a fixtures/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `.ripr/` is generated/receipt storage, not a project root.
+    #[test]
+    fn cargo_toml_inside_ripr_dir_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-ripr-dir-manifest",
+            &[(
+                ".ripr/Cargo.toml",
+                "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n",
+            )],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a .ripr/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Two sibling nested workspaces still pass: "no Cargo.toml found" is
+    /// false. The check names the shallowest path-stable workspace.
+    #[test]
+    fn sibling_nested_workspaces_pass_naming_one() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-sibling-workspaces",
+            &[
+                ("backend/Cargo.toml", "[workspace]\nmembers = []\n"),
+                ("rust/Cargo.toml", "[workspace]\nmembers = []\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
+        if cargo_toml.status != DoctorCheckStatus::Pass
+            || !evidence.contains("via workspace root")
+            || !evidence.contains(&human_path(Path::new("backend/Cargo.toml")))
+        {
+            return Err(format!(
+                "sibling workspaces must pass naming the path-stable workspace: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `cd rust/crates/x/src && ripr doctor` matches check's upward walk to
+    /// the `[workspace]` manifest, bounded by the git top level.
+    #[test]
+    fn ancestor_workspace_from_member_src_passes_cargo_toml() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-ancestor-workspace",
+            &[
+                ("rust/Cargo.toml", "[workspace]\nmembers = [\"crates/x\"]\n"),
+                (
+                    "rust/crates/x/Cargo.toml",
+                    "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+                ),
+                ("rust/crates/x/src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let start = root.join("rust/crates/x/src");
+        let (report, _probed) = evaluate_without_rust_toolchain(&start, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
+        if cargo_toml.status != DoctorCheckStatus::Pass
+            || !evidence.contains("via workspace root")
+            || !evidence.contains("Cargo.toml")
+        {
+            return Err(format!(
+                "member src must credit the ancestor workspace: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// An ancestor package-only crate (no `[workspace]`) from `src/` is the
+    /// same implicit package root `resolve_project_root` would choose.
+    #[test]
+    fn ancestor_package_from_src_passes_cargo_toml() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-ancestor-package",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+                ),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let start = root.join("src");
+        let (report, _probed) = evaluate_without_rust_toolchain(&start, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
+        if cargo_toml.status != DoctorCheckStatus::Pass
+            || !evidence.contains("via package root")
+            || !evidence.contains("Cargo.toml")
+        {
+            return Err(format!(
+                "src/ must credit the ancestor package: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A `[workspace]` above the git top level must not be adopted. The
+    /// nested in-repo workspace still wins via the downward walk.
+    #[test]
+    fn cargo_toml_walk_does_not_cross_the_git_top_level() -> Result<(), String> {
+        let outer = doctor_scope_root(
+            "scope-outer-workspace",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers = []\n"),
+                ("repo/README.md", "docs\n"),
+                ("repo/rust/Cargo.toml", "[workspace]\nmembers = []\n"),
+            ],
+        )?;
+        std::fs::create_dir(outer.join("repo/.git"))
+            .map_err(|err| format!("mkdir repo/.git: {err}"))?;
+        let repo = outer.join("repo");
+        let (report, _probed) = evaluate_without_rust_toolchain(&repo, &[]);
+        let _ = std::fs::remove_dir_all(&outer);
+        assert_cargo_toml_pass(
+            &report,
+            &format!(
+                "Cargo.toml found at {} via workspace root {}",
+                human_path(Path::new("rust/Cargo.toml")),
+                human_path(Path::new("rust"))
+            ),
+        )
+    }
+
+    /// Directory symlinks are not a nested workspace. Following them can
+    /// hang (Perl doctor #4457) or credit a tree outside the selected root.
+    #[cfg(unix)]
+    #[test]
+    fn nested_cargo_toml_walk_does_not_follow_directory_symlinks() -> Result<(), String> {
+        let root = doctor_scope_root("scope-symlink-nested", &[("README.md", "docs\n")])?;
+        let outside = doctor_scope_root(
+            "scope-symlink-outside",
+            &[("Cargo.toml", "[workspace]\nmembers = []\n")],
+        )?;
+        std::os::unix::fs::symlink(&outside, root.join("rust"))
+            .map_err(|err| format!("symlink rust -> outside: {err}"))?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a directory symlink must not satisfy cargo_toml: {cargo_toml:?}"
             ));
         }
         Ok(())
@@ -3542,10 +4370,39 @@ mod tests {
         );
 
         let cargo_missing = doctor_spawn_failure("cargo", std::io::ErrorKind::NotFound);
-        assert_eq!(cargo_missing.evidence, "cargo not available");
+        assert_eq!(
+            cargo_missing.evidence,
+            rust_toolchain_missing_with_install_fix("cargo")
+        );
+        assert!(
+            cargo_missing.evidence.contains("https://rustup.rs"),
+            "missing cargo must name an install route: {}",
+            cargo_missing.evidence
+        );
+        assert!(
+            !cargo_missing.evidence.contains("rustup update stable"),
+            "missing cargo must not reuse the below-minimum rustup update path: {}",
+            cargo_missing.evidence
+        );
         assert!(
             !cargo_missing.evidence.contains("--diff"),
             "cargo must not inherit git's saved-diff repair"
+        );
+
+        let rustc_missing = doctor_spawn_failure("rustc", std::io::ErrorKind::NotFound);
+        assert_eq!(
+            rustc_missing.evidence,
+            rust_toolchain_missing_with_install_fix("rustc")
+        );
+        assert!(
+            rustc_missing.evidence.contains("https://rustup.rs"),
+            "missing rustc must name an install route: {}",
+            rustc_missing.evidence
+        );
+        assert!(
+            !rustc_missing.evidence.contains("rustup update stable"),
+            "missing rustc must not reuse the below-minimum rustup update path: {}",
+            rustc_missing.evidence
         );
 
         let denied = doctor_spawn_failure("git", std::io::ErrorKind::PermissionDenied);
@@ -3555,6 +4412,18 @@ mod tests {
             denied.evidence
         );
         assert!(!denied.evidence.contains("--diff"));
+
+        let cargo_denied = doctor_spawn_failure("cargo", std::io::ErrorKind::PermissionDenied);
+        assert!(
+            cargo_denied.evidence.contains("could not be launched"),
+            "permission denied is not a missing-tool diagnosis: {}",
+            cargo_denied.evidence
+        );
+        assert!(
+            !cargo_denied.evidence.contains("https://rustup.rs"),
+            "a launch failure must not name the missing-tool install route: {}",
+            cargo_denied.evidence
+        );
     }
 
     /// #5252 item 3: a root that is not there cannot have a manifest, so

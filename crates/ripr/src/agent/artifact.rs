@@ -51,9 +51,20 @@ pub(crate) struct RepoExposureArtifactContext {
     pub(crate) mode: String,
     pub(crate) base_revision: Option<String>,
     pub(crate) input_identity: String,
+    /// Full Rust inventory provenance supplied by that analysis, never
+    /// computed by artifact serialization or inferred from these seams.
+    pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
 }
 
 impl RepoExposureArtifactContext {
+    pub(crate) fn with_rust_corpus_key(
+        mut self,
+        key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+    ) -> Self {
+        self.corpus_key = key.cloned();
+        self
+    }
+
     /// Build the portable semantic input identity for one repo-exposure run.
     ///
     /// The canonical string covers exactly the inputs that affect analysis
@@ -136,6 +147,7 @@ impl RepoExposureArtifactContext {
             mode,
             base_revision,
             input_identity,
+            corpus_key: None,
         })
     }
 }
@@ -253,6 +265,12 @@ fn analysis_artifact_metadata(
         "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
         "canonicalization": CONTENT_COMMITMENT_CANONICALIZATION,
+        // Wall-clock generation time in the same `unix_ms:` shape the
+        // gap-decision ledger uses, so a retained CI artifact can be aged
+        // from its own bytes (#7369). It is stamped once, here, so the
+        // two-pass content-hash scheme keeps it fixed across both passes
+        // (unlike `content_sha256`, it never changes after hashing).
+        "generated_at": artifact_generated_at_unix_ms(),
         "producer": {
             "tool": "ripr",
             "version": env!("CARGO_PKG_VERSION"),
@@ -277,6 +295,17 @@ fn analysis_artifact_metadata(
 
 fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) -> String {
     format!("snapshot:{input_identity};revision:{repository_head}")
+}
+
+/// The artifact's wall-clock generation stamp, `unix_ms:<millis>` like the
+/// gap-decision ledger. A clock that predates the Unix epoch reports an
+/// explicit `unavailable` instead of failing artifact production: the
+/// timestamp is disclosure, not integrity authority.
+fn artifact_generated_at_unix_ms() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
+        Err(_) => "unavailable".to_string(),
+    }
 }
 
 // Deferred negatives (#2921 claim boundary): main has no migration producer
@@ -357,6 +386,20 @@ pub(crate) fn validate_repo_exposure_artifact(
     {
         return Err(format!(
             "agent verify {label} artifact has invalid or unknown producer identity"
+        ));
+    }
+    // #7369: a present stamp must carry the same `unix_ms:` millisecond
+    // disclosure shape the producer pins, or the producer's documented
+    // `unavailable` fallback for a clock that predates the Unix epoch. A
+    // legacy artifact without the field stays acceptable — the absence is a
+    // missing disclosure, not invalid identity — but any other stamp fails
+    // closed instead of passing.
+    if let Some(stamp) = identity.generated_at.as_deref()
+        && stamp != "unavailable"
+        && !stamp.starts_with("unix_ms:")
+    {
+        return Err(format!(
+            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}"
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
@@ -689,6 +732,10 @@ struct ArtifactIdentity {
     kind: String,
     schema_version: String,
     canonicalization: String,
+    /// Wall-clock generation stamp (#7369). Optional at read time so
+    /// artifacts produced before the field existed keep validating; the
+    /// absence is a missing disclosure, not invalid identity.
+    generated_at: Option<String>,
     producer: ProducerIdentity,
     repository: RepositoryIdentity,
     analysis: AnalysisIdentity,
@@ -728,8 +775,26 @@ fn canonical_root(root: &Path) -> Result<PathBuf, String> {
     })
 }
 
-fn display_root(root: &Path) -> String {
-    crate::agent::loop_commands::root_path_display(root)
+/// Render the artifact repository root for the portable document (#7370).
+/// `canonical_root` produces the verbatim `\\?\` device spelling on Windows,
+/// and `repository.root` was the one machine-consumed field embedding it, so
+/// cross-artifact joins, prefix checks, dashboard logs, and a human opening
+/// the JSON all met a spelling no other ripr surface uses. The field now
+/// renders through the shared human path owner: the plain drive-letter form
+/// with stable separators. No consumer depends on the prefixed form — `agent
+/// verify` re-canonicalizes the declared root, and the repo-seams artifact
+/// check compares against this same renderer — so identity moves with the
+/// renderer instead of breaking. Other verbatim forms (`\\?\UNC\..`,
+/// `\\?\Volume{..}`) render exactly as given, like every other
+/// `human_path` consumer.
+pub(crate) fn display_root(root: &Path) -> String {
+    display_root_for_host(root, cfg!(windows))
+}
+
+/// [`display_root`] with the host made explicit so both answers are testable
+/// anywhere (#4378 pattern).
+fn display_root_for_host(root: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&root.to_string_lossy(), windows)
 }
 
 pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -2068,6 +2133,69 @@ mod tests {
     }
 
     #[test]
+    fn repo_exposure_metadata_carries_generated_at_unix_ms() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &crate::config::RiprConfig::default(),
+            )?;
+            let metadata = repo_exposure_artifact_metadata(&context, CONTENT_SHA256_PLACEHOLDER)?;
+            let generated_at = metadata["generated_at"]
+                .as_str()
+                .ok_or_else(|| "artifact metadata omitted generated_at".to_string())?;
+            let millis = generated_at.strip_prefix("unix_ms:").ok_or_else(|| {
+                format!("generated_at must use the unix_ms: shape, got {generated_at}")
+            })?;
+            if millis.parse::<u128>().is_err() {
+                return Err(format!(
+                    "generated_at millis must parse, got {generated_at}"
+                ));
+            }
+
+            // The two-pass content commitment must keep the stamp fixed:
+            // the spliced document carries the same generated_at the hash
+            // pass committed.
+            let raw_with_placeholder = serde_json::to_string_pretty(&json!({
+                "schema_version": crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+                "scope": "repo",
+                "run_status": "complete",
+                "artifact": metadata,
+                "seams": [],
+            }))
+            .map_err(|error| format!("render artifact document: {error}"))?;
+            let digest = content_sha256_with_placeholder(&raw_with_placeholder)
+                .map_err(|error| error.to_string())?;
+            let committed = replace_content_commitment(&raw_with_placeholder, &digest)
+                .map_err(|error| error.to_string())?;
+            let committed_value: Value = serde_json::from_str(&committed)
+                .map_err(|error| format!("parse committed document: {error}"))?;
+            if committed_value["artifact"]["generated_at"] != metadata["generated_at"] {
+                return Err("content commitment changed generated_at across passes".to_string());
+            }
+            // And a fresh metadata stamp must land within the same run.
+            let seams_metadata =
+                repo_seams_artifact_metadata(&context, CONTENT_SHA256_PLACEHOLDER)?;
+            let seams_generated_at = seams_metadata["generated_at"]
+                .as_str()
+                .ok_or_else(|| "repo-seams metadata omitted generated_at".to_string())?;
+            if !seams_generated_at.starts_with("unix_ms:") {
+                return Err(format!(
+                    "repo-seams generated_at must use the unix_ms: shape, got {seams_generated_at}"
+                ));
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup
+    }
+
+    #[test]
     fn repo_exposure_validation_requires_exact_snapshot_identity() -> Result<(), String> {
         let root = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
@@ -2248,6 +2376,54 @@ mod tests {
                 mutated,
                 "unsupported repo-exposure schema",
             )
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_validation_rejects_malformed_generated_at_stamp() -> Result<(), String> {
+        // #7369 follow-up from the Rust Small clippy gate: the disclosure
+        // stamp is part of the identity envelope, so validation reads it — a
+        // stamp that is not a `unix_ms:` millisecond disclosure fails closed,
+        // while a well-formed one keeps validating.
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            let malformed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("2026-10-12T12:00:00Z");
+            })?;
+            expect_identity_rejection(
+                "non-unix_ms generated_at stamp",
+                malformed,
+                "neither a unix_ms millisecond disclosure nor",
+            )?;
+            let fallback = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unavailable");
+            })?;
+            match fallback {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "the documented unavailable fallback must keep validating: {error}"
+                    ));
+                }
+            }
+            let well_formed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unix_ms:1760000000000");
+            })?;
+            match well_formed {
+                Ok(_) => Ok(()),
+                Err(error) => Err(format!(
+                    "a well-formed unix_ms stamp must keep validating: {error}"
+                )),
+            }
         })();
         let cleanup =
             std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
@@ -3256,6 +3432,36 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    /// #7370: `artifact.repository.root` embedded the verbatim `\\?\` device
+    /// spelling that `Path::canonicalize` produces on Windows — the one
+    /// machine-consumed field using a spelling no other ripr surface uses.
+    /// The rendered root strips the prefix (plain drive-letter form, stable
+    /// separators) on Windows and keeps the native spelling elsewhere;
+    /// `agent verify` re-canonicalizes the declared root and the repo-seams
+    /// check compares against this same renderer, so no consumer depends on
+    /// the prefixed form.
+    #[test]
+    fn artifact_repository_root_renders_without_windows_verbatim_prefix() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shapes are assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\tmp\ripr-audit-scratch");
+        let root = Path::new(&verbatim);
+        let windows = display_root_for_host(root, true);
+        assert_eq!(windows, format!("{drive}/tmp/ripr-audit-scratch"));
+        assert!(!windows.contains("/?/"), "{windows}");
+        assert!(!windows.contains('\\'), "{windows}");
+        let unix = display_root_for_host(root, false);
+        assert_eq!(unix, verbatim);
+        // A plain spelling is already portable and passes through unchanged
+        // apart from separator stabilization.
+        let plain = format!(r"{drive}\tmp\ripr-audit-scratch");
+        assert_eq!(
+            display_root_for_host(Path::new(&plain), true),
+            format!("{drive}/tmp/ripr-audit-scratch")
+        );
     }
 
     /// (#2823 test 6, removal-experiment oracle) Reintroducing the absolute

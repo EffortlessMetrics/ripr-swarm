@@ -82,6 +82,11 @@ document should branch on `exit`, not on free-text `stop_states`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
+  missing or not a directory is an argv-level usage refusal: it exits `2`,
+  names the root, and does not write `gate-decision.{json,md}`. Evaluation
+  does not start. This is distinct from a completed `config_error` decision
+  (also exit `2`), which still writes the report before returning.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -172,17 +177,22 @@ The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
 scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 `.rs` files) are detected or no other language is detected or enabled. A
 Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Rust root, a root with Rust sources but no
-`Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest.
+the reason and does not fail on them. A Cargo.toml at the selected root, an
+ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
+(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+A root with Rust sources but no Cargo.toml anywhere in that bounded search,
+and an empty root under the Rust-only default, still fail on a missing
+manifest.
 
 The toolchain checks depend on the profile. Under the default `analysis`
 profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`, while
-enabled language runtimes stay visible but do not decide that profile's exit.
+`--profile source-build`, the same conditions are failures and exit `2`. A
+missing cargo or rustc names an install route on the failing check; an older
+rustc still names `rustup update stable`. Enabled language runtimes stay
+visible but do not decide that profile's exit.
 
 ## CI integration
 
@@ -213,6 +223,9 @@ empty (the default, advisory) or `visible-only` never fails the job;
 a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
 `0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
 evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
-`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+`2` on a `config_error`; those completed decisions still write
+`gate-decision.{json,md}`. A `--root` that is missing or not a directory is
+argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
+treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.

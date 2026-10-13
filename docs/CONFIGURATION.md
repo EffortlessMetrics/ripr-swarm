@@ -21,12 +21,25 @@ repository `ripr.toml` file. It pairs with:
 
 `ripr.toml` is repository-scoped. Starting at the selected root, `ripr` walks
 parent directories until it finds the nearest config, then stops at a Cargo
-workspace manifest or `.git` boundary. A package-only `Cargo.toml` does not stop
+workspace manifest or `.git` boundary (including a dangling or cyclic `.git`
+symlink). A config at the boundary still applies; a config above it does not.
+A package-only `Cargo.toml` does not stop
 the walk. `ripr` does not read global user config or hidden alternate config
 files. Environment variables are process-local tuning knobs and are documented
 separately from repo policy.
 
+Implicit `check` and cache root selection also respect dangling or cyclic
+`.git` entries before adopting an enclosing workspace, preserving the local
+project's config and explicit CLI precedence.
+
 Configuration is for policy and tuning, not a prerequisite for first value.
+`ripr.toml` has no Rust fixture/builder computed-value mapping mechanism.
+Test-harness registrations identify test sources; they do not evaluate their
+inputs. For an unknown input, inspect how a related test's input reaches
+the changed expression and what the test actually checks. If it has an
+assertion, compare what that assertion observes under the original and changed
+behavior, using the project's configured test runner.
+
 `ripr.toml` is optional, and missing config is the normal first-run state — it
 uses built-in defaults. `ripr init` is **only** for teams that want to commit
 those defaults to disk so they can review, version, and tune repo policy; it
@@ -165,7 +178,7 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
 | `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
@@ -858,8 +871,14 @@ JSON-shaped, and `--json` is accepted for parity with `check`.
 `ripr` starts config discovery at the root passed by `--root` or by the LSP
 initialization root, then walks upward for the nearest `ripr.toml`. Discovery
 stops after checking an ancestor with a Cargo `[workspace]` table or at a `.git`
-boundary. Missing config is normal and preserves current built-in defaults.
-Unknown keys are errors so policy typos do not silently change analysis intent.
+boundary. Implicit `ripr check` first rebinds that selected root to the enclosing
+workspace when one exists, so a `ripr.toml` sitting in the invocation directory
+is not a candidate. `check` then warns on stderr when that closer file exists
+and differs from the loaded config, naming the skipped directory entry and
+`--root .` recovery; `doctor` and `pilot` still load from their
+`--root` (default cwd) and do not take that workspace walk. Missing config is
+normal and preserves current built-in defaults. Unknown keys are errors so
+policy typos do not silently change analysis intent.
 
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.
@@ -1065,6 +1084,15 @@ languages continue. The accepted managed producer values are
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` also resolves to `30000`; it does not disable the timeout. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
+
+A timed-out or failed managed export does not replace the previous published
+packet. Each invocation stages its output separately. Once its process has
+settled, ripr discards that invocation's partial packet; a cleanup blocker is
+preserved and named in the failure diagnostic. Forced interruption or
+unconfirmed process cleanup can retain staging, which a subsequent invocation
+does not consume.
+If staging cleanup fails after successful publication, ripr names the retained
+staging in a warning and consumes the published packet normally.
 
 To evaluate preview languages, keep Rust enabled and add only the preview
 adapters the repo wants to inspect:

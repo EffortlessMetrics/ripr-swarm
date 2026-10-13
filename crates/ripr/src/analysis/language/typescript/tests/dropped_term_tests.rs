@@ -84,8 +84,17 @@ fn parameter_is_stable_only_when_the_body_never_rebinds_it() {
 const PRICE: &str = "export const FLAT = 499;\n\nexport function shipping(subtotal: number): number {\n  return subtotal >= 5000 ? 0 : FLAT;\n}\n\nexport function price(subtotal: number, fee: number): number {\n  return subtotal + fee + shipping(subtotal) + FLAT;\n}\n";
 
 fn price_finding(label: &str, test: &str, added: &str) -> Result<Finding, String> {
+    price_finding_in(PRICE, label, test, added)
+}
+
+fn price_finding_in(
+    price_source: &str,
+    label: &str,
+    test: &str,
+    added: &str,
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
-    let source = PRICE.replace(
+    let source = price_source.replace(
         "  return subtotal + fee + shipping(subtotal) + FLAT;",
         added,
     );
@@ -164,6 +173,12 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "{:?}",
         finding.missing
     );
+    // The discriminate summary agrees with the withdrawn credit.
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    assert!(
+        summary.contains("withdrew the discrimination credit") && summary.contains("`fee`"),
+        "{summary}"
+    );
 
     // A call term does not fold: `shipping(6000)` is 0, and ripr cannot
     // show otherwise.
@@ -190,6 +205,52 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "  return subtotal + shipping(subtotal) + FLAT;",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // The whole result of a renamed import, an outer call
+    // around an inner one, and a fractional `fee` each witness the term.
+    for (label, import, call) in [
+        ("dropped-term-alias", "price as subject", "subject(6000, 7)"),
+        ("dropped-term-outer", "price", "price(price(6000, 0), 7)"),
+        ("dropped-term-half", "price", "price(6000, 0.5)"),
+    ] {
+        let test = format!(
+            "import {{ {import} }} from \"../src/price\";\ntest(\"price\", () => {{\n  expect({call}).toBe(1);\n}});\n"
+        );
+        let finding = price_finding(
+            label,
+            &test,
+            "  return subtotal + shipping(subtotal) + FLAT;",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+
+    // A local bound to a renamed import's call witnesses the term too.
+    let local_alias = "import { price as subject } from \"../src/price\";\ntest(\"price\", () => {\n  const result = subject(6000, 7);\n  expect(result).toBe(1);\n});\n";
+    let finding = price_finding(
+        "dropped-term-alias-local",
+        local_alias,
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
+    // A double sum absorbs a term below 2^-52 of its magnitude, so a
+    // `fee` under 1e-6 does not witness it.
+    let finding = price_finding(
+        "dropped-term-absorbed",
+        &price_test("price(6000, 0.0000000000001)", "6499"),
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
     // A non-zero call the assertion sees only through another expression
     // does not count: `Math.sign` hides the dropped `fee`.
@@ -360,5 +421,67 @@ fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
         "{:?}",
         finding.missing
     );
+    Ok(())
+}
+
+/// RIPR-SPEC-0251 rule 1 reaches the RIPR-SPEC-0248 dropped-term witness:
+/// `import cost from "../src/price"` calls the default-exported `price` as
+/// `cost`, directly or through a local bound once to the call. A non-zero
+/// `fee` keeps the credit; a zero `fee` withdraws it.
+#[test]
+fn dropped_term_reads_a_renamed_default_import() -> Result<(), String> {
+    let default_price = PRICE.replace("export function price", "export default function price");
+    let dropped = "  return subtotal + shipping(subtotal) + FLAT;";
+    for (label, lines, observed, class) in [
+        (
+            "dropped-term-default-nonzero",
+            "  expect(cost(6000, 7)).toBe(6506);",
+            "cost(6000, 7)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "dropped-term-default-zero",
+            "  expect(cost(6000, 0)).toBe(6499);",
+            "cost(6000, 0)",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "dropped-term-default-local-nonzero",
+            "  const result = cost(6000, 7);\n  expect(result).toBe(6506);",
+            "result",
+            ExposureClass::Exposed,
+        ),
+        (
+            "dropped-term-default-local-zero",
+            "  const result = cost(6000, 0);\n  expect(result).toBe(6499);",
+            "result",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let test = format!(
+            "import cost from \"../src/price\";\ntest(\"price\", () => {{\n{lines}\n}});\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/price.test.ts"), &test)
+                .iter()
+                .flat_map(|test| test.assertions.iter())
+                .map(|assertion| assertion.observed_expression.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(observed.to_string())],
+            "{label}"
+        );
+        let finding = price_finding_in(&default_price, label, &test, dropped)?;
+        assert_eq!(finding.class, class, "{label}: {:?}", finding.missing);
+        if class == ExposureClass::WeaklyExposed {
+            assert!(
+                finding
+                    .missing
+                    .iter()
+                    .any(|line| line.contains("`fee`, which is 0 for every tested input")),
+                "{label}: {:?}",
+                finding.missing
+            );
+        }
+    }
     Ok(())
 }

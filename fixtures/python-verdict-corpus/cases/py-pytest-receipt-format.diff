@@ -1,0 +1,12 @@
+diff --git a/pricing/receipts.py b/pricing/receipts.py
+--- a/pricing/receipts.py
++++ b/pricing/receipts.py
+@@ -3,7 +3,7 @@
+ 
+ def print_receipt(total_cents):
+     """Print the order total in dollars."""
+-    print(f"Total: {total_cents / 100:.2f}")
++    print(f"Total: {total_cents / 100:.1f}")
+ 
+ 
+ def receipt_footer(store_name):

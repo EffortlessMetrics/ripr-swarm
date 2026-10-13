@@ -2871,6 +2871,7 @@ mod tests {
     fn action_artifact() -> ValidatedGapArtifact {
         ValidatedGapArtifact {
             kind: GapArtifactKind::GapDecisionLedger,
+            corpus_currentness: None,
             root: Some(".".to_string()),
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),

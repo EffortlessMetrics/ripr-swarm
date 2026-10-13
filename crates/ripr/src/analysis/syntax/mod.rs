@@ -5,6 +5,7 @@ mod local_test_macros;
 mod module_tree;
 mod nesting;
 mod owner_pin;
+mod pattern_pin;
 #[cfg(test)]
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
@@ -15,6 +16,8 @@ pub(crate) use owner_pin::{
     owner_pin_assertions, returns_leave_the_function, supported_targeted_item_context,
     trusted_macro_binding_sites,
 };
+pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 
 pub use adapter::{

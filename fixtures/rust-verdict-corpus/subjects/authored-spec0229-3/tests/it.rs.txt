@@ -1,0 +1,11 @@
+use spec0229_3::reason;
+
+fn make() -> Option<i32> {
+    Some(5)
+}
+
+#[test]
+fn made_input_adds_one() {
+    let x = make();
+    assert_eq!(reason(x), 6);
+}

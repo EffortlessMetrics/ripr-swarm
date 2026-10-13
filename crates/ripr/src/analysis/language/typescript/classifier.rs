@@ -95,6 +95,15 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
     discriminator_value
 }
 
+/// The change-specific credit facts the observation guard reads: mocked
+/// payloads (RIPR-SPEC-0247) and credited class or match-object pins
+/// (RIPR-SPEC-0249, RIPR-SPEC-0250).
+#[derive(Clone, Copy)]
+pub(crate) struct CreditFacts<'a> {
+    pub(crate) mock_facts: &'a MockCallFacts,
+    pub(crate) pin_facts: &'a PinFacts,
+}
+
 /// Returns `true` when there is static evidence that a strong assertion in one
 /// of the oracle-eligible related tests observes the specific changed
 /// sub-expression — not just some other part of the same function body.
@@ -138,6 +147,10 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 ///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
 ///    changed token from the changed sub-expression.
 ///
+/// A RIPR-SPEC-0250 match-object pin credited in `pin_facts` also confirms,
+/// although its default reading is weak: its guard already proved it
+/// observes the whole owner result.
+///
 /// One-hop local aliasing: a bare-local observed_expression
 /// (`t.is(result, 3)`) also confirms when the test body initializes that
 /// local from an expression referencing the owner or a changed token
@@ -175,8 +188,9 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 /// reference `price`. The observed expression (and the one-hop initializer)
 /// also references the owner when it names the `local` of an
 /// `import { owner as local }` that gives the same test its
-/// `ImportAliasOwnerCall` relation. A default-import local gets no such
-/// credit. The effect side-channel test below stays a substring test
+/// `ImportAliasOwnerCall` relation, or the `local` of a default import of
+/// the owner's own default export behind an `ImportedOwnerCall` relation
+/// (RIPR-SPEC-0251). The effect side-channel test below stays a substring test
 /// (Decision 4): there a miss grants credit, so tightening it would add
 /// credit.
 pub(crate) fn ts_changed_value_is_observed(
@@ -186,8 +200,12 @@ pub(crate) fn ts_changed_value_is_observed(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-    mock_facts: &MockCallFacts,
+    credits: CreditFacts<'_>,
 ) -> bool {
+    let CreditFacts {
+        mock_facts,
+        pin_facts,
+    } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
     // families (ReturnValue / FieldConstruction). All other families keep the
@@ -238,6 +256,11 @@ pub(crate) fn ts_changed_value_is_observed(
                     .mock_payload
                     .as_ref()
                     .is_some_and(|payload| mock_facts.credits(payload, &candidate.test.body_text));
+            // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
+            // field and observes the whole owner result, so it sees the sink.
+            if value_family && pin_facts.credits(&candidate.test.file, assertion) {
+                return true;
+            }
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() && !credited_mock {
                 continue;
             }
@@ -261,6 +284,16 @@ pub(crate) fn ts_changed_value_is_observed(
                 let mut owner_names: Vec<&str> = vec![owner_name];
                 if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
                     owner_names.extend(import_alias_owner_locals(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    ));
+                }
+                // RIPR-SPEC-0251: a default import of the owner's own
+                // default export calls the owner under its local name.
+                if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+                    owner_names.extend(default_import_owner_locals(
                         candidate.test,
                         owner,
                         alias_map,
@@ -750,6 +783,8 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) sibling_tests: &'a [TypeScriptTest],
     pub(crate) alias_map: Option<&'a TsAliasMap>,
     pub(crate) workspace_root: Option<&'a Path>,
+    /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
+    pub(crate) pin_facts: Option<&'a PinFacts>,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -827,6 +862,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         sibling_tests,
         alias_map,
         workspace_root,
+        pin_facts,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -865,8 +901,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     // expected-side guard refused the assertion: present, not discriminated.
     let mut reached = false;
     for assertion in &candidate.test.assertions {
-        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
-            || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
+        let pins_class =
+            pin_facts.is_some_and(|facts| facts.credits(&candidate.test.file, assertion));
+        if !pins_class
+            && (assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate))
         {
             continue;
         }
@@ -2480,7 +2519,7 @@ fn numeric_literal_value(token: &str) -> Option<String> {
 /// while a same-named method on any other receiver (`other.total(...)`) is
 /// not — this is the receiver resolution that keeps genuine namespace-import
 /// witnesses credited without crediting unrelated receivers.
-fn owner_namespace_receivers(
+pub(crate) fn owner_namespace_receivers(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
@@ -3388,6 +3427,7 @@ pub(crate) fn strongest_family_matching_oracle(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     error_facts: &ErrorChangeFacts,
     mock_facts: &MockCallFacts,
+    pin_facts: &PinFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -3416,6 +3456,11 @@ pub(crate) fn strongest_family_matching_oracle(
                         && mock_facts.credits(payload, &candidate.test.body_text) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
+                }
+                // RIPR-SPEC-0249 rule 1: a class pin on a predicate whose
+                // branches return different classes.
+                _ if pin_facts.credits(&candidate.test.file, assertion) => {
+                    (OracleKind::ExactValue, OracleStrength::Strong)
                 }
                 _ => (
                     assertion.oracle_kind.clone(),
@@ -3464,6 +3509,59 @@ fn project_credited_mock_rows(
             row.oracle = Some(assertion_oracle_text(assertion));
         }
     }
+}
+
+/// RIPR-SPEC-0249 rule 1: a related row whose test holds a credited
+/// `toBeInstanceOf` pin shows it at its `exact_value` / strong reading, so
+/// the public row agrees with the verdict it supports.
+fn project_credited_pin_rows(
+    related: &mut [RelatedTest],
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    pin_facts: &PinFacts,
+) {
+    for (row, candidate) in related.iter_mut().zip(candidates) {
+        if row.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+            continue;
+        }
+        let credited = candidate
+            .test
+            .assertions
+            .iter()
+            .find(|assertion| pin_facts.credits(&candidate.test.file, assertion));
+        if let Some(assertion) = credited {
+            row.oracle_kind = OracleKind::ExactValue;
+            row.oracle_strength = OracleStrength::Strong;
+            row.oracle = Some(assertion_oracle_text(assertion));
+        }
+    }
+}
+
+/// `true` when `assertion` observes the whole result of one owner call:
+/// `owner(...)` or `ns.owner(...)`, optionally awaited, or a local bound
+/// once to that call. `owner(...).field` and `f(owner(...))` do not.
+pub(crate) fn ts_observes_whole_owner_result(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let bare = std::iter::once(String::new())
+        .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
+        .any(|prefix| {
+            observed
+                .strip_prefix(prefix.as_str())
+                .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
+                .is_some_and(ts_is_one_argument_list)
+        });
+    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers)
+        .is_some()
 }
 
 /// Classify a changed TypeScript/JavaScript line and return a finding.
@@ -3671,11 +3769,31 @@ pub(crate) fn classify_change_with_alias_state(
     if reads_mock_payload {
         project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
     }
+    let mut pin_facts = ts_instance_class_facts(
+        &probe_shape.family,
+        line_text,
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    );
+    pin_facts.extend(ts_match_object_facts(
+        &probe_shape.family,
+        line_text,
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    ));
+    if !pin_facts.is_empty() {
+        project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
+    }
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,
         &error_facts,
         &mock_facts,
+        &pin_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
@@ -3708,6 +3826,7 @@ pub(crate) fn classify_change_with_alias_state(
             sibling_tests: all_tests,
             alias_map,
             workspace_root,
+            pin_facts: Some(&pin_facts),
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
@@ -3755,7 +3874,10 @@ pub(crate) fn classify_change_with_alias_state(
             &related_candidates,
             alias_map,
             workspace_root,
-            &mock_facts,
+            CreditFacts {
+                mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
+            },
         );
 
     let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
@@ -3847,6 +3969,7 @@ pub(crate) fn classify_change_with_alias_state(
         discriminate_state,
         missing,
     };
+    let ladder_exposed = matches!(verdict.class, ExposureClass::Exposed);
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
@@ -3861,6 +3984,7 @@ pub(crate) fn classify_change_with_alias_state(
                 activations: &predicate_activations,
                 error_facts: &error_facts,
                 mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
             },
             mock_paths: &mock_paths,
             alias_map,
@@ -3973,6 +4097,16 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
+        // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
+        // ladder's credit; its missing line says why.
+        format!(
+            "TypeScript preview adapter: a change-specific rule withdrew the discrimination credit of the related `{}` oracle: {}",
+            strongest_kind.as_str(),
+            missing
+                .first()
+                .map_or("see missing evidence.", String::as_str)
+        )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
             "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
@@ -4365,6 +4499,25 @@ pub(crate) fn ts_dropped_term_witness(
             continue;
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        // An `import { owner as local }` rename calls the owner as `local`.
+        let mut names: Vec<&str> = vec![owner.name.as_str()];
+        if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+            names.extend(import_alias_owner_locals(
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            ));
+        }
+        // RIPR-SPEC-0251: `import local from "./owner"` calls it as `local`.
+        if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+            names.extend(default_import_owner_locals(
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            ));
+        }
         for assertion in &candidate.test.assertions {
             // A value matcher sees the returned value; an error matcher
             // (`rejects.toThrow`) sees only that the call fails.
@@ -4380,38 +4533,20 @@ pub(crate) fn ts_dropped_term_witness(
                 continue;
             };
             // Only an assertion on the call's whole result sees the term:
-            // `quote(6000, 5).tier` does not.
-            let bare = std::iter::once(String::new())
-                .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
-                .any(|prefix| {
-                    let observed = observed.trim();
-                    observed
-                        .strip_prefix("await ")
-                        .map_or(observed, str::trim_start)
-                        .strip_prefix(prefix.as_str())
-                        .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
-                        .is_some_and(ts_is_one_argument_list)
+            // `quote(6000, 5).tier` does not. In `price(price(6000, 0), 7)`
+            // the outer call's arguments are the asserted result's.
+            let arguments = ts_whole_owner_call_arguments(observed, &names, owner, &receivers)
+                .or_else(|| {
+                    names.iter().find_map(|name| {
+                        ts_observed_local_owner_call_arguments(
+                            candidate.test,
+                            assertion,
+                            name,
+                            &receivers,
+                        )
+                    })
                 });
-            // One call only: in `price(price(6000, 7), 0)` the inner call's
-            // `fee` is not the asserted result's.
-            let mut argument_lists = if bare {
-                owner_call_arguments(observed, &owner.name, &receivers)
-            } else {
-                Vec::new()
-            };
-            if argument_lists.len() != 1 {
-                argument_lists.clear();
-            }
-            if argument_lists.is_empty()
-                && let Some(arguments) = ts_observed_local_owner_call_arguments(
-                    candidate.test,
-                    assertion,
-                    &owner.name,
-                    &receivers,
-                )
-            {
-                argument_lists.push(arguments);
-            }
+            let argument_lists: Vec<Vec<String>> = arguments.into_iter().collect();
             for arguments in argument_lists {
                 let arguments = substitute_constant_arguments(
                     arguments,
@@ -4433,7 +4568,10 @@ pub(crate) fn ts_dropped_term_witness(
                     }
                 }
                 match fold_numeric_expression(term, &bindings) {
-                    Some(value) if value.abs() > 1e-9 => return DroppedTermWitness::NonZero,
+                    // A double sum absorbs an addend below 2^-52 of its
+                    // magnitude (`6499 + 1e-13 === 6499`). A term of at least
+                    // 1e-6 changes every sum below about 4.5e9.
+                    Some(value) if value.abs() >= 1e-6 => return DroppedTermWitness::NonZero,
                     Some(_) => zero = true,
                     None => unknown = true,
                 }
@@ -4445,6 +4583,32 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// The arguments of the owner call `observed` is, whole: `name(...)` for the
+/// owner's name or one of its rename locals, or `ns.owner(...)` through a
+/// receiver bound to the owner's module, optionally awaited, with optional
+/// space before `(`. `None` for a member or call on the result.
+fn ts_whole_owner_call_arguments(
+    observed: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> Option<Vec<String>> {
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let qualified = receivers
+        .iter()
+        .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
+        .filter_map(|rest| rest.trim_start().strip_prefix('.'))
+        .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
+    let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
+    bare.chain(qualified)
+        .map(str::trim_start)
+        .find(|rest| ts_is_one_argument_list(rest))
+        .and_then(|rest| balanced_call_arguments(&rest[1..]))
 }
 
 /// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change
@@ -4535,7 +4699,7 @@ fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
 /// `true` when `rest` is exactly one balanced `(...)`, so the observed
 /// expression is the owner call itself and not a member or call on it
 /// (`owner(x)["k"]`, `owner(x)?.has(k)`, `owner(x) .name`).
-fn ts_is_one_argument_list(rest: &str) -> bool {
+pub(crate) fn ts_is_one_argument_list(rest: &str) -> bool {
     if !rest.starts_with('(') {
         return false;
     }
@@ -4567,6 +4731,7 @@ struct Rule8LadderFacts<'a> {
     activations: &'a [TypeScriptPredicateActivation],
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
+    pin_facts: &'a PinFacts,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -4592,6 +4757,7 @@ fn ts_rule8_mocked_changed_callee(
         activations,
         error_facts,
         mock_facts,
+        pin_facts,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -4625,8 +4791,13 @@ fn ts_rule8_mocked_changed_callee(
             .iter()
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
-        let (strength, _) =
-            strongest_family_matching_oracle(&probe_shape.family, &subset, error_facts, mock_facts);
+        let (strength, _) = strongest_family_matching_oracle(
+            &probe_shape.family,
+            &subset,
+            error_facts,
+            mock_facts,
+            pin_facts,
+        );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
             && ts_predicate_boundary_witnessed_by_rows(boundary, &subset_activations)
@@ -4637,7 +4808,10 @@ fn ts_rule8_mocked_changed_callee(
                 &subset,
                 alias_map,
                 workspace_root,
-                mock_facts,
+                CreditFacts {
+                    mock_facts,
+                    pin_facts,
+                },
             )
         {
             exposing.push(representative);

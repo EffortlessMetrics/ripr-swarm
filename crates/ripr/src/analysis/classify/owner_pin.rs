@@ -41,6 +41,9 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+mod fallible_check;
+pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
@@ -59,10 +62,10 @@ use crate::analysis::facts::{
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES,
+    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
     generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    parse_clean_source_file, returns_leave_the_function, trusted_macro_binding_sites,
+    parse_clean_source_file, pattern_pins, returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -100,6 +103,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    fallible_dependencies:
+        RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
@@ -116,6 +121,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run for an hour.
     test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    /// Per file: the exact pattern pins of its tests through a verified
+    /// local `assert_matches!` (#6616), parsed once per run.
+    pattern_pins: RefCell<BTreeMap<PathBuf, PatternPins>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
@@ -672,14 +680,18 @@ impl OwnerPinSyntax {
         None
     }
 
-    fn refusal(
+    /// The gates every assertion of `test` shares, whatever its macro: a
+    /// parser-backed file, resolved module composition, and each module
+    /// declaration on the chain admitted. `Ok` holds the macro names some
+    /// visible binding may rebind for an assertion on `line`.
+    fn context_ambiguities(
         &self,
         test: &TestSummary,
-        assertion: &OracleFact,
+        line: usize,
         index: &RustIndex,
-    ) -> Option<AssertionRefusal> {
+    ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
         if let Some(refusal) = self.source_provenance_refusal(test, index) {
-            return Some(refusal);
+            return Err(Box::new(refusal));
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
@@ -691,11 +703,8 @@ impl OwnerPinSyntax {
             .get(&test.file)
             .filter(|facts| !facts.used_lexical_fallback)
         else {
-            return Some(AssertionRefusal::LexicalFallback);
+            return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
-            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
-        }
         let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
         let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
             let names = local_empty_macro_names(&facts.source);
@@ -723,8 +732,57 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
-        ambiguous.extend(self.scoped_names_for(test, assertion.line));
+        ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
+        Ok(ambiguous)
+    }
+
+    /// RIPR-SPEC-0229 (#6616): the value operand of `assertion` when it is
+    /// an exact pattern pin through the test file's verified local
+    /// `assert_matches!` (see `syntax::pattern_pins`), under the gates every
+    /// assertion of the test shares and with no visible rebinding of a
+    /// standard macro the pin relies on. `None` refuses.
+    pub(in crate::analysis) fn exact_pattern_pin_value(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<String> {
+        if !assertion.text.starts_with("assert_matches") {
+            return None;
+        }
+        let facts = index.files().get(&test.file)?;
+        // Look the cached pin up first; the ambiguity scan only matters when
+        // a pin exists. The memo borrow ends before that scan runs.
+        let pin = {
+            let mut memo = self.pattern_pins.borrow_mut();
+            let pins = memo
+                .entry(test.file.clone())
+                .or_insert_with(|| pattern_pins(&facts.source));
+            pins.pin(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+            )?
+            .clone()
+        };
+        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
+            Ok(ambiguous) => ambiguous,
+            Err(refusal) => return Some(*refusal),
+        };
+        let Some(facts) = index.files().get(&test.file) else {
+            return Some(AssertionRefusal::LexicalFallback);
+        };
         let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
@@ -4010,6 +4068,17 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
             .any(|name| name.replace('-', "_") == root)
 }
 
+#[cfg(test)]
+thread_local! {
+    static LIBRARY_IMPORT_EXTRACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn library_import_statements(source: &str) -> Vec<String> {
+    #[cfg(test)]
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(count.get() + 1));
+    file_use_statements(source)
+}
+
 /// Whether the library whose crate root is `owner_root` may export some other
 /// item named `name` than the owner, so that another crate's
 /// `use library::name;` could bind it. Fails closed (true) when:
@@ -4056,12 +4125,16 @@ pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, nam
     // A module name some `use` or `extern crate` also binds may name that
     // import instead (`pub use fastscore as fs;` beside an unrelated
     // `mod fs`), so it does not count as a library module.
+    // Imports depend only on the captured file, not the module being checked.
+    // Keep extraction lazy for files the short-circuiting walk never visits.
+    let library_uses: Vec<OnceCell<Vec<String>>> =
+        (0..library.len()).map(|_| OnceCell::new()).collect();
     let modules: BTreeSet<&str> = library
         .iter()
         .flat_map(|masked| declared_module_names(masked))
         .filter(|module| {
-            !library.iter().any(|masked| {
-                file_use_statements(masked)
+            !library.iter().zip(&library_uses).any(|(masked, uses)| {
+                uses.get_or_init(|| library_import_statements(masked))
                     .iter()
                     .any(|statement| use_statement_binds_name(statement, module))
                     || binds_extern_crate(masked, module)

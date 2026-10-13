@@ -1293,6 +1293,38 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0251"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0252"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0250"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toMatchObject from corpus mutation evidence: a match-object pin discriminates a change to a returned field it lists."
+
+[[artifact]]
+id = "RIPR-SPEC-0249"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toBeInstanceOf from corpus mutation evidence: a class pin discriminates a predicate change whose paths return classes the owner module keeps apart."
+
+[[artifact]]
 id = "RIPR-SPEC-0248"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
@@ -1427,3 +1459,10 @@ path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
+[[artifact]]
+id = "RIPR-SPEC-0253"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Issue #5073 defines the bounded local check-policy-all contract over nine existing independent policy scans, with actual-driver tests for collect-all errors, preserved leaf diagnostics, stale-report I/O failures and aggregate write failures; no product policy composition, hosted gate or timing-budget change."

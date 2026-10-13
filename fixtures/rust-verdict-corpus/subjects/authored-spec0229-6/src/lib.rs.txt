@@ -1,0 +1,14 @@
+//! RIPR-SPEC-0229 acceptance example 6.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    A,
+    B,
+}
+
+pub fn f(k: Kind) -> Kind {
+    match k {
+        Kind::A => Kind::B,
+        Kind::B => Kind::B,
+    }
+}

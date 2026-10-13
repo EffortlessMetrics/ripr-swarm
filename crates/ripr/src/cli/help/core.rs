@@ -129,6 +129,9 @@ Options:
                            without one, to the nearest Cargo.toml or the git
                            top level. The walk never leaves the git
                            repository. A moved root is disclosed on stderr.
+                           When that move skips a closer ripr.toml, stderr
+                           names both files and which one governed. Recovery
+                           is `--root .` from that directory.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
@@ -438,38 +441,45 @@ decision.
 
 Checks:
   - root directory exists
-  - Cargo.toml is present at the selected root (when Rust is in scope)
+  - Cargo.toml is present at the selected root, an ancestor Cargo project
+    bounded by git, or a nested Cargo.toml in this tree (when Rust is in
+    scope)
   - ripr.toml load status and effective defaults are visible
   - git is available; cargo and rustc availability is disclosed when Rust is
     in scope. Missing tools or an older workspace rustc are advisory for
     installed-binary static analysis, but fail the source-build profile.
-    Project verification uses the project's selected toolchain and its actual
-    execution result; doctor does not run verification.
+    Missing cargo or rustc on --profile source-build names an install route
+    on the `!` line (https://rustup.rs or the OS package manager). An older
+    rustc still names `rustup update stable`. Project verification uses the
+    project's selected toolchain and its actual execution result; doctor does
+    not run verification.
 
 Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
 or when no other language is detected or enabled. Otherwise (for example a
 Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
 print as skipped with the reason and do not fail doctor.
 
-First-run diagnosis (printed automatically):
+First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its
     canonical tier (stable or preview) and [adapter not compiled] when the
     feature is absent. Only languages with concrete markers are listed —
-    no overclaiming.
+    no overclaiming. Printed for every profile.
   - Detected test surfaces: per detected language, the first recognizable
     framework marker (cargo test, pytest, jest, vitest, bun). Prints
-    "test framework not detected" rather than guessing.
+    "test framework not detected" rather than guessing. Printed for every
+    profile.
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
-    nature of preview-language evidence.
-  - Recommended first command: ripr check (no base: the loader resolves this
+    nature of preview-language evidence. Printed for every profile.
+  - Recommended first command (analysis profile; not printed for --profile
+    source-build): ripr check (no base: the loader resolves this
     repository's own default branch). When git is not on PATH, the `!` git line
     names install git or `--diff PATH` / `--diff -`, and the recommended
     command is `ripr check --diff PATH`. Outside a Git work tree it names the
     repository-free scan, and a missing root is named in the recovery command
     through its lossless spelling.
 
-Start-here next step:
+Start-here next step (analysis profile; not printed for --profile source-build):
   - open `target/ripr/reports/start-here.md` first when it exists
   - when it does not, run `ripr check` first: `ripr first-pr` and
     `ripr start-here` compose that packet from analysis evidence and run no

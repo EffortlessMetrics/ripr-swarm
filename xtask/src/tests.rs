@@ -7,6 +7,7 @@ mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -12905,7 +12906,12 @@ fn goldens_check_failure_message_is_a_repair_card() {
         },
     }];
     let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
-    let message = super::goldens_check_failure_message(&entries, &violations);
+    let provenance = super::GoldenDriftProvenance {
+        binary: "/work/target/debug/ripr".to_string(),
+        ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+        revision: "abc123".to_string(),
+    };
+    let message = super::goldens_check_failure_message(&entries, &violations, &provenance);
     assert!(message.contains("golden-drift.md"), "{message}");
     assert!(
         message.contains("python_field_assignment_shape"),
@@ -12917,6 +12923,9 @@ fn goldens_check_failure_message_is_a_repair_card() {
         message.contains("reproduce: cargo xtask goldens check"),
         "{message}"
     );
+    // #7401: the card names the build that produced the actual side.
+    assert!(message.contains("ripr 0.11.0 (abc123)"), "{message}");
+    assert!(message.contains("/work/target/debug/ripr"), "{message}");
 }
 
 #[test]

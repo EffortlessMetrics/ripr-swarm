@@ -6,6 +6,9 @@
 //! A test may also borrow the `assert_eq!` of one test-local check helper it
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
+mod fallible_check;
+pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+
 use super::parse_clean_source_file;
 use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;

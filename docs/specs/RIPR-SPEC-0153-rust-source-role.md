@@ -127,6 +127,13 @@ functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
 
+The suspect prefilter ignores `mod` declarations inside comments and string
+literals (#6979); those mentions cannot spare an unchanged test file the
+authoritative module walk. Literal `#[path]` and `include!` hints still retain
+their conservative over-approximation, and an incomplete walk still keeps
+the file. Ordinary `cfg(test)` declarations and renamed literal-path modules
+retain their eligible tests, including nested fixture directories.
+
 At item granularity, the typed `FunctionSourceRole` model (#3531)
 classifies each function: `Production`, `TestAttribute` (exact
 supported test-defining attribute; registers an executable
@@ -269,9 +276,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   evaluate (feature, target, custom atoms) keeps the test. `cfg_attr`
   composition is evaluated by the shared cfg authority. The direct
   `cfg(any())` case is pinned by `fixtures/rust_test_under_false_cfg_not_grip`.
-  Not pinned by it: on the lexical fallback only, a gate is missed (the test
-  stays discovered, failing open) when it is longer than 32 lines or separated
-  from the function by a non-attribute line such as a comment (#7043).
+  On the lexical fallback, a bounded balanced scan that skips comments joins
+  a function's own gate, so a never-true cfg longer than 32 lines or separated
+  by a comment is still not credited (#7043). An unclosed `#[`, or a gate past
+  that scan's byte budget, still fails open (the test stays discovered).
 - `#3273`'s inline `#[cfg(test)]` controls and `#3286`'s helper-evidence
   regression tests remain green.
 - Module-tree seeding (#4435): an undeclared `src` file and an undeclared
@@ -287,6 +295,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Comment/string module mentions (#6979): an unchanged orphan named only
+  inside a block comment, nested block comment, doc comment, plain string or
+  raw string supplies no related test; real `cfg(test)` and renamed
+  literal-path modules retain their test, and incomplete walks retain credit.
 - Unresolved `#[path]` routes (#4435): a file reached only through a
   `cfg_attr` path target, its child, or the `cfg_attr`-only default
   resolution records the limitation naming the declaration, while a

@@ -162,15 +162,102 @@ fn multiline_false_cfg_on_the_lexical_fallback_is_not_a_test() -> Result<(), Str
     );
     normalize_file_test_styles(&mut facts)?;
     assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+    assert_evidence_only_dead_test(&facts, "never_compiled");
+    Ok(())
+}
+
+fn lexical_normalized(source: &str) -> Result<FileFacts, String> {
+    let adapter = LexicalRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    assert!(
+        facts.used_lexical_fallback,
+        "fixture must exercise the lexical fallback"
+    );
+    normalize_file_test_styles(&mut facts)?;
+    Ok(facts)
+}
+
+fn assert_evidence_only_dead_test(facts: &FileFacts, name: &str) {
     assert!(
         facts
             .functions
             .iter()
-            .find(|function| function.name == "never_compiled")
+            .find(|function| function.name == name)
             .is_some_and(|function| function.source_role.is_evidence_role()
                 && function.source_role != FunctionSourceRole::TestAttribute),
-        "never_compiled must be an evidence-only role"
+        "{name} must be an evidence-only role"
     );
+    assert!(
+        !test_names(facts).contains(&name),
+        "{name} must not be credited as grip"
+    );
+}
+
+fn padded_cfg_attribute(predicate: &str, pad_lines: usize) -> String {
+    let mut source = format!("#[cfg(\n    {predicate}\n");
+    for _ in 0..pad_lines {
+        source.push_str("        // pad\n");
+    }
+    source.push_str(")]\n");
+    source
+}
+
+#[test]
+fn long_never_true_cfg_on_the_lexical_fallback_is_not_a_test() -> Result<(), String> {
+    // #7043: the old backward join stopped after 32 lines, so a never-true
+    // cfg past that window left `never_compiled` in `facts.tests`.
+    let mut source = padded_cfg_attribute("any()", 40);
+    source.push_str("#[test]\nfn never_compiled() { assert!(true); }\n\n");
+    source.push_str("#[test]\nfn ordinary() { assert!(true); }\n");
+    let facts = lexical_normalized(&source)?;
+    assert_eq!(test_names(&facts), ["ordinary"]);
+    assert_evidence_only_dead_test(&facts, "never_compiled");
+    Ok(())
+}
+
+#[test]
+fn comment_between_never_true_cfg_and_test_on_the_lexical_fallback_is_not_a_test()
+-> Result<(), String> {
+    // #7043 / #7050 review: a `//` (or `///`) line between the gate and the
+    // function used to stop the backward walk, hiding the never-true cfg.
+    let source = r#"
+#[cfg(any())]
+// not a gate
+/// still not a gate
+#[test]
+fn never_compiled() { assert!(true); }
+
+#[test]
+fn ordinary() { assert!(true); }
+"#;
+    let facts = lexical_normalized(source)?;
+    assert_eq!(test_names(&facts), ["ordinary"]);
+    assert_evidence_only_dead_test(&facts, "never_compiled");
+    Ok(())
+}
+
+#[test]
+fn unclosed_attribute_on_the_lexical_fallback_keeps_the_following_test() -> Result<(), String> {
+    // #7043: an unclosed `#[` must not swallow the rest of the file, attach a
+    // distant never-true cfg, or drop a later complete `#[test]`. Fail open.
+    let mut source = String::from("#[cfg(any())]\nfn other() { let _ = true; }\n\n#[\n");
+    for _ in 0..512 {
+        source.push_str("unclosed\n");
+    }
+    source.push_str("#[test]\nfn still_compiled() { assert!(true); }\n");
+    let facts = lexical_normalized(&source)?;
+    assert_eq!(test_names(&facts), ["still_compiled"]);
+    Ok(())
+}
+
+#[test]
+fn long_true_cfg_on_the_lexical_fallback_keeps_the_test() -> Result<(), String> {
+    // Negative control: a >32-line `cfg(test)` is true in a test build, so
+    // joining it must not compile the test out.
+    let mut source = padded_cfg_attribute("test", 40);
+    source.push_str("#[test]\nfn compiled() { assert!(true); }\n");
+    let facts = lexical_normalized(&source)?;
+    assert_eq!(test_names(&facts), ["compiled"]);
     Ok(())
 }
 

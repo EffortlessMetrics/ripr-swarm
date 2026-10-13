@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testexception-interest-lives-ok",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-interest-lives-ok.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testexception_lives_ok_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 0.1 * $balance;",
+        "mutated_line": "return 0.1 * $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: interest doubles"
+      },
+      {
+        "replacement": "return 20 * $balance;",
+        "mutated_line": "return 20 * $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: interest is 400 times larger"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "lives_ok { interest(100) } never looks at the returned interest. Spec cells: RIPR-SPEC-0064 lives_ok/weak_smoke.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-interest-lives-ok.json",
+    "sha256": "161839c7a1985abce36a3335622c2a58f5511727b7cb1f270b728e1c28e60445",
+    "provenance": "producer"
+  }
+}

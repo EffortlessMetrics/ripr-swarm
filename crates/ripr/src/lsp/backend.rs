@@ -12,7 +12,7 @@ use super::diagnostics::{
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
+    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
     is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
@@ -3322,6 +3322,14 @@ impl Backend {
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
+        // Capture health before any snapshot lock: completion records health
+        // while reading the snapshot. Every retained-evidence branch uses
+        // this same lifecycle projection without reversing that lock order.
+        let health = self.analysis_health_snapshot();
+        let with_status = |hover, snapshot: &AnalysisSnapshot| {
+            let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
+            hover_with_analysis_health(hover, snapshot, &effective)
+        };
         let uri = &params.text_document_position_params.text_document.uri;
         let position = &params.text_document_position_params.position;
         // A quarantined (dirty-buffer) document has no valid saved-state
@@ -3359,7 +3367,7 @@ impl Backend {
             overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
                         &snapshot,
                     ));
@@ -3372,7 +3380,7 @@ impl Backend {
             // evidence as the highest-priority structural projection.
             for diagnostic in &overlapping {
                 if is_gap_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         diagnostic_hover_response(diagnostic),
                         &snapshot,
                     ));
@@ -3380,14 +3388,14 @@ impl Backend {
             }
             for diagnostic in &overlapping {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         finding_hover_response(finding, diagnostic),
                         &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     diagnostic_hover_response(diagnostic),
                     &snapshot,
                 ));
@@ -3414,7 +3422,7 @@ impl Backend {
                 .filter(|finding| !published.contains(finding.id.as_str()))
                 .collect::<Vec<_>>();
             if !findings.is_empty() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
@@ -6036,7 +6044,13 @@ impl Backend {
         let snapshot = self.latest_analysis.lock().ok()?.clone();
         if let Some(gap_id) = args.get("gap_id").and_then(|v| v.as_str()) {
             let snapshot = snapshot.as_ref()?;
-            return collect_gap_record_context_packet(&snapshot.root, args, gap_id);
+            let config = self.analysis_config()?;
+            return collect_gap_record_context_packet(
+                &snapshot.root,
+                config.repo_config(),
+                args,
+                gap_id,
+            );
         }
         if let Some(seam_id) = args.get("seam_id").and_then(|v| v.as_str()) {
             let Some(snapshot) = snapshot.as_ref() else {
@@ -6322,6 +6336,7 @@ impl Backend {
                         "reason": "no_snapshot",
                     },
                     "top_actionable_packet": serde_json::Value::Null,
+                    "gap_artifact_currentness": [],
                     "top_limitation": top_limitation,
                     "open_documents": open_documents,
                     "report_paths": workspace_status_report_paths(),
@@ -6358,6 +6373,11 @@ impl Backend {
             .filter(|a| a.is_actionable_gap())
             .count();
         let gap_artifact_rejections = snapshot.gap_artifact_rejections.len();
+        let gap_artifact_currentness = snapshot
+            .gap_artifacts
+            .iter()
+            .filter_map(|artifact| artifact.corpus_currentness_json())
+            .collect::<Vec<_>>();
 
         // Project the stored delivery selection (#1973): the same outcome
         // push publication and both pull handlers serve, not a re-evaluated
@@ -6426,6 +6446,7 @@ impl Backend {
                     "diagnostic_budget": diagnostic_budget_json.clone(),
                     "diagnostic_budget_state": diagnostic_budget_state.clone(),
                     "top_actionable_packet": top_actionable_packet,
+                    "gap_artifact_currentness": gap_artifact_currentness,
                     "top_limitation": top_limitation,
                     "receipt_status_summary": serde_json::Value::Null,
                     "open_documents": open_documents,
@@ -6461,6 +6482,7 @@ impl Backend {
             "diagnostic_budget": diagnostic_budget_json,
             "diagnostic_budget_state": diagnostic_budget_state,
             "top_actionable_packet": top_actionable_packet,
+            "gap_artifact_currentness": gap_artifact_currentness,
             "top_limitation": top_limitation,
             "receipt_status_summary": receipt_status_summary,
             "harness_registry": workspace_status_harness_summary(&snapshot),
@@ -8114,11 +8136,15 @@ fn workspace_status_rejection_repair(
         ),
         GapArtifactRejection::StaleSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts describe other source file contents; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
+        ),
+        GapArtifactRejection::StaleCorpus => (
+            "regenerate_gap_artifacts",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::UnverifiableSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts carry no usable source_subject stamp; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::WrongRoot(_) => (
             "verify_workspace_root",
@@ -8184,6 +8210,7 @@ fn limitation_sample_sources(
         GapArtifactRejection::UnverifiableSubject(reason) => vec![(*reason).to_string()],
         GapArtifactRejection::MalformedArtifact(_)
         | GapArtifactRejection::MissingIdentity
+        | GapArtifactRejection::StaleCorpus
         | GapArtifactRejection::StaleArtifact => vec![],
     }
 }
@@ -8220,6 +8247,7 @@ fn limitation_non_claims(category: &str) -> Vec<&'static str> {
 
 fn collect_gap_record_context_packet(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     args: &serde_json::Map<String, serde_json::Value>,
     gap_id: &str,
 ) -> Option<LSPAny> {
@@ -8258,7 +8286,7 @@ fn collect_gap_record_context_packet(
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
     }
     let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
@@ -8268,37 +8296,60 @@ fn collect_gap_record_context_packet(
 /// #4544: a command-time packet read re-checks the ledger's `source_subject`
 /// stamp through the shared validator, so a packet computed for other file
 /// contents is a typed stale disclosure instead of a current repair route.
-fn ledger_source_subject_sentinel(root: &Path, contents: &str) -> Option<LSPAny> {
+fn ledger_source_subject_sentinel(
+    root: &Path,
+    repo_config: &crate::config::RiprConfig,
+    contents: &str,
+) -> Option<LSPAny> {
     let Ok(artifact) = serde_json::from_str::<serde_json::Value>(contents) else {
         return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
     };
     source_subject_sentinel(
         root,
+        repo_config,
         &artifact,
         super::gap_artifacts::GapArtifactKind::GapDecisionLedger,
         "gap-decision-ledger.json",
-        "ripr reports gap-ledger",
+        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json",
     )
 }
 
 fn source_subject_sentinel(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     artifact: &serde_json::Value,
     kind: super::gap_artifacts::GapArtifactKind,
     artifact_name: &str,
     regenerate: &str,
 ) -> Option<LSPAny> {
     use super::gap_artifacts::GapArtifactRejection;
-    match super::gap_artifacts::validate_source_subject(artifact, kind, root) {
-        Ok(()) => None,
+    let context = super::gap_artifacts::GapArtifactValidationContext {
+        root,
+        enabled_languages: repo_config.languages().enabled(),
+        repo_config,
+    };
+    let recovery = format!(
+        "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json then {regenerate}"
+    );
+    match super::gap_artifacts::validate_gap_artifact(artifact, &context) {
+        Ok(validated) if validated.kind == kind => None,
+        Ok(_) => Some(repair_packet_sentinel(&format!(
+            "unsupported_kind: expected {artifact_name}"
+        ))),
         Err(GapArtifactRejection::StaleSubject(path)) => Some(repair_packet_sentinel(&format!(
-            "stale_subject: {path} changed since {artifact_name} was written; regenerate it for the current source with {regenerate}"
+            "stale_subject: {path} changed since {artifact_name} was written; {recovery}"
+        ))),
+        Err(GapArtifactRejection::StaleCorpus) => Some(repair_packet_sentinel(&format!(
+            "stale_corpus: the analyzed Rust source/test corpus changed since {artifact_name} was written; {recovery}"
         ))),
         Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
             Some(repair_packet_sentinel(&format!(
-                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current source files; regenerate it with {regenerate}"
+                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current analyzed source inputs; {recovery}"
             )))
         }
+        Err(GapArtifactRejection::WrongRoot(_)) => Some(repair_packet_sentinel(&format!(
+            "wrong_root: {artifact_name} belongs to another workspace; select its producer workspace or regenerate it for the selected workspace"
+        ))),
         Err(other) => Some(repair_packet_sentinel(other.as_str())),
     }
 }
@@ -8323,16 +8374,20 @@ impl Backend {
         let root = self.root.lock().ok()?.clone();
 
         // Try actionable-gaps.json first (preferred: projection-validated).
+        let config = self.analysis_config()?;
         let actionable_path = absolute_join(&root, Path::new(DEFAULT_ACTIONABLE_GAPS_OUT));
-        if let Some(result) =
-            collect_repair_packet_from_actionable_gaps(&root, &actionable_path, gap_id)
-        {
+        if let Some(result) = collect_repair_packet_from_actionable_gaps(
+            &root,
+            config.repo_config(),
+            &actionable_path,
+            gap_id,
+        ) {
             return Some(result);
         }
 
         // Fallback: gap-decision-ledger.json using the existing GapRecord machinery.
         let ledger_path = absolute_join(&root, Path::new(DEFAULT_GAP_DECISION_LEDGER_OUT));
-        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id)
+        collect_repair_packet_from_ledger(&root, config.repo_config(), &ledger_path, gap_id)
             // Neither source holds a packet: say so and name the route,
             // instead of a null the client can only render as "no response".
             .or_else(|| Some(repair_packet_sentinel(&no_repair_packet_reason(gap_id))))
@@ -8704,6 +8759,7 @@ fn workspace_receipt_status_report_paths() -> serde_json::Value {
 
 fn collect_repair_packet_from_actionable_gaps(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     path: &Path,
     gap_id: Option<&str>,
 ) -> Option<LSPAny> {
@@ -8742,6 +8798,17 @@ fn collect_repair_packet_from_actionable_gaps(
             .or_else(|| packets.first())?
     };
 
+    if let Some(sentinel) = source_subject_sentinel(
+        root,
+        repo_config,
+        &report,
+        super::gap_artifacts::GapArtifactKind::ActionableGaps,
+        "actionable-gaps.json",
+        "cargo xtask lane1-evidence-audit",
+    ) {
+        return Some(sentinel);
+    }
+
     // Require the packet to be actionable to emit a complete repair packet.
     if packet
         .get("gap_state")
@@ -8753,16 +8820,6 @@ fn collect_repair_packet_from_actionable_gaps(
             "gap is not actionable in actionable-gaps.json",
         ));
     }
-    if let Some(sentinel) = source_subject_sentinel(
-        root,
-        &report,
-        super::gap_artifacts::GapArtifactKind::ActionableGaps,
-        "actionable-gaps.json",
-        "cargo xtask lane1-evidence-audit",
-    ) {
-        return Some(sentinel);
-    }
-
     validate_and_render_actionable_gap_packet(root, packet)
 }
 
@@ -8902,6 +8959,7 @@ fn validate_and_render_actionable_gap_packet(
 
 fn collect_repair_packet_from_ledger(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     path: &Path,
     gap_id: Option<&str>,
 ) -> Option<LSPAny> {
@@ -8925,10 +8983,9 @@ fn collect_repair_packet_from_ledger(
     } else {
         records.iter().find(|r| r.gap_state == "actionable")?
     };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
     }
-
     // Use the existing validator for completeness gate.
     if let Err(reason) = validate_agent_gap_record_packet(record) {
         return Some(serde_json::json!({
@@ -9170,6 +9227,7 @@ mod gap_record_context_tests {
         };
         ValidatedGapArtifact {
             kind: GapArtifactKind::ActionableGaps,
+            corpus_currentness: None,
             root: None,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some(canonical_gap_id.to_string()),
@@ -9236,9 +9294,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(packet["source"], "gap_decision_ledger");
         let gap_packet = &packet["packets"][0];
@@ -9270,9 +9332,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:rust:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:rust:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(
             packet["packets"][0]["gap_id"],
@@ -9295,9 +9361,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(packet["source"], "gap_decision_ledger");
         assert_eq!(
@@ -9306,6 +9376,74 @@ mod gap_record_context_tests {
         );
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    /// Synthetic unit ledger: unknown IDs select no record even when the
+    /// unrelated artifact is stale; selected records still require admission.
+    #[test]
+    fn collect_context_unknown_gap_does_not_project_an_unrelated_stale_ledger() -> Result<(), String>
+    {
+        let owned_root =
+            super::super::tests::unique_lsp_test_root("context-unrelated-stale-ledger")?;
+        let root = owned_root.path();
+        fs::create_dir_all(root.join("target/ripr/reports"))
+            .map_err(|err| format!("create reports directory failed: {err}"))?;
+        write_gap_ledger(root)?;
+        let args_value = serde_json::json!({ "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let selected_id = "gap:rust:pricing:threshold-boundary";
+        let current = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected the current selected context".to_string())?;
+        assert_eq!(current["source"], "gap_decision_ledger");
+        assert_eq!(
+            current["packets"][0]["gap_id"],
+            "gap:pr:pricing:threshold-boundary"
+        );
+        assert_eq!(
+            current["packets"][0]["verification_commands"][0],
+            "cargo xtask fixtures boundary_gap"
+        );
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none()
+        );
+        let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+        let ledger_bytes =
+            fs::read(&ledger_path).map_err(|err| format!("read original ledger failed: {err}"))?;
+        let ledger: serde_json::Value = serde_json::from_slice(&ledger_bytes)
+            .map_err(|err| format!("parse original ledger failed: {err}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create test directory failed: {err}"))?;
+        fs::write(
+            root.join("tests/unclaimed_corpus.rs"),
+            "#[test] fn unclaimed_corpus() { assert_eq!(2 + 2, 4); }\n",
+        )
+        .map_err(|err| format!("write unclaimed test failed: {err}"))?;
+        let key = crate::analysis::workspace_cache_key_at_with_config(root, &config)?;
+        assert_ne!(
+            ledger["source_subject"]["corpus"]["files_content_hash"], key.files_content_hash,
+            "the existing corpus owner must detect the unclaimed addition"
+        );
+        assert_eq!(
+            fs::read(&ledger_path).map_err(|err| format!("read retained ledger failed: {err}"))?,
+            ledger_bytes
+        );
+        let stale = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected a stale selected-record refusal".to_string())?;
+        assert_eq!(stale["status"], "not_actionable_or_incomplete");
+        assert!(
+            stale["reason"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("stale_corpus:"))
+        );
+        assert!(stale.get("packets").is_none() && stale.get("verify_command").is_none());
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none(),
+            "an unknown gap selects no record from the unchanged stale ledger"
+        );
         Ok(())
     }
 
@@ -9353,8 +9491,13 @@ mod gap_record_context_tests {
             let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
             let gap_id = "gap:pr:pricing:threshold-boundary";
 
-            let current = collect_gap_record_context_packet(&root, args, gap_id)
-                .ok_or_else(|| "expected a current packet".to_string())?;
+            let current = collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                gap_id,
+            )
+            .ok_or_else(|| "expected a current packet".to_string())?;
             if current["status"] == "not_actionable_or_incomplete" {
                 return Err(format!(
                     "a current ledger must render its packet: {current}"
@@ -9366,8 +9509,18 @@ mod gap_record_context_tests {
             fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
                 .map_err(|err| err.to_string())?;
             for packet in [
-                collect_gap_record_context_packet(&root, args, gap_id),
-                collect_repair_packet_from_ledger(&root, &ledger_path, Some(gap_id)),
+                collect_gap_record_context_packet(
+                    &root,
+                    &crate::config::RiprConfig::default(),
+                    args,
+                    gap_id,
+                ),
+                collect_repair_packet_from_ledger(
+                    &root,
+                    &crate::config::RiprConfig::default(),
+                    &ledger_path,
+                    Some(gap_id),
+                ),
             ] {
                 let packet = packet.ok_or_else(|| "expected a stale sentinel".to_string())?;
                 let reason = packet["reason"].as_str().unwrap_or_default();
@@ -9381,8 +9534,13 @@ mod gap_record_context_tests {
 
             // A ledger without a stamp cannot be matched to the workspace.
             fs::write(&ledger_path, gap_ledger_json()).map_err(|err| err.to_string())?;
-            let packet = collect_gap_record_context_packet(&root, args, gap_id)
-                .ok_or_else(|| "expected an unverifiable sentinel".to_string())?;
+            let packet = collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                gap_id,
+            )
+            .ok_or_else(|| "expected an unverifiable sentinel".to_string())?;
             if !packet["reason"]
                 .as_str()
                 .unwrap_or_default()
@@ -9399,6 +9557,10 @@ mod gap_record_context_tests {
 
     fn gap_ledger_json() -> &'static str {
         r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "gap_decision_ledger",
+  "root": ".",
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
@@ -9460,7 +9622,15 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        assert!(collect_gap_record_context_packet(&root, args, "   ").is_none());
+        assert!(
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "   "
+            )
+            .is_none()
+        );
 
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
@@ -9481,8 +9651,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none()
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none()
         );
 
         fs::remove_dir_all(&root)
@@ -9506,9 +9681,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
         assert_eq!(packet["kind"], "repair_packet");
         assert_eq!(packet["status"], "not_actionable_or_incomplete");
         assert_eq!(packet["reason"], MALFORMED_GAP_LEDGER_REASON);
@@ -9547,8 +9726,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none()
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none()
         );
 
         fs::remove_dir_all(&outside)
@@ -9573,9 +9757,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
         assert_eq!(packet["source"], "gap_decision_ledger");
 
         fs::remove_dir_all(&root)
@@ -9621,8 +9809,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none(),
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none(),
             "symlink escape out of the workspace root must be rejected"
         );
 
@@ -9646,7 +9839,15 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        assert!(collect_gap_record_context_packet(&root, args, "gap:pr:unknown:missing").is_none());
+        assert!(
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:unknown:missing"
+            )
+            .is_none()
+        );
 
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
@@ -9667,9 +9868,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
         assert_eq!(
             packet["packets"][0]["repair_card"]["source_artifact"],
             display_path(&root.join(DEFAULT_GAP_DECISION_LEDGER_OUT))

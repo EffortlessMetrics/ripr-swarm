@@ -34,6 +34,10 @@
       "sha256": "9d0ae724256fef43a8166e5652ec794562a8df472fa81e50a3c8421c52640772"
     },
     {
+      "path": "src/label.ts",
+      "sha256": "4fc5f9d6555dd5d30c4e3c9de4b33ffa5923c366aeb866ca3b9b2fc940918191"
+    },
+    {
       "path": "src/lib.ts",
       "sha256": "63c7d5318ac14712d5a45e9eeadce2d07ed7a2d1af706abc4a0957c7a5016355"
     },
@@ -58,6 +62,10 @@
       "sha256": "f6e218a479df7e54e01ab3bb8806fd72c291f6a8b51eff355acece99bdf1b015"
     },
     {
+      "path": "src/title.ts",
+      "sha256": "2874fcea5dd2682edf3fe50c775fc7f037166317b55aaf366d5ba9ba255146b5"
+    },
+    {
       "path": "test/bonus.test.ts",
       "sha256": "2599fde18fe7e8b0ad0d48ee6f95494f97944b02e5eb3c160e0ad22956b78f88"
     },
@@ -72,6 +80,10 @@
     {
       "path": "test/hours.test.ts",
       "sha256": "9c62336808f50d24d86020fe47e8c36ce3213b3e313fb7f69ef43cb493bfe887"
+    },
+    {
+      "path": "test/label.test.ts",
+      "sha256": "3429a5a1b002ae8e8c7a89e6be328d64bbd72e1e98c0ed4a652b02796ed65b1e"
     },
     {
       "path": "test/lib.test.ts",
@@ -96,6 +108,10 @@
     {
       "path": "test/reserve.test.ts",
       "sha256": "f121d230cb356af52b2b85acf300899f669204187bf822b0195ab63bc7872cca"
+    },
+    {
+      "path": "test/title.test.ts",
+      "sha256": "1c1b06b90970d1fe66c12d15f8c708822b5ac60d0de88e0e159a45e8a45c49bc"
     }
   ]
 }

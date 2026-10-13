@@ -847,3 +847,20 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — #4478 corpus-currentness cache generation
+
+Reason: RIPR-SPEC-0197 advances classified cache generation 1.62 to 1.63.
+After integrating the passive Rust-corpus subject producer, the unchanged
+first-action snapshots still pinned 1.62. The real producer's normalized
+snapshot differs only in this generation and its content commitment; seam
+classification, corpus content hash, evidence and unchanged movement are
+preserved. Refresh the before/after producer snapshots and their verify/receipt
+commitments without promoting the deliberately incomplete portable receipt.
+
+Commands: `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`,
+then the corpus's canonical `ripr agent verify` and `ripr agent receipt` commands.
+Apply the existing portable root/head/worktree normalization from
+`normalize_unchanged_repo_exposure_producer_fixture`, and recompute the existing
+raw-JSON placeholder commitment. The receipt retains its established portable
+projection; only dependent artifact hashes are refreshed.

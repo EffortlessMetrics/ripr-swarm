@@ -43,11 +43,12 @@ pub(in crate::analysis) fn reach_evidence(
     // outside its own definition names it (see
     // `owner_may_be_reached_unseen`) and no proximity test invokes a
     // non-assertion macro (whose expansion may call it).
+    let owner_is_function = owner_fn.is_some();
     let proximity_only = !owner_anchored.is_empty()
         && related_tests
             .iter()
             .filter(|(_, reason)| *reason != RelationReason::SeamCalleeCall)
-            .all(|(_, reason)| is_proximity_only(*reason));
+            .all(|(_, reason)| !relation_establishes_reach(*reason, owner_is_function));
     if proximity_only {
         let names = owner_anchored
             .iter()
@@ -133,6 +134,36 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
         })
 }
 
+/// [`owner_may_be_reached_unseen`] answered from one scan of the workspace,
+/// for callers that ask about many owners (repo seam evidence asks once per
+/// owner whose related tests are all proximity).
+#[derive(Debug, Default)]
+pub(in crate::analysis) struct UnseenReachNames {
+    /// Every identifier some source names other than directly after `fn`.
+    named: std::collections::HashSet<String>,
+    /// Some file pulls external docs in as doctests.
+    external_docs: bool,
+}
+
+impl UnseenReachNames {
+    pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
+        let mut names = Self::default();
+        for file in index.files().values() {
+            names.external_docs |= includes_external_docs(&file.source);
+            names
+                .named
+                .extend(identifiers_outside_fn_definition(&file.source).map(str::to_string));
+        }
+        names
+    }
+
+    pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
+        is_trait_impl_method(owner)
+            || self.external_docs
+            || (!owner.name.is_empty() && self.named.contains(&owner.name))
+    }
+}
+
 /// `#![doc = include_str!("../README.md")]` turns an unindexed file into
 /// doctests that may call anything, so the name scan cannot rule them out.
 fn includes_external_docs(source: &str) -> bool {
@@ -157,27 +188,43 @@ pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool
 /// directly after the `fn` keyword. Comments and strings count: a doctest or
 /// a stringly dispatched call may be what reaches the owner.
 fn names_identifier_outside_fn_definition(source: &str, name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    source.match_indices(name).any(|(start, _)| {
-        let bytes = source.as_bytes();
-        let end = start + name.len();
-        if start > 0 && is_ident(bytes[start - 1]) {
-            return false;
+    !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
+}
+
+/// Each whole identifier in `source` (a Unicode alphanumeric or `_` run, so
+/// a non-ASCII owner name such as `café` is one identifier, not an ASCII
+/// fragment) that does not sit directly after the `fn` keyword.
+fn identifiers_outside_fn_definition(source: &str) -> impl Iterator<Item = &str> {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        while start < source.len() {
+            let Some(first) = source[start..].chars().next() else {
+                break;
+            };
+            if !is_ident(first) {
+                start += first.len_utf8();
+                continue;
+            }
+            let begin = start;
+            while let Some(next) = source[start..].chars().next() {
+                if !is_ident(next) {
+                    break;
+                }
+                start += next.len_utf8();
+            }
+            let before = source[..begin]
+                .strip_suffix("r#")
+                .unwrap_or(&source[..begin]);
+            let is_fn_definition = before
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|prefix| !prefix.chars().last().is_some_and(is_ident));
+            if !is_fn_definition {
+                return Some(&source[begin..start]);
+            }
         }
-        if bytes.get(end).is_some_and(|byte| is_ident(*byte)) {
-            return false;
-        }
-        let before = source[..start]
-            .strip_suffix("r#")
-            .unwrap_or(&source[..start]);
-        let is_fn_definition = before
-            .trim_end()
-            .strip_suffix("fn")
-            .is_some_and(|prefix| !prefix.bytes().last().is_some_and(is_ident));
-        !is_fn_definition
+        None
     })
 }
 
@@ -234,15 +281,21 @@ pub(super) fn invokes_opaque_macro(body: &str) -> bool {
     })
 }
 
-/// Relations that come from file or name proximity alone, with no captured
-/// call, helper chain, or assertion affinity tying the test to the owner.
+/// Whether a relation by itself is evidence that the test runs a seam's
+/// owner, shared by diff-mode reach and repo-mode seam reach (#5335). The
+/// rule lives on [`RelationReason::establishes_reach`] so the classifier's
+/// miss reasons and the verdict corpus read the same answer (#7531).
+pub(in crate::analysis) fn relation_establishes_reach(
+    reason: RelationReason,
+    owner_is_function: bool,
+) -> bool {
+    reason.establishes_reach(owner_is_function)
+}
+
+/// Relations that come from file or name proximity alone
+/// ([`RelationReason::is_proximity_only`]).
 pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
-    matches!(
-        reason,
-        RelationReason::SameTestFile
-            | RelationReason::SameModule
-            | RelationReason::WeakTokenSubstring
-    )
+    reason.is_proximity_only()
 }
 
 #[cfg(test)]
@@ -449,7 +502,7 @@ mod tests {
         let anchored = test("parse_summary_fails_closed");
         let related = vec![
             (&callee_only, RelationReason::SeamCalleeCall),
-            (&anchored, RelationReason::OwnerNamedTest),
+            (&anchored, RelationReason::DirectOwnerCall),
         ];
 
         let evidence = reach_evidence(&related, Some(&owner), || false);
@@ -460,6 +513,105 @@ mod tests {
             evidence.summary,
             "Related tests appear to reach parse_summary: parse_summary_fails_closed"
         );
+    }
+
+    // #5335 review (coderabbitai, devin): a relation that only names the
+    // owner — in the test's name, an import path, or a fixture-shaped
+    // helper call — is a suggested location, not owner reach. The reach
+    // question falls to the unseen-path check, so an uncalled owner stays
+    // `No` instead of inheriting a sibling's oracle.
+    #[test]
+    fn given_only_name_import_or_fixture_affinity_when_building_reach_evidence_then_reach_is_not_yes()
+     {
+        let owner = function("discounted_total");
+        let named = test("discounted_total_smoke");
+        let imported = test("imports_pricing_api");
+        let fixtured = test("pricing_fixture_roundtrip");
+        for (name, reason) in [
+            ("owner_named_test", RelationReason::OwnerNamedTest),
+            ("import_path_affinity", RelationReason::ImportPathAffinity),
+            (
+                "fixture_owner_affinity",
+                RelationReason::FixtureOwnerAffinity,
+            ),
+        ] {
+            assert!(
+                !relation_establishes_reach(reason, true),
+                "{name} must not establish reach for a function owner"
+            );
+            let evidence = reach_evidence(&[(&named, reason)], Some(&owner), || false);
+            assert_eq!(evidence.state, StageState::No, "{name}");
+            // A caller that names the owner somewhere unseen keeps it weak.
+            let evidence = reach_evidence(&[(&imported, reason)], Some(&owner), || true);
+            assert_eq!(evidence.state, StageState::Weak, "{name}");
+            assert_eq!(
+                reach_evidence(&[(&fixtured, reason)], Some(&owner), || false).state,
+                StageState::No,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_owner_names_are_whole_identifiers_in_the_unseen_scan() {
+        // `café` called from a helper: the scan must see the whole name, so
+        // a proximity-only seam over `café` stays weak instead of claiming
+        // a confirmed gap (#5335 review, devin).
+        let source = "fn café() -> u32 { 2 } fn helper() { café(); }";
+        assert!(names_identifier_outside_fn_definition(source, "café"));
+        assert!(!names_identifier_outside_fn_definition(
+            "fn café() -> u32 { 2 }",
+            "café"
+        ));
+        let identifiers: Vec<&str> =
+            identifiers_outside_fn_definition("let café_count = café(1);").collect();
+        assert_eq!(identifiers, vec!["let", "café_count", "café", "1"]);
+    }
+
+    #[test]
+    fn relation_establishes_reach_admits_only_owner_execution_paths() {
+        for reaching in [
+            RelationReason::DirectOwnerCall,
+            RelationReason::HelperOwnerCall,
+            RelationReason::ReExportChainFollowed,
+            RelationReason::AssertionTargetAffinity,
+        ] {
+            assert!(
+                relation_establishes_reach(reaching, false),
+                "{reaching:?} reaches a module-level owner"
+            );
+        }
+        for not_reaching in [
+            RelationReason::AssertionTargetAffinity,
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            assert!(
+                !relation_establishes_reach(not_reaching, true),
+                "{not_reaching:?} must not reach a function owner"
+            );
+        }
+        // Proximity and callee-only relations never reach a module-level
+        // owner either: no function body runs.
+        for not_reaching in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            assert!(
+                !relation_establishes_reach(not_reaching, false),
+                "{not_reaching:?} must not reach a module-level owner"
+            );
+        }
     }
 
     fn function(name: &str) -> FunctionSummary {

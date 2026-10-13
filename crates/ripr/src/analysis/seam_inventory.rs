@@ -164,6 +164,10 @@ pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<Classifie
 #[derive(Clone, Debug)]
 pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// The key that admitted or produced this full Rust inventory. Keeping
+    /// its consumed corpus identity avoids a later renderer hashing new
+    /// workspace bytes for old classifications. Synthetic reports have none.
+    pub(crate) corpus_key: Option<RepoSeamCacheKey>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -234,6 +238,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
+                    corpus_key: Some(key),
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -290,6 +295,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             // its SeamLimitInfo in the envelope; a complete run stored None.
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
+                corpus_key: Some(key),
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -355,6 +361,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        corpus_key: Some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -5815,6 +5822,105 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
 
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
+    -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/owner_return_pin_fallible_literal/input");
+        let config = RiprConfig::default();
+        for mutation in ["replacement", "inverted"] {
+            let root = make_tempdir(&format!("fallible-warm-{mutation}"))?;
+            for file in [
+                "Cargo.toml",
+                "Cargo.lock",
+                "src/lib.rs",
+                "src/test_support.rs",
+            ] {
+                let source =
+                    std::fs::read_to_string(fixture.join(file)).map_err(|e| e.to_string())?;
+                write_file(&root.join(file), &source)?;
+            }
+            assert!(
+                crate::analysis::workspace::verified_anyhow_identity(&root).is_some(),
+                "prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)"
+            );
+            let full = inventory_classified_seams_at(&root)?;
+            let compact = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+            for inventory in [&full, &compact] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "exact nonempty owner subject");
+                assert_eq!(answer[0].class, SeamGripClass::StronglyGripped);
+            }
+            let key = workspace_cache_key_at_with_config(&root, &config)?;
+            let full_cache = RepoSeamFactCache::at(&root);
+            let compact_cache = RepoSeamFactCache::at_compact_classified(&root);
+            for cache in [&full_cache, &compact_cache] {
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&key),
+                    CacheLoad::Hit(_)
+                ));
+                cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
+            }
+            // A distinct writer payload demonstrates both actual warm readers
+            // serve the cached entry, rather than merely repeating a cold pass.
+            assert!(inventory_classified_seams_at(&root)?.is_empty());
+            assert!(inventory_compact_classified_seams_at_with_config(&root, &config)?.is_empty());
+            // Repo grip uses its separate, existing oracle heuristic. Cache
+            // currentness must be checked independently of that classification:
+            // use a distinct cached class that no cold run here produces.
+            let mut marked_full = full.clone();
+            let mut marked_compact = compact.clone();
+            for item in marked_full.iter_mut().chain(marked_compact.iter_mut()) {
+                item.class = SeamGripClass::Intentional;
+            }
+            full_cache.store_classified_seams_with_limit(&key, &marked_full, None, 10)?;
+            compact_cache.store_classified_seams_with_limit(&key, &marked_compact, None, 10)?;
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                assert!(
+                    inventory
+                        .iter()
+                        .all(|s| s.class == SeamGripClass::Intentional)
+                );
+                assert_eq!(inventory.len(), 1, "actual marked warm entry");
+            }
+            if mutation == "replacement" {
+                write_file(
+                    &root.join(".cargo/config.toml"),
+                    "[source.crates-io]\nreplace-with='fake'\n[source.fake]\ndirectory='vendor'\n",
+                )?;
+            } else {
+                let file = root.join("src/test_support.rs");
+                let source = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+                write_file(&file, &source.replace("actual == 7", "actual == 8"))?;
+            }
+            assert_ne!(key, workspace_cache_key_at_with_config(&root, &config)?);
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "mutation still analyzed");
+                assert_ne!(
+                    answer[0].class,
+                    SeamGripClass::Intentional,
+                    "{mutation}: stale marked cache entry"
+                );
+            }
+            std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 

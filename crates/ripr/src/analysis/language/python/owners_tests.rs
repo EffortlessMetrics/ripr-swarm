@@ -148,6 +148,13 @@ fn owner_from_function(
         decorators.push("async_def".to_string());
     }
     let parameters = function_parameters(context.source, args);
+    let term_facts = super::term_activation::term_facts(
+        context.source,
+        body,
+        &parameters,
+        &text_for_range(context.source, range),
+        !decorators.is_empty() || is_async,
+    );
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
@@ -175,6 +182,7 @@ fn owner_from_function(
         ),
         same_class_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
+        term_facts,
     }
 }
 
@@ -231,6 +239,7 @@ fn owner_from_class(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     }
 }
 
@@ -258,6 +267,7 @@ pub(super) fn module_owner(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     }
 }
 
@@ -300,12 +310,27 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
-                let fixtures = fixture_parameter_names(&function.args, framework);
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
+                let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
+                    .into_iter()
+                    .filter(|name| !generated_inputs.contains(name))
+                    .collect();
                 let assertions = collect_assertions_from_statements(&function.body, source);
-                // pytest does not parametrize unittest methods.
+                // pytest does not parametrize unittest methods; Hypothesis
+                // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        super::hypothesis::example_cases(
+                            source,
+                            &function.args,
+                            &function.decorator_list,
+                        )
+                    });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -336,6 +361,7 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions,
                     assertion_admission,
@@ -353,12 +379,27 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
-                let fixtures = fixture_parameter_names(&function.args, framework);
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
+                let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
+                    .into_iter()
+                    .filter(|name| !generated_inputs.contains(name))
+                    .collect();
                 let assertions = collect_assertions_from_statements(&function.body, source);
-                // pytest does not parametrize unittest methods.
+                // pytest does not parametrize unittest methods; Hypothesis
+                // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        super::hypothesis::example_cases(
+                            source,
+                            &function.args,
+                            &function.decorator_list,
+                        )
+                    });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -389,6 +430,7 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions,
                     assertion_admission,

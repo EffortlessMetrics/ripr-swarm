@@ -716,3 +716,120 @@ fn aliased_or_same_named_wrapper_does_not_relate_or_pair() -> Result<(), String>
     assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
+
+/// A wrapper that hands the changed owner to a local `macro_rules!` macro
+/// as an identifier token (#6614). The changed `base_rate` body is always
+/// on line 8.
+fn macro_rate_source(macro_rule: &str, wrapper_body: &str, tests: &str) -> String {
+    format!(
+        "macro_rules! twice {{\n    {macro_rule}\n}}\n\npub fn other_rate() -> u32 {{ 5 }}\n\npub fn base_rate() -> u32 {{\n    3 + 4\n}}\n\npub fn doubled_rate() -> u32 {{\n    {wrapper_body}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn doubled_rate_is_pinned() {{\n        {tests}\n    }}\n}}\n"
+    )
+}
+
+const IDENT_RULE: &str = "($f:ident) => { $f() * 2 };";
+const MACRO_RATE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,3 +7,3 @@\n pub fn base_rate() -> u32 {\n-    7\n+    3 + 4\n }\n";
+
+fn macro_rate_finding(rule: &str, wrapper: &str, tests: &str) -> Result<Value, String> {
+    let finding = family_finding(
+        &macro_rate_source(rule, wrapper, tests),
+        MACRO_RATE_DIFF,
+        "return_value",
+    )?;
+    assert_eq!(finding["probe"]["line"], 8, "{finding}");
+    Ok(finding)
+}
+
+#[test]
+fn exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded() -> Result<(), String> {
+    for wrapper in [
+        "twice!(base_rate)",
+        "twice![base_rate]",
+        "twice! { base_rate }",
+    ] {
+        let finding = macro_rate_finding(IDENT_RULE, wrapper, "assert_eq!(doubled_rate(), 14);")?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{wrapper}: {finding}"
+        );
+        assert_eq!(
+            relation_of(&finding, "doubled_rate_is_pinned"),
+            Some("helper_owner_call"),
+            "{wrapper}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn any_exact_oracle_on_a_macro_argument_caller_abstains() -> Result<(), String> {
+    // ripr does not expand `twice!`, so an exact oracle in any operand shape
+    // can neither credit nor fault the owner.
+    for tests in [
+        "let rate = doubled_rate();\n        assert_eq!(rate, 14);",
+        "assert_eq!(doubled_rate().to_string(), \"14\");",
+    ] {
+        let finding = macro_rate_finding(IDENT_RULE, "twice!(base_rate)", tests)?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{tests}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap() -> Result<(), String> {
+    // The macro names a different function: no edge reaches the owner.
+    let other = macro_rate_finding(
+        IDENT_RULE,
+        "twice!(other_rate)",
+        "assert_eq!(doubled_rate(), 10);",
+    )?;
+    // The owner name is only string-literal content of the macro argument.
+    let literal = macro_rate_finding(
+        "($f:literal) => { $f.len() as u32 * 2 };",
+        "twice!(\"base_rate\")",
+        "assert_eq!(doubled_rate(), 18);",
+    )?;
+    // The edge exists, but the oracle is weak on its own terms.
+    let compared = macro_rate_finding(
+        IDENT_RULE,
+        "twice!(base_rate)",
+        "assert!(doubled_rate() > 0);",
+    )?;
+    for finding in [&other, &literal, &compared] {
+        assert_ne!(
+            finding["classification"], "propagation_unknown",
+            "{finding}"
+        );
+        let propagate = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            !propagate.contains("helper_result_not_forwarded"),
+            "{finding}"
+        );
+    }
+    assert_eq!(compared["classification"], "weakly_exposed", "{compared}");
+    assert_eq!(literal["classification"], "weakly_exposed", "{literal}");
+    Ok(())
+}
+
+#[test]
+fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(), String> {
+    // `banner` names `title` only inside its format string; the test calls
+    // `title()` itself and pins `banner()`. No macro edge, no abstention.
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+    let finding = family_finding(source, diff, "return_value")?;
+    assert_eq!(finding["probe"]["line"], 2, "{finding}");
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_ne!(
+        relation_of(&finding, "banner_reads_title"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}

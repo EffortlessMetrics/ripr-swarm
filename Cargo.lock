@@ -1476,6 +1476,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "repo-policy"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde_json",
  "sha2",
 ]
@@ -1505,6 +1506,8 @@ dependencies = [
  "tower",
  "tower-lsp-server",
  "unicode-ident",
+ "unicode-segmentation",
+ "unicode-width",
  "winsafe",
 ]
 
@@ -2553,6 +2556,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "num-bigint",
  "ra_ap_syntax",
  "rayon",
  "repo-policy",
