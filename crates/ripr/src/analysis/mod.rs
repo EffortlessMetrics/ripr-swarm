@@ -943,6 +943,13 @@ pub struct AnalysisResult {
     /// staging) instead of offering `--worktree`. Empty when no untracked
     /// routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
+    /// Gitignored routed files (#7467): ignored-file records plus routed
+    /// files under ignored directories, on both committed-history and
+    /// working-tree runs, because neither diff analyzes them. The output
+    /// layer names them instead of letting a result read as covering them;
+    /// the exclusion itself is unchanged. Empty when no gitignored routed
+    /// file exists.
+    pub(crate) ignored_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.

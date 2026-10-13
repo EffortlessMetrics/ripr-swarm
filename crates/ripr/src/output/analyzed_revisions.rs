@@ -102,6 +102,45 @@ pub(crate) fn working_tree_untracked_message(
     ))
 }
 
+/// The disclosure for gitignored routed source files on a working-tree read
+/// (#7467). Like untracked files they are in neither diff, but plain
+/// `git add -N` refuses ignored paths, so the remedy names the force
+/// intent-to-add form. `None` when no such file exists.
+pub(crate) fn working_tree_ignored_message(
+    paths: &[String],
+    display: impl Fn(&str) -> String,
+) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let listing = name_paths(paths, display);
+    Some(format!(
+        "Gitignored files ({listing}) are not in the working-tree diff, which covers tracked \
+         files only, so their behavior was not analyzed; run `git add -f -N <path>` (force \
+         intent-to-add) or stage them with `git add -f`, then re-run `ripr check`."
+    ))
+}
+
+/// The disclosure for gitignored routed source files on a committed-history
+/// read (#7467). The committed diff covers tracked files only, so these
+/// files were read as absent, never as evidence; the remedy is the same
+/// force intent-to-add form as the working-tree arm. `None` when no such
+/// file exists.
+pub(crate) fn committed_history_ignored_message(
+    paths: &[String],
+    display: impl Fn(&str) -> String,
+) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let listing = name_paths(paths, display);
+    Some(format!(
+        "Gitignored files ({listing}) are not in the committed-history diff, which covers \
+         tracked files only, so their behavior was not analyzed; run `git add -f -N <path>` \
+         (force intent-to-add) or stage them with `git add -f`, then re-run `ripr check`."
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

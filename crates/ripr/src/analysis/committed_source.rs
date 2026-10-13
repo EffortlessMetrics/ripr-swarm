@@ -110,6 +110,26 @@ impl CommittedSourceOverlay {
         self.untracked.iter().cloned().collect()
     }
 
+    /// Gitignored files a language adapter routes, root-relative and
+    /// `/`-separated, in order (#7467): the ignored-file records plus routed
+    /// files found under ignored directories. Git reports an ignored
+    /// directory as one `dir/` record, so the files inside (for example
+    /// `target/bgen.rs` under an ignored `target/`) need the disk walk in
+    /// [`expand_ignored_directories`] to be disclosed. Tracked force-added
+    /// files inside ignored directories keep their working-tree reads and
+    /// stay out of the set. Neither diff source analyzes these paths, so the
+    /// output layer names them instead of letting a result read as covering
+    /// them; the exclusion itself is unchanged.
+    pub(crate) fn ignored_source_paths(&self) -> Vec<String> {
+        let mut out: BTreeSet<String> = self.ignored.files.iter().cloned().collect();
+        out.extend(expand_ignored_directories(
+            &self.root,
+            &self.ignored.directories,
+            &self.ignored.tracked_within,
+        ));
+        out.into_iter().collect()
+    }
+
     /// Dirty paths that exist at `HEAD` but are missing from the working
     /// tree. Discovery walks the working tree, so these cannot be found and
     /// are disclosed instead of silently dropped.
@@ -422,16 +442,20 @@ pub(crate) fn probe(
     }))
 }
 
-/// Untracked files a language adapter routes, root-relative and
-/// `/`-separated, in order (RIPR-SPEC-0116). A working-tree read diffs
-/// tracked files only (`git diff <merge-base>`), so these files are not in
-/// its diff; the output layer names them instead of letting an empty or
-/// partial result read as covering them. Fails closed like [`probe`]: a
-/// status that cannot be read is an error, not an empty list.
-pub(crate) fn untracked_routed_paths(
+/// Untracked and gitignored files a language adapter routes, root-relative
+/// and `/`-separated, in order, from one `git status` call. The untracked
+/// half (RIPR-SPEC-0116) is what a working-tree read cannot contain: it diffs
+/// tracked files only (`git diff <merge-base>`). The ignored half (#7467)
+/// covers the ignored-file records plus routed files found under ignored
+/// directories (see [`CommittedSourceOverlay::ignored_source_paths`]);
+/// neither the committed-history diff nor the working-tree diff analyzes
+/// them. The output layer names both instead of letting an empty or partial
+/// result read as covering them. Fails closed like [`probe`]: a status that
+/// cannot be read is an error, not an empty list.
+pub(crate) fn untracked_and_ignored_routed_paths(
     root: &Path,
     git_timeout: Option<Duration>,
-) -> Result<Vec<String>, CoreError> {
+) -> Result<(Vec<String>, Vec<String>), CoreError> {
     let status = git_bytes(
         root,
         &[
@@ -439,14 +463,20 @@ pub(crate) fn untracked_routed_paths(
             "--porcelain",
             "-z",
             "--untracked-files=all",
+            // Ignored files are listed too (an ignored directory as one
+            // `dir/` record): discovery does not apply `.gitignore`.
+            "--ignored=matching",
             "--",
             ".",
         ],
         git_timeout,
     )?;
     let records = parse_porcelain_z(&status)?;
-    if records.untracked.is_empty() {
-        return Ok(Vec::new());
+    if records.untracked.is_empty()
+        && records.ignored_files.is_empty()
+        && records.ignored_directories.is_empty()
+    {
+        return Ok((Vec::new(), Vec::new()));
     }
     let prefix = String::from_utf8(git_bytes(
         root,
@@ -458,14 +488,79 @@ pub(crate) fn untracked_routed_paths(
             .to_string()
     })?;
     let prefix = prefix.trim_end_matches(['\n', '\r']);
-    Ok(records
-        .untracked
+    let below_root = |paths: Vec<String>| {
+        paths
+            .into_iter()
+            .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
+            .filter(|path| !path.is_empty())
+            .collect::<BTreeSet<_>>()
+    };
+    let untracked = below_root(records.untracked).into_iter().collect();
+    let mut ignored: BTreeSet<String> = below_root(records.ignored_files);
+    // Tracked force-added files inside ignored directories keep their
+    // working-tree reads; resolve them the same way [`probe`] does so they
+    // stay out of the disclosed set.
+    let directories = below_root(records.ignored_directories)
         .into_iter()
-        .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
-        .filter(|path| !path.is_empty())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect())
+        .collect::<Vec<_>>();
+    let mut tracked_within = BTreeSet::new();
+    for chunk in directories.chunks(LS_TREE_CHUNK) {
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        for record in git_bytes(root, &args, git_timeout)?.split(|byte| *byte == 0) {
+            if let Ok(path) = utf8_path(record) {
+                tracked_within.insert(path);
+            }
+        }
+    }
+    ignored.extend(expand_ignored_directories(
+        root,
+        &directories,
+        &tracked_within,
+    ));
+    Ok((untracked, ignored.into_iter().collect()))
+}
+
+/// Routed source files below ignored directories, as root-relative
+/// `/`-separated keys. No-follow like discovery: a symlinked directory is
+/// not descended and symlinked files are not sources. Names that are not
+/// valid UTF-8 key no overlay lookup and cannot be named in JSON, so they
+/// are skipped rather than invented lossily.
+fn expand_ignored_directories(
+    root: &Path,
+    directories: &[String],
+    tracked_within: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut stack: Vec<(PathBuf, String)> = directories
+        .iter()
+        .map(|directory| (root.join(directory), directory.clone()))
+        .collect();
+    while let Some((directory, key)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // `file_type` does not follow links, so symlinked entries match
+            // neither arm below.
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let child_key = format!("{key}/{name}");
+            if kind.is_dir() {
+                stack.push((entry.path(), child_key));
+            } else if kind.is_file()
+                && !tracked_within.contains(&child_key)
+                && super::language::route(Path::new(&child_key)).is_some()
+            {
+                out.insert(child_key);
+            }
+        }
+    }
+    out
 }
 
 fn is_regular_file_mode(mode: &str) -> bool {
