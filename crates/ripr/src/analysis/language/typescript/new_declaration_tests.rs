@@ -15,6 +15,14 @@ fn line(number: usize, text: &str) -> crate::analysis::diff::ChangedLine {
     }
 }
 
+/// A removed line recorded at new-side line 1, where its block's added run
+/// starts.
+fn comment(number: usize, text: &str) -> crate::analysis::diff::ChangedLine {
+    let mut removed = line(number, text);
+    removed.new_side_line = 1;
+    removed
+}
+
 fn source_line(source: &str, number: usize) -> Result<&str, String> {
     source
         .lines()
@@ -196,5 +204,93 @@ fn changed_signature_paired_elsewhere_by_git_keeps_probe() -> Result<(), String>
     removed.new_side_line = 7;
     let findings = analyze("paired-elsewhere", &source, &[1, 2, 3], vec![removed])?;
     assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// #7524: a new function replacing three comment lines, an even block. The
+/// opening line pairs by position with the first comment, which does not
+/// look like it, so the opening line still reads as new and yields no
+/// probe; the body line keeps its own. A guard that treated any counterpart
+/// as an old signature would probe the opening line.
+#[test]
+fn new_function_replacing_an_unrelated_line_is_not_probed() -> Result<(), String> {
+    let source =
+        format!("export function helper(a: number): number {{\n  return a * 2;\n}}\n{PRICE_TS}");
+    let findings = analyze(
+        "new-fn-replacing-comment",
+        &source,
+        &[1, 2, 3],
+        vec![
+            line(1, "// pricing rules"),
+            comment(2, "// apply the loyalty discount"),
+            comment(3, "// in whole currency units"),
+        ],
+    )?;
+    assert_eq!(
+        classes_on(&findings, 1),
+        Vec::<ExposureClass>::new(),
+        "{findings:?}"
+    );
+    assert_eq!(classes_on(&findings, 2).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// The control: a renamed function whose body grows in the same block. Its
+/// old signature looks like the new one, so the opening line is a changed
+/// signature and keeps its probe.
+#[test]
+fn renamed_function_in_an_uneven_block_keeps_probe() -> Result<(), String> {
+    let findings = analyze(
+        "renamed-fn-uneven",
+        PRICE_TS,
+        &[1, 2, 3],
+        vec![line(
+            1,
+            "export function oldPrice(amount: number, years: number): number {",
+        )],
+    )?;
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// #7524: the annotation-only guard reads the same pairing. In a two-line
+/// block whose second line only changes a type, that line pairs with the
+/// second removed line by position and yields no probe; before, it found
+/// no old line and was probed as new code.
+#[test]
+fn annotation_only_change_on_a_later_line_of_a_block_is_not_probed() -> Result<(), String> {
+    let mut closing = line(6, "};");
+    closing.new_side_line = 6;
+    let mut bump = line(7, "export const bump = (x: any) => x + 1;");
+    bump.new_side_line = 6;
+    let findings = analyze(
+        "annotation-later-line",
+        PRICE_TS,
+        &[6, 7],
+        vec![closing, bump],
+    )?;
+    assert_eq!(
+        classes_on(&findings, 7),
+        Vec::<ExposureClass>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// The control: the same block with a runtime change on the later line
+/// keeps that line's probe.
+#[test]
+fn behavior_change_on_a_later_line_of_a_block_keeps_probe() -> Result<(), String> {
+    let mut closing = line(6, "};");
+    closing.new_side_line = 6;
+    let mut bump = line(7, "export const bump = (x: number) => x + 2;");
+    bump.new_side_line = 6;
+    let findings = analyze(
+        "behavior-later-line",
+        PRICE_TS,
+        &[6, 7],
+        vec![closing, bump],
+    )?;
+    assert_eq!(classes_on(&findings, 7).len(), 1, "{findings:?}");
     Ok(())
 }

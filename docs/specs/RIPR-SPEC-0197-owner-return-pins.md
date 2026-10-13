@@ -95,6 +95,24 @@ rule only for an assertion whose context was admitted.
    `*_assert_eq!`) with an exact-value or whole-object oracle kind, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
+   test's outer attributes admit only `#[test]` and the `serial_test` locks
+   `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
+   body unchanged, and only with no arguments or bare lock keys;
+   `inner_attrs`, `crate`, `path` or any other argument shape refuses it.
+   Resolution reads the test's own module item list. A bare lock needs a
+   direct `use serial_test::<lock>` item there (optionally renamed, `r#`
+   normalized) and no other `use` binding the same name; imports in function
+   bodies, sibling modules, globs or macro token trees bind nothing. Both
+   forms need `serial_test` in that module to be the crate: the module binds
+   no local `serial_test` (`mod`, `use .. as`, `extern crate .. as`), holds no
+   item-position macro call, carries no attribute on a direct item other than
+   built-ins, std derives and resolved locks (`cfg_attr` and any other
+   attribute or derive macro could emit a module), and imports no glob except
+   `super::*` into an enclosing in-file module that meets the same rule. The
+   crate name is trusted: a manifest `package = ..` rename that points
+   `serial_test` at another crate is outside what source can show. Every other
+   attribute (`ignore`, async runtime tests, parameterizing macros such as
+   `rstest` or `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the
@@ -915,6 +933,17 @@ Implementation and validation obligations:
    blast-radius and focused policy checks before a coherent implementation draft.
    General oracle-strength work (#6764/#6670) remains with its existing owners.
 
+### Same-named module-level functions (#6544)
+
+A bare call used to refuse the pin whenever any other module-level `fn` of
+the owner's name existed. A same-package rival no longer refuses the pin at
+`establish`. Each test must instead settle its bare call on the owner through
+the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
+`use super::celsius::snap;` pins `celsius::snap`, while a test that imports
+`fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
+neither. A rival in another package, or one whose container is unknown,
+still refuses the pin outright.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -1373,7 +1402,11 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
-  the lone-equality forms above. Qualified assertion macros, other
+  the lone-equality forms above, and from `assert_eq!` qualified through a
+  drop-in assertion crate (`std`, `core`, `pretty_assertions`,
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
+  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
+  reads `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
@@ -1506,7 +1539,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
-  `shared_return_admission_uses_the_outer_invocation_identity`, and
+  `shared_return_admission_uses_the_outer_invocation_identity`,
+  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
   and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API

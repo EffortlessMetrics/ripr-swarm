@@ -968,6 +968,59 @@ fn config_file_discovery_stops_at_git_boundary() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn config_discovery_stops_at_unresolvable_git_entries() -> Result<(), String> {
+    for (label, target) in [("dangling", "missing-gitdir"), ("cycle", ".git")] {
+        let outer = temp_root(label)?;
+        let boundary = outer.join("project");
+        let nested = boundary.join("src");
+        fs::create_dir_all(&nested).map_err(|err| format!("mkdir failed: {err}"))?;
+        write_file(
+            &outer.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\ninclude_unchanged_tests = false\n",
+        )?;
+        std::os::unix::fs::symlink(target, boundary.join(".git"))
+            .map_err(|err| format!("symlink failed: {err}"))?;
+
+        let defaults = load_for_root(&nested)?;
+        assert!(
+            defaults.source_path().is_none(),
+            "{label}: parent config leaked"
+        );
+        let mut input = CheckInput::default();
+        apply_to_check_input(&mut input, &defaults, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Draft, "{label}");
+        assert!(input.include_unchanged_tests, "{label}");
+
+        write_file(
+            &boundary.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"ready\"\ninclude_unchanged_tests = true\n",
+        )?;
+        let local = load_for_root(&nested)?;
+        assert_eq!(
+            local.source_path(),
+            Some(boundary.join(CONFIG_FILE_NAME).as_path())
+        );
+        apply_to_check_input(&mut input, &local, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Ready, "{label}: local config must apply");
+        input.mode = Mode::Instant;
+        input.include_unchanged_tests = false;
+        apply_to_check_input(
+            &mut input,
+            &local,
+            CheckInputExplicit {
+                mode: true,
+                include_unchanged_tests: true,
+            },
+        );
+        assert_eq!(input.mode, Mode::Instant, "{label}: explicit CLI wins");
+        assert!(!input.include_unchanged_tests, "{label}: explicit CLI wins");
+        fs::remove_dir_all(&outer).map_err(|err| format!("remove fixture failed: {err}"))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn oracle_strength_literals_round_trip_through_config() -> Result<(), String> {
     let weak_smoke_none = parse_config(
@@ -1860,6 +1913,53 @@ fn candidate_config_error_timeout_renders_the_timeout_diagnostic() {
         "candidate tree ripr.toml: bad toml",
         "non-timeout failures keep their message verbatim"
     );
+}
+
+/// #7353: `reports.max_related_tests = 0` used to be accepted silently and
+/// emptied `related_tests` in every context packet; it must now fail closed
+/// with a named error naming the key and the accepted set, like the
+/// neighboring keys.
+#[test]
+fn reports_max_related_tests_zero_fails_closed_with_a_named_error() -> Result<(), String> {
+    match parse_config("[reports]\nmax_related_tests = 0\n") {
+        Err(error) => {
+            for expected in ["reports.max_related_tests", "at least 1"] {
+                if !error.contains(expected) {
+                    return Err(format!("the error must name {expected}: {error}"));
+                }
+            }
+        }
+        Ok(_) => return Err("zero max_related_tests was accepted silently".to_string()),
+    }
+    let config = parse_config("[reports]\nmax_related_tests = 3\n")
+        .map_err(|error| format!("a positive cap must parse: {error}"))?;
+    if config.reports().max_related_tests() != 3 {
+        return Err("a positive cap did not round-trip".to_string());
+    }
+    Ok(())
+}
+
+/// #7353: `perl.timeout_ms = 0` used to be silently coerced back to the
+/// default by the accessor, so "no timeout" got an undocumented 30 s
+/// limit; it must now fail closed at parse with a named error.
+#[test]
+fn perl_timeout_ms_zero_fails_closed_with_a_named_error() -> Result<(), String> {
+    match parse_config("[perl]\ntimeout_ms = 0\n") {
+        Err(error) => {
+            for expected in ["perl.timeout_ms", "at least 1"] {
+                if !error.contains(expected) {
+                    return Err(format!("the error must name {expected}: {error}"));
+                }
+            }
+        }
+        Ok(_) => return Err("zero perl.timeout_ms was accepted silently".to_string()),
+    }
+    let config = parse_config("[perl]\ntimeout_ms = 1500\n")
+        .map_err(|error| format!("a positive timeout must parse: {error}"))?;
+    if config.perl().timeout_ms() != 1500 {
+        return Err("a positive timeout did not round-trip".to_string());
+    }
+    Ok(())
 }
 
 fn skipped_config_workspace(label: &str) -> Result<(PathBuf, PathBuf), String> {

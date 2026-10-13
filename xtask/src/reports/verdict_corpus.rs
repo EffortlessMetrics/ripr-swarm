@@ -11,6 +11,7 @@ use super::fixtures::{ripr_fixture_binary, ripr_perl_fixture_binary};
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
 use coverage::{Ledger, SpecExampleCoverage, SpecExamples};
+use oracle::{ExpectedOracle, OracleAccuracy, OracleRow};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -194,6 +195,10 @@ pub(crate) struct Case {
     /// The fact packet ripr reads for a Perl case; absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) perl_facts: Option<PerlFacts>,
+    /// The related-test oracle kind and strength a spec adopts for this case
+    /// (see `verdict_corpus_oracle.rs`); scored apart from the verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_oracle: Option<ExpectedOracle>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
@@ -596,17 +601,11 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
     codes
 }
 
-/// Relations ripr's reach stage does not count as reaching the owner
-/// (`is_proximity_only` plus the seam-callee rows `reach_evidence` sets
-/// aside, in `crates/ripr/src/analysis/classify/reach.rs`). Any other listed
-/// relation makes reach `yes`, which `no_static_path` contradicts.
-const NON_REACHING_RELATIONS: [&str; 4] = [
-    "same_test_file",
-    "same_module",
-    "weak_token_substring",
-    "seam_callee_call",
-];
-
+/// A listed test whose relation reaches the owner makes reach `yes`, which
+/// `no_static_path` contradicts. Whether a relation reaches is ripr's own
+/// rule (`RelationReason::establishes_reach`, #7531). A relation string ripr
+/// does not recognize counts as reaching, so drift surfaces as a
+/// contradiction instead of passing unread.
 fn lists_a_reaching_test(finding: &Value) -> bool {
     finding
         .get("related_tests")
@@ -615,9 +614,18 @@ fn lists_a_reaching_test(finding: &Value) -> bool {
             tests.iter().any(|test| {
                 test.get("relation_reason")
                     .and_then(Value::as_str)
-                    .is_some_and(|reason| !NON_REACHING_RELATIONS.contains(&reason))
+                    .is_some_and(relation_reaches_owner)
             })
         })
+}
+
+/// Findings do not say whether the owner is a function. Diff mode emits
+/// `assertion_target_affinity` only for owners without one, where it does
+/// reach, so the rule is asked for that owner kind; it is also the reading
+/// that counts more rows as reaching.
+fn relation_reaches_owner(reason: &str) -> bool {
+    serde_json::from_value::<ripr::domain::RelationReason>(Value::from(reason))
+        .map_or(true, |reason| reason.establishes_reach(false))
 }
 
 const SUMMARY_CLASSES: [&str; 7] = [
@@ -736,6 +744,9 @@ pub(crate) struct CaseRow {
     /// reads itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) packet_provenance: Option<PacketProvenance>,
+    /// The oracle score, only for a case with `expected_oracle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle: Option<OracleRow>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -766,6 +777,11 @@ pub(crate) struct Report {
     /// ledger and the spec files, not from ripr's output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) spec_example_coverage: Option<SpecExampleCoverage>,
+    /// Related-test oracle kind and strength against `expected_oracle`
+    /// labels. Kept apart from the verdict rates, never folded into them;
+    /// omitted for a corpus with no labels.
+    #[serde(skip_serializing_if = "OracleAccuracy::is_unlabeled")]
+    pub(crate) oracle_accuracy: OracleAccuracy,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -821,7 +837,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
-) -> CaseRow {
+) -> Result<CaseRow, String> {
     let packet_driven = case.perl_facts.is_some();
     let anchored = anchored_findings(check, &case.anchor, anchor_line, packet_driven);
     let followed_retarget = anchored
@@ -860,7 +876,12 @@ pub(crate) fn case_row(
         *code_counts.entry(code.clone()).or_insert(0) += 1;
         contradictions.insert(code);
     }
-    CaseRow {
+    let oracle = case
+        .expected_oracle
+        .as_ref()
+        .map(|expected| oracle::oracle_row(&case.case_id, expected, &anchored))
+        .transpose()?;
+    Ok(CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
         origin,
@@ -881,7 +902,8 @@ pub(crate) fn case_row(
         findings_contradicted: contradicted,
         contradiction_counts: code_counts,
         packet_provenance: case.perl_facts.as_ref().map(|facts| facts.provenance),
-    }
+        oracle,
+    })
 }
 
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
@@ -916,7 +938,7 @@ pub(crate) fn build_report(
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
-        ));
+        )?);
     }
     Ok(summarize(
         corpus.spec.clone(),
@@ -992,6 +1014,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         by_origin,
         by_packet_provenance,
         spec_example_coverage: None,
+        oracle_accuracy: oracle::oracle_accuracy(
+            rows.iter()
+                .filter_map(|r| r.oracle.as_ref().map(|o| o.outcome)),
+        ),
         rows,
         non_claims,
     }
@@ -1153,6 +1179,17 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
     }
     if let Some(coverage) = &report.spec_example_coverage {
         out.push_str(&coverage::render_coverage_markdown(coverage));
+    }
+    let labeled: Vec<(&str, &OracleRow)> = report
+        .rows
+        .iter()
+        .filter_map(|r| r.oracle.as_ref().map(|o| (r.case_id.as_str(), o)))
+        .collect();
+    if !labeled.is_empty() {
+        out.push_str(&oracle::render_oracle_markdown(
+            &report.oracle_accuracy,
+            &labeled,
+        ));
     }
     out.push_str("\nNon-claims:\n\n");
     for claim in &report.non_claims {
@@ -1949,7 +1986,7 @@ fn files_under(root: &Path) -> Result<BTreeSet<String>, String> {
 }
 
 pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
-    let mut violations = Vec::new();
+    let mut violations = oracle::expected_violations(case);
     let id = &case.case_id;
     for (field, value) in [
         ("behavior_family", &case.behavior_family),
@@ -2467,15 +2504,7 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
-    let mut check: Value = serde_json::from_str(&stdout).map_err(|err| {
-        format!(
-            "case `{}`: ripr check did not emit JSON: {err}",
-            case.case_id
-        )
-    })?;
-    if case.perl_facts.is_some() {
-        refuse_unavailable_perl(&check, &case.case_id, &binary)?;
-    }
+    let mut check = case_check_output(&stdout, case, &binary)?;
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2485,9 +2514,26 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     Ok((check, anchor_line))
 }
 
-/// A binary without `lang-perl` reports the Perl run `unavailable` and exits
-/// 0 with no findings, which would score every packet case as silent. Refuse
-/// the run instead, so a wrong binary is a named error, never a verdict.
+/// Parse one case's `ripr check --json` output. A packet case whose Perl run
+/// is `unavailable` is refused here, before any row can be scored.
+pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Result<Value, String> {
+    let check: Value = serde_json::from_str(stdout).map_err(|err| {
+        format!(
+            "case `{}`: ripr check did not emit JSON: {err}",
+            case.case_id
+        )
+    })?;
+    if case.perl_facts.is_some() {
+        refuse_unavailable_perl(&check, &case.case_id, binary)?;
+    }
+    Ok(check)
+}
+
+/// A Perl run reported `unavailable` exits 0 with no findings, which would
+/// score the packet case as silent. Refuse the run instead, so it is a named
+/// error, never a verdict. Two causes report `unavailable`: a binary without
+/// `lang-perl` (another build replaced it before the copy), or a packet ripr
+/// could not read or accept. The run's own reason says which.
 pub(crate) fn refuse_unavailable_perl(
     check: &Value,
     case_id: &str,
@@ -2498,13 +2544,17 @@ pub(crate) fn refuse_unavailable_perl(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|run| {
+        .find(|run| {
             run.get("language").and_then(Value::as_str) == Some("perl")
                 && run.get("status").and_then(Value::as_str) == Some("unavailable")
         });
-    if unavailable {
+    if let Some(run) = unavailable {
+        let reason = run
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("no reason given");
         return Err(format!(
-            "case `{case_id}`: {binary} has no Perl adapter (language run `unavailable`); it is not the lang-perl build, so another build may have replaced it before the copy; rerun the corpus check"
+            "case `{case_id}`: {binary} reported the Perl language run `unavailable`: {reason}. If the reason says Perl is not available, the binary is not the lang-perl build (another build may have replaced it before the copy), so rerun the corpus check; otherwise ripr refused the case's packet"
         ));
     }
     Ok(())
@@ -2561,6 +2611,7 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let specs: SpecExamples = coverage::scan_specs(Path::new(coverage::SPECS_DIR))?;
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
+    violations.extend(oracle::oracle_ledger_violations(&corpus, &ledger, &specs));
     if violations.is_empty() {
         let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
         coverage.ledger = coverage::ledger_label(dir);
@@ -2594,13 +2645,13 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
 /// Validate one corpus honoring its coverage declaration: a ledgered corpus
 /// gates coverage, a ledgerless one validates structurally with disclosure.
 /// Every subcommand funnels through here so `--language` behaves the same
-/// for `validate`, `report`, `check` and `bless`. The Rust corpus is the
-/// exception: its spec-example ledger is mandatory (#6686 review), so a
-/// deleted or renamed ledger fails instead of silently dropping the
-/// coverage floor. Ledgerless operation is reserved for the non-Rust
-/// corpora that have not opted in yet.
+/// for `validate`, `report`, `check` and `bless`. Every corpus but Perl
+/// must carry its spec-example ledger (#6686 review for Rust, #7650 for
+/// Python and TypeScript), so a deleted or renamed ledger fails instead of
+/// silently dropping the coverage floor. Ledgerless operation is reserved
+/// for the Perl corpus, which has not opted in yet.
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
-    if is_rust_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+    if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
         return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
     }
     println!(
@@ -2616,7 +2667,8 @@ fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCo
 /// gate is skipped.
 fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
     let corpus = load_corpus(dir)?;
-    let violations = validate(&corpus, dir);
+    let mut violations = validate(&corpus, dir);
+    violations.extend(oracle::ungated_label_violations(&corpus, dir));
     if violations.is_empty() {
         Ok(corpus)
     } else {
@@ -2982,6 +3034,18 @@ fn score_loaded_corpus(
     refuse_any_expected_out(&out, dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
+    // Only a ledgered corpus can carry the `[oracle]` gate.
+    let gate = if dir.join(coverage::LEDGER_FILE).is_file() {
+        coverage::load_ledger(dir)?.oracle
+    } else {
+        None
+    };
+    oracle::arm_gate(
+        &mut report.oracle_accuracy,
+        coverage::ledger_label(dir),
+        gate.as_ref(),
+        cases.is_some(),
+    );
     write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -3006,25 +3070,55 @@ fn score_loaded_corpus(
     if let Some(note) = &floor_note {
         println!("{note}");
     }
+    let accuracy = &report.oracle_accuracy;
+    if accuracy.labeled > 0 {
+        println!(
+            "verdict-corpus: oracle accuracy {} ({}/{}), overclaim {} ({}/{}); underclaim {}, kind_mismatch {}, unobserved {}",
+            accuracy.oracle_accuracy.rate,
+            accuracy.oracle_accuracy.numerator,
+            accuracy.oracle_accuracy.denominator,
+            accuracy.oracle_overclaim_rate.rate,
+            accuracy.oracle_overclaim_rate.numerator,
+            accuracy.oracle_overclaim_rate.denominator,
+            accuracy.count(oracle::OracleOutcome::Underclaim),
+            accuracy.count(oracle::OracleOutcome::KindMismatch),
+            accuracy.count(oracle::OracleOutcome::Unobserved),
+        );
+    }
     if !check {
         return Ok(());
     }
+    // The oracle gate needs ripr's output, so it runs after the report is
+    // written for the reader to inspect. Its failure is reported with the
+    // row drift, never instead of it.
+    let gate_failure = match oracle::oracle_gate(accuracy) {
+        Ok(Some(note)) => {
+            println!("{note}");
+            None
+        }
+        Ok(None) => None,
+        Err(failure) => Some(failure),
+    };
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
-        return Ok(());
+        return gate_failure.map_or(Ok(()), Err);
     }
     let mut shown: Vec<String> = drift.iter().take(DRIFT_SHOWN).cloned().collect();
     if drift.len() > DRIFT_SHOWN {
         shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
     }
-    Err(format!(
+    let drift_failure = format!(
         "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless{}`) and state why each moved row changed in the PR.",
         normalize_path(&expected_dir),
         shown.join("\n- "),
         normalize_path(&out.join("report.md")),
         normalize_path(&expected_dir),
         language_flag(&corpus_language(dir)?)
-    ))
+    );
+    Err(match gate_failure {
+        Some(gate_failure) => format!("{gate_failure}\n{drift_failure}"),
+        None => drift_failure,
+    })
 }
 
 /// The `--language` argument a command for this corpus needs; empty for
@@ -3230,6 +3324,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
 
 #[path = "verdict_corpus_coverage.rs"]
 pub(crate) mod coverage;
+
+#[path = "verdict_corpus_oracle.rs"]
+pub(crate) mod oracle;
 
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]

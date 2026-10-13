@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0b62f5f..f741ab7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,7 +15,7 @@
+ pub fn popcount(x: u32) -> u32 {
+     let mut c = 0;
+     for i in 0..32 {
+-        c += (x >> i) & 1;
++        c += (x >> i) % 2;
+     }
+     c
+ }

@@ -12192,6 +12192,18 @@ fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed()
     let second = Path::new(OsStr::from_bytes(b"tests/pricing_\xfe.rs"));
     assert_eq!(normalized_file_stem(first), "");
     assert_eq!(normalized_file_stem(second), "");
+    assert_eq!(crate::analysis::classify::module_stem(first), None);
+    assert_eq!(crate::analysis::classify::module_stem(second), None);
+    // A file with no module stem falls back to an exact-path key, which
+    // must fail closed the same way.
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(first),
+        None
+    );
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(second),
+        None
+    );
 }
 
 // -- helper coverage ---------------------------------------------
@@ -12358,6 +12370,18 @@ fn same_test_file_accepts_stem_match_and_test_suffixes() {
     assert!(same_test_file(Path::new("tests/foo_tests.rs"), "foo"));
     assert!(!same_test_file(Path::new("tests/bar.rs"), "foo"));
     assert!(!same_test_file(Path::new(""), "foo"));
+    // Module identity (#5395): `mod.rs` is its directory's module and a crate
+    // root names none, so a bare `mod`/`lib` stem never pairs.
+    assert!(same_test_file(
+        Path::new("src/serialize/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("src/tokenizer/mod.rs"), "mod"));
+    assert!(!same_test_file(
+        Path::new("src/tokenizer/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("crates/b/src/lib.rs"), "lib"));
 }
 
 #[test]
@@ -17981,6 +18005,87 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
     Ok(())
 }
 
+#[test]
+fn helper_shared_by_two_dispatch_roots_names_the_root_that_sorts_first() -> Result<(), String> {
+    // `Beta::fmt` sorts after `Alpha::fmt`, so `Alpha::fmt` claims `label`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Alpha(pub u32);\n\
+             impl std::fmt::Display for Alpha {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(label(self.0))\n\
+                 }\n\
+             }\n\
+             pub struct Beta(pub u32);\n\
+             impl std::fmt::Display for Beta {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(label(self.0))\n\
+                 }\n\
+             }\n\
+             fn label(amount: u32) -> &'static str { if amount > 100 { \"large\" } else { \"small\" } }\n",
+        ),
+        (
+            "tests/render.rs",
+            "use ripr_fixture::{Alpha, Beta};\n\
+             #[test] fn renders() { assert_eq!(Beta(1).to_string(), Alpha(150).to_string()); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("`label` may run from `fmt` (src/lib.rs:3), a trait method of `Alpha`"),
+        "the first root in path order is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn dispatch_callees_record_mentions_in_path_order_not_call_order() -> Result<(), String> {
+    // `Outer::fmt` calls `late` before `early`; both name `Inner`. The
+    // mention credited for `Inner` is the callee that sorts first by path.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "struct Inner(u32);\n\
+             impl std::fmt::Display for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             fn early() -> String { Inner(1).to_string() }\n\
+             fn late() -> String { Inner(2).to_string() }\n\
+             #[derive(Default)]\n\
+             pub struct Outer;\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(&late())?;\n\
+                     f.write_str(&early())\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"smallsmall\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains(
+            "`early` (src/lib.rs:8), which may itself run through trait dispatch, uses `Inner`"
+        ),
+        "the path-first callee is the witness: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
 // --- #6026: a boundary assert whose expected value contradicts static
 // evaluation must not close the gap ---
 
@@ -18348,6 +18453,78 @@ mod tests {
     Ok(())
 }
 
+/// #6292: repo mode shares the diff-mode call-identity rule. The only test
+/// calls `b::render`, so it neither relates to nor grips the never-called
+/// `a::render`, while `b::render` keeps it as a direct owner call.
+#[test]
+fn a_qualified_call_to_another_modules_function_does_not_grip_the_owner() -> Result<(), String> {
+    let source = "pub mod a {\n    pub fn render(x: i32) -> i32 {\n        x + 1\n    }\n}\n\npub mod b {\n    pub fn render(x: i32) -> i32 {\n        x * 2\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn doubles_two() {\n        assert_eq!(b::render(2), 4);\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), source)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let related_for = |owner_suffix: &str| -> Result<Vec<(String, RelationReason)>, String> {
+        let seam = seams
+            .iter()
+            .find(|seam| seam.owner().ends_with(owner_suffix))
+            .ok_or_else(|| format!("seam for {owner_suffix} must be inventoried"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .iter()
+            .map(|related| (related.test_name.clone(), related.relation_reason))
+            .collect())
+    };
+    let changed = related_for("::a::render")?;
+    if changed.iter().any(|(name, _)| name == "doubles_two") {
+        return Err(format!(
+            "a test of b::render must not relate to a::render: {changed:?}"
+        ));
+    }
+    let rival = related_for("::b::render")?;
+    if rival != vec![("doubles_two".to_string(), RelationReason::DirectOwnerCall)] {
+        return Err(format!("b::render must keep its direct test: {rival:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_crate_root_owner_when_grip_associates_then_only_its_own_inline_tests_relate()
+-> Result<(), String> {
+    // #5395: a crate root has no module stem, so `lib.rs` must not pair
+    // with another crate's `lib.rs` by name, yet its own inline tests
+    // still relate by exact path. Test bodies stay free of owner
+    // identifiers so SameTestFile is the only reason that can fire.
+    let own_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                       { if amount >= threshold { amount - 10 } else { amount } }\n\
+                   #[cfg(test)] mod tests { #[test] fn own_smoke() { assert_eq!(1, 1); } }\n";
+    let other_src = "#[cfg(test)] mod tests { #[test] fn other_smoke() { assert_eq!(2, 2); } }\n";
+    // The owner is the workspace-root crate, so no package prefix scopes
+    // the candidates: only module identity keeps the member crate's
+    // `lib.rs` tests out.
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), own_src),
+        (PathBuf::from("crates/b/src/lib.rs"), other_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["own_smoke"] {
+        return Err(format!(
+            "expected only own_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// #5335: grade one seam from `files` with both the full and the compact
 /// evidence builders, and return the full evidence, its class, and the
 /// compact reach state (badges and reports must agree on reach).
@@ -18434,6 +18611,43 @@ fn called_sibling_stays_strongly_gripped_beside_an_uncalled_one() -> Result<(), 
         "{}",
         evidence.reach.summary
     );
+    Ok(())
+}
+
+#[test]
+fn given_mod_rs_owner_when_grip_associates_then_module_identity_decides_same_test_file()
+-> Result<(), String> {
+    // #5395: `serialize/mod.rs` is module `serialize`. Its companion
+    // `tests/serialize.rs` relates; another module's `tokenizer/mod.rs`
+    // inline tests do not, although both files are named `mod.rs`.
+    let owner_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                         { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let tokenizer_src =
+        "#[cfg(test)] mod tests { #[test] fn tokenizer_smoke() { assert_eq!(2, 2); } }\n";
+    let companion_src = "#[test] fn companion_smoke() { assert_eq!(3, 3); }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/serialize/mod.rs"), owner_src),
+        (PathBuf::from("src/tokenizer/mod.rs"), tokenizer_src),
+        (PathBuf::from("tests/serialize.rs"), companion_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/serialize/mod.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["companion_smoke"] {
+        return Err(format!(
+            "expected only companion_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
     Ok(())
 }
 

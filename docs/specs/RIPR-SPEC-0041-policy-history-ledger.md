@@ -418,6 +418,13 @@ Current implementation coverage includes:
   `.ripr/policy-history.jsonl`.
 - Unit tests proving `--out-jsonl` appends one snapshot line, preserves prior
   records, and can be read back as `--history` to populate trend fields.
+- `cli_smoke/output_leaf_identity.rs` exercises the real command with distinct
+  parent/local destinations and, on Unix, a literal backslash filename versus
+  a directory path. It also requires native dot/parent aliases of the current
+  input to refuse before writing. `output::path` tests preserve unresolved
+  relative parents, native separator identity, and Windows drive-relative
+  versus rooted paths. These are lexical comparisons; symlink aliases are not
+  established by this contract.
 
 ## Implementation Mapping
 

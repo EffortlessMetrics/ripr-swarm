@@ -1,0 +1,43 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_empty_sink_module_comparison/input
+config: <cwd>/fixtures/python_empty_sink_module_comparison/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python: 1.
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: preview language, advisory only (preview_limited)
+  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
+  File: src/constants.py:1
+  Language: python
+  Language status: preview
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:src/constants.py:<module>:predicate_boundary:predicate:x=1
+  Changed behavior: x = 1
+  Missing discriminator: A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
+  Related test: tests/test_constants.py:4 test_constants
+  Suggested test file: tests/test_constants.py
+  Suggested test: test_constants
+  Test node: tests/test_constants.py::test_constants
+  Verify command: python -m pytest tests/test_constants.py::test_constants (high)
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    - reach yes: 1 related Python test(s) found for owner `<module>`
+    - infection yes: Changed Python expression can alter preview-classified predicate behavior: `x = 1`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast probe:src_constants.py:python_preview:904eec8a
+  ripr context --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast --at probe:src_constants.py:python_preview:904eec8a
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

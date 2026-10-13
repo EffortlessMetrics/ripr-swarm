@@ -2,6 +2,7 @@ use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
+use ra_ap_syntax::{AstNode, ast};
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -164,13 +165,29 @@ impl UnseenReachNames {
     }
 }
 
-/// `#![doc = include_str!("../README.md")]` turns an unindexed file into
-/// doctests that may call anything, so the name scan cannot rule them out.
-fn includes_external_docs(source: &str) -> bool {
-    source.lines().any(|line| {
-        let line = line.trim_start();
-        (line.starts_with("#![doc") || line.starts_with("#[doc")) && line.contains("include_str!")
-    })
+/// Macro-derived documentation can produce unindexed doctest calls, including
+/// external files and names assembled by `concat!` or supplied by `env!`.
+pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
+    if !source.contains("doc") || !source.contains('!') {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attribute| {
+            attribute.meta().is_some_and(|meta| {
+                meta.skip_cfg_attrs().into_iter().any(|meta| {
+                    meta.simple_name().is_some_and(|name| name == "doc")
+                        && matches!(meta, ast::Meta::KeyValueMeta(value)
+                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+                })
+            })
+        })
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -187,7 +204,10 @@ pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool
 /// Whether `source` contains `name` as a whole identifier anywhere other than
 /// directly after the `fn` keyword. Comments and strings count: a doctest or
 /// a stringly dispatched call may be what reaches the owner.
-fn names_identifier_outside_fn_definition(source: &str, name: &str) -> bool {
+pub(in crate::analysis) fn names_identifier_outside_fn_definition(
+    source: &str,
+    name: &str,
+) -> bool {
     !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
 }
 
@@ -261,7 +281,7 @@ const TRANSPARENT_TEST_MACROS: &[&str] = &[
 /// True when `body` invokes a macro (`name!(`, `name![`, `name! {`) outside
 /// [`TRANSPARENT_TEST_MACROS`]. Text inside string literals counts too, which
 /// only keeps reach uncertain.
-pub(super) fn invokes_opaque_macro(body: &str) -> bool {
+pub(in crate::analysis) fn invokes_opaque_macro(body: &str) -> bool {
     let bytes = body.as_bytes();
     bytes.iter().enumerate().any(|(bang, byte)| {
         if *byte != b'!' {
@@ -282,56 +302,20 @@ pub(super) fn invokes_opaque_macro(body: &str) -> bool {
 }
 
 /// Whether a relation by itself is evidence that the test runs a seam's
-/// owner, shared by diff-mode reach and repo-mode seam reach (#5335).
-///
-/// Only relations that capture a path to running the owner count: a direct
-/// call, a call through a helper chain, or (diff mode, TypeScript) an import
-/// through a verified re-export chain, which reveal-reach already credits.
-/// Everything else is a candidate-location suggestion that never has to run
-/// the owner:
-///
-/// - proximity relations ([`is_proximity_only`]) share a file, module, or a
-///   token substring;
-/// - `OwnerNamedTest` matches the owner's name in the test's name, an
-///   `ImportPathAffinity` matches a path reference, and
-///   `FixtureOwnerAffinity` matches a call to a fixture-shaped helper — none
-///   of them invokes the owner (#5335 review: an uncalled `as_kb` inherited
-///   a sibling's exact-value oracle through its name);
-/// - `AssertionTargetAffinity` means a test asserts on a token the seam's
-///   expression also names; for a module-level owner (a struct or field with
-///   no owning function) that assertion is how the owner is observed, but
-///   for a function-bodied owner the token can belong to any code, so it is
-///   not a path to the function. Diff mode emits that relation only for
-///   owners without a function, so the rule leaves it unchanged;
-/// - `SeamCalleeCall` runs the seam's converted callee, never the owner.
+/// owner, shared by diff-mode reach and repo-mode seam reach (#5335). The
+/// rule lives on [`RelationReason::establishes_reach`] so the classifier's
+/// miss reasons and the verdict corpus read the same answer (#7531).
 pub(in crate::analysis) fn relation_establishes_reach(
     reason: RelationReason,
     owner_is_function: bool,
 ) -> bool {
-    match reason {
-        RelationReason::DirectOwnerCall
-        | RelationReason::HelperOwnerCall
-        | RelationReason::ReExportChainFollowed => true,
-        RelationReason::AssertionTargetAffinity => !owner_is_function,
-        RelationReason::SameTestFile
-        | RelationReason::SameModule
-        | RelationReason::OwnerNamedTest
-        | RelationReason::ImportPathAffinity
-        | RelationReason::FixtureOwnerAffinity
-        | RelationReason::WeakTokenSubstring
-        | RelationReason::SeamCalleeCall => false,
-    }
+    reason.establishes_reach(owner_is_function)
 }
 
-/// Relations that come from file or name proximity alone, with no captured
-/// call, helper chain, or assertion affinity tying the test to the owner.
+/// Relations that come from file or name proximity alone
+/// ([`RelationReason::is_proximity_only`]).
 pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
-    matches!(
-        reason,
-        RelationReason::SameTestFile
-            | RelationReason::SameModule
-            | RelationReason::WeakTokenSubstring
-    )
+    reason.is_proximity_only()
 }
 
 #[cfg(test)]
@@ -458,13 +442,40 @@ mod tests {
 
     #[test]
     fn included_doc_files_count_as_unseen_callers() {
-        assert!(includes_external_docs(
-            "#![doc = include_str!(\"../README.md\")]\npub fn a() {}"
-        ));
-        assert!(includes_external_docs("  #[doc = include_str!(\"x.md\")]"));
-        assert!(!includes_external_docs(
-            "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]"
-        ));
+        for (source, expected) in [
+            (
+                "#![doc = include_str!(\"../README.md\")]\npub fn a() {}",
+                true,
+            ),
+            ("#[doc = include_str!(\"x.md\")] fn a() {}", true),
+            ("#![doc =\n include_str ! (\"x.md\")\n]\nfn a() {}", true),
+            (
+                "#![doc = concat!(\"mean_\", \"latency(&[])\")] fn a() {}",
+                true,
+            ),
+            ("#![doc = env!(\"DOCS\")] fn a() {}", true),
+            (
+                "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"] fn a() {}",
+                false,
+            ),
+            (
+                "#[doc = \"x\"] const T: &str = include_str!(\"t.txt\");",
+                false,
+            ),
+            (
+                "#[doc = \"include_str! is described here\"] fn a() {}",
+                false,
+            ),
+        ] {
+            assert!(
+                crate::analysis::syntax::parse_clean_source_file(source).is_some(),
+                "{source}"
+            );
+            assert_eq!(includes_external_docs(source), expected, "{source}");
+        }
+        let malformed = "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]";
+        assert!(crate::analysis::syntax::parse_clean_source_file(malformed).is_none());
+        assert!(includes_external_docs(malformed));
     }
 
     #[test]

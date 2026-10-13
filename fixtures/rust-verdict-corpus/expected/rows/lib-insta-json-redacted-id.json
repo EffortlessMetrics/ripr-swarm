@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-insta-json-redacted-id",
+  "subject_id": "authored-lib-insta",
+  "origin": "authored",
+  "anchor": "src/lib.rs:44",
+  "behavior_family": "field_construction",
+  "test_shape": "insta_json_snapshot_redacted_field",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

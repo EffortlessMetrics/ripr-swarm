@@ -66,6 +66,10 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     owner_pin_syntax: super::OwnerPinSyntax,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
+    /// The analysis root that probe paths are joined onto, while index and
+    /// test paths stay relative to it (#6791). `None` when the caller did not
+    /// name one; same-file matching then infers the changed file's path.
+    analysis_root: Option<std::path::PathBuf>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -125,6 +129,11 @@ impl RelatedTestCandidateIndex {
             {
                 push_index(&mut candidates.by_test_stem, stem, test_index);
             }
+            if let Some(stem) = module_stem(&test.file)
+                && cross_host_stem(&test.file).as_ref() != Some(&stem)
+            {
+                push_index(&mut candidates.by_test_stem, stem, test_index);
+            }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
 
@@ -139,6 +148,14 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    /// Record the root that probe paths are joined onto, so same-file
+    /// matching strips it exactly instead of inferring the changed file from
+    /// indexed path tails (#6791).
+    pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
+        self.analysis_root = Some(root.to_path_buf());
+        self
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -217,8 +234,16 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if let Some(probe_stem) = cross_host_stem(&probe.location.file)
-            && !probe_stem.is_empty()
+        // The raw stem and the module stem (`serialize` for `serialize/mod.rs`)
+        // both feed the prefilter, which only narrows and must stay a superset
+        // of what `find_related_tests` matches.
+        for probe_stem in [
+            cross_host_stem(&probe.location.file),
+            module_stem(&probe.location.file),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|stem| !stem.is_empty())
         {
             for stem in [
                 probe_stem.clone(),
@@ -232,10 +257,13 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if !file_name.is_empty()
-            && !extend_substring_bucket(&mut selected, &self.by_path_trigram, file_name.as_bytes())
-        {
-            scan_all = true;
+        let module_name = module_stem(&probe.location.file).unwrap_or_default();
+        for name in [&file_name, &module_name] {
+            if !name.is_empty()
+                && !extend_substring_bucket(&mut selected, &self.by_path_trigram, name.as_bytes())
+            {
+                scan_all = true;
+            }
         }
 
         for token in probe_tokens.iter().filter(|token| token.len() > 2) {
@@ -574,7 +602,17 @@ fn find_related_tests_with_candidates<'a>(
     // whose captured calls name it relates weakly (SeamCalleeCall) even when
     // no name-affinity signal fires.
     let seam_callee = wrapper_seam_callee(probe);
-    let file_name = normalized_file_stem(&probe.location.file);
+    // Module identity, not the bare file stem: `serialize/mod.rs` is module
+    // `serialize`, and a crate root (`lib.rs`, `main.rs`) names no module, so
+    // `tokenizer/mod.rs` tests are not related to a `serialize/mod.rs` change
+    // through the shared stem `mod` (#5395).
+    let file_name = module_stem(&probe.location.file).unwrap_or_default();
+    let analysis_root = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.analysis_root.as_deref(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -661,6 +699,26 @@ fn find_related_tests_with_candidates<'a>(
                 .collect(),
         }
     };
+
+    // #6292/#6537: a module-level owner with same-named module-level rivals
+    // in its package is told apart by the call's spelled path. A test whose
+    // every call of the name settles on a rival relates through no signal.
+    let call_identity = owner_fn
+        .filter(|_| indexed_same_name_ids.len() > 1)
+        .and_then(|owner| match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => super::OwnerCallIdentity::new(
+                owner,
+                candidate_index
+                    .function_indices(owner_name)
+                    .iter()
+                    .map(|&function_index| index.functions().at(function_index)),
+                index,
+            ),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => {
+                super::OwnerCallIdentity::new(owner, index.functions().iter(), index)
+            }
+        });
 
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
@@ -848,6 +906,15 @@ fn find_related_tests_with_candidates<'a>(
             })
         });
 
+        if calls_owner
+            && !calls_helper_entry
+            && call_identity.as_ref().is_some_and(|identity| {
+                identity.resolve_test(test, index) == super::CallTarget::Other
+            })
+        {
+            continue;
+        }
+
         // Token text discarded by a property macro cannot re-enter through
         // raw-body, test-name or file-name affinity. An independent ordinary
         // helper/seam route remains eligible and is judged by its usual owner.
@@ -922,7 +989,8 @@ fn find_related_tests_with_candidates<'a>(
             });
 
         let test_name = test.name.to_ascii_lowercase();
-        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        let same_test_file =
+            same_test_file(&probe.location.file, probe_path.as_deref(), &test.file);
         // Keep the broad path-token association available to callers, but do
         // not publish it as file identity.  A short source stem such as
         // `config` can occur in unrelated test paths (for example
@@ -1681,32 +1749,109 @@ fn strip_comments_and_strings(source: &str) -> String {
     out
 }
 
-/// Return whether `test_file` is the canonical companion test file for
-/// `probe_file`.  This intentionally mirrors the stronger test-grip
-/// authority: only the source stem itself and its `_test`/`_tests` variants
-/// count as file identity.  Paths are compared by stem, so host-specific
-/// separators do not affect the result.
-fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    // Merge resolution (#3545 x PR-3547): keep the PR's `cross_host_stem`
-    // authority — it normalizes both separator flavors (main's #3545 intent)
-    // AND fails closed on non-UTF-8 paths, where lossy conversion could
-    // collapse distinct names into one stem (#3545 review).  Keep main's
-    // empty-stem guard so degenerate stems never count as file identity.
-    let Some(probe_stem) = cross_host_stem(probe_file) else {
+/// Return whether `test_file` is the changed file itself or its canonical
+/// companion test file. `probe_path` is the changed file's root-relative
+/// path from [`probe_index_path`]. Companions compare Rust module identity
+/// ([`module_stem`]): the module's own name and its `_test`/`_tests`
+/// variants. The test-grip relation (`test_grip_evidence/related_tests.rs`)
+/// keys `SameTestFile` on the same module identity.
+fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path) -> bool {
+    // Inline tests in the changed file are its own tests, whatever the file is
+    // called. Non-UTF-8 paths fail closed (#3545): lossy conversion could fake
+    // a match.
+    let Some(test_text) = test_file.to_str() else {
         return false;
     };
-    if probe_stem.is_empty() {
-        return false;
+    if probe_path.is_some_and(|probe_path| {
+        !probe_path.is_empty() && normalize_path(Path::new(test_text)) == probe_path
+    }) {
+        return true;
     }
-    let Some(test_stem) = cross_host_stem(test_file) else {
+    // Compare module identity (#5395): `mod.rs` takes its directory's name and
+    // a crate root has none, so `serialize/mod.rs` and `tokenizer/mod.rs` (or
+    // two crates' `lib.rs`) no longer pair through a shared bare stem.
+    let (Some(probe_stem), Some(test_stem)) = (module_stem(probe_file), module_stem(test_file))
+    else {
         return false;
     };
-    if test_stem.is_empty() {
-        return false;
-    }
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
+}
+
+/// The changed file's path in the index's root-relative form (#6791).
+///
+/// Probe locations are joined onto the analysis root (`--root`), while index
+/// and test paths are root-relative. With the root known, stripping it is
+/// exact. Without it (callers that build their own candidate index), the
+/// changed file is inferred: the longest indexed
+/// path that the probe path ends with on a segment boundary; the owner's file
+/// counts as indexed. A shorter match is a different file that only shares a
+/// tail, such as the root crate's `src/lib.rs` for a member crate's
+/// `crates/a/src/lib.rs`. The owner's file is exact; without an owner this
+/// relies on the changed file being indexed. A changed file the workspace
+/// walk skips (an ignored directory such as `fixtures/`) is not indexed, and
+/// an ownerless probe in it can still resolve to a shorter indexed tail. A
+/// probe with no indexed tail keeps its own path, so it can only match a
+/// test path exactly. Non-UTF-8 paths fail closed (#3545).
+fn probe_index_path(
+    probe_file: &Path,
+    analysis_root: Option<&Path>,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+) -> Option<String> {
+    let probe_text = probe_file.to_str()?;
+    // The analysis root is exact: strip it and the rest is the changed
+    // file's root-relative path.
+    if let Some(relative) = analysis_root.and_then(|root| probe_file.strip_prefix(root).ok()) {
+        let relative = normalize_path(Path::new(relative.to_str()?));
+        if !relative.is_empty() {
+            return Some(relative);
+        }
+    }
+    let probe_path = normalize_path(Path::new(probe_text));
+    let owner_path = owner_fn
+        .and_then(|owner| owner.file.to_str())
+        .map(|file| normalize_path(Path::new(file)));
+    // Longest first: the whole path, then each tail after a `/`. One map
+    // lookup per path segment, not a scan of every indexed file.
+    let tails = std::iter::once(probe_path.as_str()).chain(
+        probe_path
+            .match_indices('/')
+            .map(|(slash, _)| &probe_path[slash + 1..]),
+    );
+    let mut tails = tails.filter(|tail| !tail.is_empty());
+    // The owner's file is the exact root-relative path, so it wins over an
+    // indexed tail that reaches into the root's own segments (root `app`
+    // holding both `src/main.rs` and a member `app/src/main.rs`).
+    if let Some(owner_path) = owner_path
+        && tails.clone().any(|tail| tail == owner_path)
+    {
+        return Some(owner_path);
+    }
+    let indexed = tails.find(|tail| index.files().get(Path::new(tail)).is_some());
+    Some(indexed.map_or_else(|| probe_path.clone(), str::to_string))
+}
+
+/// The Rust module a source path names: its file stem, except that `mod.rs`
+/// takes the name of its directory and a crate root (`lib.rs`, `main.rs`)
+/// names no module (#5395). `None` when no module identity exists, including
+/// non-UTF-8 paths, which fail closed like [`cross_host_stem`].
+pub(in crate::analysis) fn module_stem(path: &Path) -> Option<String> {
+    let stem = cross_host_stem(path)?;
+    match stem.as_str() {
+        "" | "lib" | "main" => None,
+        "mod" => {
+            let text = path.to_str()?.replace('\\', "/");
+            let mut parts = text.rsplit('/');
+            let _file = parts.next();
+            parts
+                .next()
+                .filter(|dir| !dir.is_empty() && *dir != "." && *dir != ".." && *dir != "src")
+                .map(str::to_string)
+        }
+        _ => Some(stem),
+    }
 }
 
 /// Extract the file stem on any host: split on both separator flavors
@@ -1726,7 +1871,7 @@ fn cross_host_stem(path: &Path) -> Option<String> {
     Some(stem.to_string())
 }
 
-fn normalize_path(path: &Path) -> String {
+pub(super) fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
@@ -1990,7 +2135,7 @@ fn normalized_file_stem(path: &Path) -> String {
 /// without a `crates/` segment) and the package guards in
 /// `find_related_tests`, which fail closed when both sides of a candidate
 /// relation are unscopable absolute paths.
-fn path_is_absolute_form(path: &Path) -> bool {
+pub(super) fn path_is_absolute_form(path: &Path) -> bool {
     let normalized = normalize_path(path);
     let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
     path.is_absolute() || normalized.starts_with('/') || has_drive_prefix
@@ -4042,6 +4187,7 @@ mod tests {
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4080,6 +4226,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4132,6 +4279,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -7672,6 +7820,255 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn mod_and_crate_root_stems_carry_module_identity_not_bare_stem() {
+        // #5395: `serialize/mod.rs` and `tokenizer/mod.rs` share only the stem
+        // `mod`; two crate roots share only `lib`.
+        // An empty index: the probe path stands for itself.
+        let index = RustIndex::default();
+        let same = |probe: &str, test: &str| {
+            let probe_path = super::probe_index_path(Path::new(probe), None, None, &index);
+            super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
+        };
+        assert!(!same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/tokenizer/mod.rs"
+        ));
+        assert!(!same("crates/a/src/lib.rs", "crates/b/src/lib.rs"));
+        assert!(!same("crates/a/src/main.rs", "crates/a/tests/main.rs"));
+        // `mod.rs` is its directory's module, so its companions still pair.
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/tests/serialize.rs"
+        ));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize_tests.rs"
+        ));
+        assert!(same("src/serialize.rs", "tests/serialize/mod.rs"));
+        // Inline tests in the changed file are its own, crate root included.
+        assert!(same("crates/a/src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize/mod.rs"
+        ));
+        // A path tail is not the same file: without an indexed path to
+        // resolve against, only an exact (normalized) path matches.
+        assert!(same("./src/lib.rs", "src/lib.rs"));
+        assert!(!same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
+        assert!(!same("crates/a/src/lib.rs", "src/lib.rs"));
+        // A root-relative probe never claims a member crate's crate root.
+        assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(!same("src/main.rs", "crates/x/src/main.rs"));
+        // An unnormalized `..` parent names no module.
+        assert!(!same("a/../mod.rs", "b/../mod.rs"));
+    }
+
+    #[test]
+    fn mod_rs_change_does_not_relate_another_modules_inline_tests() {
+        // #5395 (html5ever pin): a change in `serialize/mod.rs` listed the
+        // inline tests of `tokenizer/mod.rs` as `same_test_file`.
+        let owner = function("html5ever/src/serialize/mod.rs", "write_escaped");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "html5ever/src/tokenizer/mod.rs",
+                    "check_lines",
+                    "assert!(true);",
+                ),
+                test(
+                    "html5ever/src/serialize/mod.rs",
+                    "escapes_text",
+                    "assert!(true);",
+                ),
+                // The module's companion file relates by module identity,
+                // which only the candidate index's module-stem buckets
+                // select; the cfg(test) full-scan parity check fails if
+                // they are missing.
+                test(
+                    "html5ever/tests/serialize.rs",
+                    "companion_smoke",
+                    "assert!(true);",
+                ),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("html5ever/src/serialize/mod.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        let mut names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["companion_smoke", "escapes_text"]);
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
+    }
+
+    #[test]
+    fn root_prefixed_probe_resolves_to_its_indexed_path() {
+        // #6791: under `--root` the probe path is joined onto the root while
+        // index paths are root-relative. The changed file is the longest
+        // indexed tail, never a shorter one that a different file shares.
+        let mut index = RustIndex::default();
+        for file in ["src/lib.rs", "crates/a/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let resolve = |probe: &str| super::probe_index_path(Path::new(probe), None, None, &index);
+        assert_eq!(
+            resolve("ws/crates/a/src/lib.rs").as_deref(),
+            Some("crates/a/src/lib.rs")
+        );
+        assert_eq!(resolve("ws/src/lib.rs").as_deref(), Some("src/lib.rs"));
+        assert_eq!(resolve("./src/lib.rs").as_deref(), Some("src/lib.rs"));
+        // A tail that only shares characters, not a segment, is no match.
+        assert_eq!(resolve("ws/xsrc/lib.rs").as_deref(), Some("ws/xsrc/lib.rs"));
+        // The owner's file wins over a longer indexed tail that reaches into
+        // the root's own segments: under root `app`, the root package's
+        // `app/src/lib.rs` probe is not the member `app/src/lib.rs`.
+        let mut rooted = RustIndex::default();
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            rooted.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root_owner = function("src/lib.rs", "f");
+        assert_eq!(
+            super::probe_index_path(
+                Path::new("app/src/lib.rs"),
+                None,
+                Some(&root_owner),
+                &rooted
+            )
+            .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &rooted).as_deref(),
+            Some("app/src/lib.rs")
+        );
+        // No indexed tail: the probe keeps its own path.
+        assert_eq!(
+            resolve("ws/crates/b/src/main.rs").as_deref(),
+            Some("ws/crates/b/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn member_crate_root_change_does_not_claim_the_root_crates_inline_tests() {
+        // #6791: a module-level change (no owner function) in member crate
+        // `member/src/lib.rs` under an absolute root, as the editor sidecar
+        // passes, listed the workspace root crate's `src/lib.rs` inline
+        // tests as `same_test_file` because the probe path ends with
+        // `src/lib.rs`. An absolute path outside `crates/` derives no package
+        // prefix, so no package guard filters them.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("member/src/lib.rs", "own_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "member/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let mut probe = probe("/abs/ws/member/src/lib.rs", "marker");
+        probe.owner = None;
+
+        let related = find_related_tests(&probe, None, &index, true, None, None);
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["own_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
+    fn analysis_root_resolves_an_ownerless_probe_exactly() {
+        // #6791 review: under root `/tmp/app`, an ownerless change in the
+        // root package's `src/lib.rs` has the probe path `/tmp/app/src/lib.rs`,
+        // whose longer tail `app/src/lib.rs` is a member's file. Tail
+        // inference picks the member; the known root picks the right file.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("app/src/lib.rs", "member_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root = Path::new("/tmp/app");
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), Some(root), None, &index)
+                .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), None, None, &index)
+                .as_deref(),
+            Some("app/src/lib.rs")
+        );
+        // A relative root strips the same way: under `--root app` the root
+        // package's `app/src/lib.rs` is `src/lib.rs`, although the whole
+        // probe path is itself an indexed member path.
+        assert_eq!(
+            super::probe_index_path(
+                Path::new("app/src/lib.rs"),
+                Some(Path::new("app")),
+                None,
+                &index
+            )
+            .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &index).as_deref(),
+            Some("app/src/lib.rs")
+        );
+
+        let mut probe = probe("/tmp/app/src/lib.rs", "marker");
+        probe.owner = None;
+        let candidates = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &candidates,
+        );
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["root_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
     fn foreign_separator_probe_still_resolves_the_canonical_companion() {
         // The probe path was recorded with Windows separators; the stem
         // extraction must split on both flavors so `config_tests` stays a
@@ -7707,7 +8104,14 @@ fn crate_c_score_test() {
         let test_file = std::path::PathBuf::from(std::ffi::OsString::from_vec(
             b"crates/core/tests/foo\x81_tests.rs".to_vec(),
         ));
-        assert!(!super::same_test_file(&probe_file, &test_file));
+        let index = RustIndex::default();
+        let probe_path = super::probe_index_path(&probe_file, None, None, &index);
+        assert_eq!(probe_path, None);
+        assert!(!super::same_test_file(
+            &probe_file,
+            probe_path.as_deref(),
+            &test_file
+        ));
     }
 
     #[test]
@@ -9945,6 +10349,52 @@ quickcheck! {
             names.is_empty(),
             "opaque macros must not mint tests: {names:?}"
         );
+        Ok(())
+    }
+
+    /// #6537: two files each define `delay` and test it from their own
+    /// `mod tests { use super::*; .. }`. The coolers test's bare `delay(..)`
+    /// binds `coolers::delay`, so it neither relates to nor reaches the
+    /// changed `heaters::delay`; the heaters test still relates directly.
+    #[test]
+    fn a_sibling_files_same_named_function_test_does_not_relate() -> Result<(), String> {
+        let heaters = "pub fn delay(warm: bool) -> u32 {\n    if warm { 5 } else { 50 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn cold_delay() {\n        assert_eq!(delay(false), 50);\n    }\n}\n";
+        let coolers = heaters.replace("cold_delay", "warm_delay");
+        let mut functions = Vec::new();
+        let mut tests = Vec::new();
+        let mut files = std::collections::BTreeMap::new();
+        for (path, source) in [
+            ("src/heaters.rs", heaters),
+            ("src/coolers.rs", coolers.as_str()),
+        ] {
+            let facts =
+                crate::analysis::syntax::ra::summarize_file_with_parser(Path::new(path), source)
+                    .map_err(|error| error.to_string())?;
+            functions.extend(facts.functions.iter().cloned());
+            tests.extend(facts.tests.iter().cloned());
+            files.insert(PathBuf::from(path), facts);
+        }
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0 == "src/heaters.rs::delay")
+            .cloned()
+            .ok_or("heaters::delay owner")?;
+        let mut changed = probe("src/heaters.rs", "if warm { 5 } else { 50 }");
+        changed.owner = Some(owner.id.clone());
+
+        let related = find_related_tests(&changed, Some(&owner), &index, true, None, None);
+        let names = related
+            .iter()
+            .map(|(test, reason)| (test.name.as_str(), *reason))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![("cold_delay", RelationReason::DirectOwnerCall)]);
         Ok(())
     }
 

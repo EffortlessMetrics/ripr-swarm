@@ -1,0 +1,12 @@
+diff --git a/src/heaters.rs b/src/heaters.rs
+--- a/src/heaters.rs
++++ b/src/heaters.rs
+@@ -6,7 +6,7 @@
+ 
+ pub fn delay(mode: Mode) -> u32 {
+     match mode {
+-        Mode::Warm => 5,
++        Mode::Warm => 2 + 3,
+         Mode::Cold => 50,
+     }
+ }

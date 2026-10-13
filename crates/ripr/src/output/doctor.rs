@@ -1072,16 +1072,21 @@ pub(crate) enum RustToolchainScope {
 
 /// Decide whether the Rust toolchain checks apply to a root.
 ///
-/// `detected` is doctor's marker scan of the root (`Cargo.toml` or `.rs`
-/// files mark Rust) and `config` is the effective configuration, whose
-/// enabled set already includes Python auto-enablement from
-/// `config::load_for_root`. The rule stays fail-closed for Rust:
+/// `detected` is doctor's shallow marker scan of the root (`Cargo.toml` or
+/// `.rs` files at that root mark Rust). `cargo_manifest_found` is the
+/// cargo-only locator result (selected-root, git-bounded ancestor, or nested
+/// `Cargo.toml`). `config` is the effective configuration, whose enabled set
+/// already includes Python auto-enablement from `config::load_for_root`. The
+/// rule stays fail-closed for Rust:
 ///
 /// - an unloadable config keeps the checks required (the config check
 ///   already fails the report, and nothing proves Rust is out of scope);
 /// - Rust absent from the effective enabled set puts it out of scope;
 /// - detected Rust markers keep the checks required, so a Rust root without
 ///   `Cargo.toml` still fails;
+/// - a nested or ancestor Cargo.toml found by the locator also keeps the
+///   checks required, so a polyglot git root with `package.json` and
+///   `rust/Cargo.toml` does not skip `cargo_toml` (#7506);
 /// - otherwise Rust is enabled only by default or by an explicit list that
 ///   also names another language. When another language is detected or
 ///   enabled, the root is that language's project and Rust is out of scope;
@@ -1090,10 +1095,12 @@ pub(crate) enum RustToolchainScope {
 ///
 /// `enabled = ["rust", "<language>"]` is what doctor's own enablement tip
 /// and the preview docs tell users to write, so an explicit `rust` entry
-/// alone cannot mean the root is a Rust project.
+/// alone cannot mean the root is a Rust project. Nested-manifest discovery
+/// stays on the cargo locator; it is not folded into `detect_languages`.
 pub(crate) fn rust_toolchain_scope(
     config: &Result<RiprConfig, String>,
     detected: &[LanguageId],
+    cargo_manifest_found: bool,
 ) -> RustToolchainScope {
     let Ok(config) = config else {
         return RustToolchainScope::Required;
@@ -1102,7 +1109,7 @@ pub(crate) fn rust_toolchain_scope(
     if !enabled.contains(&LanguageId::Rust) {
         return RustToolchainScope::NotInScope("Rust is not enabled in [languages]".to_string());
     }
-    if detected.contains(&LanguageId::Rust) {
+    if detected.contains(&LanguageId::Rust) || cargo_manifest_found {
         return RustToolchainScope::Required;
     }
     let mut others: Vec<&'static str> = Vec::new();
@@ -1188,8 +1195,9 @@ fn probe_says_unborn(head_resolves: Option<bool>) -> bool {
 /// Evaluate the doctor core checks and also return the raw config load
 /// result, so the human-readable projection can print full local detail
 /// without going through the redacted JSON evidence. `detected` is the
-/// caller's marker scan of the root, used only to decide whether the Rust
-/// toolchain checks apply (see [`rust_toolchain_scope`]).
+/// caller's shallow marker scan of the root; [`rust_toolchain_scope`] also
+/// consults the cargo-only locator so a nested `Cargo.toml` keeps the
+/// toolchain checks required (#7506).
 #[cfg(test)]
 pub(crate) fn evaluate_doctor_core_with_config(
     root: &Path,
@@ -1450,7 +1458,8 @@ fn evaluate_doctor_core_with_probe_for_profile(
     let mut report = DoctorReport::new(&root.display().to_string());
     report.profile = profile;
     let config = load_for_root(root);
-    let rust_scope = rust_toolchain_scope(&config, detected);
+    let located = locate_cargo_toml(root);
+    let rust_scope = rust_toolchain_scope(&config, detected, located.is_some());
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
     report.add_check("root_directory", root_status, Some(root_evidence));
@@ -1460,7 +1469,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
         // #5252 item 3: a root that is not there cannot have a manifest;
         // fail only `root_directory` and skip here like the tool checks.
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
-    } else if let Some(found) = locate_cargo_toml(root) {
+    } else if let Some(found) = located {
         report.add_check(
             "cargo_toml",
             DoctorStatus::Pass,
@@ -3132,6 +3141,7 @@ mod tests {
                 ("src/textfmt/__init__.py", "def f():\n    return 1\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
         // Python auto-enablement keeps the default `rust` entry, so the skip
@@ -3155,6 +3165,29 @@ mod tests {
                 ("package.json", "{}\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_rust_toolchain_skipped(&report, &probed, "Rust is not enabled in [languages]")
+    }
+
+    /// #7506: disabling Rust still skips even when the locator would name a
+    /// nested workspace. The enabled-set veto is not overridden.
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn nested_workspace_does_not_override_rust_disabled_in_languages() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-typescript-nested-rust-disabled",
+            &[
+                (
+                    CONFIG_FILE_NAME,
+                    "[languages]\nenabled = [\"typescript\"]\n",
+                ),
+                ("package.json", "{}\n"),
+                ("rust/Cargo.toml", "[workspace]\nmembers = []\n"),
+            ],
+        )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
         let _ = std::fs::remove_dir_all(&root);
         assert_rust_toolchain_skipped(&report, &probed, "Rust is not enabled in [languages]")
@@ -3177,6 +3210,7 @@ mod tests {
                 ("package.json", "{}\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
         let _ = std::fs::remove_dir_all(&root);
         assert_rust_toolchain_skipped(&report, &probed, "in scope: typescript")
@@ -3603,6 +3637,45 @@ mod tests {
         )
     }
 
+    /// #7506: a TypeScript marker at the git root must not skip `cargo_toml`
+    /// when the cargo-only locator can name `rust/Cargo.toml`. `detected`
+    /// is the shallow scan (`package.json` only); the locator, not
+    /// `detect_languages`, keeps the check required.
+    #[test]
+    fn polyglot_git_root_with_typescript_and_nested_workspace_keeps_cargo_toml_required()
+    -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-polyglot-ts-nested-workspace",
+            &[
+                ("package.json", "{\"name\": \"site\"}\n"),
+                ("README.md", "docs\n"),
+                ("rust/Cargo.toml", "[workspace]\nmembers = [\"crates/x\"]\n"),
+                (
+                    "rust/crates/x/Cargo.toml",
+                    "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+                ),
+                ("rust/crates/x/src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_cargo_toml_pass(
+            &report,
+            &format!(
+                "Cargo.toml found at {} via workspace root {}",
+                human_path(Path::new("rust/Cargo.toml")),
+                human_path(Path::new("rust"))
+            ),
+        )?;
+        if probed != ["git", "cargo", "rustc"] {
+            return Err(format!(
+                "nested Cargo.toml must keep cargo/rustc in scope, probed {probed:?}"
+            ));
+        }
+        Ok(())
+    }
+
     /// A nested package-only crate (no `[workspace]`) is still a Cargo
     /// project `check` would analyze from the git root.
     #[test]
@@ -3901,7 +3974,7 @@ mod tests {
     fn unloadable_config_keeps_rust_toolchain_required() {
         let config: Result<RiprConfig, String> = Err("invalid ripr.toml".to_string());
         assert_eq!(
-            rust_toolchain_scope(&config, &[LanguageId::TypeScript]),
+            rust_toolchain_scope(&config, &[LanguageId::TypeScript], false),
             RustToolchainScope::Required
         );
     }

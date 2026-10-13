@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "struct_literal_return",
   "test_shape": "assert_ne_struct_literal",
-  "hard_case": "Measured defect: ripr reports whole_object_equality / strong; the spec adopts whole_object_equality / weak (rule 1). The return_value finding reads exposed although truth is partial, and the field_construction finding reads weakly_exposed.",
+  "hard_case": "Measured defect at labeling: ripr reported whole_object_equality / strong; the spec adopts whole_object_equality / weak (rule 1). The return_value finding read exposed although truth is partial, and the field_construction finding read weakly_exposed. Since #6670 the classifier keeps the struct inequality weak and no probe-family override lifts it, so both findings read weakly_exposed.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
@@ -51,5 +51,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#14"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "whole_object_equality",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#14"
+  }
 }

@@ -1,0 +1,150 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_adversarial_replaced_block_non_delta_operand/input",
+  "config_path": "<cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:78e7d39663b13ef0b922e5a045d879016a33d1f9984ac2b52feb05a05f5d0151","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":4,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_account.py:python_preview:c7d70a2d",
+      "canonical_gap_id": "gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance",
+        "language": "python",
+        "file": "src/account.py",
+        "owner": "Account.balance",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "max_0_self._balance"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_account.py:python_preview:c7d70a2d",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/account.py",
+        "line": 7,
+        "expression": "        return max(0, self._balance)",
+        "owner": "python:src/account.py::Account.balance"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `balance`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return max(0, self._balance)`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `balance`", "infection yes: Changed Python return expression can alter the owner return value: `return max(0, self._balance)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return max(0, self._balance) (line 7)", "related test tests/test_account.py:4 test_balance_starts_at_the_opening_amount uses strong exact value oracle: assert account._balance == 100", "missing discriminator return value == <expected value>: changed Python returned-value at line 7 lacks a concrete repair discriminator"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return max(0, self._balance)","line":7}
+      ],
+      "evidence": ["owner: Account.balance", "owner_kind: method", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_account.py", "suggested_test_name: test_balance_starts_at_the_opening_amount", "suggested_test_node_id: tests/test_account.py::test_balance_starts_at_the_opening_amount", "suggested_verify_command: python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_balance_starts_at_the_opening_amount)", "test_verify_command: python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount (test_balance_starts_at_the_opening_amount)", "related_test_relation: syntactic_call (test_balance_starts_at_the_opening_amount)", "test_oracle: exact_value strong (test_balance_starts_at_the_opening_amount)", "test_oracle_shape: field_assertion (test_balance_starts_at_the_opening_amount)"],
+      "missing": ["A strong Python oracle reaches `balance`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "return value == <expected value>",
+            "reason": "changed Python returned-value at line 7 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"return_value","text":"return max(0, self._balance)","line":7}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "return value == <expected value>",
+          "reason": "changed Python returned-value at line 7 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"return_value","text":"return max(0, self._balance)","line":7}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_balance_starts_at_the_opening_amount",
+          "file": "tests/test_account.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert account._balance == 100"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_account.py",
+        "suggested_test_name": "test_balance_starts_at_the_opening_amount",
+        "suggested_test_node_id": "tests/test_account.py::test_balance_starts_at_the_opening_amount",
+        "verify_command": "python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "Account.balance",
+        "changed_behavior": "return_value changed at src/account.py:7: `return max(0, self._balance)`",
+        "current_test_evidence": "tests/test_account.py:4 test_balance_starts_at_the_opening_amount currently has oracle_strength=strong, oracle_kind=exact_value: assert account._balance == 100",
+        "missing_discriminator": "return value == <expected value>",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_account.py",
+          "test_name": "test_balance_starts_at_the_opening_amount",
+          "pytest_node_id": "tests/test_account.py::test_balance_starts_at_the_opening_amount"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_account.py::test_balance_starts_at_the_opening_amount",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "changed_sink": "max, _balance",
+      "observed_sink": "assert account._balance == 100",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/account.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/account.py","digest":"sha256:4381425824c3503225033bbf0426ba5fe110b92c6cf3ec97df9a7eaa36e78402"},{"path":"tests/test_account.py","digest":"sha256:3c5c1d37b2b93b48b73cd3a9ca78b45462badd715e6da7a4388ad71bfed24981"}]}
+}

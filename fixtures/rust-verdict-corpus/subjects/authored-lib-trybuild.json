@@ -1,0 +1,45 @@
+{
+  "subject_id": "authored-lib-trybuild",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against trybuild 1.0.121 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "9d9e5aee92546df226ccd9601e40a02c37ce4f35b09232e57564b4240dd36e92"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "cb34464f71a968008254e2ef48dfb1a893e069cb65c75c568ca82cc810b68abc"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "7f8b2d7e6fb3d7cf4f184069f583a5d93da3aabada4143320cb4d6839708c8b3"
+    },
+    {
+      "path": "tests/ui.rs",
+      "sha256": "aa9e3239d29f97aa3de50dbc665d795932191f912d362adb5d1d80c559bf8ffd"
+    },
+    {
+      "path": "tests/ui/fail_frame_len.rs",
+      "sha256": "0842bb3afa9ba9dd48b0a6a38abafe75752cfc21fe17f3a849e7c6de0393886a"
+    },
+    {
+      "path": "tests/ui/fail_frame_len.stderr",
+      "sha256": "6a9d5cefd5a40a1aad6a0eccfd646a9922a5761cc258e66894a502bf3df54b32"
+    },
+    {
+      "path": "tests/ui/fail_port_type.rs",
+      "sha256": "c6408447a06cb5dd7af6b0e7548d586bea4bb07b725ad6c09c991d49453889b6"
+    },
+    {
+      "path": "tests/ui/fail_port_type.stderr",
+      "sha256": "58b9518112269501d1db0f1c5a766e663e6a3a4f727aee4f6313313266655079"
+    },
+    {
+      "path": "tests/ui/pass_parity.rs",
+      "sha256": "6c81a18c8c2cfe47144187c5e8e009e5f8172e0b600971f6fa5281734b7ede2d"
+    }
+  ]
+}

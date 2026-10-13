@@ -54,17 +54,12 @@ surviving limits before selecting the next transition.
 
 A bounded worker finishing its phase returns an obligation, not parent
 completion. The delivery owner verifies its evidence and takes the next useful
-authorized transition, or assigns it through an available worker. Before handback
-or a remote-owned wait, retain in the existing issue/PR: claim and exact head,
-observed proof/review with artifact links, unmet acceptance, next action and its
-owner, and the actual prerequisite/capability/authorization boundary if any.
-For pending commands, include the original task/driver handle and exact log/report
-paths; keep an unobserved native terminal result distinct from a pass report.
-When native writes are unavailable, use the existing task return and name the
-capable owner needed to mirror it; do not invent access or stop available proof.
-Keep that record current instead of relying on the long briefing or adding a
-tracker. A fresh worker reads those native objects and enters the earliest
-missing judgment. If no executable transition remains, name who/what can resume;
+authorized transition, or assigns it through an available worker. At handback
+or a remote-owned wait, update the existing issue/PR using the shared
+[PR-native continuation record](../../../docs/PR_AUTOMATION.md#pr-native-continuation-record).
+Keep the exact candidate, evidence, dependency, owner and resume condition there;
+a fresh worker enters the earliest missing judgment without a long briefing or
+another tracker. If no executable transition remains, name who/what can resume;
 do not imply an unarranged worker or background watch will do it.
 
 Use the [paired continuation scenarios](../../../docs/agent-context/delivery-continuation-scenarios.md)

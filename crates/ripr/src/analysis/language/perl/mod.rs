@@ -665,11 +665,32 @@ fn packet_to_findings_with_currentness(
         let concrete_discriminator = concrete_change_discriminator(change);
         let has_concrete_discriminator = concrete_discriminator.is_some();
 
+        // Advice must name an established direct call, not whichever advisory
+        // row the producer listed first (#6734). Prefer admitted exact evidence;
+        // stable identities break ties without raising any evidence strength.
+        let suggested_test = related_evidence
+            .iter()
+            .filter(|ev| {
+                ev.relation_kind.supports_positive_reachability()
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+            })
+            .min_by_key(|ev| {
+                (
+                    ev.class != ExposureClass::WeaklyExposed,
+                    &ev.test_id,
+                    &ev.relation_id,
+                )
+            });
+
         // Use the selected eligible oracle's assertion shape (the one actually
         // linked to this change), not a generic behavior-hint default.
-        let selected_assertion_shape = related_evidence
-            .iter()
-            .find_map(|ev| ev.oracle_shape.clone())
+        let selected_assertion_shape = suggested_test
+            .and_then(|selected| {
+                let oracle = packet.oracle(selected.oracle_id.as_deref()?)?;
+                (oracle.test_id == selected.test_id
+                    && oracle.target_owner_id.as_deref() == Some(change.owner_id.as_str()))
+                .then(|| oracle.kind.assertion_shape().to_string())
+            })
             .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string());
 
         // Canonical gap: only when a concrete discriminator exists, the packet
@@ -731,22 +752,21 @@ fn packet_to_findings_with_currentness(
         } else if !is_already_observed
             && !actionability_blocked
             && has_concrete_discriminator
-            && let Some(first) = related.first()
+            && let Some(selected) = suggested_test
         {
             evidence.push(format!(
                 "perl_suggested_test_location: {}::{}",
-                first.file.display(),
-                first.name
+                selected.test_path, selected.test_name
             ));
             evidence.push(format!(
                 "perl_suggested_assertion: {}",
                 change.behavior_hint.default_missing_discriminator()
             ));
         }
-        // Verify command: per-test, from the related evidence (already keyed by
-        // test_id). Never a global CommandScope::Test scan.
-        if let Some(first_ev) = related_evidence.first()
-            && let Some(argv) = first_ev.verify_command.as_ref()
+        // Verification belongs to the same selected test as the location.
+        // A missing command cannot be replaced by another row's command.
+        if let Some(selected) = suggested_test
+            && let Some(argv) = selected.verify_command.as_ref()
             && !argv.is_empty()
         {
             evidence.push(format!("perl_verify_command: {}", argv.join(" ")));
@@ -1523,7 +1543,10 @@ impl PerlFactPacket {
     fn verify_command_for_test(&self, test_id: &str) -> Option<&VerifyCommandFact> {
         self.verify_commands
             .iter()
-            .find(|command| command.test_id.as_deref() == Some(test_id))
+            .filter(|command| {
+                command.test_id.as_deref() == Some(test_id) && !command.argv.is_empty()
+            })
+            .min_by(|left, right| left.command_id.cmp(&right.command_id))
     }
 
     fn test(&self, test_id: &str) -> Option<&TestFact> {
@@ -1625,10 +1648,13 @@ impl PerlFactPacket {
             .iter()
             .find(|test| test.test_id == relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
+        // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
+        // relation, so it is neither classified nor displayed as its oracle.
         let oracle = relation
             .oracle_id
             .as_deref()
-            .and_then(|oracle_id| self.oracle(oracle_id));
+            .and_then(|oracle_id| self.oracle(oracle_id))
+            .filter(|oracle| oracle.test_id == relation.test_id);
         let verify_fact = self.verify_command_for_test(&test.test_id);
         let verify_command = verify_fact.map(|command| command.argv.clone());
         let owner = self.owner(&relation.owner_id);
@@ -3054,7 +3080,8 @@ fn perl_row_observation_unconfirmed(
 /// evidence:
 /// - the relation is a `DirectOwnerCall` with `Reachable` reachability (advisory
 ///   relations can never prove observation);
-/// - the linked oracle is strong-exact and targets the changed owner;
+/// - the linked oracle belongs to the relation's test, is strong-exact and
+///   targets the changed owner;
 /// - the oracle carries a non-empty `observed_sink`;
 /// - the change carries a non-empty `changed_observable`;
 /// - `observed_sink` and `changed_observable` refer to the same sink.
@@ -3094,6 +3121,11 @@ fn sink_aligned_observation(
             continue;
         };
         let oracle = packet.oracle(oracle_id)?;
+        // RIPR-SPEC-0235 rule 5: the oracle must belong to the relation's
+        // test, the same binding `classify_related_relation` uses.
+        if oracle.test_id != ev.test_id {
+            continue;
+        }
         // Strong-exact oracle targeting the changed owner.
         if !oracle.is_strong_exact() {
             continue;
@@ -3644,4 +3676,7 @@ mod tests;
 /// Packet-backed findings the output, LSP and MCP projection tests share
 /// (#5510).
 #[cfg(test)]
-pub(crate) use tests::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
+pub(crate) use tests::{
+    EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
+    with_concrete_discriminator,
+};

@@ -611,6 +611,116 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
     subject_names_collection(&subject, receiver)
 }
 
+/// The field path of a collection write on `self` (`log` for
+/// `self.log.push(x)`, `stock` for `self.stock.insert(k, v)`, `a.b` for
+/// `self.a.b.push(x)`). RIPR-SPEC-0228 extends the direct-collection
+/// observer to these receivers; any other expression gives `None`.
+pub(in crate::analysis) fn field_collection_write_path(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let rest = trimmed.strip_prefix("self.")?;
+    let (target, _) = rest.split_once('(')?;
+    let (path, method) = target.rsplit_once('.')?;
+    let path = path.trim();
+    (matches!(method.trim(), "push" | "insert")
+        && path.split('.').all(|segment| is_bare_ident(segment.trim())))
+    .then_some(path)
+}
+
+/// How an assertion's primary subject reads the field collection `path`:
+/// from the local binding `binding`, directly (`inv.log`, `inv.log[0]`,
+/// `inv.log.len()`) or through a method with no arguments
+/// (`inv.history()`), named in `getter`.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct FieldCollectionRead {
+    pub(in crate::analysis) binding: String,
+    pub(in crate::analysis) getter: Option<String>,
+}
+
+/// The reads of the field collection `path` by `assertion_text`'s compared
+/// sides: its primary subject (`assert_eq!(subject, ..)`, `assert!(subject)`)
+/// and, for `assert_eq!`, the second operand too, since either side may hold
+/// the actual value. A side that is not rooted at a local binding read of
+/// that field or of one argument-free method reads nothing. Neither does a
+/// side compared with an operand that names the same binding
+/// (`assert_eq!(o.entries(), o.entries())` cannot fail), nor, unless
+/// `count_reads`, a side that reads only how many elements there are
+/// (`.len()`, `.is_empty()`): a changed argument leaves that count alone.
+pub(in crate::analysis) fn assertion_field_collection_reads(
+    assertion_text: &str,
+    path: &str,
+    count_reads: bool,
+) -> Vec<FieldCollectionRead> {
+    let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
+        .into_iter()
+        .collect();
+    if let Some(payload) = macro_payload(assertion_text, "assert_eq") {
+        let payload = payload.trim_start();
+        if let Some(second) = subjects
+            .first()
+            .and_then(|first| payload.strip_prefix(first.as_str()))
+            .and_then(|rest| rest.trim_start().strip_prefix(','))
+            .and_then(first_call_argument)
+        {
+            subjects.push(second);
+        }
+    }
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
+        .filter_map(|(index, subject)| {
+            let read = subject_field_collection_read(subject, path)?;
+            let other = subjects
+                .get(1 - index.min(1))
+                .filter(|_| subjects.len() == 2);
+            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+        })
+        .collect()
+}
+
+/// Whether `subject` ends in a count of a collection (`.len()`,
+/// `.is_empty()`) rather than a read of its elements.
+fn reads_only_count(subject: &str) -> bool {
+    let compact: String = subject.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.ends_with(".len()") || compact.ends_with(".is_empty()")
+}
+
+/// Whether `text` names `ident` as a whole identifier outside comments and
+/// strings.
+fn names_ident(text: &str, ident: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldCollectionRead> {
+    let mut bare = subject.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let (binding, after) = bare.split_once('.')?;
+    if !is_bare_ident(binding) {
+        return None;
+    }
+    if subject_names_collection(bare, &format!("{binding}.{path}")) {
+        return Some(FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: None,
+        });
+    }
+    let method = collection_read_method(&format!(".{after}"))?.to_string();
+    let getter_call = format!("{binding}.{method}()");
+    subject_names_collection(bare, &getter_call).then(|| FieldCollectionRead {
+        binding: binding.to_string(),
+        getter: Some(method),
+    })
+}
+
 fn assertion_primary_subject(text: &str) -> Option<String> {
     let payload = macro_payload(text, "assert_eq")
         .or_else(|| macro_payload(text, "assert_ne"))
@@ -1749,6 +1859,83 @@ mod tests {
             alternate_limitations.compute_semantic_digest()
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: a collection write on a field path of `self` names
+    /// its field path; any other receiver or method does not.
+    #[test]
+    fn field_collection_write_path_reads_self_field_receivers() {
+        assert_eq!(
+            field_collection_write_path("self.log.push(x);"),
+            Some("log")
+        );
+        assert_eq!(
+            field_collection_write_path("self.stock.insert(sku.to_string(), n)"),
+            Some("stock")
+        );
+        assert_eq!(field_collection_write_path("self.a.b.push(x)"), Some("a.b"));
+        for other in [
+            "items.push(x)",
+            "self.log.extend(xs)",
+            "self.log.push",
+            "other.log.push(x)",
+            "self.log().push(x)",
+            "self.log[0].push(x)",
+        ] {
+            assert_eq!(field_collection_write_path(other), None, "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228: a compared side reads the field collection directly
+    /// or through one argument-free method; another field, another root, or a
+    /// computed value is not such a read.
+    #[test]
+    fn assertion_field_collection_reads_name_binding_and_getter() {
+        let direct = |binding: &str| {
+            vec![FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: None,
+            }]
+        };
+        let through = |binding: &str, getter: &str| {
+            vec![FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: Some(getter.to_string()),
+            }]
+        };
+        let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
+        assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
+        assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(inv.history(), &[1]);"),
+            through("inv", "history")
+        );
+        // Either side of an equality may hold the actual value.
+        assert_eq!(reads("assert_eq!(vec![1], inv.log);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(&[1], inv.history());"),
+            through("inv", "history")
+        );
+        for other in [
+            "assert_eq!(inv.logs, vec![1]);",
+            "assert_eq!(inv.at(0), 1);",
+            "assert_eq!(make().log, vec![1]);",
+            "assert_eq!(inv.history().first().copied().unwrap() + 1, 2);",
+            "assert_ne!(vec![1], inv.log);",
+            // Compared with itself, or with a value read from the same binding.
+            "assert_eq!(inv.history(), inv.history());",
+            "assert_eq!(inv.log, expected_for(&inv));",
+            // A count does not read a changed element.
+            "assert_eq!(inv.log.len(), 1);",
+            "assert!(inv.history().is_empty());",
+        ] {
+            assert!(reads(other).is_empty(), "{other}");
+        }
+        // A deleted write changes the count, so a count reads it.
+        assert_eq!(
+            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true),
+            direct("inv")
+        );
     }
 
     #[test]

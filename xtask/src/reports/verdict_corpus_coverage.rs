@@ -33,6 +33,9 @@ pub(crate) struct Ledger {
     /// listed so the limit stays visible, never counted.
     #[serde(default)]
     pub(crate) unmeasured: Vec<UnmeasuredSpec>,
+    /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
+    #[serde(default)]
+    pub(crate) oracle: Option<super::oracle::OracleGate>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -395,6 +398,9 @@ pub(crate) fn spec_example_coverage_for_corpus(
     let specs = scan_specs(&specs_dir_for_corpus(corpus_dir)?)?;
     let mut violations = super::validate(&corpus, corpus_dir);
     violations.extend(coverage_violations(&corpus, &ledger, &specs));
+    violations.extend(super::oracle::oracle_ledger_violations(
+        &corpus, &ledger, &specs,
+    ));
     if !violations.is_empty() {
         return Err(format!(
             "verdict corpus is invalid:\n- {}",
