@@ -343,3 +343,82 @@ describe.each([])((() => { test("dead title callback", () => { expect(loyaltyTie
     assert_eq!(finding.related_tests.len(), 0);
     Ok(())
 }
+
+#[test]
+fn empty_tables_disclose_only_executed_inline_title_functions() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let cases = [
+        (
+            "arrow-block",
+            r#"(() => { test("live arrow title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            true,
+        ),
+        (
+            "ordinary-function",
+            r#"(function () { test("live function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            true,
+        ),
+        (
+            "expression-arrow",
+            r#"(() => (test("live concise title", () => { expect(loyaltyTier(1000)).toBe("gold"); }), "dead suite"))()"#,
+            true,
+        ),
+        (
+            "generator-not-advanced",
+            r#"(function* () { test("dead generator title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            false,
+        ),
+        (
+            "returned-dormant-function",
+            r#"(() => (() => { test("dead returned function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }))()"#,
+            false,
+        ),
+        (
+            "uninvoked-dormant-function",
+            r#"(() => { test("dead uninvoked function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })"#,
+            false,
+        ),
+    ];
+    for (label, title, partial_warning) in cases {
+        let source = format!(
+            "import {{ test, describe, expect }} from \"vitest\";\n\
+             import {{ loyaltyTier }} from \"../src/tier\";\n\
+             describe.each([])({title}, () => {{ test(\"dead empty callback\", () => {{ expect(loyaltyTier(1000)).toBe(\"gold\"); }}); }});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 0, "{label}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert_eq!(gap.is_some(), partial_warning, "{label}");
+        if let Some(gap) = gap {
+            assert!(gap.snippet.contains("live"), "{label}: {}", gap.snippet);
+            assert!(!gap.snippet.contains("dead empty callback"), "{label}");
+        }
+        let root = ts_unique_tempdir(&format!("empty-table-iife-{label}"))?;
+        ts_write_file(&root.join("src/tier.ts"), TIER)?;
+        ts_write_file(&root.join("tests/tier.test.ts"), &source)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let result = result?;
+        let actual_partial = result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        });
+        assert_eq!(actual_partial, partial_warning, "{label}");
+        assert_eq!(result.findings.len(), 1, "{label}");
+        let finding = result
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == TIER_LINE.0)
+            .ok_or_else(|| format!("missing IIFE finding: {label}"))?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{label}");
+        assert_eq!(finding.ripr.reach.state, StageState::No, "{label}");
+        assert_eq!(finding.related_tests.len(), 0, "{label}");
+    }
+    Ok(())
+}

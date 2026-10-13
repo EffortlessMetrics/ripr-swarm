@@ -2723,8 +2723,8 @@ impl UnextractedTestFinder<'_> {
         self.visit_arguments(&call.arguments);
     }
 
-    /// Empty-table arguments still evaluate direct calls and comma operands;
-    /// creating a function value does not execute its body.
+    /// Empty-table arguments still evaluate calls and comma operands;
+    /// only an invoked non-generator function value executes its body.
     fn visit_empty_table_evaluated_expression(&mut self, expression: &Expression<'_>) {
         match runtime_expression(expression) {
             Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {}
@@ -2736,8 +2736,58 @@ impl UnextractedTestFinder<'_> {
                     }
                 }
             }
-            Expression::CallExpression(call) => self.visit_call(call, true),
+            Expression::CallExpression(call) => {
+                self.visit_call(call, true);
+                if self.gap.is_none() {
+                    match runtime_expression(&call.callee) {
+                        Expression::ArrowFunctionExpression(arrow) => {
+                            self.visit_empty_table_invoked_statements(&arrow.body.statements);
+                        }
+                        Expression::FunctionExpression(function) if !function.generator => {
+                            if let Some(body) = &function.body {
+                                self.visit_empty_table_invoked_statements(&body.statements);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             expression => self.visit_expression(expression, false),
+        }
+    }
+
+    /// Returning or storing a function value in an IIFE still leaves it dormant.
+    fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
+        for statement in statements {
+            if self.gap.is_some() {
+                return;
+            }
+            match statement {
+                Statement::ExpressionStatement(expression) => {
+                    self.visit_empty_table_evaluated_expression(&expression.expression);
+                }
+                Statement::ReturnStatement(returned) => {
+                    if let Some(argument) = &returned.argument {
+                        self.visit_empty_table_evaluated_expression(argument);
+                    }
+                    return;
+                }
+                Statement::VariableDeclaration(declaration) => {
+                    for declarator in &declaration.declarations {
+                        if let Some(initializer) = &declarator.init {
+                            self.visit_empty_table_evaluated_expression(initializer);
+                        }
+                        if self.gap.is_some() {
+                            return;
+                        }
+                    }
+                }
+                Statement::BlockStatement(block) => {
+                    self.visit_empty_table_invoked_statements(&block.body);
+                }
+                Statement::FunctionDeclaration(_) => {}
+                statement => self.visit_statement(statement),
+            }
         }
     }
 
