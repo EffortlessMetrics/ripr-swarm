@@ -6984,9 +6984,7 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
         let owner = index.functions().iter().find(|function| {
             function.name == "reading" && function.file == Path::new("meter/src/lib.rs")
         });
-        let Some(owner) = owner else {
-            return None;
-        };
+        let owner = owner?;
         let pin = OwnerReturnPin::establish(&return_probe(owner, "40 + 2"), owner, &index)?;
         let syntax = OwnerPinSyntax::default();
         let test = index.tests().at(0);
