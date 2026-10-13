@@ -351,6 +351,9 @@ the classifier read, when all of these hold:
   the `matches!`);
 - no foreign import, same-named function in the test's package, nested
   `fn` or local binding of the owner's name makes the call ambiguous;
+- no binding visible to the test (a `macro_rules!`, an import or a
+  `macro_use`) may rebind `assert!`, `assert_ne!` or `matches!`, and the
+  test's file and module chain pass the shared assertion-context gates;
 - the other operand, or the pattern, names the changed error's enum only
   through sibling variants.
 

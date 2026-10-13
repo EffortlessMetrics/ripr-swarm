@@ -649,6 +649,10 @@ fn spec_0231_sibling_inequality_off_the_owner_call_stays_refused() -> Result<(),
         "let _ = withdraw(1, 0);\n    let withdraw = |_: u64, _: u64| other;\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
         // So does a nested function.
         "let _ = withdraw(1, 0);\n    fn withdraw(_: u64, _: u64) -> Result<u64, PayError> { Ok(0) }\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        // A test-visible macro rebinding the assertion may check nothing.
+        "macro_rules! assert_ne { ($l:expr, $r:expr) => { let _ = ($l, $r); }; }\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        "macro_rules! assert { ($c:expr) => { let _ = $c; }; }\n    assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
+        "macro_rules! matches { ($v:expr, $p:pat) => { false }; }\n    assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
     ] {
         let (class, oracles) = sibling_exclusion_reading(assertion)?;
         assert_ne!(class, ExposureClass::WeaklyExposed, "{assertion}");

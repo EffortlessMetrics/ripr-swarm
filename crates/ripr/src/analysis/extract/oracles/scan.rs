@@ -2439,12 +2439,82 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
     if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
         return None;
     }
-    if !ends_with_unwrap_err(value) {
+    if !ends_with_unwrap_err(value) || !receiver_keeps_call_error(&masked) {
         return None;
     }
     let discarded =
         binding.is_none_or(|name| name.starts_with('_') || !references_whole_word(rest, name));
     discarded.then(|| value.to_string())
+}
+
+/// Whether `.unwrap_err()` reads the error side of the statement's first
+/// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
+/// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
+/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+fn receiver_keeps_call_error(masked: &str) -> bool {
+    const KEEPS_OK: &[&str] = &[
+        "as_deref",
+        "as_mut",
+        "as_ref",
+        "cloned",
+        "copied",
+        "inspect",
+        "inspect_err",
+        "map",
+        "map_err",
+    ];
+    let Some(receiver) = masked.trim_end().strip_suffix(".unwrap_err()") else {
+        return false;
+    };
+    let Some(open) = receiver.find('(') else {
+        return false;
+    };
+    let Some(mut rest) = balanced_group_end(receiver, open).map(|close| &receiver[close + 1..])
+    else {
+        return false;
+    };
+    loop {
+        let rest_trimmed = rest.trim_start();
+        if rest_trimmed.is_empty() {
+            return true;
+        }
+        let Some(segment) = rest_trimmed.strip_prefix('.') else {
+            return false;
+        };
+        let segment = segment.trim_start();
+        let name_len = segment.bytes().take_while(|b| is_ident_byte(*b)).count();
+        let (name, after) = segment.split_at(name_len);
+        if name == "await" {
+            rest = after;
+            continue;
+        }
+        let after = after.trim_start();
+        if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
+            return false;
+        }
+        let Some(close) = balanced_group_end(after, 0) else {
+            return false;
+        };
+        rest = &after[close + 1..];
+    }
+}
+
+/// The byte index of the `)` closing the `(` at `open`.
+fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0_i64;
+    for (index, byte) in text.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn delimiters_balance(masked: &str) -> bool {

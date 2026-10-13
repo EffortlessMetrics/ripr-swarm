@@ -1495,6 +1495,29 @@ fn ok_literal() {
                 "let e = check(\n        300,\n    ).unwrap_err();\n    assert_eq!(e, E::TooLong);",
                 vec![(ExactErrorVariant, Strong)],
             ),
+            // An `Ok` the adapter turns into `Err` passes whatever the call
+            // returned; only adapters that keep an `Ok` an `Ok` may sit
+            // between the call and `unwrap_err()`.
+            (
+                "fallback_error",
+                "check(300).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "option_converted",
+                "let _e = find(3).ok_or(E::Missing).unwrap_err();",
+                vec![],
+            ),
+            (
+                "error_mapped",
+                "check(300).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "method_receiver",
+                "svc.check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
         ];
         let mut source = String::new();
         for (name, body, expected) in &cases {

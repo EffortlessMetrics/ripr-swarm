@@ -102,7 +102,11 @@ or `Err` (or `Some` or `None`):
 - `assert!(r.is_err())`, `assert!(r.is_ok())`, `assert!(!r.is_ok())` and the
   `Option` twins;
 - `assert!(matches!(r, Err(_)))`, `assert!(matches!(r, Ok(_)))`;
-- `r.unwrap_err()` or `r.expect_err(..)` whose value is never compared;
+- `r.unwrap_err()` or `r.expect_err(..)` whose value is never compared,
+  read directly off the call's result: only adapters that keep an `Ok` an
+  `Ok` (`map_err`, `map`, `as_ref`, `.await`) may sit between them, so
+  `check(x).and(Err(E::Other)).unwrap_err()` or `x.ok_or(E).unwrap_err()`
+  reads nothing;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
 - `#[should_panic]` without `expected`, only when unwrapping the owner result
   with `unwrap()` or `expect()` is the sole possible panic source on the
