@@ -1533,11 +1533,19 @@ fn missing_field_value_discriminator(
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
     let pushed_into = owner_fn.and_then(|owner| {
+        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+            .and_then(|call| call.impl_type());
         super::propagation_witness::pushed_literal_collection_path(
             owner.body.as_str(),
             owner.start_line,
             probe.location.line,
             &probe.expression,
+            &|method| {
+                impl_type.and_then(|impl_type| {
+                    super::builder_override::inherent_method_body(index, impl_type, method)
+                        .map(str::to_string)
+                })
+            },
         )
         .map(|path| (owner, path))
     });

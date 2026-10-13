@@ -593,6 +593,27 @@ pub(in crate::analysis) fn setter_plainly_writes(
     stores
 }
 
+/// The body of the one non-test inherent method `name` on `impl_type`.
+/// `None` when there is none, several, or only a trait impl's: a trait
+/// method may be another impl's body at the call site.
+pub(in crate::analysis) fn inherent_method_body<'a>(
+    index: &'a RustIndex,
+    impl_type: &str,
+    name: &str,
+) -> Option<&'a str> {
+    let mut candidates = index.functions().iter().filter(|function| {
+        function.name == name
+            && !function.source_role.is_evidence_role()
+            && !function.id.0.contains(" for ")
+            && OwnerCall::from_symbol(&function.id.0)
+                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+    });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+        return None;
+    };
+    Some(function.body.as_str())
+}
+
 /// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
 /// takes only `&self` and its body is one tail expression returning the field
 /// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
@@ -607,19 +628,10 @@ pub(in crate::analysis) fn getter_plainly_reads(
     getter: &str,
     field: &str,
 ) -> bool {
-    let mut candidates = index.functions().iter().filter(|function| {
-        function.name == getter
-            && !function.source_role.is_evidence_role()
-            // An inherent method only: a trait method may be another
-            // impl's body at the call site.
-            && !function.id.0.contains(" for ")
-            && OwnerCall::from_symbol(&function.id.0)
-                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
-    });
-    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+    let Some(body) = inherent_method_body(index, impl_type, getter) else {
         return false;
     };
-    let Some(parse) = parse_clean_source_file(&function.body) else {
+    let Some(parse) = parse_clean_source_file(body) else {
         return false;
     };
     let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {

@@ -309,14 +309,22 @@ changes `self.count += 2` to `self.count += 1`.
   credited (#7131): `pushed_literal_collection_path` and
   `assertion_whole_collection_equality` in `propagation_witness.rs`,
   `pushed_collection_compared_whole` in `activation.rs`. The literal must be
-  the whole argument of `self.<path>.push(..)`, and nothing later in the
-  owner body may touch `self.<path>` except another `push`. The assertion
-  must be an `assert_eq!` whose one operand is the whole collection
-  (`inv.log`, `inv.history()`, optionally borrowed) read after the owner
-  call as above, and whose other operand does not name that binding.
-  Projections (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`,
-  literals built in a local and pushed later, `insert` and callee writes are
-  not credited and keep the missing field-value fact.
+  the whole argument of `self.<path>.push(..)`, the push a top-level
+  statement of the owner body (not in a branch, loop, block or closure),
+  and the changed initializer must occur once on its line. Nothing later in
+  the owner body may write the field: a use of `self.<path>` other than
+  another `push`, a bare `self` (`*self = ..`, `reset(self)`), or a call
+  `self.m(..)` whose inherent body, followed through further `self` calls,
+  may do so; an unresolved method counts as a write. The assertion must be
+  an `assert_eq!` whose one operand is the whole collection (`inv.log`,
+  `inv.history()`, optionally borrowed) read after the owner call as above,
+  and whose other operand does not name that binding. Projections
+  (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`, literals built in
+  a local and pushed later, `insert`, and a push preceded by another
+  statement on its line are not credited and keep the missing field-value
+  fact. A custom `PartialEq` on the element that ignores the changed field
+  is not detected: whole-value equality is taken to compare every field, as
+  for RIPR-SPEC-0225 whole-value credit.
 - Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
   their corpus cases read `static_unknown`.
 

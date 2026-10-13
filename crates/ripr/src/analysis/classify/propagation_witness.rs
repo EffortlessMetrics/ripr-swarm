@@ -697,16 +697,24 @@ fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldColle
 
 /// #7131: the field path `self.<path>` whose `push` takes, as its whole
 /// argument, the struct or enum literal that encloses `expression` on `line`
-/// of `body` (the owner body, starting at `start_line`):
+/// of `body` (the owner body, from its `fn`, starting at `start_line`):
 /// `self.log.push(Event::Shipped { sku: sku.to_owned(), qty })` gives `log`
-/// for `sku: sku.to_owned()`. Any other placement gives `None`, and so does
-/// a later write to the field in the same body other than another `push`,
-/// since that write could undo the pushed element before a test reads it.
+/// for `sku: sku.to_owned()`. Any other placement gives `None`, and so do:
+/// - an `expression` that occurs twice on its line, since the probe could be
+///   either one;
+/// - a push that is not a top-level statement of the body (inside a branch,
+///   loop, block or closure), which a test may never run;
+/// - anything later in the body that may write the field again: a use of
+///   `self.<path>` other than another `push`, a bare `self`, or a call
+///   `self.m(..)` whose body (from `method_body`, through further `self`
+///   calls) may do so. A method `method_body` cannot resolve counts as a
+///   write.
 pub(in crate::analysis) fn pushed_literal_collection_path(
     body: &str,
     start_line: usize,
     line: usize,
     expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let line_start = masked
@@ -715,7 +723,11 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
         .map(str::len)
         .sum::<usize>();
     let line_text = body.get(line_start..)?.lines().next()?;
-    let probe_at = line_start + line_text.find(expression.trim())?;
+    let expression = expression.trim();
+    if expression.is_empty() || line_text.matches(expression).count() != 1 {
+        return None;
+    }
+    let probe_at = line_start + line_text.find(expression)?;
     // The group opened at `from` must close after the probe: a net count of
     // delimiters would let a later `Ok(` hold an already closed `push(` open.
     let encloses_probe = |from: usize, open: char, close: char| {
@@ -726,7 +738,7 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
         .rmatch_indices(".push(")
         .find_map(|(at, call)| {
             let paren = at + call.len() - 1;
-            if !encloses_probe(paren, '(', ')') {
+            if !encloses_probe(paren, '(', ')') || !top_level_statement(&masked, at) {
                 return None;
             }
             let argument = &masked[paren + 1..];
@@ -750,19 +762,67 @@ pub(in crate::analysis) fn pushed_literal_collection_path(
             let call_line_start = masked[..at].rfind('\n').map_or(0, |index| index + 1);
             let path = field_collection_write_path(body.get(call_line_start..=paren)?)?;
             let call_end = masked.len() - after_literal.len();
-            let receiver = format!("self.{path}");
-            let later_write = masked[call_end..]
-                .match_indices(&receiver)
-                .any(|(index, matched)| {
-                    let rest = &masked[call_end + index + matched.len()..];
-                    !rest.starts_with(".push(")
-                        && !rest
-                            .chars()
-                            .next()
-                            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                });
-            (!later_write).then(|| path.to_string())
+            let mut visited = Vec::new();
+            (!may_write_field(&masked[call_end..], path, method_body, &mut visited))
+                .then(|| path.to_string())
         })
+}
+
+/// Whether the statement at `at` in a body (masked, from its `fn`) sits
+/// directly in the body's block, not in a nested block, branch, loop or
+/// closure.
+fn top_level_statement(masked: &str, at: usize) -> bool {
+    let before = &masked[..at];
+    let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
+    let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+    depth == 1 && !before[statement_start..].contains('|')
+}
+
+/// Whether masked `code` may write the field `self.<path>` other than by
+/// another `push`: see [`pushed_literal_collection_path`]. `visited` holds
+/// the `self` methods already followed, so recursion ends.
+fn may_write_field(
+    code: &str,
+    path: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+    visited: &mut Vec<String>,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let field = format!(".{path}");
+    code.match_indices("self").any(|(at, word)| {
+        let rest = &code[at + word.len()..];
+        if code[..at].chars().next_back().is_some_and(ident) || rest.starts_with(ident) {
+            return false;
+        }
+        if let Some(after) = rest.strip_prefix(field.as_str())
+            && !after.starts_with(ident)
+        {
+            return !after.starts_with(".push(");
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            // A bare `self`: passed on, reborrowed or assigned through.
+            return true;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        if name.is_empty() {
+            return true;
+        }
+        if !after.trim_start().starts_with('(') {
+            // Another field.
+            return false;
+        }
+        if visited.iter().any(|seen| seen == name) {
+            return false;
+        }
+        visited.push(name.to_string());
+        method_body(name).is_none_or(|callee| {
+            let masked = crate::analysis::extract::mask_comments_and_strings(&callee);
+            // The callee's own signature names `self`; scan its block only.
+            let block = masked.find('{').map_or("", |open| &masked[open..]);
+            may_write_field(block, path, method_body, visited)
+        })
+    })
 }
 
 /// The offset in `after_open` of the `close` that balances an `open` just
@@ -802,13 +862,7 @@ pub(in crate::analysis) fn assertion_whole_collection_equality(
         .into_iter()
         .find_map(|(side, other)| {
             let read = whole_collection_read(side, path)?;
-            let masked = crate::analysis::extract::mask_comments_and_strings(other);
-            let names_binding = masked.match_indices(read.binding.as_str()).any(|(at, name)| {
-                let ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-                !masked[..at].chars().next_back().is_some_and(ident)
-                    && !masked[at + name.len()..].chars().next().is_some_and(ident)
-            });
-            (!names_binding).then_some(read)
+            (!names_ident(other, &read.binding)).then_some(read)
         })
 }
 
@@ -826,7 +880,9 @@ fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> 
             getter: None,
         });
     }
-    let getter = after.strip_suffix("()").filter(|name| is_bare_ident(name))?;
+    let getter = after
+        .strip_suffix("()")
+        .filter(|name| is_bare_ident(name))?;
     Some(FieldCollectionRead {
         binding: binding.to_string(),
         getter: Some(getter.to_string()),
@@ -1946,22 +2002,99 @@ mod tests {
     #[test]
     fn pushed_literal_collection_path_needs_the_whole_pushed_literal() {
         let path = |body: &str, line: usize| {
-            pushed_literal_collection_path(body, 1, line, "sku: sku.to_owned()")
+            pushed_literal_collection_path(body, 1, line, "sku: sku.to_owned()", &|name| match name
+            {
+                "refresh" => {
+                    Some("fn refresh(&mut self) { self.flag = self.count() > 0; }".to_string())
+                }
+                "count" => Some("fn count(&self) -> usize { self.stock.len() }".to_string()),
+                "normalize" => Some(
+                    "fn normalize(&mut self) { for l in &mut self.log { l.sku.clear(); } }"
+                        .to_string(),
+                ),
+                "deep" => Some("fn deep(&mut self) { self.normalize(); }".to_string()),
+                _ => None,
+            })
         };
         let one_line = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: sku.to_owned(), qty });\n}";
         assert_eq!(path(one_line, 2).as_deref(), Some("log"));
         let split = "fn add(&mut self) {\n    self.a.b.push(Line {\n        sku: sku.to_owned(),\n        qty,\n    });\n    self.a.b.push(other);\n}";
         assert_eq!(path(split, 3).as_deref(), Some("a.b"));
+        // A later call that resolves to code leaving the field alone keeps it.
+        let refreshed = "fn ship(&mut self) {\n    self.log.push(Event { sku: sku.to_owned() });\n    self.refresh();\n    self.total += 1;\n}";
+        assert_eq!(path(refreshed, 2).as_deref(), Some("log"));
         for (body, line) in [
-            ("fn add(&mut self) {\n    let e = Line { sku: sku.to_owned() };\n    self.log.push(e);\n}", 2),
-            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }.clone());\n}", 2),
-            ("fn add(&mut self) {\n    items.push(Line { sku: sku.to_owned() });\n}", 2),
-            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log.clear();\n}", 2),
-            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log = Vec::new();\n}", 2),
-            ("fn add(&mut self) {\n    self.log.push(wrap(Line { sku: sku.to_owned() }));\n}", 2),
-            ("fn add(&mut self) {\n    self.log.push(x);\n    let l = Line { sku: sku.to_owned() };\n}", 3),
-            ("fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty });\n    Ok(Receipt {\n        sku: sku.to_owned(),\n    })\n}", 4),
-            ("fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty }); Ok(Receipt { sku: sku.to_owned() })\n}", 2),
+            (
+                "fn add(&mut self) {\n    let e = Line { sku: sku.to_owned() };\n    self.log.push(e);\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }.clone());\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    items.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log.clear();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log = Vec::new();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(wrap(Line { sku: sku.to_owned() }));\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(x);\n    let l = Line { sku: sku.to_owned() };\n}",
+                3,
+            ),
+            (
+                "fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty });\n    Ok(Receipt {\n        sku: sku.to_owned(),\n    })\n}",
+                4,
+            ),
+            (
+                "fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty }); Ok(Receipt { sku: sku.to_owned() })\n}",
+                2,
+            ),
+            // The expression twice on its line: the probe could be either.
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }); self.other.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            // A push that may not run.
+            (
+                "fn add(&mut self) {\n    if qty > 0 { self.log.push(Line { sku: sku.to_owned() }); }\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    let f = |s: &mut Self| s.log.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            // A later callee that writes the field, directly or through another call.
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.normalize();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.deep();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.unknown();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    *self = Self::default();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    reset(self);\n}",
+                2,
+            ),
         ] {
             assert_eq!(path(body, line), None, "{body}");
         }
