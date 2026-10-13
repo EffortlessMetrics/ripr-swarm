@@ -775,7 +775,9 @@ pub(crate) struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) spec_example_coverage: Option<SpecExampleCoverage>,
     /// Related-test oracle kind and strength against `expected_oracle`
-    /// labels. Kept apart from the verdict rates, never folded into them.
+    /// labels. Kept apart from the verdict rates, never folded into them;
+    /// omitted for a corpus with no labels.
+    #[serde(skip_serializing_if = "OracleAccuracy::is_unlabeled")]
     pub(crate) oracle_accuracy: OracleAccuracy,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
@@ -2647,7 +2649,8 @@ fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCo
 /// gate is skipped.
 fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
     let corpus = load_corpus(dir)?;
-    let violations = validate(&corpus, dir);
+    let mut violations = validate(&corpus, dir);
+    violations.extend(oracle::ungated_label_violations(&corpus, dir));
     if violations.is_empty() {
         Ok(corpus)
     } else {
@@ -3013,17 +3016,18 @@ fn score_loaded_corpus(
     refuse_any_expected_out(&out, dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
-    // Only a ledgered corpus can carry the `[oracle]` gate; a case subset
-    // reports the oracle rows but is never gated on whole-corpus counts.
-    if dir.join(coverage::LEDGER_FILE).is_file()
-        && let Some(gate) = coverage::load_ledger(dir)?.oracle
-    {
-        report.oracle_accuracy.ledger = coverage::ledger_label(dir);
-        if cases.is_none() {
-            report.oracle_accuracy.match_floor = Some(gate.match_floor);
-            report.oracle_accuracy.overclaim_ceiling = Some(gate.overclaim_ceiling);
-        }
-    }
+    // Only a ledgered corpus can carry the `[oracle]` gate.
+    let gate = if dir.join(coverage::LEDGER_FILE).is_file() {
+        coverage::load_ledger(dir)?.oracle
+    } else {
+        None
+    };
+    oracle::arm_gate(
+        &mut report.oracle_accuracy,
+        coverage::ledger_label(dir),
+        gate.as_ref(),
+        cases.is_some(),
+    );
     write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -3067,26 +3071,36 @@ fn score_loaded_corpus(
         return Ok(());
     }
     // The oracle gate needs ripr's output, so it runs after the report is
-    // written for the reader to inspect.
-    if let Some(note) = oracle::oracle_gate(accuracy)? {
-        println!("{note}");
-    }
+    // written for the reader to inspect. Its failure is reported with the
+    // row drift, never instead of it.
+    let gate_failure = match oracle::oracle_gate(accuracy) {
+        Ok(Some(note)) => {
+            println!("{note}");
+            None
+        }
+        Ok(None) => None,
+        Err(failure) => Some(failure),
+    };
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
-        return Ok(());
+        return gate_failure.map_or(Ok(()), Err);
     }
     let mut shown: Vec<String> = drift.iter().take(DRIFT_SHOWN).cloned().collect();
     if drift.len() > DRIFT_SHOWN {
         shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
     }
-    Err(format!(
+    let drift_failure = format!(
         "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless{}`) and state why each moved row changed in the PR.",
         normalize_path(&expected_dir),
         shown.join("\n- "),
         normalize_path(&out.join("report.md")),
         normalize_path(&expected_dir),
         language_flag(&corpus_language(dir)?)
-    ))
+    );
+    Err(match gate_failure {
+        Some(gate_failure) => format!("{gate_failure}\n{drift_failure}"),
+        None => drift_failure,
+    })
 }
 
 /// The `--language` argument a command for this corpus needs; empty for

@@ -44,7 +44,9 @@ pub(crate) struct ExpectedOracle {
     /// subject has one asserting test.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) test: Option<String>,
-    /// The spec acceptance example that states the value, `RIPR-SPEC-NNNN#K`.
+    /// The spec acceptance example the label measures, `RIPR-SPEC-NNNN#K`.
+    /// The example states the value or, where it states only the verdict,
+    /// the spec's rules fix it (RIPR-SPEC-0219 records each such reading).
     pub(crate) spec: String,
 }
 
@@ -315,6 +317,10 @@ pub(crate) struct OracleAccuracy {
 }
 
 impl OracleAccuracy {
+    pub(crate) fn is_unlabeled(&self) -> bool {
+        self.labeled == 0
+    }
+
     pub(crate) fn count(&self, outcome: OracleOutcome) -> usize {
         self.by_outcome
             .get(outcome.as_str())
@@ -335,6 +341,7 @@ pub(crate) fn oracle_accuracy(outcomes: impl IntoIterator<Item = OracleOutcome>)
     }
     let get = |o: OracleOutcome| by_outcome.get(o.as_str()).copied().unwrap_or_default();
     OracleAccuracy {
+        // `arm_gate` names the scored corpus's own ledger.
         ledger: format!("{CORPUS_DIR}/{LEDGER_FILE}"),
         labeled,
         oracle_accuracy: ratio(get(OracleOutcome::Match), labeled),
@@ -343,6 +350,40 @@ pub(crate) fn oracle_accuracy(outcomes: impl IntoIterator<Item = OracleOutcome>)
         match_floor: None,
         overclaim_ceiling: None,
     }
+}
+
+/// Name the scored corpus's ledger and, for a whole-corpus run with an
+/// `[oracle]` table, arm its floor and ceiling. A case subset reports its
+/// oracle rows but is never gated on whole-corpus counts.
+pub(crate) fn arm_gate(
+    accuracy: &mut OracleAccuracy,
+    ledger: String,
+    gate: Option<&OracleGate>,
+    subset: bool,
+) {
+    accuracy.ledger = ledger;
+    if let Some(gate) = gate.filter(|_| !subset) {
+        accuracy.match_floor = Some(gate.match_floor);
+        accuracy.overclaim_ceiling = Some(gate.overclaim_ceiling);
+    }
+}
+
+/// A corpus without a spec-coverage ledger has no `[oracle]` gate and no
+/// spec-example check, so a label there would be scored but never gated.
+/// Refuse it until the corpus opts into a ledger.
+pub(crate) fn ungated_label_violations(corpus: &Corpus, dir: &std::path::Path) -> Vec<String> {
+    corpus
+        .cases
+        .iter()
+        .filter(|case| case.expected_oracle.is_some())
+        .map(|case| {
+            format!(
+                "case `{}` carries expected_oracle but {} has no {LEDGER_FILE} to gate it; add the ledger with an [oracle] table or remove the label",
+                case.case_id,
+                crate::normalize_path(dir)
+            )
+        })
+        .collect()
 }
 
 /// The oracle gate. Fewer matches than the floor or more overclaims than

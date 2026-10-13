@@ -161,7 +161,9 @@ fn validation_rejects_unknown_kinds_strengths_and_malformed_labels() -> Result<(
     assert!(test.iter().any(|v| v.contains("test is present but empty")));
     // Unknown fields fail at parse time.
     let extra = labeled_case(|c| c["expected_oracle"]["strong"] = json!(true));
-    assert!(extra.is_err());
+    if extra.is_ok() {
+        return Err("an unknown expected_oracle field parsed".to_string());
+    }
     Ok(())
 }
 
@@ -330,7 +332,43 @@ fn committed_labels_are_valid_and_the_expected_report_meets_the_gate() -> Result
     let gate = ledger.oracle.ok_or("no [oracle] table")?;
     // The committed rows are the expected state; the summary derives from
     // them, so the gate must equal what they record.
-    let accuracy = expected_report(&dir)?.oracle_accuracy;
+    let report = expected_report(&dir)?;
+    // Each row must carry its case's label and the outcome its own observed
+    // entries score to, so a hand-edited row cannot satisfy the counts.
+    for case in &corpus.cases {
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.case_id == case.case_id)
+            .ok_or(format!("no row for {}", case.case_id))?;
+        match (&case.expected_oracle, &row.oracle) {
+            (None, None) => {}
+            (Some(label), Some(scored)) => {
+                assert_eq!(
+                    serde_json::to_value(label).map_err(|e| e.to_string())?,
+                    serde_json::to_value(&scored.expected).map_err(|e| e.to_string())?,
+                    "{}: the row's expected oracle is not the case label",
+                    case.case_id
+                );
+                let claim = claimed(&scored.observed_all, &label.kind);
+                assert_eq!(
+                    scored.outcome,
+                    classify(label, claim),
+                    "{}: the row's outcome is not what its observed entries score",
+                    case.case_id
+                );
+                assert_eq!(scored.observed_kind, claim.map(|c| c.kind.clone()));
+                assert_eq!(scored.observed_strength, claim.map(|c| c.strength.clone()));
+            }
+            _ => {
+                return Err(format!(
+                    "{}: label and row disagree on whether the case is scored",
+                    case.case_id
+                ));
+            }
+        }
+    }
+    let accuracy = report.oracle_accuracy;
     assert_eq!(
         accuracy.count(OracleOutcome::Match),
         gate.match_floor,
@@ -341,5 +379,69 @@ fn committed_labels_are_valid_and_the_expected_report_meets_the_gate() -> Result
         gate.overclaim_ceiling,
         "overclaim_ceiling is not the committed overclaim count"
     );
+    Ok(())
+}
+
+#[test]
+fn the_gate_arms_only_for_a_whole_corpus_run_with_an_oracle_table() {
+    let gate = OracleGate {
+        match_floor: 3,
+        overclaim_ceiling: 1,
+    };
+    let fresh = || oracle_accuracy([OracleOutcome::Match]);
+
+    let mut whole = fresh();
+    arm_gate(
+        &mut whole,
+        "fixtures/x/spec-coverage.toml".to_string(),
+        Some(&gate),
+        false,
+    );
+    assert_eq!(whole.ledger, "fixtures/x/spec-coverage.toml");
+    assert_eq!(
+        (whole.match_floor, whole.overclaim_ceiling),
+        (Some(3), Some(1))
+    );
+    // One match against a floor of three fails once armed.
+    let armed = oracle_gate(&whole);
+    assert!(
+        matches!(&armed, Err(failure) if failure.contains("below the floor 3")),
+        "{armed:?}"
+    );
+
+    let mut subset = fresh();
+    arm_gate(
+        &mut subset,
+        "fixtures/x/spec-coverage.toml".to_string(),
+        Some(&gate),
+        true,
+    );
+    assert_eq!((subset.match_floor, subset.overclaim_ceiling), (None, None));
+    assert_eq!(oracle_gate(&subset), Ok(None));
+
+    let mut tableless = fresh();
+    arm_gate(
+        &mut tableless,
+        "fixtures/y/spec-coverage.toml".to_string(),
+        None,
+        false,
+    );
+    assert_eq!(tableless.ledger, "fixtures/y/spec-coverage.toml");
+    assert_eq!(oracle_gate(&tableless), Ok(None));
+}
+
+#[test]
+fn a_corpus_without_a_ledger_refuses_oracle_labels() -> Result<(), String> {
+    let dir = repo_path(CORPUS_DIR);
+    let mut corpus = load_corpus(&dir)?;
+    assert!(
+        ungated_label_violations(&corpus, &dir)
+            .iter()
+            .any(|v| v.contains("has no spec-coverage.toml"))
+    );
+    for case in &mut corpus.cases {
+        case.expected_oracle = None;
+    }
+    assert!(ungated_label_violations(&corpus, &dir).is_empty());
     Ok(())
 }

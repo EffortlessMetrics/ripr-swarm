@@ -415,7 +415,10 @@ runs ripr, writes the report, then fails when matches fall below
 `match_floor` or overclaims rise above `overclaim_ceiling`, naming the fix;
 when matches rise or overclaims fall it passes and prints the tighter
 number to commit. A `--case` subset reports its oracle rows but is never
-gated on whole-corpus counts. The summary's `oracle_accuracy` is derived
+gated on whole-corpus counts. A corpus without `spec-coverage.toml` has
+nothing to gate a label with, so `validate` refuses `expected_oracle`
+there. When the gate and the row comparison both fail, `check` reports
+both. The summary's `oracle_accuracy` is derived
 from the committed rows, as the verdict rates are, so the scoreboard reads
 it without a committed summary file.
 
@@ -443,10 +446,12 @@ Decisions:
 - RIPR-SPEC-0231 labels: the 28 `spec0231-*` cases carry the value each
   acceptance example adopts; the "(unchanged)" controls expect today's
   value. Example 8 states only "not `mock_expectation`" for
-  `assert!(score(2).to_string().len() == 1 || is_present())`; with step 9
-  closed by rule 5, no earlier step admits it (today's reading proves steps
-  1 to 8 do not), steps 10 and 11 are for custom helpers, and step 12 reads
-  a bare `assert!` as `relational_check` / weak, so that is the label.
+  `assert!(is_present())`; with step 9 closed by rule 5, no earlier step
+  admits it (today's reading proves steps 1 to 8 do not), steps 10 to 12
+  are for custom helpers and `.any()` membership, and step 13 reads a bare
+  `assert!` as `relational_check` / weak, so that is the label. Like the
+  RIPR-SPEC-0227 labels below, its `spec` cites the example the label
+  measures; the spec's rules, not the example text, fix the value.
 - RIPR-SPEC-0227 labels: it states `is_err()` and `Err(_)` are
   `broad_error` / weak, and its decision 2 reads a bare `unwrap_err()` as a
   weak `Err`-side oracle. Labeled are the `is_err()`-only tests outside the
@@ -674,6 +679,8 @@ Oracle-accuracy tests live in
 - `gate_fails_below_the_floor_or_above_the_ceiling_and_invites_tightening`
 - `oracle_scores_stay_out_of_the_verdict_rates`
 - `committed_labels_are_valid_and_the_expected_report_meets_the_gate`
+- `the_gate_arms_only_for_a_whole_corpus_run_with_an_oracle_table`
+- `a_corpus_without_a_ledger_refuses_oracle_labels`
 
 ## Implementation Mapping
 
