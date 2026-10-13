@@ -135,6 +135,8 @@ impl AnalysisRecoveryKind {
             Self::IncreaseConfiguredLimit => "increase_configured_limit",
             Self::Retry => "retry",
             Self::InspectFailure => "inspect_failure",
+            Self::DeclareHandwrittenFiles => "declare_handwritten_files",
+            Self::RenameGeneratedMarkedSource => "rename_generated_marked_source",
         }
     }
 
@@ -798,6 +800,14 @@ mod tests {
             ),
             (AnalysisRecoveryKind::Retry, "retry"),
             (AnalysisRecoveryKind::InspectFailure, "inspect_failure"),
+            (
+                AnalysisRecoveryKind::DeclareHandwrittenFiles,
+                "declare_handwritten_files",
+            ),
+            (
+                AnalysisRecoveryKind::RenameGeneratedMarkedSource,
+                "rename_generated_marked_source",
+            ),
         ];
         for (recovery, expected) in recoveries {
             assert_eq!(recovery.as_str(), expected);
