@@ -1495,7 +1495,9 @@ mod tests {
         assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
         let mut other = probe_at(ProbeFamily::ReturnValue, "40 + 2", 2);
         other.owner = Some(SymbolId("owner:other".to_string()));
-        assert!(constant_tail_witness(&other, &owner, &[]).is_none());
+        let sinks = super::super::local_flow_sinks(&other, Some(&owner));
+        assert!(!sinks.is_empty());
+        assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
     }
 
     #[test]

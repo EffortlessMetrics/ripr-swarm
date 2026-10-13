@@ -813,7 +813,10 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    before any favorable receipt is constructed. Independence alone does not
    establish the right discriminator: owner `7` with expected `8` fails on the
    current source and passes after changing the owner to `8`. That inverted
-   oracle supplies no new observation credit or complete propagation witness.
+   oracle supplies no new observation credit and no receipt-bound propagation
+   witness. (Since #6617 the constant tail `7` completes its own propagation
+   witness under "Constant owner tails"; that settles propagation only and
+   grants this oracle nothing.)
    Value equality is checked only for this already source-bound literal pair;
    it is not token matching or credit for an unrelated equal number. The
    local's only references are its declaration and the whole left comparison operand.
@@ -876,7 +879,7 @@ Acceptance/control matrix:
 | Subject | Runtime with answer 8 | Required static result |
 | --- | --- | --- |
 | Frozen helper-exact, unchanged source/patch/manifest/lock | one test fails | answer `exposed`, complete digest-valid owner/value witness, no gap |
-| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or complete propagation witness |
+| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or receipt-bound propagation witness |
 | Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
 | Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
 | Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
@@ -944,7 +947,10 @@ statement anywhere in the body yields no witness (fail closed). The witness
 settles propagation only; relation, activation and oracle strength keep
 their own rules, so a weak oracle on a constant tail keeps its gap.
 `current_path_witness`, `semantic_tokens` and the rule-7a receipt are
-unchanged.
+unchanged. Rule 7a's refusal controls therefore check that a refused receipt
+grants no observation credit (`discriminate` is not `yes`) instead of reading
+propagation, which the rule-7a fixture's constant `u8` tail now establishes
+on its own.
 
 ### Same-named module-level functions (#6544)
 

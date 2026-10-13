@@ -143,23 +143,7 @@ fn weak_oracle_on_a_constant_owner_tail_keeps_its_gap() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn constant_that_is_not_the_whole_owner_body_gets_no_witness() -> Result<(), String> {
-    // Fail closed: a statement before the constant is outside the
-    // constant-tail shape (the unit tests cover names, calls, casts,
-    // closures, macros, blocks and branches).
-    for (owner, line, new, test) in [(
-        "pub fn answer() -> u32 {\n    let _unused = 1;\n    return 40 + 2;\n}",
-        3,
-        "return 40 + 2;",
-        "assert_eq!(answer(), 42);",
-    )] {
-        let finding = return_finding(owner, line, "42", new, test)?;
-        assert!(
-            !propagate_summary(&finding).contains(COMPLETE),
-            "{owner}: {finding}"
-        );
-        assert_ne!(finding["classification"], "exposed", "{owner}: {finding}");
-    }
-    Ok(())
-}
+// Shapes outside the constant tail (a preceding statement, names, calls,
+// casts, closures, macros, blocks, branches) never reach a `return_value`
+// probe whose text is the whole tail, so their refusals are pinned by the
+// unit tests on `constant_owner_tail_line` in `propagation_witness.rs`.
