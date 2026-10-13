@@ -4377,6 +4377,10 @@ fn gap_code_actions_omit_unsafe_related_paths_and_commands() -> Result<(), Strin
 }
 
 #[test]
+// #7460: the fixture's gap artifact carries `LanguageId::Python`, so it is a
+// safe projection input only when `lang-python` is compiled in; the same gate
+// as the other python-fixture gap code action tests.
+#[cfg(feature = "lang-python")]
 fn gap_code_actions_open_related_test_falls_back_to_anchor_line_when_target_line_is_omitted()
 -> Result<(), String> {
     // #7460: a ledger repair route that names a related test but omits
@@ -4443,6 +4447,8 @@ fn gap_code_actions_open_related_test_falls_back_to_anchor_line_when_target_line
 }
 
 #[test]
+// #7460: python-fixture gate, same reason as the fallback test above.
+#[cfg(feature = "lang-python")]
 fn gap_code_actions_omit_open_related_test_when_no_line_is_available() -> Result<(), String> {
     // #7460: when the repair route omits `target_line` and the gap record
     // also has no anchor line, drop the navigation action instead of
