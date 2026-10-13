@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2192590..63e6d52 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,7 +15,7 @@
+ }
+ 
+ pub fn kmh_to_ms(v: f64) -> f64 {
+-    v / 3.6
++    v / (36.0 / 10.0)
+ }
+ 
+ #[cfg(test)]

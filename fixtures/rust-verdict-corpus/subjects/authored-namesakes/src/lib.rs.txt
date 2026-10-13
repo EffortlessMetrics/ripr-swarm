@@ -1,0 +1,68 @@
+pub mod coolers;
+pub mod heaters;
+
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+pub mod celsius {
+    pub fn snap(v: u32) -> u32 {
+        (v + 5) / 10 * 10
+    }
+}
+
+pub mod fahrenheit {
+    pub fn snap(v: u32) -> u32 {
+        (v + 6) / 12 * 12
+    }
+}
+
+pub mod metric {
+    pub fn round(v: u32) -> u32 {
+        (v + 50) / 100 * 100
+    }
+}
+
+pub mod imperial {
+    pub fn round(v: u32) -> u32 {
+        (v + 6) / 12 * 12
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doubles_two() {
+        assert_eq!(b::render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::celsius::snap;
+
+    #[test]
+    fn snap_seventeen_to_twenty() {
+        assert_eq!(snap(17), 20);
+    }
+}
+
+#[cfg(test)]
+mod round_tests {
+    use super::imperial::round;
+
+    #[test]
+    fn round_to_the_foot() {
+        assert_eq!(round(17), 12);
+    }
+}

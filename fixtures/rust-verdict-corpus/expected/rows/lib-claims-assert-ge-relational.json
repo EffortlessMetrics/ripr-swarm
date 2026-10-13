@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-claims-assert-ge-relational",
+  "subject_id": "authored-lib-claims",
+  "origin": "authored",
+  "anchor": "src/lib.rs:15",
+  "behavior_family": "return_value",
+  "test_shape": "claims_assert_ge_relational",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

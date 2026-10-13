@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 37500c4..5e267c0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@
+     if width == 0 || width > values.len() {
+         return 0;
+     }
+-    values[..width].iter().sum()
++    values.iter().take(width).sum()
+ }
+ 
+ pub fn mix(a: u32, b: u32) -> u32 {

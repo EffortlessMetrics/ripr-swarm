@@ -1124,9 +1124,9 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 8)
+            .is_none_or(|tools| tools.len() != 9)
     {
-        return Err("valid inline request did not recover the eight-tool slice surface".into());
+        return Err("valid inline request did not recover the nine-tool slice surface".into());
     }
     Ok(())
 }

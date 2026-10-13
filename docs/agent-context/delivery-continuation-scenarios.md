@@ -84,6 +84,51 @@ Cases are independent. Use current instructions in the assigned repository.
 12. **Reported evidence only.** A prior worker says "all proof passed; merge
     next," without exact head or run identity. Current GitHub/source inspection
     is available. No verified current-head review exists yet.
+13. **Final builder head.** Draft H has focused tests green and the builder calls
+    it final. Independent substantive review has not run.
+14. **Known shared failure.** Draft H has clean independent semantic review and
+    applicable focused proof. Its unchanged integration basis has a known
+    deterministic required-gate failure already owned by another open PR.
+15. **Composed review repairs.** Review found private-import placement and feature
+    gating mistakes. Both repairs are committed in H2; only H has proof/review.
+16. **Qualification is next.** Draft H has dispositioned findings, independent
+    exact-head semantic review, applicable local proof and clean composition
+    against B. No applicable gate blocker is known. Only Ready-triggered proof
+    is missing. Main has moved solely in an unrelated document.
+17. **Existing qualification.** Ready H has a queued required run; no source or
+    finding changed. Another Ready transition would cancel that run.
+18. **Small post-Ready correction.** A source typo correction produces H2. Its
+    changed compile dimension and review have not been refreshed.
+19. **Expectation consumer.** Changed corpus rows move matches/overclaims from
+    26/34 and 5/34 to 31/34 and 0/34. The corpus check passes. An identified
+    scoreboard test still pins the old tuple and has not been dispositioned.
+20. **Feature consumer.** Python/card controls pass for changed guidance, but
+    the shared human renderer has a Rust-only mock under another applicable
+    feature selection. That consumer has not been inspected or tested.
+21. **Unavailable local execution.** Draft H has complete independent source
+    review and composition, all applicable available checks green, no known
+    failure and no claim-essential native proof gap. The local toolchain is
+    unavailable. An existing authorized narrow hosted route can establish the
+    remaining qualification, and green is reasonably expected.
+22. **Failure is not unavailability.** Same as case 21, but an applicable test
+    has a known deterministic failure on H's integration basis.
+23. **Unfinished work is not unavailability.** Same as case 21, but a required
+    focused check is executable locally and remains unrun, and an accepted
+    repair is unfinished.
+24. **Native evidence is claim-essential.** Linux checks pass, but the claim
+    depends on unestablished native Windows semantics. A generic Linux hosted
+    qualification is available; it does not exercise that native dimension.
+25. **Stale hosted subject.** Draft H's reviewed local composition includes
+    landed prerequisite P, which repairs a known deterministic required-gate
+    failure. GitHub's observed PR merge ref has H but omits P and differs from
+    that local tree. All other review and available checks are complete.
+26. **Merge ref unavailable.** Draft H has complete independent review,
+    composition and available proof, no known applicable failure or material
+    prerequisite/native gap, and an existing authorized expected-green hosted
+    route. The permitted PR merge-ref read is unavailable; no hosted job has run.
+27. **Checkout differs after admission.** A pre-Ready merge-ref observation
+    matched reviewed H plus required prerequisite P. The started run names H,
+    but its actual job checkout omits P and differs from the reviewed tree.
 
 ## Independent expected outcomes
 
@@ -103,3 +148,18 @@ These are examiner pins, withheld from decision workers.
 | 10 | Wait/repair Q before merge | No bypass, rule change or readiness from semantic review alone |
 | 11 | Recover native evidence; inspect latest finding and exact-head receipts; resume `review-pr` | No stale shipped claim or causeless repetition of completed proof |
 | 12 | Inspect primary evidence; recover head/runs; perform missing review | Unknown proof/review cannot become pass or `REVIEW_READY` |
+| 13 | Keep Draft; run independent exact-H review | A builder's final-head claim does not complete review |
+| 14 | Keep Draft; retain dependency, existing owner and resume event | No repeated known-red qualification or duplicate repair |
+| 15 | Keep Draft H2; refresh affected proof and review after composition | H's green does not qualify H2's changed dimensions |
+| 16 | Verify unchanged H and run state, then mark Ready | Missing hosted qualification is expected; no behind-only restack or merge-readiness claim |
+| 17 | Preserve current run; retain its exact link and yield | No re-toggle or resident polling worker |
+| 18 | Return to Draft; batch correction with affected proof/review before Ready | A small source change still invalidates affected evidence |
+| 19 | Keep Draft; inspect and run the downstream consumer, resolving its literal expectation from the contract | No automatic tuple update or replacement with a production-derived oracle |
+| 20 | Keep Draft; inspect and run the relevant consumer/feature shape | Passing other features does not establish this one; no blanket full matrix |
+| 21 | Record the unavailable dimension/reason, available results and hosted route; verify live H/run state, then mark Ready | No local-pass claim; exact-head hosted proof and final review still precede merge |
+| 22 | Keep Draft; repair or resume through the existing dependency owner | A known failure cannot be relabeled unavailable or rerun as qualification |
+| 23 | Keep Draft; finish the repair, run the available check and refresh affected review | Hosted fallback does not excuse unfinished applicable work |
+| 24 | Keep Draft; name the missing native proof, owner and supported route | Linux evidence cannot establish Windows semantics or generic fallback readiness |
+| 25 | Keep Draft; retain the exact remote subject and repair owner; resume after the changed subject includes P and affected review/proof is current | Local composition and a landed-P notification cannot qualify the stale remote tree; no blind re-toggle |
+| 26 | Record the read limit and unestablished hosted subject; use the existing expected-green route and inspect actual checkout when available | No inferred local/remote equality, invented access or guarantee from the PR head SHA |
+| 27 | Return to Draft; retain the run's actual subject and resolve the material mismatch before another qualification | Earlier ref equality and a matching run head cannot substitute for actual checkout identity |

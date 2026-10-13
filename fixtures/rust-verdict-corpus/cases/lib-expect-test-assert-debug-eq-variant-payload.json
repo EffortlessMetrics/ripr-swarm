@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-expect-test-assert-debug-eq-variant-payload",
+  "subject_id": "authored-lib-expect-test",
+  "diff": "cases/lib-expect-test-assert-debug-eq-variant-payload.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "expect_test_assert_debug_eq",
+  "hard_case": "With the expectation on its own lines, ripr reads the continuation `.assert_debug_eq(&tokens)` as exact_value/strong (not snapshot/medium as RIPR-SPEC-0231 step 6 says) and still reports weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "10 + n",
+        "mutated_line": "Ok(n) => Token::Num(10 + n),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tokens_debug_inline",
+        "equivalence_review": "not equivalent: '7' gives Num(17) not Num(70)"
+      },
+      {
+        "replacement": "100 * n",
+        "mutated_line": "Ok(n) => Token::Num(100 * n),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tokens_debug_inline",
+        "equivalence_review": "not equivalent: '7' gives Num(700) not Num(70)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`expect![[r#\"...\"#]].assert_debug_eq(&tokens)` compares the full pretty Debug output including `Num(70)`; both mutants change the payload.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
