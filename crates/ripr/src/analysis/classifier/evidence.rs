@@ -159,7 +159,7 @@ impl ClassifiedProbeEvidence {
                 }
                 PropagationWitnessDiagnostic::from_witness(witness)
             });
-        let gathered = activation_and_boundary_input(
+        let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -168,6 +168,12 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.workspace_complete,
             context.test_value_facts,
+        );
+        crate::analysis::classify::refine_slice_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &flow_sinks,
         );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
@@ -1102,8 +1108,10 @@ fn trailing_path_segments(path: &str) -> Vec<&str> {
         None => path,
     };
     let start = path
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == ':'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
     path[start..]
         .split("::")
         .filter(|segment| !segment.is_empty())
@@ -1156,6 +1164,7 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
 mod tests {
     use super::evidence_summaries;
     use super::owner_local_binding_names;
+    use super::trailing_path_segments;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::FunctionSourceRole;
@@ -1862,5 +1871,10 @@ mod tests {
             "callee identity must be bound to semantic digest"
         );
         Ok(())
+    }
+
+    #[test]
+    fn trailing_path_segments_steps_past_a_multi_byte_separator() {
+        assert_eq!(trailing_path_segments("x→Stack::new"), vec!["Stack", "new"]);
     }
 }

@@ -173,6 +173,12 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // extended run does not suggest a smaller --timeout-ms than it used.
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
     let PilotAnalysisResult::Complete(report) = analysis_result else {
+        // #7425: a timeout overwrites only the two summaries. Remove leftover
+        // repo-exposure and seam-packet files from an earlier complete run so
+        // the packet directory does not present them as this run's outputs.
+        // Removal, not in-place stale markers: no schema change, and a
+        // missing file cannot be read as current evidence.
+        remove_unwritten_timeout_packet_siblings(&artifacts)?;
         let context = output::pilot::PilotSummaryContext {
             root: &input.root,
             mode: &input.mode,
@@ -760,6 +766,38 @@ fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), Strin
         .map_err(|err| format!("write output {} failed: {err}", path.display()))
 }
 
+/// Drop leftover complete-run siblings so a timeout packet cannot be read as
+/// the previous run (#7425). Missing paths are a no-op; a directory at a
+/// sibling path fails closed rather than leaving mixed evidence.
+fn remove_unwritten_timeout_packet_siblings(
+    artifacts: &output::pilot::PilotArtifacts,
+) -> Result<(), String> {
+    for path in artifacts.unwritten_timeout_siblings() {
+        remove_timeout_packet_sibling(path)?;
+    }
+    Ok(())
+}
+
+fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "inspect leftover timeout packet file {} failed: {error}",
+            path.display()
+        )),
+        Ok(metadata) if metadata.file_type().is_dir() => Err(format!(
+            "leftover timeout packet path {} is a directory; refusing to leave it as if it were this run's output",
+            path.display()
+        )),
+        Ok(_) => std::fs::remove_file(path).map_err(|error| {
+            format!(
+                "remove leftover timeout packet file {} failed: {error}",
+                path.display()
+            )
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,6 +1159,224 @@ mod tests {
             "pilot must not name first-pr's flag, got {error}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn remove_unwritten_timeout_packet_siblings_is_a_no_op_when_absent() -> Result<(), String> {
+        let dir = TempPacketDir::new("absent")?;
+        let artifacts = packet_dir_artifacts(&dir);
+        remove_unwritten_timeout_packet_siblings(&artifacts)?;
+        for path in artifacts.unwritten_timeout_siblings() {
+            assert!(
+                !path.exists(),
+                "absent sibling must stay absent: {}",
+                path.display()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn remove_unwritten_timeout_packet_siblings_deletes_prior_run_files() -> Result<(), String> {
+        let dir = TempPacketDir::new("stale")?;
+        let artifacts = packet_dir_artifacts(&dir);
+        for path in artifacts.unwritten_timeout_siblings() {
+            std::fs::write(path, "PREVIOUS_COMPLETE_RUN")
+                .map_err(|err| format!("write {}: {err}", path.display()))?;
+        }
+        std::fs::write(dir.join("unrelated.txt"), "keep-me")
+            .map_err(|err| format!("write unrelated: {err}"))?;
+        std::fs::write(&artifacts.pilot_summary_json, "PREVIOUS_SUMMARY")
+            .map_err(|err| format!("write prior summary: {err}"))?;
+
+        remove_unwritten_timeout_packet_siblings(&artifacts)?;
+
+        for path in artifacts.unwritten_timeout_siblings() {
+            assert!(
+                !path.exists(),
+                "timeout must drop leftover sibling {}",
+                path.display()
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("unrelated.txt"))
+                .map_err(|err| format!("read unrelated: {err}"))?,
+            "keep-me",
+            "unrelated files in the packet directory must stay"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&artifacts.pilot_summary_json)
+                .map_err(|err| format!("read prior summary: {err}"))?,
+            "PREVIOUS_SUMMARY",
+            "summaries are rewritten by the timeout path, not this helper"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_unwritten_timeout_packet_siblings_unlinks_a_symlink_and_keeps_its_target()
+    -> Result<(), String> {
+        let dir = TempPacketDir::new("symlink")?;
+        let artifacts = packet_dir_artifacts(&dir);
+        let target = dir.join("previous-run-repo-exposure.json");
+        std::fs::write(&target, "PREVIOUS_COMPLETE_RUN")
+            .map_err(|err| format!("write symlink target: {err}"))?;
+        std::os::unix::fs::symlink(&target, &artifacts.repo_exposure_json)
+            .map_err(|err| format!("symlink: {err}"))?;
+
+        remove_unwritten_timeout_packet_siblings(&artifacts)?;
+
+        assert!(
+            artifacts.repo_exposure_json.symlink_metadata().is_err(),
+            "the packet-dir name must not still present the prior run"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).map_err(|err| format!("read target: {err}"))?,
+            "PREVIOUS_COMPLETE_RUN",
+            "unlinking the packet-dir name must not delete the symlink target"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn remove_unwritten_timeout_packet_siblings_refuses_a_directory() -> Result<(), String> {
+        let dir = TempPacketDir::new("dir-sibling")?;
+        let artifacts = packet_dir_artifacts(&dir);
+        std::fs::create_dir(&artifacts.repo_exposure_json)
+            .map_err(|err| format!("create directory sibling: {err}"))?;
+        std::fs::write(artifacts.repo_exposure_json.join("nested.json"), "stale")
+            .map_err(|err| format!("write nested: {err}"))?;
+
+        let error = match remove_unwritten_timeout_packet_siblings(&artifacts) {
+            Err(error) => error,
+            Ok(()) => {
+                return Err(
+                    "a directory sibling must fail closed, not be left or walked".to_string(),
+                );
+            }
+        };
+        assert!(
+            error.contains("is a directory"),
+            "directory sibling must name the refusal, got: {error}"
+        );
+        assert!(
+            artifacts.repo_exposure_json.is_dir(),
+            "fail-closed must leave the unexpected directory in place"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn timed_out_pilot_removes_prior_run_packet_siblings() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::writable("pilot-timeout-stale", "packet")?;
+        std::fs::write(
+            env.root.join("Cargo.toml"),
+            "[package]\nname = \"timeout_stale\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::create_dir(env.root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(env.root.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+
+        std::fs::create_dir_all(&env.target).map_err(|err| format!("create packet dir: {err}"))?;
+        let stale = "PREVIOUS_COMPLETE_RUN";
+        for name in [
+            "repo-exposure.json",
+            "repo-exposure.md",
+            "agent-seam-packets.json",
+            "pilot-summary.json",
+        ] {
+            std::fs::write(env.target.join(name), stale)
+                .map_err(|err| format!("write stale {name}: {err}"))?;
+        }
+        std::fs::write(env.target.join("unrelated.txt"), "keep-me")
+            .map_err(|err| format!("write unrelated: {err}"))?;
+
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        pilot(&args(&[
+            "--root",
+            root,
+            "--out",
+            out,
+            "--timeout-ms",
+            "1",
+            "--quiet",
+        ]))?;
+
+        let summary = std::fs::read_to_string(env.target.join("pilot-summary.json"))
+            .map_err(|err| format!("read timeout summary: {err}"))?;
+        assert!(
+            summary.contains(r#""status": "partial""#)
+                && summary.contains(r#""reason": "timeout""#),
+            "production timeout path must run; got:\n{summary}"
+        );
+        assert!(
+            !summary.contains(stale),
+            "the partial summary must not carry the previous run's bytes:\n{summary}"
+        );
+        for name in [
+            "repo-exposure.json",
+            "repo-exposure.md",
+            "agent-seam-packets.json",
+        ] {
+            let path = env.target.join(name);
+            assert!(
+                !path.exists(),
+                "timed-out pilot must not leave leftover {name} from the previous run"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(env.target.join("unrelated.txt"))
+                .map_err(|err| format!("read unrelated: {err}"))?,
+            "keep-me"
+        );
+        Ok(())
+    }
+
+    fn packet_dir_artifacts(dir: &Path) -> output::pilot::PilotArtifacts {
+        output::pilot::PilotArtifacts {
+            repo_exposure_json: dir.join("repo-exposure.json"),
+            repo_exposure_md: dir.join("repo-exposure.md"),
+            agent_seam_packets_json: dir.join("agent-seam-packets.json"),
+            pilot_summary_json: dir.join("pilot-summary.json"),
+            pilot_summary_md: dir.join("pilot-summary.md"),
+        }
+    }
+
+    struct TempPacketDir(PathBuf);
+
+    impl TempPacketDir {
+        fn new(label: &str) -> Result<Self, String> {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| format!("clock: {err}"))?
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "ripr-pilot-timeout-{label}-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir)
+                .map_err(|err| format!("create {}: {err}", dir.display()))?;
+            Ok(Self(dir))
+        }
+    }
+
+    impl std::ops::Deref for TempPacketDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Drop for TempPacketDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]

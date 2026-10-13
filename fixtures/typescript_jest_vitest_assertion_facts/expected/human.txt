@@ -1,6 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/typescript_jest_vitest_assertion_facts/input
+config: <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input/ripr.toml
 
 Summary: 7 probe(s), 4 exposed, 3 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed
 
