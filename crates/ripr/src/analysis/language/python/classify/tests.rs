@@ -2,6 +2,7 @@
 
 use super::super::owners_tests::{extract_owners, extract_tests};
 use super::classify_change_with_old;
+use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
@@ -1046,5 +1047,95 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
         )?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
     }
+    Ok(())
+}
+
+// #7392: a return-value change inside a guarding `if` arm executes only for
+// call inputs that satisfy the guard. When every strong related call provably
+// fails the guard, the changed line never runs under an observed input, so a
+// strong exact-value oracle still passes either way.
+const QUOTE_SOURCE: &str = "def quote(total):\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n";
+
+/// Added-line classification with the new-side source threaded in, matching
+/// the production diff path where the guarded-arm gate can read the owner
+/// body.
+fn classify_added_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(file, line, after, None, &owners, &tests, Some(source))
+        .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+#[test]
+fn guarded_arm_return_value_below_guard_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert!(
+        missing_boundary(&finding, "total > 1000").is_some(),
+        "{finding:?}"
+    );
+    assert!(observed(&finding, "total = 100.0"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn unguarded_return_value_with_source_keeps_oracle_credit() -> Result<(), String> {
+    let finding = classify_added_case(
+        "def quote(total):\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        2,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
+    // No-source entries (repo mode, deleted lines, the old test harness)
+    // keep the pre-gate verdict: without the owner body the gate cannot
+    // read the guard, so it fails open rather than downgrading.
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, QUOTE_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+    );
+    let finding = classify_change_with_old(
+        file,
+        3,
+        "        return round(total * 1.02, 2)",
+        None,
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
