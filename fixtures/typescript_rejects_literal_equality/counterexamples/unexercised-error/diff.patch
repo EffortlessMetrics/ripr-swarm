@@ -1,0 +1,12 @@
+diff --git a/src/load.ts b/src/load.ts
+--- a/src/load.ts
++++ b/src/load.ts
+@@ -3,7 +3,7 @@
+     throw "TOKEN_REQUIRED";
+   }
+   if (options.token === "expired") {
+-    throw "TOKEN_BAD";
++    throw "TOKEN_EXPIRED";
+   }
+   return "ready";
+ }
