@@ -3572,7 +3572,7 @@ fn h1_boundary_check_is_ordering_independent_across_related_tests() -> Result<()
     Ok(())
 }
 
-const EXACT_RETURN_PACKET: &str = r#"{
+pub(crate) const EXACT_RETURN_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",
   "packet_id": "perl-facts:repo:exact-return",
   "packet_status": "complete",
@@ -5073,7 +5073,7 @@ fn all_fact_arrays() -> [&'static str; 8] {
 }
 
 /// Replace the change's digest with a concrete, finding-wide discriminator.
-fn with_concrete_discriminator(text: String) -> String {
+pub(crate) fn with_concrete_discriminator(text: String) -> String {
     text.replace(
         "\"changed_text_digest\": \"sha256:return\"",
         "\"changed_text_digest\": \"discriminator:$amount == 100\"",
@@ -5101,7 +5101,7 @@ fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<Related
     rows
 }
 
-fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
+pub(crate) fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
     let mut findings = findings_from_packet(text)?;
     if findings.len() != 1 {
         return Err(format!("expected one finding, got {}", findings.len()));

@@ -3676,4 +3676,7 @@ mod tests;
 /// Packet-backed findings the output, LSP and MCP projection tests share
 /// (#5510).
 #[cfg(test)]
-pub(crate) use tests::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
+pub(crate) use tests::{
+    EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
+    with_concrete_discriminator,
+};
