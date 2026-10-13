@@ -410,12 +410,13 @@ rule only for an assertion whose context was admitted.
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
    it is not a second source here. Because the other exits are read by
-   their spelling, an owner file that binds `None`, `Some`, `Ok` or `Err`
-   as a value (a `const`, `fn`, pattern binding or import, or a glob it
-   cannot see through) refuses this mirror case. The propagation witness of any changed
-   `return X;` completes only when the owner's return sink is that same `X`
-   on the changed line, so an identical value returned elsewhere is a
-   different exit. An owner
+   their spelling, an owner file that binds either name the gate relies on
+   (`Some` and `None`, or `Ok` and `Err`) as a value (a `const`, `fn`, pattern binding or import, or a glob it
+   cannot see through) refuses this mirror case. The propagation witness of a changed
+   `return Some(..);` (or `Ok(..)` / `Err(..)`) around a call-free payload
+   completes only when the owner's return sink is that same constructor on
+   the changed line, so an identical value returned elsewhere is a
+   different exit; a returned call result stays a candidate. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.

@@ -1007,6 +1007,15 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
         format!("{lib}\n#[allow(non_upper_case_globals)]\nconst None: Option<u32> = Some(3);\n");
     let shadowed_index = index(&[(LIB, &shadowed)]);
     assert!(establish(&shadowed_index, "lookup", "return Some(k + 2);").is_none());
+    // The same for an early `Ok` beside `Err` exits and a rebound `Err`.
+    let lib = "pub fn parse(k: u32) -> Result<u32, u32> {\n    if k == 1 { return Ok(k + 2); }\n    Err(k)\n}\n";
+    let ok_index = index(&[(LIB, lib)]);
+    assert!(establish(&ok_index, "parse", "return Ok(k + 2);").is_some());
+    let shadowed = format!(
+        "{lib}\n#[allow(non_snake_case)]\nfn Err(k: u32) -> Result<u32, u32> {{\n    Ok(k)\n}}\n"
+    );
+    let shadowed_index = index(&[(LIB, &shadowed)]);
+    assert!(establish(&shadowed_index, "parse", "return Ok(k + 2);").is_none());
 
     let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
     let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";

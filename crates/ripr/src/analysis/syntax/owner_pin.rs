@@ -1589,13 +1589,6 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
 /// guard twin, so a coarser no never mis-credits, and the parser-backed
 /// name equality keeps the whole-word rule (#7130 review: identity over
 /// token coincidence).
-/// [`file_binds_value_name`] over a whole source file. A file that does not
-/// parse cleanly may bind anything, so it answers yes.
-pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
-    parse_clean_source_file(source)
-        .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
-}
-
 fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
     let spells = |text: &str| text.trim_start_matches("r#") == name;
     root.descendants().any(|node| {
@@ -1629,6 +1622,13 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
                 })
             })
     })
+}
+
+/// [`file_binds_value_name`] over a whole source file. A file that does not
+/// parse cleanly may bind anything, so it answers yes.
+pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source)
+        .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
 }
 
 /// Whether a glob import can only carry names this file's own scan covers:

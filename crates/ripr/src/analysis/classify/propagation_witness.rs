@@ -408,26 +408,36 @@ fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) ->
 /// wrapped forms (`return Ok(amount)`, `return Err(error)`) and call results
 /// keep their parentheses and are not normalized here, so a sink on another
 /// line fails closed as a candidate edge; [`returns_itself_on_its_line`]
-/// completes them only when the sink is the same expression on the probe's
-/// own line.
+/// completes a call-free constructor only when the sink is the same
+/// expression on the probe's own line.
 fn direct_return_identity(text: &str) -> Option<String> {
     let normalized = normalize_semantic_text(text);
     let payload = normalized.strip_prefix("return ")?.trim();
     (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
 }
 
-/// RIPR-SPEC-0231 example 23: any `return X;` whose return sink is `X` on the
-/// changed line itself (`return Some(1 + 2);`, `return Ok(amount);`,
-/// `return f(x);`) is one expression, not a wrapper around a payload, so the
-/// edge is established as it is for the same tail.
-/// The sink must sit on the probe's line: an identical constructor returned
-/// elsewhere in the owner is a different exit.
+/// RIPR-SPEC-0231 example 23: `return Some(1 + 2);` whose return sink is
+/// `Some(1 + 2)` on the changed line itself is one expression, so the edge is
+/// established as it is for the same tail. Only a `Some(..)`, `Ok(..)` or
+/// `Err(..)` constructor around a call-free payload qualifies: a call result
+/// (`return f(x);`, `return Ok(self.persist(x));`) may not carry the changed
+/// value at all. The sink must sit on the probe's line: an identical
+/// constructor returned elsewhere in the owner is a different exit.
 fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
     let source = normalize_semantic_text(&probe.expression);
+    let call_free_constructor = |payload: &str| {
+        ["Some(", "Ok(", "Err("].iter().any(|head| {
+            payload
+                .strip_prefix(head)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .is_some_and(|inner| !inner.trim().is_empty() && !inner.contains(['(', ')']))
+        })
+    };
     sink.kind == FlowSinkKind::ReturnValue
         && sink.line == probe.location.line
         && source.strip_prefix("return ").is_some_and(|payload| {
-            !payload.trim().is_empty() && payload.trim() == normalize_semantic_text(&sink.text)
+            let payload = payload.trim();
+            call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
         })
 }
 
@@ -1415,7 +1425,21 @@ mod tests {
         assert_eq!(elsewhere.edges[0].status, EdgeStatus::Candidate);
         assert!(!complete_direct_witness(&wrapped, Some(&elsewhere)));
 
-        // Any wrapped `return X;` completes against `X` on its own line.
+        // A call result returned on its own line stays a candidate: the
+        // call may not carry the changed value (`propagate_value_returned`).
+        let call_return = probe(ProbeFamily::ReturnValue, "return self.persist(amount * 9);");
+        let call_witness = current_path_witness(
+            &call_return,
+            &[sink(
+                FlowSinkKind::ReturnValue,
+                "self.persist(amount * 9)",
+                10,
+            )],
+        )
+        .ok_or_else(|| "same-line call return witness was absent".to_string())?;
+        assert_eq!(call_witness.edges[0].status, EdgeStatus::Candidate);
+
+        // A call-free constructor completes against itself on its own line.
         let ok_return = probe(ProbeFamily::ReturnValue, "return Ok(amount);");
         let ok_witness = current_path_witness(
             &ok_return,
