@@ -59,12 +59,16 @@ pub(super) fn some_matches_pins_a_value(text: &str) -> bool {
             .next_back()
             .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
         {
-            return false;
+            // A user macro whose name ends in `matches!` (`expect_matches!`)
+            // is not the std pattern test, so it keeps today's reading.
+            return true;
         }
         // A user macro (`custom::matches!`) is not the std pattern test, so
-        // it keeps today's reading.
+        // it keeps today's reading. A spaced or commented std path
+        // (`std :: matches!`) is still std.
         if let Some(path) = before.trim_end().strip_suffix("::") {
             let segment = path
+                .trim_end()
                 .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
                 .next()
                 .unwrap_or_default();

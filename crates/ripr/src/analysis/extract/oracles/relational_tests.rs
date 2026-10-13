@@ -463,6 +463,15 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
             &weak,
         ),
         ("assert!(xs.iter().any(|x| matches!(x, Some(_))));", &weak),
+        // A spaced or commented std path is still the std pattern test.
+        (
+            "assert!(xs.iter().any(|x| std :: matches!(x, Some(_))));",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| core /* c */ :: matches!(x, Some(_))));",
+            &weak,
+        ),
         // `matches!` named only in a comment or string is no pattern.
         (
             "assert!(ready /* matches! */ && matches!(r, Ok(_)));",
@@ -480,6 +489,13 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
         ("ensure!(matches!(r, Ok(3)) == true);", &exact),
         ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
         ("assert!(flag == true && matches!(r, Ok(_)));", &exact),
+        // A user macro whose name ends in `matches!` keeps today's reading.
+        ("assert!(custom_matches!(r, Ok(_)));", &exact),
+        ("expect_matches!(r, Ok(3));", &exact),
+        (
+            "assert!(xs.iter().any(|x| custom::matches!(x, Some(_))));",
+            &exact,
+        ),
     ] {
         require_classification(text, expected)?;
     }
