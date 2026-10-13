@@ -19,6 +19,7 @@ mod reach;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
+mod slice_boundary;
 mod text;
 mod transitive_reach;
 mod value_transfer;
@@ -32,7 +33,7 @@ pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
-pub(in crate::analysis) use builder_override::setter_plainly_writes;
+pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
 pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
@@ -48,7 +49,7 @@ pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    macro_hop_reach_without_exact_pin, resolve_chain, returned_ledger,
+    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
@@ -66,7 +67,8 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use reach::{
-    UnseenReachNames, is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen,
+    UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
+    is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
     reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
@@ -81,6 +83,7 @@ pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{

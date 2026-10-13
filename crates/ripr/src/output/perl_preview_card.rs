@@ -1,5 +1,6 @@
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, OracleStrength, RelatedTest,
+    perl_suggested_related_test,
 };
 use serde_json::{Value, json};
 
@@ -97,7 +98,12 @@ pub(crate) fn perl_preview_card(finding: &Finding) -> Option<PerlPreviewCard> {
     let gap = finding.canonical_gap.as_ref()?;
     let repair_route = evidence_value(finding, "perl_repair_kind: ")?;
     let target_test_shape = evidence_value(finding, "perl_target_test_shape: ")?;
-    let suggested_test_location = evidence_value(finding, "perl_suggested_test_location: ")?;
+    let related_test = perl_suggested_related_test(finding)?;
+    let suggested_test_location = format!(
+        "{}::{}",
+        related_test.file.display().to_string().replace('\\', "/"),
+        related_test.name
+    );
     let suggested_assertion = evidence_value(finding, "perl_suggested_assertion: ")?;
     let verify_command = evidence_value(finding, "perl_verify_command: ")?;
     let _receipt_command = evidence_value(finding, "perl_receipt_command: ")?;
@@ -123,7 +129,10 @@ pub(crate) fn perl_preview_card(finding: &Finding) -> Option<PerlPreviewCard> {
         .to_string();
     let current_test_evidence = evidence_value(finding, "perl_current_test_evidence: ")
         .map(str::to_string)
-        .or_else(|| strongest_related_test(finding).map(current_test_evidence))?;
+        .or_else(|| {
+            (related_test.oracle_strength != OracleStrength::None)
+                .then(|| current_test_evidence(related_test))
+        })?;
 
     let (
         public_projection_ready,
@@ -158,7 +167,7 @@ pub(crate) fn perl_preview_card(finding: &Finding) -> Option<PerlPreviewCard> {
         current_test_evidence,
         missing_discriminator,
         target_test_shape: target_test_shape.to_string(),
-        suggested_test_location: suggested_test_location.to_string(),
+        suggested_test_location,
         suggested_assertion: suggested_assertion.to_string(),
         verify_command: verify_command.to_string(),
         confidence,
@@ -218,14 +227,6 @@ pub(crate) fn perl_preview_card_json_value(card: &PerlPreviewCard) -> Value {
 /// receipt/edit-boundary evidence carried by a `Finding`.
 pub(crate) fn perl_preview_card_json(finding: &Finding) -> Option<Value> {
     perl_preview_card(finding).map(|card| perl_preview_card_json_value(&card))
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
-        .filter(|test| test.oracle_strength != OracleStrength::None)
 }
 
 fn current_test_evidence(test: &RelatedTest) -> String {

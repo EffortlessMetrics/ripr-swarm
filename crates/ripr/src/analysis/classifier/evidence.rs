@@ -5,10 +5,10 @@ use crate::analysis::classify::{
     activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
-    fallible_literal_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    fallible_literal_witness, getter_plainly_reads, has_same_test_boundary_oracle_pairing,
+    helper_only_reach, helper_pins_owner_call, infection_evidence_with_boundary_input,
+    local_flow_sinks, operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
+    package_prefix, propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -159,7 +159,7 @@ impl ClassifiedProbeEvidence {
                 }
                 PropagationWitnessDiagnostic::from_witness(witness)
             });
-        let gathered = activation_and_boundary_input(
+        let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -168,6 +168,12 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.workspace_complete,
             context.test_value_facts,
+        );
+        crate::analysis::classify::refine_slice_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &flow_sinks,
         );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
@@ -296,12 +302,15 @@ impl ClassifiedProbeEvidence {
             (Some(owner), Some(chain))
                 if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
-                    // #6614: reach resting on a local-macro argument hop
-                    // abstains only under an exact pin of a caller; a weak
-                    // oracle there keeps its own gap.
-                    && !crate::analysis::classify::macro_hop_reach_without_exact_pin(
+                    // #6614, #7549: when every oracle on a caller's result
+                    // is weak on its own terms, its gap is established
+                    // without pairing the caller to the owner; only an
+                    // oracle that might pin the owner abstains.
+                    && !crate::analysis::classify::hop_reach_keeps_weak_oracle_gap(
+                        owner,
                         chain,
                         &context.related_tests,
+                        effect_family,
                     )
                     && if effect_family {
                         !chain_passes_effect_target_to_observed_hops(
@@ -513,6 +522,9 @@ impl ClassifiedProbeEvidence {
                 },
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
+                },
+                getter_reads_field: &|impl_type, getter, field| {
+                    getter_plainly_reads(context.index, impl_type, getter, field)
                 },
             },
             arm_selector.as_ref(),

@@ -1581,6 +1581,17 @@ mod tests {
                 "suggested_verify_command: pytest tests/test_pricing.py::test_small_order_pays_shipping".to_string(),
                 "suggested_verify_command_confidence: high".to_string(),
             ];
+            finding.related_tests = vec![RelatedTest {
+                name: "test_small_order_pays_shipping".to_string(),
+                file: PathBuf::from("tests/test_pricing.py"),
+                line: 7,
+                oracle: Some("assert shipping_fee(5)".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            }];
         } else {
             finding.activation.missing_discriminators.clear();
         }
@@ -1598,6 +1609,11 @@ mod tests {
         let carded = python_preview_finding(11, true);
         assert!(crate::output::python_repair_card::python_repair_card(&uncarded).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        assert_eq!(
+            crate::output::python_repair_card::python_repair_card(&carded)
+                .map(|card| card.current_test_evidence),
+            Some("tests/test_pricing.py:7 test_small_order_pays_shipping currently has oracle_strength=smoke, oracle_kind=smoke_only: assert shipping_fee(5)".to_string())
+        );
         for findings in [
             vec![uncarded.clone(), carded.clone()],
             vec![carded.clone(), uncarded.clone()],

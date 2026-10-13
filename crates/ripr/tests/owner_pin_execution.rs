@@ -1808,7 +1808,10 @@ fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), Str
         ..CheckInput::default()
     })?;
     assert_eq!(report.findings.len(), 1, "retain the actual async owner");
-    assert_eq!(report.findings[0].class, ExposureClass::PropagationUnknown);
+    // The tail `if`/`else` propagation sink is resolved (#6781), so the class
+    // is `static_unknown` on the unestablished async assertion provenance
+    // (#5040); discovery still supplies no execution provenance below.
+    assert_eq!(report.findings[0].class, ExposureClass::StaticUnknown);
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
             .map_err(|error| error.to_string())?;
