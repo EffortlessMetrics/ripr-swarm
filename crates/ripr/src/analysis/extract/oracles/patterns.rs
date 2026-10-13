@@ -562,6 +562,40 @@ pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     Some(format!("{macro_name}({});", rest.join(" && ")))
 }
 
+/// RIPR-SPEC-0231 rule 1 (#7558): the boolean assertion with every
+/// parenthesized `&&` conjunct that a `||` decides removed, so the other
+/// conjuncts decide the reading, as they do beside a negated pattern
+/// (`ensure!(c == d && (a || b))` reads as `ensure!(c == d)`). `None` when
+/// no conjunct is such a group or a top-level `||` decides the whole
+/// condition; an empty string when nothing else remains. A group that also
+/// holds a pinning conjunct (`(x == 1 || y) && z == 2` in parentheses)
+/// drops whole, which only weakens the reading.
+pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let is_deciding_group = |conjunct: &str| {
+        let masked = mask_comments_and_strings(conjunct.trim());
+        super::arguments::parenthesized_contents(masked.trim())
+            .is_some_and(has_deciding_disjunction)
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| is_deciding_group(conjunct)) {
+        return None;
+    }
+    let rest = conjuncts
+        .iter()
+        .filter(|conjunct| !is_deciding_group(conjunct))
+        .map(|conjunct| conjunct.trim())
+        .collect::<Vec<_>>();
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    Some(format!("{macro_name}({});", rest.join(" && ")))
+}
+
 /// Splits on `&&` outside any delimiter, string or comment.
 fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
     let masked = mask_comments_and_strings(condition);
@@ -1008,7 +1042,9 @@ pub(super) fn has_deciding_disjunction(condition: &str) -> bool {
         || split_top_level_conjuncts(condition)
             .into_iter()
             .any(|conjunct| {
-                super::arguments::parenthesized_contents(conjunct.trim())
+                // Masked, so a leading comment cannot hide the group.
+                let masked = mask_comments_and_strings(conjunct.trim());
+                super::arguments::parenthesized_contents(masked.trim())
                     .is_some_and(has_deciding_disjunction)
             })
 }
@@ -1024,12 +1060,13 @@ pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
         && split_top_level_conjuncts(condition)
             .into_iter()
             .any(|conjunct| {
-                let conjunct = conjunct.trim();
-                if let Some(inner) = super::arguments::parenthesized_contents(conjunct) {
+                // Masked, so a leading comment cannot hide the group.
+                let masked = mask_comments_and_strings(conjunct.trim());
+                let masked = masked.trim();
+                if let Some(inner) = super::arguments::parenthesized_contents(masked) {
                     return has_top_level_exact_equality(inner);
                 }
-                let masked = mask_comments_and_strings(conjunct);
-                top_level_comparison_operator(&masked).is_some_and(|(at, _)| {
+                top_level_comparison_operator(masked).is_some_and(|(at, _)| {
                     masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
                 })
             })
@@ -1921,11 +1958,34 @@ mod spec_0106_tests {
             ("(a == b) && ready", true),
             ("(a == b || c) && ready", false),
             ("total(&cart) == 42 // a || b", true),
+            ("/* pinned */ (a == b) && ready", true),
         ] {
             let actual = has_top_level_exact_equality(condition);
             if actual != expected {
                 return Err(format!(
                     "comparison classification mismatch for {condition}: {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deciding_disjunctions_are_found_past_comments_and_groups() -> Result<(), String> {
+        for (condition, expected) in [
+            ("a || b", true),
+            ("ready && (a || b)", true),
+            ("ready && /* fallback */ (a || b)", true),
+            ("((a == b || c))", true),
+            ("ready && f(a || b)", false),
+            ("xs.iter().any(|x| x == 1 || x == 2)", false),
+            ("a == b // || c", false),
+            (r#"a == "x || y""#, false),
+        ] {
+            let actual = has_deciding_disjunction(condition);
+            if actual != expected {
+                return Err(format!(
+                    "deciding disjunction mismatch for {condition}: {actual}"
                 ));
             }
         }

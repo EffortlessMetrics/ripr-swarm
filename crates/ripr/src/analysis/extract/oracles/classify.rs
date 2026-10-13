@@ -6,21 +6,27 @@ use super::arguments::{
 };
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
-    PatternPolarity, contains_negated_pattern, has_deciding_disjunction,
-    has_top_level_exact_equality, inequality_has_struct_literal_operand, is_broad_error_assertion,
-    is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
-    is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
-    is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
-    is_exact_membership_any_assertion, is_exact_value_assertion, is_inequality_macro_assertion,
-    is_inequality_named_assertion_helper, is_inequality_named_assertion_macro,
-    is_inequality_only_comparison, is_mock_expectation_line, is_negated_pattern_assertion,
-    is_observer_named_assertion_helper, is_smoke_check, is_snapshot_assertion,
-    is_whole_object_equality_assertion, negated_pattern_conjunct_rest, pattern_comparison_polarity,
-    tests_both_sides,
+    PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
+    has_deciding_disjunction, has_top_level_exact_equality, inequality_has_struct_literal_operand,
+    is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
+    is_comparison_shaped_custom_assertion, is_custom_assertion_helper, is_duplicative_comparison,
+    is_duplicative_equality_assertion, is_effect_observer_subject_assertion,
+    is_exact_error_variant_assertion, is_exact_membership_any_assertion, is_exact_value_assertion,
+    is_inequality_macro_assertion, is_inequality_named_assertion_helper,
+    is_inequality_named_assertion_macro, is_inequality_only_comparison, is_mock_expectation_line,
+    is_negated_pattern_assertion, is_observer_named_assertion_helper, is_smoke_check,
+    is_snapshot_assertion, is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
+    pattern_comparison_polarity, tests_both_sides,
 };
 
 /// RIPR-SPEC-0231 rule 1: an inequality shows only that the value is not one
 /// alternative, so it never earns an exact kind or strong strength.
+/// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
+const RELATION: OracleClassification = OracleClassification {
+    kind: OracleKind::RelationalCheck,
+    strength: OracleStrength::Weak,
+};
+
 const INEQUALITY: OracleClassification = OracleClassification {
     kind: OracleKind::RelationalCheck,
     strength: OracleStrength::Weak,
@@ -61,6 +67,21 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             INEQUALITY
         } else {
             classify_assertion(&rest)
+        };
+    }
+    // A parenthesized `&&` conjunct that a `||` decides pins nothing, so the
+    // other conjuncts decide; the group itself is still a relation, so the
+    // reading is never below `relational_check` / weak (#7558).
+    if let Some(rest) = deciding_disjunction_conjunct_rest(line) {
+        return if rest.is_empty() {
+            RELATION
+        } else {
+            let classification = classify_assertion(&rest);
+            if classification.strength.rank() >= RELATION.strength.rank() {
+                classification
+            } else {
+                RELATION
+            }
         };
     }
     // A `matches!` compared with `==` or `!=` reads as the pattern only with
@@ -172,9 +193,14 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Weak,
         }
     } else if is_broad_error_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::BroadError,
-            strength: OracleStrength::Weak,
+        // `ready || r.is_err()` passes without an error: only a relation.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+            }
         }
     } else if is_duplicative_equality_assertion(line) {
         OracleClassification {
@@ -192,7 +218,7 @@ fn classify_non_negated_assertion(
         } else {
             INEQUALITY
         }
-    } else if is_whole_object_equality_assertion(line) && !disjunction {
+    } else if is_whole_object_equality_assertion(line) {
         OracleClassification {
             kind: OracleKind::WholeObjectEquality,
             strength: OracleStrength::Strong,
@@ -331,9 +357,13 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             strength: OracleStrength::Weak,
         })
     } else if is_broad_error_assertion(&condition) {
-        Some(OracleClassification {
-            kind: OracleKind::BroadError,
-            strength: OracleStrength::Weak,
+        Some(if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+            }
         })
     } else if ((is_exact_value_assertion(&condition) && !disjunction)
         || has_top_level_exact_equality(&condition))
@@ -1283,17 +1313,25 @@ mod tests {
             ),
             ("ensure!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
             ("assert!(o.is_none_or(|v| v > 1));", SmokeOnly, Smoke),
-            // Both sides only on one receiver; a field is not a method.
-            ("assert!(left.is_ok() || right.is_err());", BroadError, Weak),
+            // Both sides only on one receiver; a field is not a method. Rule 4
+            // does not apply, but rule 1's disjunction does: the condition
+            // passes with no error at all, so it is only a relation (#7558).
+            (
+                "assert!(left.is_ok() || right.is_err());",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "assert!(get(1).is_some() || get(1).is_none());",
                 RelationalCheck,
                 Weak,
             ),
             ("assert!(status.is_err);", RelationalCheck, Weak),
+            // `|| fallback` passes with no error, so rule 1's disjunction
+            // reads it as a relation (#7558).
             (
                 "assert!(r.is_ok() && r.is_err() || fallback);",
-                BroadError,
+                RelationalCheck,
                 Weak,
             ),
             (

@@ -285,6 +285,24 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
             &exact,
         ),
         ("ensure!(matches!(r, Err(Error::Denied)) && ready);", &err),
+        (
+            "ensure!(matches!(pick(|x| x > 1 || x < 0), Ok(3)));",
+            &exact,
+        ),
+        // A parenthesized `||` conjunct drops out and the other conjuncts
+        // decide: a required `==` or pattern beside it still pins.
+        ("ensure!(c == d && (a || b));", &exact),
+        ("ensure!((a || b) && c == d);", &exact),
+        ("assert!(matches!(r, Ok(3)) && (a || b));", &exact),
+        ("assert!((a || b) && matches!(r, Ok(3)));", &exact),
+        (
+            "ensure!(matches!(r, Err(Error::Denied)) && (x || y));",
+            &err,
+        ),
+        ("ensure!(ready && /* fallback */ (a == b || c));", &weak),
+        // A disjunction with a broad error arm passes without an error.
+        ("assert!(ready || r.is_err());", &weak),
+        ("ensure!(ready || r.is_err());", &weak),
     ] {
         let classification = classify_assertion(text);
         if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {

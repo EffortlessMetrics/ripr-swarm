@@ -55,6 +55,9 @@
     ],
     "excerpt_parity": "matched"
   },
+  "spec_examples": [
+    "RIPR-SPEC-0231#13"
+  ],
   "expected_oracle": {
     "kind": "relational_check",
     "strength": "weak",

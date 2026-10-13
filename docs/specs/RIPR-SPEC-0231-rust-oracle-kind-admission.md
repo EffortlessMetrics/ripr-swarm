@@ -139,7 +139,7 @@ guard that pins a value (decision 7).
 0. an `ensure!` condition runs its own sub-chain
    (`classify_fallible_assertion`): `exact_error_variant` / strong, then
    `broad_error` / weak, then an exact comparison that is not duplicative as
-   `exact_value` / strong, then `smoke_only` / smoke, otherwise
+   `exact_value` / strong (rule 1 says which `==` is one), then `smoke_only` / smoke, otherwise
    `relational_check` / weak
 1. `exact_error_variant` / strong
 2. `broad_error` / weak
@@ -219,16 +219,26 @@ Two pattern terms are used below.
    `relational_check` / weak. `assert_ne!` stays an inequality whatever
    the literal. A `!=` in a boolean assertion condition is rule 1's
    inequality only when `!=` is the condition's only comparison
-   (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
-   strings and comments keeps the reading that `==` earns
-   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). A
-   disjunction that decides the condition passes when any one arm holds,
-   so no arm lends the condition an exact kind: a top-level `||`, or a
-   `||` inside a parenthesized group that is the whole condition or one of
-   its top-level `&&` conjuncts, caps an `assert!`, `debug_assert!` or
-   `ensure!` condition at `relational_check` / weak, including a literal
-   `|| false` arm, which is not read through. A `||` inside a call
-   argument, closure or pattern does not decide the condition
+   (`ensure!(a != b)`); a condition that also has a pinning `==` (below)
+   keeps the reading that `==` earns
+   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). That
+   `==` must be a top-level `&&` conjunct whose own top-level operator is
+   `==`: an `==` inside a closure, call argument or negation pins nothing
+   (`ensure!(f(|x| x == 1))`, `ensure!(!(a == b))` and
+   `ensure!(xs.iter().position(|x| *x == 1) != None)` read
+   `relational_check` / weak). A disjunction that decides the condition
+   passes when any one arm holds, so no arm lends it an exact kind. In an
+   `assert!`, `debug_assert!`, `prop_assert!` or `ensure!` condition, a
+   top-level `||`, or one at the top level of a parenthesized group that
+   is the whole condition (the group read again by the same rule), caps the
+   reading at `relational_check` / weak, including a literal `|| false`
+   arm, which is not read through, and an arm such as `r.is_err()` that
+   would otherwise earn `broad_error`. A parenthesized `&&` conjunct that
+   such a `||` decides pins nothing, so, as beside a negated pattern, the
+   other conjuncts decide and the reading is never below
+   `relational_check` / weak (`ensure!(c == d && (a || b))` reads as
+   `ensure!(c == d)`). A `||` inside a call argument, closure or pattern
+   does not decide the condition
    (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
    `exact_value`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
@@ -479,7 +489,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 13. `ensure!(score(2) != 0)`: `relational_check` / weak (today
     `exact_value` / strong). `ensure!(score(2) != 0 || score(3) == 6)` and
     `ensure!(ready && (score(2) == 4 || done))`: `relational_check` / weak
-    (both read `exact_value` / strong before #7558).
+    (both read `exact_value` / strong before #7558);
+    `ensure!(score(2) == 4 && (ready || done))`: `exact_value` / strong.
 14. `assert_ne!(build(3), Config { retries: 9 })`: `whole_object_equality` /
     weak.
 15. `assert!(opt.is_some_and(|v| v > 1))`: `smoke_only` / smoke (unchanged).
