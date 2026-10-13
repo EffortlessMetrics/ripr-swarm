@@ -255,9 +255,7 @@ fn perl_composition_test_name_whitespace_is_identity() -> Result<(), String> {
 
 #[test]
 fn perl_composition_real_sparse_packet_stays_advisory() -> Result<(), String> {
-    use crate::analysis::language::perl::{
-        EXACT_RETURN_PACKET, only_finding, with_concrete_discriminator,
-    };
+    use crate::analysis::{EXACT_RETURN_PACKET, only_finding, with_concrete_discriminator};
     let finding = only_finding(&with_concrete_discriminator(
         EXACT_RETURN_PACKET.to_string(),
     ))?;
