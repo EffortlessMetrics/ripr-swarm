@@ -12,7 +12,17 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 100
+floor = 101
+
+# Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
+# oracle kind and strength a spec adopts; `verdict-corpus check` fails when
+# matches fall below `match_floor` or overclaims (ripr reads the test
+# stronger than the spec) rise above `overclaim_ceiling`. When ripr
+# improves, `check` prints the new numbers: raise the floor and lower the
+# ceiling to them. Loosening either is a reviewed edit with a reason.
+[oracle]
+match_floor = 26
+overclaim_ceiling = 5
 
 # LSP Repair Packet Command
 [[spec]]

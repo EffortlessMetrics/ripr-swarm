@@ -23,7 +23,7 @@
     },
     {
       "path": "src/subject.py",
-      "sha256": "b1ac95dccf0f74f14c8fe245edcaeda5d759cb8a0c242c4614b415f11b69fc23"
+      "sha256": "47f731689f2fc4e6841a3343673674ff39e0a16467d9805c4cd5238232cff405"
     },
     {
       "path": "tests/__init__.py",
@@ -36,6 +36,10 @@
     {
       "path": "tests/test_exc_info.py",
       "sha256": "4b4c4dd6e8cb647bba51036718a70b335b63da5807257fc1f9f0af57c21ee1b0"
+    },
+    {
+      "path": "tests/test_handler.py",
+      "sha256": "53910313313d269233a0652c600fdc52e8a08a7f7a3a414ed0991dbd1688b368"
     },
     {
       "path": "tests/test_rival.py",
