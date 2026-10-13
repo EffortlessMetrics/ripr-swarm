@@ -40,13 +40,19 @@
 //!
 //! This is bounded syntax, not name resolution. File-backed module paths
 //! come from the file's location under `src/`; a package with any `#[path]`
-//! attribute switches the rule off. Macro-generated items are a documented
+//! attribute switches the rule off. In a package with both `src/lib.rs` and
+//! `src/main.rs`, a `src/` module belongs to the root whose top-level `mod`
+//! declarations name it; one neither or both roots name switches the rule
+//! off for its definitions and leaves its tests outside the owner's crate. Macro-generated items are a documented
 //! residual that reads unsettled or mismatched, never as a new grant.
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FunctionContainer;
-use crate::analysis::syntax::{NameScope, NameScopes, UseBinding, name_scopes_for_fn};
+use crate::analysis::syntax::{
+    NameScope, NameScopes, RustModuleTreeEdge, UseBinding, name_scopes_for_fn,
+    rust_module_tree_scan,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -67,8 +73,10 @@ type TestKey = (PathBuf, usize);
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
-    /// The owner's crate within its package (`crate_class`).
+    /// The owner's crate within its package (`CrateLayout::class`).
     owner_crate: Option<String>,
+    /// How the owner's package splits `src/` between its crates.
+    layout: CrateLayout,
     owner_file: PathBuf,
     owner_package: Option<String>,
     /// Module path of each definition: the owner first. `None` when the
@@ -118,8 +126,11 @@ struct TestScope {
 impl OwnerCallIdentity {
     /// `None` when the rule does not apply: the owner is not a placed
     /// module-level `fn`, no other module-level `fn` of its name exists in
-    /// its package among `same_named`, or the package remaps a module file
-    /// with `#[path]`, so the physical layout may not be the module path.
+    /// its crate among `same_named`, the package remaps a module file with
+    /// `#[path]` (so the physical layout may not be the module path), the
+    /// owner or a same-named rival sits in a `src/` module whose crate the
+    /// roots' `mod` declarations do not settle, or a same-named definition
+    /// is spelled in the other path form (absolute against relative).
     /// Callers then keep their prior behavior, which never grants new
     /// credit.
     pub(in crate::analysis) fn new<'a>(
@@ -131,27 +142,59 @@ impl OwnerCallIdentity {
             return None;
         }
         let owner_path = definition_module_path(owner)?;
-        let owner_package = super::related_tests::package_prefix(&owner.file);
-        let mut definitions = vec![Some(owner_path)];
+        let owner_package = package_key(&owner.file);
+        let owner_absolute = super::related_tests::path_is_absolute_form(&owner.file);
+        let mut rivals = Vec::new();
         for function in same_named {
             if function.name != owner.name
                 || (function.file == owner.file && function.start_line == owner.start_line)
-                || !same_crate_rival(owner, function)
             {
                 continue;
             }
+            if function.item.container == FunctionContainer::Free
+                && super::related_tests::path_is_absolute_form(&function.file) != owner_absolute
+            {
+                // A mixed index cannot be told apart by package: rule off.
+                return None;
+            }
+            if package_key(&function.file) == owner_package {
+                rivals.push(function);
+            }
+        }
+        if rivals.is_empty() || package_remaps_module_paths(index, owner_package.as_deref()) {
+            return None;
+        }
+        let layout = CrateLayout::new(index, owner_package.as_deref());
+        let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+            return None;
+        };
+        let mut definitions = vec![Some(owner_path)];
+        for function in rivals {
             match function.item.container {
-                FunctionContainer::Free => definitions.push(definition_module_path(function)),
+                FunctionContainer::Free if function.item.has_body => {
+                    match layout.classify(&function.file) {
+                        // Only a library-shaped `src/` module is ambiguous,
+                        // and it may compose into either root's crate.
+                        CrateClass::Ambiguous if owner_crate == "lib" || owner_crate == "main" => {
+                            return None;
+                        }
+                        CrateClass::Crate(class) if class == owner_crate => {
+                            definitions.push(definition_module_path(function));
+                        }
+                        _ => {}
+                    }
+                }
                 FunctionContainer::Unknown => definitions.push(None),
                 _ => {}
             }
         }
-        if definitions.len() < 2 || package_remaps_module_paths(index, owner_package.as_deref()) {
+        if definitions.len() < 2 {
             return None;
         }
         Some(Self {
             name: owner.name.clone(),
-            owner_crate: crate_class(&owner.file),
+            owner_crate: Some(owner_crate),
+            layout,
             owner_file: owner.file.clone(),
             owner_package,
             definitions,
@@ -170,8 +213,8 @@ impl OwnerCallIdentity {
         function.name == self.name
             && function.item.container == FunctionContainer::Free
             && function.item.has_body
-            && super::related_tests::package_prefix(&function.file) == self.owner_package
-            && crate_class(&function.file) == self.owner_crate
+            && package_key(&function.file) == self.owner_package
+            && self.layout.class(&function.file) == self.owner_crate
     }
 
     /// What `test`'s calls of the owner's name settle on, taken together:
@@ -311,8 +354,8 @@ impl OwnerCallIdentity {
         // modules only from the owner's own crate: same package, same crate
         // within it.
         let same_crate = self.owner_crate.is_some()
-            && crate_class(&test.file) == self.owner_crate
-            && super::related_tests::package_prefix(&test.file) == self.owner_package;
+            && self.layout.class(&test.file) == self.owner_crate
+            && package_key(&test.file) == self.owner_package;
         TestScope {
             file_segments: file_module_segments(&test.file).filter(|_| same_crate),
             scopes,
@@ -327,13 +370,18 @@ impl OwnerCallIdentity {
     /// the owner is the root package. From any other crate: the import
     /// names the manifests give the owner's library (`MemberCrates`).
     fn own_crate_names(&self, test: &TestSummary, index: &RustIndex) -> BTreeSet<String> {
-        let test_package = super::related_tests::package_prefix(&test.file);
+        let test_package = package_key(&test.file);
         let same_package = test_package == self.owner_package;
         let mut names = BTreeSet::new();
         if same_package && !under_tests_dir(&test.file) {
             return names;
         }
-        if same_package && self.owner_package.is_none() {
+        // An integration test imports only the package's library, never a
+        // binary's crate.
+        if same_package
+            && self.owner_package.is_none()
+            && self.owner_crate.as_deref() == Some("lib")
+        {
             names.extend(index.package_names.iter().cloned());
         }
         if let Some(owner_root) =
@@ -595,8 +643,7 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
     index.files().iter().any(|(path, facts)| {
-        super::related_tests::package_prefix(path).as_deref() == package
-            && has_path_attribute(&facts.data().source)
+        package_key(path).as_deref() == package && has_path_attribute(&facts.data().source)
     })
 }
 
@@ -693,6 +740,168 @@ fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
     Some(path)
 }
 
+/// The package a file belongs to. A relative path keeps
+/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// above `src/` or `tests/`, or `None` for the root package). That leaves an
+/// absolute path outside a `crates/` layout unscoped (#3235) and drops the
+/// workspace directory from an absolute `crates/<name>/`, so two packages
+/// under absolute roots could read as one (#7576). An absolute path is keyed
+/// by the whole directory above its one `src/` or `tests/` component; a path
+/// with several (an ancestor `/srv/src/`) cannot be split by its layout,
+/// so it is keyed as its own package and never shares a crate with another
+/// file.
+fn package_key(path: &Path) -> Option<String> {
+    if !super::related_tests::path_is_absolute_form(path) {
+        return super::related_tests::package_prefix(path);
+    }
+    let normalized = super::related_tests::normalize_path(path);
+    let markers: Vec<usize> = normalized
+        .match_indices("/src/")
+        .chain(normalized.match_indices("/tests/"))
+        .map(|(at, _)| at)
+        .collect();
+    match markers.as_slice() {
+        [at] => Some(format!("{}/", &normalized[..*at])),
+        _ => Some(format!("{normalized}?")),
+    }
+}
+
+/// The part of a normalized path below its last `src/` directory.
+fn src_body(normalized: &str) -> Option<&str> {
+    normalized
+        .rfind("/src/")
+        .map(|index| &normalized[index + "/src/".len()..])
+        .or_else(|| normalized.strip_prefix("src/"))
+}
+
+/// Which crate of its package a file composes into.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CrateClass {
+    /// Outside `src/` and `tests/`.
+    Outside,
+    /// A `src/` module of a package with both `src/lib.rs` and
+    /// `src/main.rs` whose crate the roots' `mod` declarations do not
+    /// settle.
+    Ambiguous,
+    Crate(String),
+}
+
+/// The first module segments one crate root declares; `None` when unknown.
+type DeclaredModules = Option<BTreeSet<String>>;
+
+/// How the owner's package splits its `src/` modules between the library
+/// and the `src/main.rs` binary (#7576). With only `src/lib.rs`, every
+/// `src/` module outside `src/bin/` is the library's; with only
+/// `src/main.rs`, the binary's. With both, a module belongs to the root
+/// whose top-level `mod` declarations name its first segment; a module both
+/// or neither root names, or any module when a root's scan is incomplete
+/// (an item-position macro, `include!`, a parse error), is
+/// [`CrateClass::Ambiguous`].
+#[derive(Debug, Default)]
+struct CrateLayout {
+    package: Option<String>,
+    /// The first module segments `src/lib.rs` and `src/main.rs` declare,
+    /// when the package has both; `None` for a root this scan cannot read
+    /// completely.
+    roots: Option<(DeclaredModules, DeclaredModules)>,
+    /// The package has `src/main.rs` and no `src/lib.rs`: every `src/`
+    /// module outside `src/bin/` that compiles is the binary's.
+    main_only: bool,
+}
+
+impl CrateLayout {
+    fn new(index: &RustIndex, package: Option<&str>) -> Self {
+        let mut lib = Vec::new();
+        let mut main = Vec::new();
+        for (path, facts) in index.files().iter() {
+            if package_key(path).as_deref() != package || under_tests_dir(path) {
+                continue;
+            }
+            let normalized = super::related_tests::normalize_path(path);
+            match src_body(&normalized) {
+                Some("lib.rs") => lib.push(&facts.data().source),
+                Some("main.rs") => main.push(&facts.data().source),
+                _ => {}
+            }
+        }
+        let declared = |sources: Vec<&Arc<str>>| match sources.as_slice() {
+            [source] => declared_first_segments(source),
+            _ => None,
+        };
+        let main_only = lib.is_empty() && !main.is_empty();
+        let roots = (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
+        Self {
+            package: package.map(str::to_string),
+            roots,
+            main_only,
+        }
+    }
+
+    fn classify(&self, file: &Path) -> CrateClass {
+        let Some(shape) = crate_class(file) else {
+            return CrateClass::Outside;
+        };
+        if self.main_only && shape == "lib" && package_key(file) == self.package {
+            return CrateClass::Crate("main".to_string());
+        }
+        let Some((lib, main)) = &self.roots else {
+            return CrateClass::Crate(shape);
+        };
+        let normalized = super::related_tests::normalize_path(file);
+        if shape != "lib"
+            || src_body(&normalized) == Some("lib.rs")
+            || package_key(file) != self.package
+        {
+            return CrateClass::Crate(shape);
+        }
+        let Some(first) = file_module_segments(file).and_then(|segments| segments.first().cloned())
+        else {
+            return CrateClass::Ambiguous;
+        };
+        let names =
+            |root: &Option<BTreeSet<String>>| root.as_ref().map(|names| names.contains(&first));
+        match (names(lib), names(main)) {
+            (Some(true), Some(false)) => CrateClass::Crate("lib".to_string()),
+            (Some(false), Some(true)) => CrateClass::Crate("main".to_string()),
+            _ => CrateClass::Ambiguous,
+        }
+    }
+
+    /// The file's crate; `None` outside the layout or when ambiguous, so it
+    /// never equals a placed owner's crate.
+    fn class(&self, file: &Path) -> Option<String> {
+        match self.classify(file) {
+            CrateClass::Crate(class) => Some(class),
+            CrateClass::Outside | CrateClass::Ambiguous => None,
+        }
+    }
+}
+
+/// The first module segment of every module a crate root declares: `mod a;`
+/// gives `a`, and so does `mod a { mod b; }`. `None` when the scan is
+/// incomplete outside function bodies (an item-position macro, a parse
+/// error) or the root `include!`s another file, which may declare more. A
+/// body macro (`log::info!` in `fn main`) can only declare a module local
+/// to its function, never a crate-level one, so it does not count.
+fn declared_first_segments(source: &str) -> Option<BTreeSet<String>> {
+    let scan = rust_module_tree_scan(source);
+    if !scan.items_complete {
+        return None;
+    }
+    let mut names = BTreeSet::new();
+    for edge in scan.edges {
+        match edge {
+            RustModuleTreeEdge::Default { inline, name } => {
+                names.insert(inline.into_iter().next().unwrap_or(name));
+            }
+            RustModuleTreeEdge::Path(_)
+            | RustModuleTreeEdge::Include(_)
+            | RustModuleTreeEdge::UnresolvedPath { .. } => return None,
+        }
+    }
+    Some(names)
+}
+
 /// The crate a file composes into within its package, read from the
 /// layout: `tests:<name>` for an integration test, `bin:<name>` for a
 /// `src/bin` target, `main` for `src/main.rs`, and `lib` for every other
@@ -707,24 +916,12 @@ fn crate_class(file: &Path) -> Option<String> {
         let first = rest.split('/').next()?;
         return Some(format!("tests:{}", first.trim_end_matches(".rs")));
     }
-    let body = normalized
-        .rfind("/src/")
-        .map(|index| &normalized[index + "/src/".len()..])
-        .or_else(|| normalized.strip_prefix("src/"))?;
+    let body = src_body(&normalized)?;
     if let Some(bin) = body.strip_prefix("bin/") {
         let first = bin.split('/').next()?;
         return Some(format!("bin:{}", first.trim_end_matches(".rs")));
     }
     Some(if body == "main.rs" { "main" } else { "lib" }.to_string())
-}
-
-/// `function` is a rival this identity tells apart: same package, same
-/// crate, and a body (an `extern` declaration is not one).
-fn same_crate_rival(owner: &FunctionSummary, function: &FunctionSummary) -> bool {
-    super::related_tests::package_prefix(&function.file)
-        == super::related_tests::package_prefix(&owner.file)
-        && (function.item.container != FunctionContainer::Free
-            || (function.item.has_body && crate_class(&function.file) == crate_class(&owner.file)))
 }
 
 /// The file sits under a `tests/` directory and no `src/` directory: an
@@ -759,8 +956,15 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
     let body = body.strip_suffix(".rs")?;
     let mut segments: Vec<String> = body.split('/').map(str::to_string).collect();
     if !under_tests && segments.first().is_some_and(|first| first == "bin") {
-        // `src/bin/x.rs` is its own crate root.
+        // `src/bin/x.rs` is its own crate root, and so is `src/bin/x/main.rs`;
+        // `src/bin/x/y/mod.rs` is that crate's module `y`.
         segments.drain(..2.min(segments.len()));
+        if segments.len() == 1 && segments[0] == "main" {
+            segments.clear();
+        }
+        if segments.last().is_some_and(|last| last == "mod") {
+            segments.pop();
+        }
         return Some(segments);
     }
     if under_tests {
@@ -1720,6 +1924,7 @@ mod tests {
         let identity = OwnerCallIdentity {
             name: "render".to_string(),
             owner_crate: Some("lib".to_string()),
+            layout: CrateLayout::default(),
             owner_file: PathBuf::from("src/lib.rs"),
             owner_package: None,
             definitions: vec![Some(strings(&["a"])), Some(strings(&["b"])), None],
@@ -1803,6 +2008,330 @@ mod tests {
             file_module_segments(Path::new("tests/common/mod.rs")),
             Some(strings(&["common"]))
         );
+        assert_eq!(
+            file_module_segments(Path::new("src/bin/tool/main.rs")),
+            Some(vec![])
+        );
+        assert_eq!(
+            file_module_segments(Path::new("src/bin/tool/fmt.rs")),
+            Some(strings(&["fmt"]))
+        );
+        assert_eq!(
+            file_module_segments(Path::new("src/bin/tool/fmt/mod.rs")),
+            Some(strings(&["fmt"]))
+        );
+        assert_eq!(
+            file_module_segments(Path::new("src/bin/tool/fmt/main.rs")),
+            Some(strings(&["fmt", "main"]))
+        );
         assert_eq!(file_module_segments(Path::new("build.rs")), None);
+    }
+
+    const BIN_LIB: &str = "pub mod util;\n\npub fn render(x: i32) -> i32 {\n    x + 1\n}\n";
+    const BIN_UTIL: &str = "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n";
+    const BIN_MAIN: &str =
+        "mod shell;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {}\n";
+    const BIN_SHELL: &str = "\
+pub fn render(x: i32) -> i32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn binary_root_render() {
+        assert_eq!(crate::render(2), 1);
+    }
+
+    #[test]
+    fn binary_shell_render() {
+        assert_eq!(crate::shell::render(2), 4);
+    }
+}
+";
+
+    /// #7576 part 1: `src/shell.rs` is declared by `src/main.rs`, so it is the
+    /// binary's module. Its `crate::render` names `src/main.rs`'s `render`,
+    /// never the library's, and its `render` is a rival of the binary root's
+    /// `render` only.
+    #[test]
+    fn binary_owned_modules_compose_into_the_binary() {
+        let index = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", BIN_MAIN),
+            ("src/shell.rs", BIN_SHELL),
+        ]);
+        let lib_owner = index
+            .functions()
+            .iter()
+            .find(|function| function.file == Path::new("src/lib.rs"));
+        assert!(lib_owner.is_some(), "the library's render must be indexed");
+        let Some(lib_owner) = lib_owner else {
+            return;
+        };
+        let identity = OwnerCallIdentity::new(lib_owner, index.functions().iter(), &index);
+        assert!(identity.is_some(), "the library's render has util's rival");
+        let Some(identity) = identity else {
+            return;
+        };
+        let test = |name: &str| index.tests().iter().find(|test| test.name == name);
+        assert!(test("binary_root_render").is_some());
+        let Some(root_test) = test("binary_root_render") else {
+            return;
+        };
+        assert_eq!(
+            identity.resolve_test(root_test, &index),
+            CallTarget::Unsettled,
+            "the binary's `crate::render` is never the library's render"
+        );
+        assert_eq!(identity.definitions.len(), 2, "shell's render is no rival");
+
+        let main_owner = index.functions().iter().find(|function| {
+            function.file == Path::new("src/main.rs") && function.name == "render"
+        });
+        assert!(
+            main_owner.is_some(),
+            "the binary root's render must be indexed"
+        );
+        let Some(main_owner) = main_owner else {
+            return;
+        };
+        let identity = OwnerCallIdentity::new(main_owner, index.functions().iter(), &index);
+        assert!(
+            identity.is_some(),
+            "the binary root's render has shell's rival"
+        );
+        let Some(identity) = identity else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(root_test, &index), CallTarget::Owner);
+        assert!(test("binary_shell_render").is_some());
+        let Some(cli_test) = test("binary_shell_render") else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(cli_test, &index), CallTarget::Other);
+    }
+
+    /// A module both roots declare, or one whose root `include!`s more, has
+    /// no settled crate: the rule switches off for its definitions.
+    #[test]
+    fn a_module_both_roots_declare_switches_the_rule_off() {
+        let shared_lib = format!("pub mod shell;\n{BIN_LIB}");
+        let shared = index(&[
+            ("src/lib.rs", shared_lib.as_str()),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", BIN_MAIN),
+            ("src/shell.rs", BIN_SHELL),
+        ]);
+        // The library's render has util's rival; shell's render may be either
+        // crate's, so the rule switches off.
+        assert!(identity_for(&shared, "src/lib.rs").is_none());
+        // Neither root declares `shell`: an orphan has no settled crate either.
+        let orphan = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", "fn main() {}\n"),
+            ("src/shell.rs", BIN_SHELL),
+        ]);
+        assert!(identity_for(&orphan, "src/lib.rs").is_none());
+        // An item-position macro in a root may declare any module.
+        let macro_main =
+            format!("cfg_if::cfg_if! {{ if #[cfg(unix)] {{ mod shell; }} }}\n{BIN_MAIN}");
+        let macro_root = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", macro_main.as_str()),
+            ("src/shell.rs", BIN_SHELL),
+        ]);
+        assert!(identity_for(&macro_root, "src/lib.rs").is_none());
+        assert_eq!(
+            declared_first_segments("mod a;\nmod b { mod c; }\n"),
+            Some(["a", "b"].iter().map(|name| name.to_string()).collect())
+        );
+        assert_eq!(
+            declared_first_segments("include!(\"mods.rs\");\nmod a;\n"),
+            None
+        );
+    }
+
+    /// The first `render` in `file`'s identity, `None` when the rule is off.
+    fn identity_for(index: &RustIndex, file: &str) -> Option<OwnerCallIdentity> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.file == Path::new(file) && function.name == "render");
+        assert!(owner.is_some(), "a render in `{file}` must be indexed");
+        OwnerCallIdentity::new(owner?, index.functions().iter(), index)
+    }
+
+    /// A body macro in `fn main` (`log::info!`) cannot declare a crate-level
+    /// module, so the roots still settle which crate `shell` is in; an
+    /// integration test never names the binary's crate, so its
+    /// `modules::render` stays unsettled for the binary root's render.
+    #[test]
+    fn a_body_macro_in_main_keeps_the_split_and_tests_never_name_the_binary() {
+        let logged_main = "mod shell;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {\n    log::info!(\"start\");\n}\n";
+        let api = "#[test]\nfn api_render() {\n    assert_eq!(modules::render(2), 1);\n}\n";
+        let index = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", logged_main),
+            ("src/shell.rs", BIN_SHELL),
+            ("tests/api.rs", api),
+        ]);
+        let identity = identity_for(&index, "src/main.rs");
+        assert!(
+            identity.is_some(),
+            "shell's render is the binary root's rival"
+        );
+        let Some(identity) = identity else {
+            return;
+        };
+        let test = index.tests().iter().find(|test| test.name == "api_render");
+        assert!(test.is_some());
+        let Some(test) = test else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(test, &index), CallTarget::Unsettled);
+        let lib = identity_for(&index, "src/lib.rs");
+        assert!(lib.is_some(), "the library's render has util's rival");
+        if let Some(lib) = lib {
+            assert_eq!(lib.resolve_test(test, &index), CallTarget::Owner);
+        }
+    }
+
+    /// A package with `src/main.rs` and no `src/lib.rs` composes its `src/`
+    /// modules into the binary: the root's `render` and `shell`'s are
+    /// rivals, so `crate::render` from `shell`'s tests settles on the root.
+    #[test]
+    fn a_binary_only_package_composes_its_modules_into_the_binary() {
+        let index = index(&[("src/main.rs", BIN_MAIN), ("src/shell.rs", BIN_SHELL)]);
+        let identity = identity_for(&index, "src/main.rs");
+        assert!(identity.is_some(), "shell's render is the root's rival");
+        let Some(identity) = identity else {
+            return;
+        };
+        let test = |name: &str| index.tests().iter().find(|test| test.name == name);
+        assert!(test("binary_root_render").is_some());
+        assert!(test("binary_shell_render").is_some());
+        let (Some(root_test), Some(shell_test)) =
+            (test("binary_root_render"), test("binary_shell_render"))
+        else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(root_test, &index), CallTarget::Owner);
+        assert_eq!(identity.resolve_test(shell_test, &index), CallTarget::Other);
+    }
+
+    /// A `src/bin` owner never shares a crate with a library-shaped module,
+    /// so an orphan `src/` namesake leaves its identity on.
+    #[test]
+    fn an_ambiguous_module_leaves_a_bin_owner_alone() {
+        let index = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/main.rs", "fn main() {}\n"),
+            ("src/old.rs", BIN_UTIL),
+            (
+                "src/bin/tool.rs",
+                "mod fmt;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {}\n",
+            ),
+            ("src/bin/tool/fmt.rs", BIN_UTIL),
+        ]);
+        assert!(identity_for(&index, "src/bin/tool.rs").is_some());
+        assert!(identity_for(&index, "src/lib.rs").is_none());
+    }
+
+    /// A `src/bin/<name>/main.rs` root is the crate root: its `crate::render`
+    /// names its own `render`.
+    #[test]
+    fn a_bin_directory_main_is_its_crate_root() {
+        let main = "\
+mod fmt;
+
+fn render(x: i32) -> i32 {
+    x - 1
+}
+
+fn main() {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tool_root_render() {
+        assert_eq!(crate::render(2), 1);
+    }
+}
+";
+        let index = index(&[
+            ("src/bin/tool/main.rs", main),
+            ("src/bin/tool/fmt.rs", BIN_UTIL),
+        ]);
+        assert_eq!(
+            settle(&index, "src/bin/tool/main.rs::render", "tool_root_render"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// #7576 part 2: two packages under an absolute root without a
+    /// `crates/` directory stay apart, so `crate::a::render` in `b` never
+    /// names `a`'s render. Same shape as
+    /// `crate_paths_in_another_package_are_unsettled`.
+    #[test]
+    fn absolute_packages_outside_a_crates_layout_stay_apart() {
+        let other = "\
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn other_package_a() {
+        assert_eq!(crate::a::render(1), 2);
+    }
+}
+";
+        let index = index(&[("/w/x/src/lib.rs", RENDER_LIB), ("/w/y/src/lib.rs", other)]);
+        assert_eq!(
+            settle(&index, "::a::render", "other_package_a"),
+            Some(CallTarget::Unsettled)
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "crate_path_names_a"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            package_key(Path::new("/w/x/src/a/b.rs")),
+            Some("/w/x/".to_string())
+        );
+        assert_eq!(
+            package_key(Path::new("/w/x/tests/api.rs")),
+            Some("/w/x/".to_string())
+        );
+        assert_eq!(package_key(Path::new("src/lib.rs")), None);
+        // An ancestor `src/` leaves the layout unreadable: the file is its
+        // own package, never the package of `/srv/src/proj/src/lib.rs`.
+        assert_eq!(
+            package_key(Path::new("/srv/src/proj/tests/api.rs")),
+            Some("/srv/src/proj/tests/api.rs?".to_string())
+        );
+        assert_ne!(
+            package_key(Path::new("/srv/src/proj/src/lib.rs")),
+            package_key(Path::new("/srv/src/proj/tests/api.rs"))
+        );
+        // Absolute `crates/<name>/` keeps its workspace directory.
+        assert_ne!(
+            package_key(Path::new("/tmp/one/crates/api/src/a.rs")),
+            package_key(Path::new("/tmp/two/crates/api/src/a.rs"))
+        );
+        assert_eq!(
+            package_key(Path::new("crates/api/src/a.rs")),
+            Some("crates/api/".to_string())
+        );
+    }
+
+    /// An index spelling one same-named definition absolute and another
+    /// relative cannot be split by package: the rule switches off.
+    #[test]
+    fn a_mixed_path_form_index_has_no_identity() {
+        let index = index(&[("src/lib.rs", RENDER_LIB), ("/w/x/src/lib.rs", BIN_UTIL)]);
+        assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
     }
 }
