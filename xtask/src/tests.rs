@@ -9344,6 +9344,68 @@ fn allow_attribute_detection_ignores_untracked_lints() {
 }
 
 #[test]
+fn allow_attribute_detection_preserves_literal_multiline_byte_lines() {
+    let text = format!(
+        "// 🦀 # noise\n{}\nconst HASH: &str = \"#\";\n{}\n dead_code,\n warnings,\n clippy::module_name_repetitions,\n reason = \"🦀 #\")]\nfn f() {{}}\n{}\n// {}\n",
+        concat!("#", "[cfg(any())]"),
+        concat!("#", "[allow("),
+        concat!("#", "![expect(unused_imports)]"),
+        concat!("#", "[allow(unsafe_code)]"),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    // The existing text scanner also recognizes attribute text in comments.
+    assert_eq!(
+        findings,
+        vec![
+            (4, "allow(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (10, "expect(unused_imports)".to_string()),
+            (11, "allow(unsafe_code)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
+    for text in [
+        "#",
+        "#!",
+        "#[]",
+        concat!("#", "[allow]"),
+        concat!("#", "[allow(warnings"),
+        concat!("#", "[allows(warnings)]"),
+        concat!("#", "[expect = (warnings)]"),
+        concat!("#", "[allow(warning)]"),
+        concat!("#", "[allow(reason = \"warnings\")]"),
+        concat!("#", "[allow(clippy::module_name_repetitions)]"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
+    let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
+            (129, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn allow_attribute_budget_fails_stale_shrunk_and_orphaned_rows() {
     let guarded = guarded_allow_attribute_lints();
     let mut allowlist = BTreeMap::new();
