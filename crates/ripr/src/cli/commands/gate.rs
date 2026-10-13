@@ -48,12 +48,15 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     let options = parse_gate_options(rest)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
+    // `--baseline` is parsed but is a comparison input, not a candidate
+    // source; acknowledge it when present so the error does not read as if
+    // the operator passed nothing (#7654).
     if options.input.pr_guidance.is_none()
         && options.input.gap_ledger.is_none()
         && options.input.repo_exposure.is_none()
     {
         return Err(CommandError::from(
-            "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options".to_string(),
+            missing_candidate_input_message(options.input.baseline.is_some()).to_string(),
         ));
     }
     let report = output::gate::build_gate_decision_report(&options.input)?;
@@ -228,6 +231,14 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         out_md,
         mode_explicit,
     })
+}
+
+fn missing_candidate_input_message(baseline_present: bool) -> &'static str {
+    if baseline_present {
+        "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+    } else {
+        "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+    }
 }
 
 fn require_existing_gate_root(root: &Path) -> Result<(), String> {
@@ -481,6 +492,59 @@ mod tests {
                 mode_explicit: false,
             })
         );
+    }
+
+    #[test]
+    fn gate_evaluate_missing_input_acknowledges_received_baseline() {
+        // `--baseline` is parsed, then rejected as a non-candidate source.
+        // The error must name that flag instead of listing only the three
+        // candidate inputs as if nothing was passed (#7654). Missing-input
+        // returns before writing reports, so these cases must not delete
+        // shared default paths.
+        for argv in [
+            args(&[
+                "evaluate",
+                "--baseline",
+                "target/ripr/reports/gate-baseline.json",
+            ]),
+            args(&[
+                "evaluate",
+                "--baseline",
+                "target/ripr/reports/gate-baseline.json",
+                "--mode",
+                "baseline-check",
+            ]),
+        ] {
+            let result = gate(&argv);
+            assert_eq!(
+                result,
+                Err(CommandError::Failure(
+                    "gate evaluate received --baseline but it is not a candidate source; gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+                        .to_string()
+                )),
+                "argv={argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_evaluate_missing_input_without_baseline_does_not_claim_baseline_was_received() {
+        // Discriminator: a message that always mentions a received
+        // `--baseline` would fail this `--mode baseline-check` case (#7654).
+        let result = gate(&args(&["evaluate", "--mode", "baseline-check"]));
+        assert_eq!(
+            result,
+            Err(CommandError::Failure(
+                "gate evaluate requires at least one of --pr-guidance <path>, --gap-ledger <path>, or --repo-exposure <path>; see `ripr gate --help` for all options"
+                    .to_string()
+            ))
+        );
+        if let Err(CommandError::Failure(message)) = &result {
+            assert!(
+                !message.contains("received --baseline"),
+                "absent --baseline must not be acknowledged as received: {message}"
+            );
+        }
     }
 
     #[test]
