@@ -282,7 +282,7 @@ mod tests {
     /// #7451: naming mutants.json as a valid path is not enough if the
     /// reader still thinks matched_total means observed runtime evidence.
     #[test]
-    fn calibrate_help_discloses_mutants_json_only_denominator() {
+    fn calibrate_help_discloses_mutants_json_only_denominator() -> Result<(), String> {
         for needle in [
             "mutants.json-only import counts unexecuted candidates in matched_total",
             "no runtime observation",
@@ -290,18 +290,21 @@ mod tests {
             "no_runtime_data",
             "Pass outcomes.json",
         ] {
-            assert!(
-                CALIBRATE_HELP.contains(needle),
-                "calibrate help omitted mutants.json-only denominator contract {needle:?}"
-            );
+            if !CALIBRATE_HELP.contains(needle) {
+                return Err(format!(
+                    "calibrate help omitted mutants.json-only denominator contract {needle:?}"
+                ));
+            }
         }
         let after_options = CALIBRATE_HELP
             .split("The calibration report is advisory.")
             .nth(1)
-            .expect("advisory paragraph is the producer-block anchor");
-        assert!(
-            after_options.contains("mutants.json-only path counts unexecuted candidates"),
-            "the option one-liner is not the full denominator caveat:\n{after_options}"
-        );
+            .ok_or("advisory paragraph is the producer-block anchor")?;
+        if !after_options.contains("mutants.json-only path counts unexecuted candidates") {
+            return Err(format!(
+                "the option one-liner is not the full denominator caveat:\n{after_options}"
+            ));
+        }
+        Ok(())
     }
 }
