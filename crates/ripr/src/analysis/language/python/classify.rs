@@ -86,7 +86,7 @@ pub(super) struct PythonNoBehaviorContext {
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
 /// the position of a new `def` header makes it a changed declaration, however
 /// few tokens the two share (#7556).
-fn is_python_declaration_line(text: &str) -> bool {
+pub(super) fn is_python_declaration_line(text: &str) -> bool {
     let trimmed = text.trim_start();
     ["def ", "async def ", "class ", "@"]
         .iter()

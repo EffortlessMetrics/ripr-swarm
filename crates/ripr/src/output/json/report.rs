@@ -1349,6 +1349,11 @@ struct RepairPlacement {
 }
 
 fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement> {
+    // Base-side evidence names a line the candidate no longer has, so it has
+    // no repair placement (RIPR-SPEC-0156, #7587).
+    if finding.source_currentness.is_base_side() {
+        return None;
+    }
     Some(RepairPlacement {
         suggested_test_file: evidence_value(finding, "suggested_test_file: ")?.to_string(),
         suggested_test_name: evidence_value(finding, "suggested_test_name: ")?.to_string(),

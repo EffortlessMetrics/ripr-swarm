@@ -33,6 +33,11 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     {
         return None;
     }
+    // A deleted or moved line is base-side evidence, never a repair target
+    // (RIPR-SPEC-0156, #7587): the line it names is gone from the candidate.
+    if finding.source_currentness.is_base_side() {
+        return None;
+    }
 
     let gap = finding.canonical_gap.as_ref()?;
     let missing_discriminator = finding

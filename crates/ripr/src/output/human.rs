@@ -1539,6 +1539,26 @@ mod tests {
         finding
     }
 
+    /// #7587: a deleted or moved Python line is base-side evidence and names
+    /// a line the candidate no longer has, so it gets no repair card, while
+    /// the same finding on the candidate side keeps its card.
+    #[test]
+    fn base_side_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = carded.clone();
+            base_side.source_currentness = currentness;
+            assert!(
+                crate::output::python_repair_card::python_repair_card(&base_side).is_none(),
+                "{currentness:?}"
+            );
+        }
+    }
+
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
     /// finding at line 5 over the carded literal finding at line 11, so check
     /// said "no ripr command routes this" while pilot had a card. A Python
