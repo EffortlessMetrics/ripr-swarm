@@ -1070,6 +1070,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   #7546); the corpus has no `assertRaises` callable,
   `assertRaises ... as cm` or other example 34 form yet, and each needs
   its own case before those parts read as established.
+  Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
+  mutant the `assert_called_once_with` expectation kills, and a sign case
+  (`py-spec0233-ex09-mock-sign`) the test cannot see, which scores ideal.
 
 ## Implementation Mapping
 

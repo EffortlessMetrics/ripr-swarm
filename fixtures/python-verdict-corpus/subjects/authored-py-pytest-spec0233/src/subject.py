@@ -169,3 +169,8 @@ def perr_exc_length(text):
     if not text:
         raise KeyError("empty")
     return int(text)
+
+
+def on_parse(text, handler):
+    handler(int(text))
+    return handler
