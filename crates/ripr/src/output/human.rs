@@ -233,16 +233,16 @@ pub(crate) fn render_full_with_config_and_navigation(
         .collect();
     // Navigation is the established CLI/library compatibility boundary. Build
     // sharing only from visible donors; public library legacy bytes stay exact.
-    let shared = drill_in.map(|_| shared::SharedReport::build(&visible));
+    // Decide once to avoid rescanning the catalogue for each finding.
+    let shared = drill_in
+        .map(|_| shared::SharedReport::build(&visible))
+        .filter(shared::SharedReport::is_shared);
     if let Some(shared) = &shared {
         shared.render_catalogue(&mut out);
     }
     let findings_rendered = visible.len();
     for (ordinal, finding) in visible.iter().enumerate() {
-        let shared_sections = shared
-            .as_ref()
-            .filter(|shared| shared.is_shared())
-            .map(|shared| &shared.findings[ordinal]);
+        let shared_sections = shared.as_ref().map(|shared| &shared.findings[ordinal]);
         if shared_sections.is_some() {
             out.push_str(&format!("Finding {}: ", ordinal + 1));
         }
