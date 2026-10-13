@@ -1,4 +1,7 @@
-use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
+use super::actions::{
+    SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
+    resolve_action,
+};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
@@ -34,9 +37,9 @@ use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
-    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, UnavailableAdapterCoverage,
-    content_digest, format_duration,
+    AnalysisAttemptState, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
+    DocumentStalenessReason, DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata,
+    UnavailableAdapterCoverage, content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -6743,6 +6746,191 @@ fn gap_code_actions_disable_verify_route_when_verification_commands_missing() ->
     {
         return Err("no executable verify command may survive without a route".to_string());
     }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
+    // A stale retained snapshot must not relabel producer refusals as
+    // refresh-recoverable. Exercise each real gap producer through
+    // code_action_response, then the retained-health conversion for both
+    // queued and failed refresh states.
+    let cases = [
+        (
+            "verification",
+            "Verify after test: copy verify command",
+            "verification_route_unavailable",
+        ),
+        (
+            "receipt",
+            "Review result: copy receipt command",
+            "receipt_route_unavailable",
+        ),
+        (
+            "static",
+            "Inspect gap: copy repair packet",
+            "preview_or_static_limitation",
+        ),
+    ];
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let client = client_features_with_disabled_support(&borrowed)?;
+    let mut refusal_failures = Vec::new();
+
+    for (producer, title, expected_reason) in cases {
+        let root = unique_lsp_test_root(&format!("retained-gap-{producer}"))?;
+        let extension = if producer == "static" { "rs" } else { "py" };
+        let uri = file_uri_for_path(&root.path().join(format!("src/pricing.{extension}")))?;
+        let mut diagnostic = gap_action_diagnostic();
+        let data = diagnostic
+            .data
+            .as_mut()
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "gap fixture must carry an object payload".to_string())?;
+        match producer {
+            "verification" => {
+                data.remove("verification_commands");
+            }
+            "receipt" => {
+                data.remove("receipt_command");
+            }
+            "static" => {
+                data.insert("language".to_string(), serde_json::json!("rust"));
+                data.insert(
+                    "gap_state".to_string(),
+                    serde_json::json!("static_limitation"),
+                );
+                data.insert("repairability".to_string(), serde_json::json!("no_action"));
+                data.insert(
+                    "static_limit_kind".to_string(),
+                    serde_json::json!("cross_language_target_unresolved"),
+                );
+                data.insert(
+                    "projection_exclusion_reasons".to_string(),
+                    serde_json::json!(["cross_language_target_unresolved"]),
+                );
+            }
+            _ => unreachable!("the cases above define each supported producer"),
+        }
+
+        let mut snapshot = sample_analysis_snapshot(
+            root.path().to_path_buf(),
+            uri.clone(),
+            vec![diagnostic.clone()],
+            Vec::new(),
+        );
+        snapshot.gap_artifacts = vec![validated_gap_artifact()];
+        let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
+        let actions = code_action_response(&params, Some(&snapshot), &client);
+        let selected = code_action_literals(&actions)?
+            .into_iter()
+            .find(|action| action.title == title)
+            .ok_or_else(|| format!("{producer} producer did not emit {title}"))?;
+        assert_disabled_action_invariants(selected)?;
+        assert_eq!(disabled_reason_of(selected), Some(expected_reason));
+        let producer_human_reason = selected
+            .disabled
+            .as_ref()
+            .ok_or_else(|| "producer refusal must be inert".to_string())?
+            .reason
+            .clone();
+        let producer_action_id = selected
+            .data
+            .as_ref()
+            .and_then(|data| data["action_id"].as_str())
+            .ok_or_else(|| "producer refusal must retain its action identity".to_string())?
+            .to_string();
+        let producer_diagnostics = selected.diagnostics.clone();
+
+        for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
+            let mut retained = actions.clone();
+            disable_retained_analysis_actions(
+                &mut retained,
+                &AnalysisHealth {
+                    state,
+                    ..AnalysisHealth::default()
+                },
+            );
+            let selected = code_action_literals(&retained)?
+                .into_iter()
+                .find(|action| action.title == title)
+                .ok_or_else(|| format!("{producer} refusal vanished in {state:?}"))?;
+            assert_disabled_action_invariants(selected)?;
+            let machine_reason_matches = disabled_reason_of(selected) == Some(expected_reason);
+            let human_reason_matches = selected
+                .disabled
+                .as_ref()
+                .map(|disabled| disabled.reason.as_str())
+                == Some(producer_human_reason.as_str());
+            let identity_matches = selected
+                .data
+                .as_ref()
+                .and_then(|data| data["action_id"].as_str())
+                == Some(producer_action_id.as_str())
+                && selected.diagnostics == producer_diagnostics;
+            if !machine_reason_matches || !human_reason_matches || !identity_matches {
+                refusal_failures.push(format!(
+                    "{producer} in {state:?}: expected {expected_reason}, got {:?}; human text preserved={human_reason_matches}; identity and diagnostic preserved={identity_matches}",
+                    disabled_reason_of(selected)
+                ));
+            }
+            if !retained.iter().any(|action| {
+                matches!(action, CodeActionOrCommand::CodeAction(action)
+                    if action.title == "Refresh Analysis - Saved Workspace Check"
+                        && action.command.as_ref().is_some_and(|command| command.command == REFRESH_COMMAND))
+            }) {
+                return Err(format!("refresh must remain active in {state:?}"));
+            }
+        }
+    }
+    // These two stale-snapshot cases remain more specific than retained
+    // health; preserve their refusal reasons and identities through conversion.
+    let (_root, params, mut stale_snapshot) = gap_kind_parity_request()?;
+    stale_snapshot.diagnostics_by_uri.clear();
+    let stale = code_action_response(&params, Some(&stale_snapshot), &client);
+    let stale_action_id = code_action_literals(&stale)?
+        .into_iter()
+        .find(|action| action.title == "Inspect gap: copy repair packet")
+        .and_then(|action| action.data.as_ref())
+        .and_then(|data| data["action_id"].as_str())
+        .ok_or_else(|| "stale snapshot positive must emit the gap packet".to_string())?
+        .to_string();
+    for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
+        let mut retained = stale.clone();
+        disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state,
+                ..AnalysisHealth::default()
+            },
+        );
+        let stale = code_action_literals(&retained)?
+            .into_iter()
+            .find(|action| action.title == "Inspect gap: copy repair packet")
+            .ok_or_else(|| format!("stale snapshot action vanished in {state:?}"))?;
+        assert_disabled_action_invariants(stale)?;
+        if disabled_reason_of(stale) != Some("stale_snapshot")
+            || stale
+                .data
+                .as_ref()
+                .and_then(|data| data["action_id"].as_str())
+                != Some(stale_action_id.as_str())
+        {
+            refusal_failures.push(format!(
+                "stale snapshot in {state:?}: reason or identity changed"
+            ));
+        }
+    }
+
+    if !refusal_failures.is_empty() {
+        return Err(format!(
+            "producer refusal preservation failed in {} controls: {}",
+            refusal_failures.len(),
+            refusal_failures.join("; ")
+        ));
+    }
+
     Ok(())
 }
 
