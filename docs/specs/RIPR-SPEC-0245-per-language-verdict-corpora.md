@@ -129,7 +129,7 @@ without a producer, and a producer or packet in any other corpus.
 `check` runs a case that carries a packet on the `lang-perl` build with
 `--perl-facts <packet>`; `check-all` builds it once per run, only when a
 corpus has such a case. A packet case whose run reports the Perl adapter
-`unavailable` is an error, never a silent row. ripr marks a Perl finding `candidate_current` only
+`unavailable` is an error naming the run's reason, never a silent row. ripr marks a Perl finding `candidate_current` only
 when a diff line falls inside the packet's change range read one-based
 (#6586), and the pinned producer writes zero-based lines (#3221), so its
 findings stay `unresolved_subject`. A packet case therefore also counts
@@ -229,6 +229,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `packet_findings_count_while_their_subject_is_unresolved_and_others_do_not`
 - `report_keeps_edited_packet_rates_apart_from_producer_rates`
 - `a_packet_case_refuses_a_binary_without_the_perl_adapter`
+- `case_output_refuses_an_unavailable_perl_run_only_for_packet_cases`
 - `committed_python_corpus_is_valid_and_covers_each_test_library`
 - `python_expected_rows_agree_with_corpus_labels`
 - `fixtures/python-verdict-corpus/spec-coverage.toml` and its floor
