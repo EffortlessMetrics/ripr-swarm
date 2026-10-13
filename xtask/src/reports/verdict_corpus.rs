@@ -532,17 +532,11 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
     codes
 }
 
-/// Relations ripr's reach stage does not count as reaching the owner
-/// (`is_proximity_only` plus the seam-callee rows `reach_evidence` sets
-/// aside, in `crates/ripr/src/analysis/classify/reach.rs`). Any other listed
-/// relation makes reach `yes`, which `no_static_path` contradicts.
-const NON_REACHING_RELATIONS: [&str; 4] = [
-    "same_test_file",
-    "same_module",
-    "weak_token_substring",
-    "seam_callee_call",
-];
-
+/// A listed test whose relation reaches the owner makes reach `yes`, which
+/// `no_static_path` contradicts. Whether a relation reaches is ripr's own
+/// answer (`RelationReason::reaches_owner`, #7531). A relation string ripr
+/// does not recognize counts as reaching, so drift surfaces as a
+/// contradiction instead of passing unread.
 fn lists_a_reaching_test(finding: &Value) -> bool {
     finding
         .get("related_tests")
@@ -551,9 +545,14 @@ fn lists_a_reaching_test(finding: &Value) -> bool {
             tests.iter().any(|test| {
                 test.get("relation_reason")
                     .and_then(Value::as_str)
-                    .is_some_and(|reason| !NON_REACHING_RELATIONS.contains(&reason))
+                    .is_some_and(relation_reaches_owner)
             })
         })
+}
+
+fn relation_reaches_owner(reason: &str) -> bool {
+    serde_json::from_value::<ripr::domain::RelationReason>(Value::from(reason))
+        .map_or(true, ripr::domain::RelationReason::reaches_owner)
 }
 
 const SUMMARY_CLASSES: [&str; 7] = [

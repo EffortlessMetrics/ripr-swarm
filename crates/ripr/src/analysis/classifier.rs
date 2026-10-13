@@ -88,10 +88,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .unwrap_or(&probe.expression);
     let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression);
     let class = evidence.classify(context.probe);
+    // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
+    // keep reveal's so a withheld finding can report them again.
+    let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
+        .related_tests
+        .iter()
+        .map(|test| test.miss)
+        .collect();
 
     let mut finding = build_finding(&context, class, evidence);
     if let Some(chain) = resolved_chain.as_ref() {
-        withhold_helper_uniqueness_as_unknown(&mut finding, chain, index);
+        withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
     finding
 }
@@ -111,6 +118,7 @@ fn withhold_helper_uniqueness_as_unknown(
     finding: &mut Finding,
     chain: &HelperChain,
     index: &RustIndex,
+    reveal_misses: &[Option<RelatedTestMiss>],
 ) {
     if finding.class != ExposureClass::NoStaticPath {
         return;
@@ -169,10 +177,20 @@ fn withhold_helper_uniqueness_as_unknown(
             "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; the helper-chain relation stays refused"
         ),
     ]);
-    for test in &mut finding.related_tests {
-        if test.miss == Some(RelatedTestMiss::NoCallPath) {
-            test.miss = None;
-        }
+    restore_reveal_misses(&mut finding.related_tests, reveal_misses);
+}
+
+/// #7532: a withheld finding reports what `reveal` recorded for each row, as
+/// any other `static_unknown` finding does, rather than the `no_call_path`
+/// the `no_static_path` annotation wrote. A `no_call_path` from `reveal`
+/// itself is cleared too: the abstention establishes no missing call.
+/// `build_finding` keeps reveal's row order, so rows pair by position.
+fn restore_reveal_misses(
+    related_tests: &mut [RelatedTest],
+    reveal_misses: &[Option<RelatedTestMiss>],
+) {
+    for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
+        test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
 }
 
@@ -585,6 +603,89 @@ mod tests {
             !finding
                 .stop_reasons
                 .contains(&StopReason::HelperIdentityUnresolved)
+        );
+    }
+
+    // #7532: withholding as `static_unknown` reports the misses `reveal`
+    // recorded, not the `no_call_path` the `no_static_path` annotation wrote,
+    // and not none.
+    #[test]
+    fn given_withheld_helper_uniqueness_finding_then_rows_keep_reveal_misses() {
+        let unasserted = test_calling("src/op.rs", "accepts_wildcard", "parse", "parse(\">=1.0\")");
+        let mut smoke = test_calling("src/op.rs", "accepts_caret", "parse", "parse(\"^1\")");
+        smoke.assertions = vec![oracle_fact(
+            "assert!(parse(\"^1\").is_ok());",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        )];
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![unasserted, smoke],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
+        let rows: Vec<(&str, Option<RelationReason>, Option<RelatedTestMiss>)> = finding
+            .related_tests
+            .iter()
+            .map(|test| (test.name.as_str(), test.relation_reason, test.miss))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("accepts_caret", Some(RelationReason::SameTestFile), None),
+                (
+                    "accepts_wildcard",
+                    Some(RelationReason::SameTestFile),
+                    Some(RelatedTestMiss::NoAssertion)
+                ),
+            ]
+        );
+    }
+
+    // #7532: a `no_call_path` from `reveal` is cleared as well; the
+    // abstention establishes no missing call. Rows pair by position.
+    #[test]
+    fn given_reveal_misses_when_restored_then_no_call_path_is_cleared() {
+        let row = |miss| RelatedTest {
+            name: "row".to_string(),
+            file: PathBuf::from("tests/row.rs"),
+            line: 1,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: Some(RelationReason::SameModule),
+            relation_confidence: None,
+            miss,
+        };
+        let mut rows = vec![
+            row(Some(RelatedTestMiss::NoCallPath)),
+            row(Some(RelatedTestMiss::NoCallPath)),
+            row(Some(RelatedTestMiss::NoCallPath)),
+            row(Some(RelatedTestMiss::AssertionNotObserving)),
+        ];
+        restore_reveal_misses(
+            &mut rows,
+            &[
+                Some(RelatedTestMiss::AssertionNotCredited),
+                Some(RelatedTestMiss::NoCallPath),
+                None,
+                Some(RelatedTestMiss::AssertionNotObserving),
+            ],
+        );
+        assert_eq!(
+            rows.iter().map(|test| test.miss).collect::<Vec<_>>(),
+            vec![
+                Some(RelatedTestMiss::AssertionNotCredited),
+                None,
+                None,
+                Some(RelatedTestMiss::AssertionNotObserving),
+            ]
         );
     }
 

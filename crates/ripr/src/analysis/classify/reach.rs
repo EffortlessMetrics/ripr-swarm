@@ -44,10 +44,9 @@ pub(in crate::analysis) fn reach_evidence(
     // `owner_may_be_reached_unseen`) and no proximity test invokes a
     // non-assertion macro (whose expansion may call it).
     let proximity_only = !owner_anchored.is_empty()
-        && related_tests
+        && !related_tests
             .iter()
-            .filter(|(_, reason)| *reason != RelationReason::SeamCalleeCall)
-            .all(|(_, reason)| is_proximity_only(*reason));
+            .any(|(_, reason)| reason.reaches_owner());
     if proximity_only {
         let names = owner_anchored
             .iter()
@@ -234,15 +233,10 @@ pub(super) fn invokes_opaque_macro(body: &str) -> bool {
     })
 }
 
-/// Relations that come from file or name proximity alone, with no captured
-/// call, helper chain, or assertion affinity tying the test to the owner.
+/// Relations that come from file or name proximity alone
+/// ([`RelationReason::is_proximity_only`]).
 pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
-    matches!(
-        reason,
-        RelationReason::SameTestFile
-            | RelationReason::SameModule
-            | RelationReason::WeakTokenSubstring
-    )
+    reason.is_proximity_only()
 }
 
 #[cfg(test)]

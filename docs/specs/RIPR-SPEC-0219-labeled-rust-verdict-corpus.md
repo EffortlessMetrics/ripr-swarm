@@ -154,9 +154,10 @@ Contradictions are internal to ripr's output and need no label:
 summary counts that disagree with the findings list. Since #5424 a
 `no_static_path` finding lists every test it examined with why each misses,
 so `no_static_path_with_related_tests` counts only a listed test whose
-relation ripr's reach stage treats as reaching the owner: anything other
-than `same_test_file`, `same_module`, `weak_token_substring`, or
-`seam_callee_call`. The rule reads the listed rows (at most eight, highest
+relation ripr's reach stage treats as reaching the owner
+(`RelationReason::reaches_owner`): anything other than `same_test_file`,
+`same_module`, `weak_token_substring`, or `seam_callee_call`. A relation
+string ripr does not recognize counts as reaching. The rule reads the listed rows (at most eight, highest
 relation confidence first), so a reaching row ranked below the window goes
 uncounted.
 

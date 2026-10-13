@@ -1,8 +1,8 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, is_proximity_only, missing_evidence,
-    recommended_next_step, stop_reasons,
+    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
+    stop_reasons,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -255,10 +255,10 @@ fn annotate_related_test_misses(
     }
 }
 
-/// Relations `reach_evidence` does not count as reaching the owner: the
-/// proximity-only links, and a seam-callee call, which it sets aside.
+/// Relations `reach_evidence` does not count as reaching the owner
+/// ([`RelationReason::reaches_owner`]).
 fn reaches_nothing(reason: RelationReason) -> bool {
-    is_proximity_only(reason) || reason == RelationReason::SeamCalleeCall
+    !reason.reaches_owner()
 }
 
 /// Strongest first.

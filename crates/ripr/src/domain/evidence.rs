@@ -197,6 +197,39 @@ impl RelationReason {
         }
     }
 
+    /// Proximity alone: file or name nearness, with no captured call, helper
+    /// chain, or assertion affinity tying the test to the owner.
+    pub fn is_proximity_only(self) -> bool {
+        matches!(
+            self,
+            Self::SameTestFile | Self::SameModule | Self::WeakTokenSubstring
+        )
+    }
+
+    /// Whether a related test with this relation counts as reaching the owner
+    /// in the reach stage, which is `yes` only when some related test does.
+    /// Proximity-only relations do not reach, and a seam-callee call runs
+    /// the seam's callee rather than the owner (#3714). A `no_static_path`
+    /// finding therefore contradicts any related test that reaches. The match
+    /// is exhaustive so a new variant must be classified here (#7531): reach,
+    /// the `no_static_path` miss reason, and the verdict corpus contradiction
+    /// check all read this one answer.
+    pub fn reaches_owner(self) -> bool {
+        match self {
+            Self::DirectOwnerCall
+            | Self::HelperOwnerCall
+            | Self::AssertionTargetAffinity
+            | Self::OwnerNamedTest
+            | Self::ImportPathAffinity
+            | Self::FixtureOwnerAffinity
+            | Self::ReExportChainFollowed => true,
+            Self::SameTestFile
+            | Self::SameModule
+            | Self::WeakTokenSubstring
+            | Self::SeamCalleeCall => false,
+        }
+    }
+
     /// Sort order: lower value sorts first (highest-priority reason first).
     pub fn priority(self) -> u8 {
         match self {
@@ -276,6 +309,36 @@ mod tests {
         Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, StageEvidence,
         StageState,
     };
+
+    // #7531: the verdict corpus reads a serialized `relation_reason` back
+    // through serde and asks `reaches_owner`, so the serialized name must be
+    // `as_str` for every variant, and the reach split must stay as decided.
+    #[test]
+    fn relation_reason_serializes_as_its_label_and_splits_on_reach() {
+        let cases = [
+            (RelationReason::DirectOwnerCall, true, false),
+            (RelationReason::HelperOwnerCall, true, false),
+            (RelationReason::AssertionTargetAffinity, true, false),
+            (RelationReason::SameTestFile, false, true),
+            (RelationReason::SameModule, false, true),
+            (RelationReason::OwnerNamedTest, true, false),
+            (RelationReason::ImportPathAffinity, true, false),
+            (RelationReason::FixtureOwnerAffinity, true, false),
+            (RelationReason::WeakTokenSubstring, false, true),
+            (RelationReason::ReExportChainFollowed, true, false),
+            (RelationReason::SeamCalleeCall, false, false),
+        ];
+
+        for (reason, reaches, proximity) in cases {
+            assert_eq!(
+                serde_json::to_value(reason).ok(),
+                Some(serde_json::Value::from(reason.as_str())),
+                "{reason:?}"
+            );
+            assert_eq!(reason.reaches_owner(), reaches, "{reason:?}");
+            assert_eq!(reason.is_proximity_only(), proximity, "{reason:?}");
+        }
+    }
 
     #[test]
     fn oracle_kind_labels_are_stable_contract_terms() {

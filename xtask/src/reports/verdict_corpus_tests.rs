@@ -239,6 +239,15 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]
     );
+    // #7531: a relation string ripr does not know fails closed.
+    no_path["related_tests"][1]["relation_reason"] = json!("renamed_relation");
+    assert_eq!(
+        finding_contradictions(&no_path),
+        vec!["no_static_path_with_related_tests"]
+    );
+    no_path["related_tests"][1]["relation_reason"] = json!("weak_token_substring");
+    no_path["related_tests"][0]["relation_reason"] = json!("same_module");
+    assert!(finding_contradictions(&no_path).is_empty());
 
     let mut exposed = clean.clone();
     exposed["classification"] = json!("exposed");
