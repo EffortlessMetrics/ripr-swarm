@@ -5,4 +5,4 @@
   mock-object grades of RIPR-SPEC-0247, dropped additive terms
   (RIPR-SPEC-0248), and bound-local and base-class pins (RIPR-SPEC-0249,
   RIPR-SPEC-0250). Spec-example coverage rises from 46 to 66 of 97, and the
-  ledger floor with it (#7099).
+  ledger floor with it (#7684).
