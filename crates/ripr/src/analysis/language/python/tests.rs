@@ -6140,3 +6140,153 @@ fn a_root_lib_directory_is_an_import_root() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn empty_sink_tokens_do_not_credit_a_discarded_short_function_result() -> Result<(), String> {
+    let file = Path::new("src/constants.py");
+    let owners = extract_owners(file, "y = 2\n\n\ndef f():\n    return 1\n");
+    let owner = flat_owner(&owners, "f")?;
+    let tests = extract_tests(
+        Path::new("tests/test_constants.py"),
+        "from src.constants import f, y\n\n\ndef test_constants():\n    f()\n    assert y == 2\n",
+    );
+    assert_eq!(
+        tests.len(),
+        1,
+        "the genuine strong assertion must be parsed"
+    );
+    assert_eq!(
+        candidate_relations(owner, &tests),
+        vec![("test_constants".to_string(), "syntactic_call")]
+    );
+    let finding = classify_change_with_old(
+        file,
+        5,
+        "    return 1",
+        Some("    return 0"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the changed one-letter function must yield a finding".to_string())?;
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert_eq!(
+        finding.related_tests[0].oracle.as_deref(),
+        Some("assert y == 2")
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_different_sink")
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_sink_tokens_preserve_a_short_function_output_assertion() -> Result<(), String> {
+    let file = Path::new("src/constants.py");
+    let owners = extract_owners(file, "y = 2\n\n\ndef f():\n    return 1\n");
+    let tests = extract_tests(
+        Path::new("tests/test_constants.py"),
+        "from src.constants import f, y\n\n\ndef test_constants():\n    assert f() == 1\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_change_with_old(
+        file,
+        5,
+        "    return 1",
+        Some("    return 0"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the observed one-letter function must yield a finding".to_string())?;
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_owner_call_through_module")
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_sink_tokens_do_not_credit_module_comparison_text() -> Result<(), String> {
+    // Python parses `<module>(1)` here as a chained comparison, not a Call.
+    // Preserve the existing lexical relation as a negative input: this test
+    // repairs sink credit, without expanding the relation-scanner contract.
+    let file = Path::new("src/constants.py");
+    let owners = extract_owners(file, "x = 1\ny = 2\n");
+    let owner = flat_owner(&owners, "<module>")?;
+    let tests = extract_tests(
+        Path::new("tests/test_constants.py"),
+        "from src.constants import y as module\n\n\ndef test_constants():\n    assert 0 <module>(1)\n    assert module == 2\n",
+    );
+    assert_eq!(tests.len(), 1);
+    assert_eq!(
+        candidate_relations(owner, &tests),
+        vec![("test_constants".to_string(), "syntactic_call")]
+    );
+    let finding = classify_change_with_old(file, 1, "x = 1", Some("x = 0"), &owners, &tests)
+        .ok_or_else(|| "the changed module assignment must yield a finding".to_string())?;
+    assert_eq!(
+        finding.probe.owner.as_ref().map(ToString::to_string),
+        Some("python:src/constants.py::<module>".to_string())
+    );
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert_eq!(
+        finding.related_tests[0].oracle.as_deref(),
+        Some("assert module == 2")
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_different_sink")
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_sink_tokens_keep_ordinary_module_imports_conservative() -> Result<(), String> {
+    let file = Path::new("src/constants.py");
+    let owners = extract_owners(file, "x = 1\ny = 2\n");
+    let owner = flat_owner(&owners, "<module>")?;
+    for oracle in ["assert y == 2", "assert x == 1"] {
+        let tests = extract_tests(
+            Path::new("tests/test_constants.py"),
+            &format!("from src.constants import x, y\n\n\ndef test_constants():\n    {oracle}\n"),
+        );
+        assert_eq!(tests.len(), 1);
+        assert_eq!(
+            candidate_relations(owner, &tests),
+            vec![("test_constants".to_string(), "same_stem")]
+        );
+        let finding = classify_change_with_old(file, 1, "x = 1", Some("x = 0"), &owners, &tests)
+            .ok_or_else(|| "ordinary module imports must retain the changed finding".to_string())?;
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Unknown
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("unknown"));
+        assert_eq!(
+            finding.alignment_reason.as_deref(),
+            Some("no_strong_oracle")
+        );
+    }
+    Ok(())
+}

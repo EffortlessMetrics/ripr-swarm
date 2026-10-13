@@ -1,0 +1,10 @@
+diff --git a/non-secure/index.js b/non-secure/index.js
+--- a/non-secure/index.js
++++ b/non-secure/index.js
+@@ -18,5 +18,5 @@
+   while (i-- > 0) {
+     id += urlAlphabet[(Math.random() * 64) | 0]
+   }
+-  return id
++  return id.slice(1)
+ }

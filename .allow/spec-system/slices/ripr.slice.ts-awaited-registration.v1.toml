@@ -1,0 +1,29 @@
+schema_version = "2.0"
+id = "ripr.slice.ts-awaited-registration.v1"
+generation = 1
+source_issue = "issue:6798"
+design_reference = "RIPR-SPEC-0243"
+change_class = "behavior_change"
+claim_boundary = "Once-awaited statement root registrations use the existing TypeScript/JavaScript extraction, qualification-option fence, callback shadows, assertion admission and title masking. Newly supported awaited roots additionally require known runner registration under actual lexical bindings; bare-root admission is unchanged. Existing unsupported positions remain uncredited and infection/propagation remain unknown. Pinned upstream Nano ID sources and separately authored consumer assertions establish one bounded real-codebase contrast; they are not upstream tests or a population estimate."
+non_goals = [
+  "node:test t.assert API/provenance expansion owned by PR #7523, or new runner APIs",
+  "initializer/helper registration support or new callback reach",
+  "Python sink alignment or Rust macro reach",
+  "support-tier promotion, runtime mutation authority or repair-packet expansion",
+]
+return_conditions = [
+  "Stop a promotion if awaited roots bypass existing qualification or admission.",
+  "Preserve the original corpus labels and upstream source identities.",
+]
+owned_seams = ["seam:ripr:analysis:language-typescript-test-declarations"]
+shared_seams = ["seam:ripr:specs:typescript-preview-static-facts"]
+forbidden_seams = ["seam:ripr:analysis:language-python-adapter", "seam:ripr:analysis:language-rust-adapter", "seam:ripr:output:support-promotion"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0243"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

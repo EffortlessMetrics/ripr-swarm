@@ -12,7 +12,7 @@ use super::diagnostics::{
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
+    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
     is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
@@ -3322,6 +3322,14 @@ impl Backend {
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
+        // Capture health before any snapshot lock: completion records health
+        // while reading the snapshot. Every retained-evidence branch uses
+        // this same lifecycle projection without reversing that lock order.
+        let health = self.analysis_health_snapshot();
+        let with_status = |hover, snapshot: &AnalysisSnapshot| {
+            let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
+            hover_with_analysis_health(hover, snapshot, &effective)
+        };
         let uri = &params.text_document_position_params.text_document.uri;
         let position = &params.text_document_position_params.position;
         // A quarantined (dirty-buffer) document has no valid saved-state
@@ -3359,7 +3367,7 @@ impl Backend {
             overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
                         &snapshot,
                     ));
@@ -3372,7 +3380,7 @@ impl Backend {
             // evidence as the highest-priority structural projection.
             for diagnostic in &overlapping {
                 if is_gap_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         diagnostic_hover_response(diagnostic),
                         &snapshot,
                     ));
@@ -3380,14 +3388,14 @@ impl Backend {
             }
             for diagnostic in &overlapping {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         finding_hover_response(finding, diagnostic),
                         &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     diagnostic_hover_response(diagnostic),
                     &snapshot,
                 ));
@@ -3414,7 +3422,7 @@ impl Backend {
                 .filter(|finding| !published.contains(finding.id.as_str()))
                 .collect::<Vec<_>>();
             if !findings.is_empty() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,

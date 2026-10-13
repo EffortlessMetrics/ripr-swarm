@@ -27,7 +27,12 @@ projections. Gate decisions, when configured, remain the pass/fail authority.
 ## Behavior
 
 The generated PR CI workflow must be cheap, installable, predictable, and
-advisory by default. Its canonical shape is:
+advisory by default. Its header must give the public CI guide URL rather than
+requiring `docs/CI.md` in the adopter's repository. The repository-variable
+comments must name GitHub's `Settings > Secrets and variables > Actions >
+Variables` location directly above `RIPR_GATE_MODE`.
+
+Its canonical shape is:
 
 ```text
 checkout and setup
