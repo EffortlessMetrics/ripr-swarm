@@ -108,3 +108,12 @@ card for the assertion already present. The equal-values control therefore also
 requires no invented typed discriminator, placement, repair card or strengthen-
 test next step. The warning and strong oracle remain; withholding ungrounded
 repair authority does not suppress the finding or promote the change.
+
+Final production `0cd2b3798f445e4d87280a329862400627f83745` passes all 569
+Python adapter tests. Its real CLI retains the five literal fixture outcomes
+and omits every ungrounded repair field/card for equal values. All 410 goldens,
+honesty checks and dogfood pass. The final independent corpus guard rejects the
+retained actual `414b63c61` bad-card JSON/human output with exit 1 specifically
+for `must_not_have_verify_command`; restored repaired artifacts pass with exit 0
+and their original SHA-256 values are verified. This mutation challenges dishonest
+reblessing of an advisory card, separately from non-promotion checks.
