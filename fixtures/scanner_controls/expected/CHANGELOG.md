@@ -178,3 +178,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — scanner_controls (16)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — scanner_controls (17)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — scanner_controls (18)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

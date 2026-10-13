@@ -88,7 +88,7 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         finding("reachable_unrevealed", 10, "base_deleted"),
         finding("reachable_unrevealed", 11, "candidate_current"),
     ]});
-    let anchored = anchored_findings(&check, &anchor(), None);
+    let anchored = anchored_findings(&check, &anchor(), None, false);
     assert_eq!(anchored.len(), 1);
     assert_eq!(case_verdict(&anchored), Verdict::Credited);
     let other = Anchor {
@@ -96,7 +96,7 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         line: 10,
     };
     assert_eq!(
-        case_verdict(&anchored_findings(&check, &other, None)),
+        case_verdict(&anchored_findings(&check, &other, None, false)),
         Verdict::Silent
     );
 }
@@ -186,11 +186,11 @@ fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
     let check = json!({"findings": [retargeted, other_binding, other_file]});
     // Without a `let` anchor the anchor line alone counts, and nothing sits
     // there.
-    assert!(anchored_findings(&check, &anchor(), None).is_empty());
-    assert!(anchored_findings(&check, &anchor(), Some("    end == 0")).is_empty());
+    assert!(anchored_findings(&check, &anchor(), None, false).is_empty());
+    assert!(anchored_findings(&check, &anchor(), Some("    end == 0"), false).is_empty());
     // A same-named `let` elsewhere in the diff has another initializer.
-    assert!(anchored_findings(&check, &anchor(), Some("    let end = a.len();")).is_empty());
-    let followed = anchored_findings(&check, &anchor(), Some(anchor_line));
+    assert!(anchored_findings(&check, &anchor(), Some("    let end = a.len();"), false).is_empty());
+    let followed = anchored_findings(&check, &anchor(), Some(anchor_line), false);
     assert_eq!(followed.len(), 1, "{followed:#?}");
     assert_eq!(
         followed[0].pointer("/probe/line").and_then(Value::as_u64),
@@ -227,10 +227,36 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
     no_path["classification"] = json!("no_static_path");
     no_path["ripr"]["reach"]["state"] = json!("no");
     no_path["related_tests_total"] = json!(81);
+    // Since #5424, examined proximity-linked tests are listed with why they
+    // miss; that agrees with "no path". A calling test does not.
+    no_path["related_tests"] = json!([
+        {"name": "same_file", "relation_reason": "same_test_file", "miss": "no_call_path"},
+        {"name": "seam", "relation_reason": "seam_callee_call", "miss": "no_call_path"},
+    ]);
+    assert!(finding_contradictions(&no_path).is_empty());
+    no_path["related_tests"][1]["relation_reason"] = json!("direct_owner_call");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]
     );
+    // #7531: a relation string ripr does not know fails closed.
+    no_path["related_tests"][1]["relation_reason"] = json!("renamed_relation");
+    assert_eq!(
+        finding_contradictions(&no_path),
+        vec!["no_static_path_with_related_tests"]
+    );
+    // #5335 / #7531: name, import and fixture affinity never reach, so a
+    // `no_static_path` finding listing them is consistent.
+    for relation in [
+        "same_module",
+        "weak_token_substring",
+        "owner_named_test",
+        "import_path_affinity",
+        "fixture_owner_affinity",
+    ] {
+        no_path["related_tests"][1]["relation_reason"] = json!(relation);
+        assert!(finding_contradictions(&no_path).is_empty(), "{relation}");
+    }
 
     let mut exposed = clean.clone();
     exposed["classification"] = json!("exposed");
@@ -547,6 +573,125 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
         "{violations:#?}"
     );
     Ok(())
+}
+
+fn subject_by_id<'a>(raw: &'a mut Value, id: &str) -> Result<&'a mut Value, String> {
+    raw["subjects"]
+        .as_array_mut()
+        .and_then(|subjects| {
+            subjects
+                .iter_mut()
+                .find(|subject| subject["subject_id"] == json!(id))
+        })
+        .ok_or_else(|| format!("corpus has no subject `{id}`"))
+}
+
+#[test]
+fn validator_rejects_a_tampered_retained_lockfile() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+            && let Some(lock) = files.iter_mut().find(|file| file["path"] == "Cargo.lock")
+        {
+            lock["sha256"] = json!("0".repeat(64));
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("Cargo.lock")
+                && v.contains("does not match its pinned sha256")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+        {
+            files.retain(|file| file["path"] != "Cargo.lock");
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("pins a registry crate")
+                && v.contains("Cargo.lock")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_ignores_dotted_features_and_multiline_path_tables() {
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dependencies]\nfoo = { git = \"https://example.com/foo.git\" }\n"
+        ),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_fails_closed_on_invalid_toml() {
+    let result = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n");
+    assert!(
+        matches!(&result, Err(err) if err.contains("not valid TOML")),
+        "unclosed table must not look like a non-pin: {result:?}"
+    );
 }
 
 #[test]
@@ -877,7 +1022,7 @@ fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String>
         report.false_actionable_rate.numerator
     );
     assert_eq!(report.rows[0].origin, SubjectOrigin::Authored);
-    let markdown = render_report_markdown(&report);
+    let markdown = render_report_markdown(&report, "rust");
     assert!(
         markdown.contains("| authored | 1 | 1/1 | 1/1 |"),
         "{markdown}"
@@ -900,7 +1045,7 @@ fn relativize_probe_files_strips_only_the_run_root() {
         json!("/elsewhere/src/lib.rs")
     );
     // `./src/lib.rs` already reads as root-relative; the foreign root does not.
-    assert_eq!(anchored_findings(&check, &anchor(), None).len(), 2);
+    assert_eq!(anchored_findings(&check, &anchor(), None, false).len(), 2);
 }
 
 #[test]
@@ -990,25 +1135,71 @@ fn per_record_corpus(name: &str, case_ids: &[&str]) -> Result<PathBuf, String> {
 }
 
 #[test]
+fn in_file_name_order_sorts_a_shuffled_listing() {
+    let shuffled = [
+        "z-ord.json",
+        "m-ord.json",
+        "a-ord.json",
+        "y-ord.json",
+        "b-ord.json",
+        "n-ord.json",
+        "x-ord.json",
+        "c-ord.json",
+        "w-ord.json",
+        "v-ord.json",
+        "u-ord.json",
+        "t-ord.json",
+        "s-ord.json",
+        "h-ord.json",
+        "g-ord.json",
+        "f-ord.json",
+        "r-ord.json",
+        "q-ord.json",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect::<Vec<_>>();
+    let mut expected = shuffled.clone();
+    expected.sort();
+    assert_ne!(
+        shuffled, expected,
+        "fixture names must start unsorted so a missing sort is visible"
+    );
+    assert_eq!(in_file_name_order(shuffled), expected);
+}
+
+#[test]
 fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(), String> {
-    let dir = per_record_corpus("verdict-order", &["b-case", "a-case"])?;
+    // Enough mixed names that a missing sort in `in_file_name_order` still
+    // shows up on filesystems whose readdir is unsorted (#6945).
+    let ids = [
+        "z-ord", "m-ord", "a-ord", "y-ord", "b-ord", "n-ord", "x-ord", "c-ord", "w-ord", "v-ord",
+        "u-ord", "t-ord", "s-ord", "h-ord", "g-ord", "f-ord", "r-ord", "q-ord",
+    ];
+    let dir = per_record_corpus("verdict-order", &ids)?;
+    // NTFS and some other filesystems already return sorted names, so a
+    // readdir `assert_ne!` would fail even with the sort present. The
+    // shuffled-path helper is the filesystem-independent discriminator;
+    // load_corpus must still emit file-name order.
     let corpus = load_corpus(&dir)?;
-    let ids: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
-    assert_eq!(ids, ["a-case", "b-case"]);
+    let loaded: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let mut expected = ids.to_vec();
+    expected.sort();
+    assert_eq!(loaded, expected);
     // A copied file that keeps the original id is refused, so two files can
     // never carry one id.
-    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-case.json"))?)
+    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-ord.json"))?)
         .map_err(|err| err.to_string())?;
-    copy["case_id"] = json!("b-case");
-    crate::tests::write(&dir.join("cases/c-case.json"), &format!("{copy:#}"));
+    copy["case_id"] = json!("z-ord");
+    crate::tests::write(&dir.join("cases/dup-case.json"), &format!("{copy:#}"));
     let err = load_corpus(&dir).err().unwrap_or_default();
     assert!(
-        err.contains("c-case.json") && err.contains("`b-case`"),
+        err.contains("dup-case.json") && err.contains("`z-ord`"),
         "{err}"
     );
     // A mistyped record name or a diff without its record would drop a case
     // silently; validate names both.
-    fs::remove_file(dir.join("cases/c-case.json")).map_err(|err| err.to_string())?;
+    fs::remove_file(dir.join("cases/dup-case.json")).map_err(|err| err.to_string())?;
     crate::tests::write(&dir.join("cases/d-case.JSON"), "{}\n");
     crate::tests::write(&dir.join("cases/e-case.diff"), "");
     fs::create_dir_all(dir.join("subjects/orphan")).map_err(|err| err.to_string())?;
@@ -1025,7 +1216,7 @@ fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(
         );
     }
     assert!(
-        !violations.iter().any(|v| v.starts_with("cases/a-case")),
+        !violations.iter().any(|v| v.starts_with("cases/a-ord")),
         "{violations:#?}"
     );
     Ok(())
@@ -1213,8 +1404,8 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
         "{drift:?}"
     );
 
-    // A `--cases a-case` run reads only that row, so b-case's move and the
-    // summary are out of its scope.
+    // A `--cases a-case` run reads only that row, so b-case's move is out of
+    // its scope.
     let mut subset = corpus.clone();
     select_cases(&mut subset, &["a-case".to_string()])?;
     let mut subset_report = scored_report(&subset)?;
@@ -1222,11 +1413,12 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
     subset_report.rows[0].observed_verdict = Verdict::Credited;
     assert_eq!(expected_drift(&expected, &subset_report, false)?.len(), 1);
 
-    // A whole-corpus run also needs every row present, no extra files and
-    // the same summary.
+    // A whole-corpus run also needs every row present and no extra files; a
+    // committed summary is one of them, since the summary is derived.
     fs::remove_file(expected.join("rows/a-case.json")).map_err(|err| err.to_string())?;
     crate::tests::write(&expected.join("rows/gone-case.json"), "{}\n");
     crate::tests::write(&expected.join("report.json"), "{}\n");
+    crate::tests::write(&expected.join("summary.json"), "{}\n");
     let drift = expected_drift(&expected, &report, true)?;
     assert!(
         drift.iter().any(|d| d.contains("no expected row")),
@@ -1240,17 +1432,17 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
         drift.iter().any(|d| d.contains("expected/report.json")),
         "{drift:?}"
     );
-    let mut fewer = corpus.clone();
-    select_cases(&mut fewer, &["b-case".to_string()])?;
-    let drift = expected_drift(&expected, &scored_report(&fewer)?, true)?;
     assert!(
-        drift.iter().any(|d| d.contains("summary.json")),
+        drift
+            .iter()
+            .any(|d| d.contains("expected/summary.json is not part of the expected state")),
         "{drift:?}"
     );
 
-    // bless restores exactly the expected state.
+    // bless restores exactly the expected state and writes no summary.
     bless(&expected, &report)?;
     assert!(expected_drift(&expected, &report, true)?.is_empty());
+    assert!(!expected.join("summary.json").exists());
     let unknown = select_cases(&mut corpus.clone(), &["no-such-case".to_string()])
         .err()
         .unwrap_or_default();
@@ -1291,5 +1483,933 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
         "src/lib.rs - (line )",
     ] {
         assert!(!is_one_test_name(bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), String> {
+    let dir = per_record_corpus("verdict-derived-summary", &["a-case", "b-case"])?;
+    let corpus = load_corpus(&dir)?;
+    // One case carries a self-contradicting finding and a summary-count
+    // mismatch, so the contradiction rate and per-code counts are non-trivial.
+    let clean = finding("reachable_unrevealed", 10, "candidate_current");
+    let mut exposed = clean.clone();
+    exposed["classification"] = json!("exposed");
+    let contradicted = json!({
+        "summary": {"findings": 3},
+        "findings": [clean, exposed],
+    });
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .enumerate()
+        .map(|(index, case)| {
+            let check = if index == 0 {
+                contradicted.clone()
+            } else {
+                json!({"findings": []})
+            };
+            (case.case_id.clone(), check)
+        })
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        report.contradiction_rate.denominator > 0 && !report.contradictions_by_code.is_empty(),
+        "fixture must exercise the contradiction counts: {:?}",
+        report.contradictions_by_code
+    );
+    bless(&dir.join("expected"), &report)?;
+    let derived = expected_report(&dir)?;
+    assert_eq!(
+        render_report_json(&derived)?,
+        render_report_json(&report)?,
+        "the summary rebuilt from the row files must equal the run's"
+    );
+    // A row that drops its counts no longer parses, so a stale row cannot
+    // silently zero the contradiction rate.
+    let row_path = dir.join("expected/rows/a-case.json");
+    let mut row = parse_json(&row_path)?;
+    if let Some(object) = row.as_object_mut() {
+        object.remove("findings_scored");
+    }
+    crate::tests::write(
+        &row_path,
+        &serde_json::to_string_pretty(&row).map_err(|err| err.to_string())?,
+    );
+    let err = expected_report(&dir).err().unwrap_or_default();
+    assert!(err.contains("findings_scored"), "{err}");
+
+    // A case without its row fails instead of shrinking the denominators.
+    bless(&dir.join("expected"), &report)?;
+    fs::remove_file(dir.join("expected/rows/b-case.json")).map_err(|err| err.to_string())?;
+    let err = expected_report(&dir).err().unwrap_or_default();
+    assert!(
+        err.contains("missing rows") && err.contains("b-case"),
+        "{err}"
+    );
+    Ok(())
+}
+
+fn typescript_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/typescript-verdict-corpus")
+}
+
+#[test]
+fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> Result<(), String> {
+    let dir = typescript_corpus_dir();
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    assert!(
+        corpus.cases.len() >= 40,
+        "typescript corpus shrank to {}",
+        corpus.cases.len()
+    );
+    assert!(
+        corpus
+            .subjects
+            .iter()
+            .all(|s| s.subject_id.starts_with("authored-ts-")),
+        "typescript subjects are authored-ts-<lib>-<name>"
+    );
+    for library in ["jest", "vitest", "mocha", "nodetest"] {
+        assert!(
+            corpus
+                .subjects
+                .iter()
+                .any(|s| s.subject_id.starts_with(&format!("authored-ts-{library}-"))),
+            "no {library} subject"
+        );
+    }
+    for truth in [TruthState::Discriminated, TruthState::NotDiscriminated] {
+        assert!(
+            corpus.cases.iter().any(|case| case.truth.state == truth),
+            "typescript corpus has no {} case",
+            truth.as_str()
+        );
+    }
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
+fn python_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/python-verdict-corpus")
+}
+
+#[test]
+fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // Python corpus in `check-all`.
+    let dir = python_corpus_dir();
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/python-verdict-corpus/spec-coverage.toml"
+    );
+    assert!(
+        corpus.cases.len() >= 65,
+        "python corpus shrank to {}",
+        corpus.cases.len()
+    );
+    // Every RIPR-SPEC-0238 acceptance example but 10 keeps a case citing
+    // it; the ledger leaves 10 visible as uncovered rather than waived.
+    // Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
+    // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
+    // library cases that cite them.
+    let spec = coverage
+        .by_spec
+        .iter()
+        .find(|row| row.spec == "RIPR-SPEC-0238")
+        .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
+    assert_eq!(spec.in_scope_examples, 40);
+    assert_eq!(spec.uncovered, vec![10]);
+    assert_eq!(spec.waived, 0);
+    assert!(
+        coverage.floor >= 39 && coverage.floor <= coverage.covered_examples,
+        "python ledger floor {} against {} covered",
+        coverage.floor,
+        coverage.covered_examples
+    );
+    for example in (1..=34).filter(|&n| n != 10) {
+        let prefix = format!("py-spec0233-ex{example:02}-");
+        let cited = format!("RIPR-SPEC-0238#{example}");
+        assert!(
+            corpus
+                .cases
+                .iter()
+                .any(|c| c.case_id.starts_with(&prefix) && c.spec_examples.contains(&cited)),
+            "no case citing RIPR-SPEC-0238 example {example}"
+        );
+    }
+    // Every test library the corpus exists to cover keeps cases in both
+    // error directions: discriminated cases measure false actionable, the
+    // rest measure false exposed and false silent. A library whose subject
+    // stays listed after its cases are dropped fails here.
+    for library in ["pytest", "unittest", "hypothesis"] {
+        let prefix = format!("authored-py-{library}-");
+        let states: Vec<TruthState> = corpus
+            .cases
+            .iter()
+            .filter(|c| c.subject_id.starts_with(&prefix))
+            .map(|c| c.truth.state)
+            .collect();
+        assert!(
+            states.contains(&TruthState::Discriminated),
+            "no discriminated {library} case"
+        );
+        assert!(
+            states.iter().any(|s| *s != TruthState::Discriminated),
+            "no {library} case that is not fully discriminated"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn python_expected_rows_agree_with_corpus_labels() -> Result<(), String> {
+    let dir = python_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
+    // The ledger declares coverage: no file, no gate. Presence alone decides,
+    // so a present-but-unreadable ledger fails loudly instead of un-gating.
+    let dir = crate::tests::temp_dir("verdict-coverage-mode");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = \"x\"\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    Ok(())
+}
+
+#[test]
+fn language_names_its_own_corpus_directory_and_nothing_else() -> Result<(), String> {
+    let fixtures = crate::dogfood::repo_rooted_fixture_path("fixtures");
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "typescript")?,
+        fixtures.join("typescript-verdict-corpus")
+    );
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "rust")?,
+        fixtures.join("rust-verdict-corpus")
+    );
+    // The name is pasted into re-bless hints, so shell metacharacters,
+    // spaces and option-like names are refused before any path is built.
+    for bad in [
+        "..",
+        "",
+        "type/script",
+        "x;touch PWN",
+        "x y",
+        "$(id)",
+        "-rf",
+        "TypeScript",
+    ] {
+        let err = language_corpus_dir_in(&fixtures, bad)
+            .err()
+            .ok_or(format!("`{bad}` was accepted"))?;
+        assert!(err.contains("not a usable language name"), "{bad}: {err}");
+    }
+    let err = language_corpus_dir_in(&fixtures, "cobol")
+        .err()
+        .ok_or("a language with no corpus was accepted")?;
+    assert!(err.contains("names no corpus"), "{err}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn language_refuses_a_symlinked_corpus_directory() -> Result<(), String> {
+    let fixtures = crate::tests::temp_dir("verdict-language-symlink");
+    let elsewhere = crate::tests::temp_dir("verdict-language-symlink-target");
+    crate::tests::write(&elsewhere.join("corpus.json"), "{}\n");
+    crate::tests::write(&fixtures.join("go-verdict-corpus/corpus.json"), "{}\n");
+    std::os::unix::fs::symlink(&elsewhere, fixtures.join("perl-verdict-corpus"))
+        .map_err(|e| format!("symlink failed: {e}"))?;
+    let err = language_corpus_dir_in(&fixtures, "perl")
+        .err()
+        .ok_or("a symlinked corpus directory was accepted")?;
+    assert!(err.contains("is a symlink"), "{err}");
+    // A real directory beside it still resolves.
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "go")?,
+        fixtures.join("go-verdict-corpus")
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn split_refuses_symlinks_below_the_corpus_directory() -> Result<(), String> {
+    // #6686 review: split writes subjects/, cases/ and back to
+    // corpus.json, so a link at any of them would redirect writes
+    // outside the corpus. Each link is refused before anything is read.
+    let legacy = corpus_value(&repo_corpus_dir())?;
+    let elsewhere = crate::tests::temp_dir("verdict-split-symlink-target");
+    for name in ["subjects", "cases", "corpus.json"] {
+        let dir = crate::tests::temp_dir(&format!("verdict-split-symlink-{name}"));
+        if name == "corpus.json" {
+            std::os::unix::fs::symlink(elsewhere.join("corpus.json"), dir.join("corpus.json"))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        } else {
+            crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+            std::os::unix::fs::symlink(&elsewhere, dir.join(name))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        }
+        let err = split(&dir)
+            .err()
+            .ok_or_else(|| format!("split followed a symlinked {name}"))?;
+        assert!(err.contains("is a symlink"), "{err}");
+    }
+    // A dangling record-level link fails `exists`, so only the write-time
+    // refusal stops split from creating the file the link names outside
+    // the corpus (#6686 review). The record directories exist, so the
+    // subjects and the other cases write normally and the run reaches the
+    // linked record.
+    let dir = crate::tests::temp_dir("verdict-split-symlink-record");
+    crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+    fs::create_dir_all(dir.join("subjects")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(dir.join("cases")).map_err(|err| err.to_string())?;
+    let case_id = legacy["cases"][0]["case_id"]
+        .as_str()
+        .ok_or("the legacy corpus has a first case id")?
+        .to_string();
+    let record = dir.join("cases").join(format!("{case_id}.json"));
+    std::os::unix::fs::symlink(elsewhere.join(format!("{case_id}.json")), &record)
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let err = split(&dir)
+        .err()
+        .ok_or("split wrote through a dangling record symlink")?;
+    assert!(err.contains("is a symlink"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String> {
+    // A language with cases but no spec ledger still passes structural
+    // validation; only the spec-example gate is skipped.
+    let dir = crate::tests::temp_dir("verdict-no-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    // Without the ledger nothing gates an `expected_oracle` label, so the
+    // copied Rust labels are refused until they are removed.
+    let refused = validated_corpus_without_coverage(&dir)
+        .err()
+        .ok_or("a ledgerless corpus accepted oracle labels")?;
+    assert!(refused.contains("carries expected_oracle"), "{refused}");
+    for entry in fs::read_dir(dir.join("cases")).map_err(|err| err.to_string())? {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let mut case = parse_json(&path)?;
+        if let Some(fields) = case.as_object_mut()
+            && fields.remove("expected_oracle").is_some()
+        {
+            let text = serde_json::to_string_pretty(&case).map_err(|err| err.to_string())?;
+            fs::write(&path, format!("{text}\n")).map_err(|err| err.to_string())?;
+        }
+    }
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    assert!(!corpus.cases.is_empty());
+    Ok(())
+}
+
+#[test]
+fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Result<(), String> {
+    for (name, rust) in [
+        ("rust-verdict-corpus", true),
+        ("copied-corpus", true),
+        ("Rust-verdict-corpus", true),
+        ("go-verdict-corpus", true),
+        ("typescript-verdict-corpus", false),
+    ] {
+        assert_eq!(
+            is_rust_corpus(&Path::new("fixtures").join(name)),
+            rust,
+            "{name}"
+        );
+    }
+    let dir = typescript_corpus_dir();
+    let raw = corpus_value(&dir)?;
+    let i = raw["cases"]
+        .as_array()
+        .and_then(|cases| {
+            cases
+                .iter()
+                .position(|case| case["truth"]["mutants"][0]["outcome"] == json!("tests_failed"))
+        })
+        .ok_or("no typescript case with a failing first mutant")?;
+    let validate_with = |title: &str| -> Result<Vec<String>, String> {
+        let mut raw = raw.clone();
+        raw["cases"][i]["truth"]["mutants"][0]["failing_test"] = json!(title);
+        let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+        Ok(validate(&corpus, &dir))
+    };
+    // A jest title has spaces and may have commas; its npx command is
+    // recorded, not replayed.
+    assert_eq!(
+        validate_with("rounds 1, 2 and 3 cents down")?,
+        Vec::<String>::new()
+    );
+    for bad in ["two\nlines", "first\rsecond", " padded", ""] {
+        assert!(
+            validate_with(bad)?
+                .iter()
+                .any(|v| v.contains("is not one test name")),
+            "{bad:?}"
+        );
+    }
+    // The same title on a Rust corpus is not one Rust test name.
+    let rust = tampered(|raw| {
+        raw["cases"][0]["truth"]["mutants"][0]["failing_test"] = json!("rounds 1, 2 and 3");
+    })?;
+    assert!(
+        rust.iter().any(|v| v.contains("is not one test name")),
+        "{rust:#?}"
+    );
+    Ok(())
+}
+
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|arg| arg.to_string()).collect()
+}
+
+#[test]
+fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["--language", "typescript"]),
+        args(&["check", "--language", "typescript"]),
+        args(&["--language", "typescript", "check"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check", "{given:?}");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{given:?}");
+    }
+    // A leading --language keeps the subcommand that follows it.
+    for sub in ["validate", "report", "bless", "split"] {
+        let parsed = parse_corpus_args(&args(&["--language", "typescript", sub]))?;
+        assert_eq!(parsed.sub, sub);
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{sub}");
+    }
+    assert_eq!(parse_corpus_args(&[])?.sub, "check");
+    for (given, refusal) in [
+        (
+            args(&["check-all", "--language", "typescript"]),
+            "drop --language",
+        ),
+        (
+            args(&["check", "--language", "typescript", "--language", "rust"]),
+            "given twice",
+        ),
+        (
+            args(&["bless", "--language", "typescript", "--out", "x"]),
+            "takes only --language",
+        ),
+        (args(&["check", "--language"]), "needs a corpus language"),
+        (args(&["check", "bless"]), "unknown argument `bless`"),
+        (
+            args(&["--language", "typescript", "check-all"]),
+            "drop --language",
+        ),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String> {
+    let corpus = load_corpus(&typescript_corpus_dir())?;
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| (case.case_id.clone(), json!({"findings": []})))
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        render_report_markdown(&report, "typescript")
+            .starts_with("# TypeScript verdict corpus report\n"),
+        "typescript title"
+    );
+    assert!(
+        render_report_markdown(&report, "rust").starts_with("# Rust verdict corpus report\n"),
+        "rust title"
+    );
+    assert_eq!(language_flag("typescript"), " --language typescript");
+    assert_eq!(language_flag("rust"), "");
+    // A corpus directory found by check-all names the language in the hint;
+    // a name that would need shell quoting is refused instead of printed.
+    assert_eq!(
+        corpus_language(Path::new("fixtures/typescript-verdict-corpus"))?,
+        "typescript"
+    );
+    let err = corpus_language(Path::new("fixtures/x;touch PWN-verdict-corpus"))
+        .err()
+        .ok_or("a hostile corpus directory name was accepted")?;
+    assert!(err.contains("names no usable language"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
+    // Opting in is strict: a corrupt ledger is a loud failure, never a
+    // silent fallback to the un-gated path.
+    let dir = crate::tests::temp_dir("verdict-bad-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = 42\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    let err = validated_corpus(&dir).err().unwrap_or_default();
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+    Ok(())
+}
+
+#[test]
+fn out_inside_a_sibling_corpus_expected_directory_is_refused() -> Result<(), String> {
+    // `--language typescript --out <rust expected>` must fail: only `bless`
+    // writes expected state, for the selected corpus and every sibling.
+    let root = crate::tests::temp_dir("verdict-sibling-out");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
+    // The selected corpus keeps its own guard, and a neutral directory
+    // still passes.
+    let own_expected = selected.join("expected");
+    let err = refuse_any_expected_out(&own_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(err.contains("typescript-verdict-corpus"), "{err}");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    Ok(())
+}
+
+#[test]
+fn a_sibling_that_names_no_usable_language_does_not_abort_the_guard() -> Result<(), String> {
+    // Discovery accepts `Bad`/`x;y` via safe_id but corpus_language refuses
+    // them; the shared --out guard must skip such siblings instead of
+    // aborting the selected corpus's run. Their errors still fail check-all
+    // through corpus_dirs/check_each.
+    let root = crate::tests::temp_dir("verdict-malformed-sibling");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript", "Bad", "x;y"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    // The valid sibling's guard still holds.
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
+    Ok(())
+}
+
+fn corpus_args(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_string()).collect()
+}
+
+#[test]
+fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String> {
+    // Both advertised `validate --language` spellings parse to a language
+    // with no `--out`/`--cases`; the parser refuses the option forms, so
+    // the dispatch arm only branches on the coverage declaration.
+    for words in [
+        ["validate", "--language", "typescript"].as_slice(),
+        ["--language", "typescript", "validate"].as_slice(),
+    ] {
+        let parsed = parse_corpus_args(&corpus_args(words))?;
+        assert_eq!(parsed.sub, "validate");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"));
+        assert!(parsed.out.is_none() && parsed.cases.is_none());
+    }
+    for words in [
+        ["validate", "--out", "reports"].as_slice(),
+        ["validate", "--cases", "a-case"].as_slice(),
+    ] {
+        let err = parse_corpus_args(&corpus_args(words))
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("takes only --language"), "{err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
+-> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: a non-Rust
+    // language validates structurally with no coverage attached, while the
+    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
+    // deleting that ledger fails instead of dropping the coverage floor.
+    // (The gated half needs the repo-relative specs tree, so the `validate`
+    // and `check-all` CLI runs prove it, not a unit test.)
+    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
+    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let err = validated_corpus_declared(&rust)
+        .err()
+        .ok_or("a Rust corpus without its spec-example ledger validated")?;
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+
+    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
+    assert!(coverage.is_none());
+    assert!(!corpus.cases.is_empty());
+    Ok(())
+}
+
+fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
+    corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "weakly_exposed",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect()
+}
+
+fn perl_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/perl-verdict-corpus")
+}
+
+fn tampered_perl(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
+    let dir = perl_corpus_dir();
+    let mut raw = corpus_value(&dir)?;
+    edit(&mut raw);
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    Ok(validate(&corpus, &dir))
+}
+
+#[test]
+fn committed_perl_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    for library in ["testmore", "test2", "testexception"] {
+        assert!(
+            corpus.subjects.iter().any(|s| s
+                .subject_id
+                .starts_with(&format!("authored-perl-{library}-"))),
+            "no {library} subject"
+        );
+    }
+    for truth in [TruthState::Discriminated, TruthState::NotDiscriminated] {
+        assert!(
+            corpus.cases.iter().any(|case| case.truth.state == truth),
+            "perl corpus has no {} case",
+            truth.as_str()
+        );
+    }
+    let provenances: BTreeSet<&str> = corpus
+        .cases
+        .iter()
+        .filter_map(|c| c.perl_facts.as_ref())
+        .map(|f| f.provenance.as_str())
+        .collect();
+    assert_eq!(provenances, BTreeSet::from(["edited_producer", "producer"]));
+    Ok(())
+}
+
+#[test]
+fn perl_expected_rows_agree_with_corpus_labels() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let provenance = case.perl_facts.as_ref().map(|f| f.provenance.as_str());
+        assert_eq!(
+            row["packet_provenance"],
+            json!(provenance),
+            "{}",
+            case.case_id
+        );
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
+/// The first committed Perl case whose packet is the producer's own output;
+/// a fresh key when there is none, so the tamper finds no violation and the
+/// subtest fails naming itself.
+fn producer_case(raw: &mut Value) -> &mut Value {
+    let index = raw["cases"].as_array().and_then(|cases| {
+        cases
+            .iter()
+            .position(|case| case["perl_facts"]["provenance"] == json!("producer"))
+    });
+    match index {
+        Some(index) => &mut raw["cases"][index],
+        None => &mut raw["no_producer_case"],
+    }
+}
+
+#[test]
+fn validator_holds_perl_packets_to_their_pins_and_provenance() -> Result<(), String> {
+    let cases = [
+        (
+            "packet without facts",
+            Box::new(|raw: &mut Value| raw["cases"][0]["perl_facts"] = Value::Null)
+                as Box<dyn Fn(&mut Value)>,
+            "has no `perl_facts`",
+        ),
+        (
+            "moved packet",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["sha256"] = json!("0".repeat(64));
+            }),
+            "does not match its pinned sha256",
+        ),
+        (
+            "packet outside packets/",
+            Box::new(|raw: &mut Value| {
+                raw["cases"][0]["perl_facts"]["packet"] = json!("cases/x.json");
+            }),
+            "is not a safe path under packets/",
+        ),
+        (
+            "edited packet without edits",
+            Box::new(|raw: &mut Value| {
+                producer_case(raw)["perl_facts"]["provenance"] = json!("edited_producer");
+            }),
+            "does not say what was edited",
+        ),
+        (
+            "producer packet with edits",
+            Box::new(|raw: &mut Value| {
+                producer_case(raw)["perl_facts"]["edits"] = json!("set a sink");
+            }),
+            "mark it edited_producer",
+        ),
+        (
+            "no producer",
+            Box::new(|raw: &mut Value| raw["fact_producer"] = Value::Null),
+            "names no `fact_producer`",
+        ),
+        (
+            "short producer commit",
+            Box::new(|raw: &mut Value| raw["fact_producer"]["commit"] = json!("99458fd")),
+            "is not a 40-character lowercase hex sha",
+        ),
+        (
+            "uppercase producer commit",
+            Box::new(|raw: &mut Value| {
+                raw["fact_producer"]["commit"] = json!("99458FDE50B8204ECF7054779BB3670E6B5FDDA5");
+            }),
+            "is not a 40-character lowercase hex sha",
+        ),
+    ];
+    for (name, edit, expected) in cases {
+        let violations = tampered_perl(edit)?;
+        assert!(
+            violations.iter().any(|v| v.contains(expected)),
+            "{name}: {violations:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validator_refuses_perl_facts_and_a_producer_outside_the_perl_corpus() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        raw["fact_producer"] = json!({
+            "name": "p", "repository": "r", "commit": "0".repeat(40), "command": "c"
+        });
+        raw["cases"][0]["perl_facts"] = json!({
+            "packet": "packets/x.json", "sha256": "0", "provenance": "producer"
+        });
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`fact_producer` is for the perl corpus")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("carries `perl_facts` outside the perl corpus")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn packet_findings_count_while_their_subject_is_unresolved_and_others_do_not() {
+    let check = json!({"findings": [finding("exposed", 10, "unresolved_subject")]});
+    assert_eq!(anchored_findings(&check, &anchor(), None, true).len(), 1);
+    assert!(anchored_findings(&check, &anchor(), None, false).is_empty());
+    let stale = json!({"findings": [finding("exposed", 10, "stale")]});
+    assert!(anchored_findings(&stale, &anchor(), None, true).is_empty());
+}
+
+#[test]
+fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let producer = report
+        .by_packet_provenance
+        .get("producer")
+        .ok_or("no producer rates")?;
+    let edited = report
+        .by_packet_provenance
+        .get("edited_producer")
+        .ok_or("no edited rates")?;
+    let count = |provenance: PacketProvenance| {
+        corpus
+            .cases
+            .iter()
+            .filter(|c| c.perl_facts.as_ref().map(|f| f.provenance) == Some(provenance))
+            .count()
+    };
+    assert_eq!(producer.cases_total, count(PacketProvenance::Producer));
+    assert_eq!(edited.cases_total, count(PacketProvenance::EditedProducer));
+    assert_eq!(
+        producer.cases_total + edited.cases_total,
+        corpus.cases.len()
+    );
+    assert_eq!(
+        producer.false_actionable_rate.numerator + edited.false_actionable_rate.numerator,
+        report.false_actionable_rate.numerator
+    );
+    assert!(render_report_markdown(&report, "perl").contains("By fact-packet provenance"));
+    // The rows carry provenance, so a summary rebuilt from them keeps it.
+    let rebuilt = summarize(
+        report.spec.clone(),
+        report.non_claims.clone(),
+        report.rows.clone(),
+    );
+    assert_eq!(render_report_json(&rebuilt)?, render_report_json(&report)?);
+    // A corpus without packets carries no provenance table or row field.
+    let rust = load_corpus(&repo_corpus_dir())?;
+    let rust_report = build_report(&rust, &gap_checks(&rust), &BTreeMap::new())?;
+    assert!(rust_report.by_packet_provenance.is_empty());
+    assert!(!render_report_json(&rust_report)?.contains("packet_provenance"));
+    Ok(())
+}
+
+#[test]
+fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), String> {
+    let unavailable = json!({"findings": [], "language_runs": [
+        {"language": "perl", "status": "unavailable", "reason": "not compiled"}
+    ]});
+    let Err(err) = refuse_unavailable_perl(&unavailable, "c", "ripr-lang-perl") else {
+        return Err("an unavailable Perl run must be refused".to_string());
+    };
+    assert!(err.contains("has no Perl adapter"), "{err}");
+    for ok in [
+        json!({"findings": [], "language_runs": [{"language": "perl", "status": "ok"}]}),
+        json!({"findings": [], "language_runs": [{"language": "rust", "status": "unavailable"}]}),
+        json!({"findings": []}),
+    ] {
+        assert!(
+            refuse_unavailable_perl(&ok, "c", "ripr-lang-perl").is_ok(),
+            "{ok}"
+        );
+    }
+    Ok(())
+}
+
+// #7531: the corpus reads ripr's serialized `relation_reason` back through
+// serde. Every label ripr writes must parse to its variant, or the
+// fail-closed default would invent contradictions.
+#[test]
+fn every_relation_label_reads_back_through_ripr_rule() {
+    use ripr::domain::RelationReason;
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::AssertionTargetAffinity,
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::OwnerNamedTest,
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::WeakTokenSubstring,
+        RelationReason::ReExportChainFollowed,
+        RelationReason::SeamCalleeCall,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<RelationReason>(json!(reason.as_str())).ok(),
+            Some(reason),
+            "{reason:?}"
+        );
+        assert_eq!(
+            relation_reaches_owner(reason.as_str()),
+            reason.establishes_reach(false),
+            "{reason:?}"
+        );
     }
 }

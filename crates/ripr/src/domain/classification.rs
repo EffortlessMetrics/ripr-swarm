@@ -36,8 +36,8 @@ outside tests calls it); it is the observation, not the code under observation. 
 calls this helper over inputs that exercise the changed check.";
 
 pub(crate) const ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
-outside tests calls it); there is no fixture/builder for ripr.toml to describe. Add a boundary or \
-negative-path case for the code this helper checks.";
+outside tests calls it); inspect the inputs and behavior this helper checks, including any existing \
+boundary or negative-path assertions.";
 
 /// RIPR-SPEC-0115: stable leading phrase of the transitive-reach *witness*
 /// pointer. The producer (`analysis::classify::transitive_reach`) begins the
@@ -57,6 +57,15 @@ pub(crate) const ASSERTION_NOT_CREDITED_PREFIX: &str = "assertion not credited: 
 /// macro binding is not statically established (RIPR-SPEC-0197). Shared so
 /// the renderer can tell this refusal from "no assertion at all".
 pub(crate) const ASSERTION_CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+
+/// Reach summary prefix when every related test is a `SeamCalleeCall`: the
+/// tests exercise the seam's converted callee and never invoke the changed
+/// owner (#3714). The producer (`analysis::classify::reach`) builds the
+/// summary from this literal, and the human renderer recognizes it so no
+/// classification hint claims a reaching test for such a finding (#7003).
+/// Shared here in `domain/` so the two sides agree on one literal across
+/// the analysis/output seam (reuse, don't fork).
+pub(crate) const CALLEE_ONLY_REACH_PREFIX: &str = "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them)";
 
 /// RIPR-SPEC-0114/0117: stable evidence prefixes for named static-limitation
 /// detail. Producers append these lines to `Finding.evidence`; renderers and

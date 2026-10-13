@@ -167,6 +167,15 @@ classification = "config"
 reason = "xtask package manifest."
 covered_by = ["cargo check -p xtask --locked"]
 
+[[allow]]
+glob = "tools/repo-policy/Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Product-independent workflow and agent policy package manifest."
+covered_by = ["cargo check -p repo-policy --locked"]
+
 # ---------------------------------------------------------------------------
 # Distribution adapters
 # ---------------------------------------------------------------------------
@@ -798,7 +807,7 @@ kind = "public_proof_receipt"
 owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "generated"
-reason = "Committed assembly of fixtures/rust-verdict-corpus/expected/ (summary.json plus rows/) that docs/PUBLIC_PROOF.md is rendered from."
+reason = "Committed snapshot of the report fixtures/rust-verdict-corpus/expected/rows/ describes (summary derived from the rows, plus the rows) that docs/PUBLIC_PROOF.md is rendered from."
 generated_by = "cargo xtask public-proof --refresh-receipts"
 covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask public_proof"]
 

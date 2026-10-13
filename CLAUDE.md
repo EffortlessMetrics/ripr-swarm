@@ -51,6 +51,10 @@ Use the narrowest skill that matches the current state. Enter existing work at
 the earliest missing or stale judgment rather than recreating completed
 ceremony.
 
+For a phase change or bounded worker return, use `deliver-pr`'s continuation
+handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
+challenge both useful continuation and genuine stop boundaries.
+
 ## Product contract
 
 `ripr` asks:

@@ -120,6 +120,9 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
 
     let categories = super::super::categorize_changed_files(files);
     let mut required = Vec::new();
+    if categories.support_tiers {
+        required.push("check-support-tiers");
+    }
     if categories.rust_src {
         required.extend([
             "check-no-panic-family",
@@ -179,6 +182,12 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     use super::{run_transaction, selector_report};
+
+    #[test]
+    fn child_diagnostics_do_not_change_the_ran_skipped_contract() -> Result<(), String> {
+        let report = format!("{EMPTY_FAST_REPORT}{}", crate::check_fast_diagnostics(&[]));
+        super::validate_fast_report(&[], &report)
+    }
 
     const EMPTY_FAST_REPORT: &str = concat!(
         "# check-fast report\n\n",
@@ -251,31 +260,259 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
+    const RUST_GATES: [&str; 4] = [
+        "check-no-panic-family",
+        "check-allow-attributes",
+        "check-file-policy",
+        "clippy",
+    ];
+
+    fn selected_receipt(paths: &[&str], report: &str) -> (Result<(), String>, String) {
+        let selected = paths
+            .iter()
+            .map(|path| (*path).to_string())
+            .collect::<Vec<_>>();
         let receipt = RefCell::new(String::new());
-        let selected = vec!["xtask/src/check_fast_strict.rs".to_string()];
         let mut discover = || Ok(selected.clone());
         let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
             *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
         };
-
         let result = run_transaction(
             &mut discover,
             || Ok(()),
-            || Ok(EMPTY_FAST_REPORT.to_string()),
+            || Ok(report.to_string()),
             &mut write,
         );
-        let error = match result {
-            Ok(()) => return Err("missing Rust gate receipt unexpectedly passed".to_string()),
-            Err(error) => error,
-        };
-        if !error.contains("check-no-panic-family") || !error.contains("clippy") {
-            return Err(format!("missing Rust gates were not identified: {error}"));
+        let written = receipt.borrow().clone();
+        (result, written)
+    }
+
+    fn require_rust_receipts(paths: &[&str]) -> Result<(), String> {
+        let (result, receipt) = selected_receipt(paths, EMPTY_FAST_REPORT);
+        let error = result
+            .err()
+            .ok_or_else(|| format!("missing Rust gates unexpectedly passed for {paths:?}"))?;
+        for gate in RUST_GATES {
+            if !error.contains(gate) {
+                return Err(format!("missing gate {gate} not identified: {error}"));
+            }
         }
-        if !receipt.borrow().contains("Selector: fast_report_mismatch") {
-            return Err(format!("unexpected mismatch receipt: {}", receipt.borrow()));
+        if !receipt.contains("Status: fail")
+            || !receipt.contains("Selector: fast_report_mismatch")
+            || !receipt.contains(&format!("Changed files: {}", paths.len()))
+        {
+            return Err(format!("wrong missing-gate receipt: {receipt}"));
+        }
+
+        let (always, _) = EMPTY_FAST_REPORT
+            .split_once("\n\nSkipped:\n")
+            .ok_or_else(|| "control report lacks Skipped boundary".to_string())?;
+        for omitted in [
+            None,
+            Some(RUST_GATES[0]),
+            Some(RUST_GATES[1]),
+            Some(RUST_GATES[2]),
+            Some(RUST_GATES[3]),
+        ] {
+            let rust = RUST_GATES
+                .iter()
+                .filter(|gate| Some(**gate) != omitted)
+                .map(|gate| format!("- {gate}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let report = format!("{always}\n{rust}\n\nSkipped:\n- check-fixture-contracts\n");
+            let (result, receipt) = selected_receipt(paths, &report);
+            match omitted {
+                None => {
+                    result?;
+                    if !receipt.contains("Status: pass") || !receipt.contains("Selector: stable") {
+                        return Err(format!("complete Rust receipt failed: {receipt}"));
+                    }
+                }
+                Some(gate) => {
+                    let error = result
+                        .err()
+                        .ok_or_else(|| format!("omitted {gate} passed"))?;
+                    if !error.contains(gate) || !receipt.contains("Selector: fast_report_mismatch")
+                    {
+                        return Err(format!(
+                            "omitted {gate} was not rejected: {error}; {receipt}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_manifest_only_requires_rust_gate_receipts() -> Result<(), String> {
+        for path in [
+            "Cargo.toml",
+            "xtask/Cargo.toml",
+            "crates/ripr/Cargo.toml",
+            "tools/repo-policy/Cargo.toml",
+        ] {
+            require_rust_receipts(&[path])?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_lock_only_requires_rust_gate_receipts() -> Result<(), String> {
+        require_rust_receipts(&["Cargo.lock"])
+    }
+
+    #[test]
+    fn selected_manifest_and_lock_require_rust_gate_receipts() -> Result<(), String> {
+        require_rust_receipts(&["tools/repo-policy/Cargo.toml", "Cargo.lock"])
+    }
+
+    #[test]
+    fn selected_support_tier_inputs_require_leaf_receipt() -> Result<(), String> {
+        for path in [
+            "docs/specs/RIPR-SPEC-9999-control.md",
+            "docs/specs/nested/control.md",
+            "docs/status/SUPPORT_TIERS.md",
+            "README.md",
+            "metrics/rust-repair-trust/corpus.json",
+            "xtask/src/main.rs",
+            "xtask/src/command.rs",
+            "xtask/src/command/front_door.rs",
+            ".github/workflows/proof.yml",
+            "scripts/proof.sh",
+        ] {
+            let categories = super::super::super::categorize_changed_files(&[path.to_string()]);
+            if !categories.support_tiers {
+                return Err(format!("support-tier input was not selected: {path}"));
+            }
+            let mut report = EMPTY_FAST_REPORT.to_string();
+            let mut other_gates = String::new();
+            if categories.rust_src {
+                for gate in RUST_GATES {
+                    other_gates.push_str(&format!("- {gate}\n"));
+                }
+            }
+            if categories.workflow {
+                other_gates.push_str("- check-workflows\n");
+            }
+            report = report.replace("\n\nSkipped:\n", &format!("\n{other_gates}\nSkipped:\n"));
+            let (result, receipt) = selected_receipt(&[path], &report);
+            let error = result
+                .err()
+                .ok_or_else(|| format!("missing support leaf passed: {path}"))?;
+            if !error.contains("check-support-tiers")
+                || !receipt.contains("Selector: fast_report_mismatch")
+            {
+                return Err(format!(
+                    "missing leaf was not diagnosed: {path}; {error}; {receipt}"
+                ));
+            }
+            let complete =
+                report.replace("\n\nSkipped:\n", "\n- check-support-tiers\n\nSkipped:\n");
+            selected_receipt(&[path], &complete).0?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn support_tier_near_matches_keep_noop_applicability() -> Result<(), String> {
+        for path in [
+            "docs/specs/control.txt",
+            "docs/specs-not/control.md",
+            "docs/status/SUPPORT_TIERS.md.bak",
+            "README.md.bak",
+            "metrics/rust-repair-trust/corpus.json.bak",
+            "xtask/src-not/main.rs",
+            "scripts-not/proof.sh",
+            ".github/workflows-not/proof.yml",
+            "docs/guide.md",
+            "crates/ripr/src/lib.rs",
+        ] {
+            if super::super::super::categorize_changed_files(&[path.to_string()]).support_tiers {
+                return Err(format!("unrelated input selected a support scan: {path}"));
+            }
+        }
+        if super::super::super::categorize_changed_files(&[]).support_tiers {
+            return Err("zero paths selected a support scan".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn documentation_and_manifest_near_matches_keep_fast_receipts() -> Result<(), String> {
+        for path in [
+            "docs/guide.md",
+            "docs/Cargo.toml.md",
+            "OtherCargo.toml",
+            "docs/Cargo.lock",
+            "Cargo.lock.md",
+        ] {
+            let categories = super::super::super::categorize_changed_files(&[path.to_string()]);
+            if categories.rust_src || categories.workflow || categories.policy || categories.fixture
+            {
+                return Err(format!("unrelated path widened conditional gates: {path}"));
+            }
+            let (result, receipt) = selected_receipt(&[path], EMPTY_FAST_REPORT);
+            result?;
+            if !receipt.contains("Status: pass") || !receipt.contains("Changed files: 1") {
+                return Err(format!("fast path receipt changed for {path}: {receipt}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_manifest_retains_rust_and_fixture_obligations() -> Result<(), String> {
+        let paths = ["fixtures/propagate_value_returned/input/Cargo.toml"];
+        let categories = super::super::super::categorize_changed_files(&[paths[0].to_string()]);
+        if !categories.rust_src || !categories.fixture {
+            return Err("fixture manifest lost Rust or fixture category".to_string());
+        }
+        let (result, _) = selected_receipt(&paths, EMPTY_FAST_REPORT);
+        let error = result
+            .err()
+            .ok_or_else(|| "fixture manifest accepted empty gates".to_string())?;
+        if !error.contains("clippy") || !error.contains("check-fixture-contracts") {
+            return Err(format!("fixture manifest lost required gates: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
+        for path in [
+            "xtask/src/check_fast_strict.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/source_identity.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+        ] {
+            let receipt = RefCell::new(String::new());
+            let selected = vec![path.to_string()];
+            let mut discover = || Ok(selected.clone());
+            let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+                *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+                Ok(())
+            };
+
+            let result = run_transaction(
+                &mut discover,
+                || Ok(()),
+                || Ok(EMPTY_FAST_REPORT.to_string()),
+                &mut write,
+            );
+            let error = match result {
+                Ok(()) => return Err("missing Rust gate receipt unexpectedly passed".to_string()),
+                Err(error) => error,
+            };
+            if !error.contains("check-no-panic-family") || !error.contains("clippy") {
+                return Err(format!("missing Rust gates were not identified: {error}"));
+            }
+            if !receipt.borrow().contains("Selector: fast_report_mismatch") {
+                return Err(format!("unexpected mismatch receipt: {}", receipt.borrow()));
+            }
         }
         Ok(())
     }

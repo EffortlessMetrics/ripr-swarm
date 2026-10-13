@@ -105,7 +105,6 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
 ## Pending — boundary_named_constant (10)
 
 Reason:
@@ -147,6 +146,54 @@ Updated:
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — boundary_named_constant (14)
+
+Reason:
+RIPR-SPEC-0001: observed value context for parcels::BULK_ITEMS (a pub const) is constant, not enum_variant (#5357)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — boundary_named_constant (15)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — boundary_named_constant (16)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — boundary_named_constant (17)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
 
 Command:
 `cargo xtask goldens bless boundary_named_constant --reason "..."`

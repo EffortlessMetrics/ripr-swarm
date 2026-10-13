@@ -60,10 +60,14 @@ The receipt records source-survivor candidates, a set-differenced inventory of
 paths changed only on the swarm side, and a non-dispositive inventory of
 swarm-authority resolution candidates, exact-parent version/changelog
 observations (including Cargo.lock and npm lock roots; missing changelog
-evidence remains unknown), invalidation rules, and
+evidence remains unknown; each parent's unfolded `changelog.d/` fragments are
+listed), invalidation rules, and
 next actions. `preview_tree` is automatic merge-tree output only. A separate
 optional reviewed resolved-tree SHA is recorded and verified in the supplied
 repository object store; absent that input, finalization is visibly missing.
+A supplied reviewed tree is the folded tree, so the preflight refuses one that
+still holds a `changelog.d/` fragment other than `README.md` and names it
+(#6341).
 It does not create a join or modify either authoritative checkout.
 
 ### Consumed native acceptance (receipt v2)
@@ -158,6 +162,9 @@ Historical evidence and freeze-time `required_not_run` remain unchanged.
   source-promotion fixture linkage, missing changelog unknown-state handling,
   location-independent identity serialization, exclusive disposable-directory
   creation, and rejection of a non-ancestor swarm main.
+  `unfolded_changelog_fragments_are_reported_and_refused_in_reviewed_tree`
+  covers the per-parent fragment listing and the refusal of a reviewed tree
+  that still holds a fragment.
 - `fixtures/source_promotion/diverged-conflict.json` pins the discriminating
   divergent/conflict expectation.
 

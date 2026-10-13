@@ -10,6 +10,7 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use crate::core_error::CoreError;
 use crate::output;
 use crate::output::human::terminal_safe;
+use crate::output::repo_exposure::RepoExposureLimit;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,20 +40,19 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
-    config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
-    limit_info: Option<&analysis::SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
-    population_differs_from_check: bool,
+    context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
-    if population_differs_from_check {
+    let Some(context) = context else {
         return write_pilot_file(
             path,
-            output::repo_exposure::render_repo_exposure_json_with_generated_skip(
+            output::repo_exposure::render_repo_exposure_json_with_limit(
                 classified,
                 limit_info,
                 ts_guidance.as_ref(),
@@ -60,27 +60,17 @@ fn write_pilot_repo_exposure_json(
                 generated_skip,
             ),
         );
-    }
-    // Base `None`: pilot's printed after-snapshot command passes no `--base`
-    // or `--diff`, so both snapshots intentionally carry no base under
-    // RIPR-SPEC-0084. Keep this explicit rather than coupling artifact
-    // identity to the `CheckInput` default.
-    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
-        input.root.clone(),
-        input.mode.as_str().to_string(),
-        None,
-        config,
-    )?;
+    };
     let mut render_error = None;
     output::file_write::write_with(path, |file| {
         let mut writer = std::io::BufWriter::new(file);
         if let Err(err) = output::repo_exposure::write_repo_exposure_json_with_context(
             classified,
-            limit_info,
+            limit_info.map(RepoExposureLimit::info),
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
-            &context,
+            context,
             &mut writer,
         ) {
             render_error = Some(err);
@@ -173,6 +163,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     } else {
         PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
             classified: Vec::new(),
+            corpus_key: None,
             limit_info: None,
             skipped_generated: Vec::new(),
             naming_only_skips: Vec::new(),
@@ -219,6 +210,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
+    let corpus_key = report.corpus_key;
     let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
@@ -294,6 +286,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
     let limit_info = pilot_budget_info.or(inventory_limit_info);
+    let repo_exposure_limit = limit_info.as_ref().map(|info| {
+        if pilot_budget_truncated {
+            RepoExposureLimit::PilotBudget(info)
+        } else {
+            RepoExposureLimit::Inventory(info)
+        }
+    });
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
@@ -330,20 +329,34 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
+    // The existing context is available only for the check-comparable full
+    // population. Keep base None, matching pilot's printed after command.
+    let snapshot_context = if pilot_budget_truncated || change_seams_added {
+        None
+    } else {
+        Some(
+            crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+                input.root.clone(),
+                input.mode.as_str().to_string(),
+                None,
+                &config,
+            )?
+            .with_rust_corpus_key(corpus_key.as_ref()),
+        )
+    };
     write_pilot_repo_exposure_json(
         &artifacts.repo_exposure_json,
         &input,
-        &config,
         &classified,
-        limit_info.as_ref(),
+        repo_exposure_limit,
         generated_skip.as_ref(),
-        pilot_budget_truncated || change_seams_added,
+        snapshot_context.as_ref(),
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
-        output::repo_exposure::render_repo_exposure_md_with_generated_skip(
+        output::repo_exposure::render_repo_exposure_md_with_limit(
             &classified,
-            limit_info.as_ref(),
+            repo_exposure_limit,
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
@@ -353,7 +366,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
             &classified,
-            limit_info.as_ref(),
+            repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
         ),
@@ -909,6 +922,7 @@ mod tests {
                 crate::analysis::cancellation::checkpoint()?;
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
+                    corpus_key: None,
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),

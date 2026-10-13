@@ -1,6 +1,7 @@
+mod all;
 mod allow_attributes;
+mod changelog_fragments;
 mod ci_lane_whitelist;
-pub(crate) mod ci_scratch;
 mod covered_by;
 mod dependency_expiry;
 pub(crate) mod distribution;
@@ -20,9 +21,14 @@ mod release_targets;
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
 mod static_language;
 mod test_inventory;
+mod text_encoding;
 mod workflows;
 
+pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use changelog_fragments::{
+    check_changelog_fragments, check_changelog_fragments_with_args, unfolded_fragment_paths,
+};
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
 pub(crate) use covered_by::check_covered_by;
 pub(crate) use dependency_expiry::check_dependency_suppression_expiry;
@@ -38,6 +44,7 @@ pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
 pub(crate) use static_language::check_static_language;
+pub(crate) use text_encoding::check_text_encoding;
 pub(crate) use workflows::check_workflows;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {

@@ -29,7 +29,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/benches_harness_evidence/input --diff <cwd>/fixtures/benches_harness_evidence/diff.patch --mode fast probe:src_lib.rs:predicate:9b2a72c1
   ripr context --root <cwd>/fixtures/benches_harness_evidence/input --diff <cwd>/fixtures/benches_harness_evidence/diff.patch --mode fast --at probe:src_lib.rs:predicate:9b2a72c1
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/benches_harness_evidence/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/benches_harness_evidence/input --at src/lib.rs:2 --kind predicate
 
 More:
   Full evidence: rerun with --format human-full

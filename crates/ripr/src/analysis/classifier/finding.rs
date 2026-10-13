@@ -1,4 +1,4 @@
-use super::evidence::ClassifiedProbeEvidence;
+use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
@@ -7,7 +7,7 @@ use crate::analysis::classify::{
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
 
-const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change (a test may still reach it through macros, dynamic dispatch, or integration tests that static evidence does not follow). Add or point to a test that exercises it and asserts the result first; deep mode and real mutation testing need a reaching test to say more.";
+const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
@@ -36,32 +36,41 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    let recommended_next_step = if class == ExposureClass::WeaklyExposed
-        && exact_oracle_covers_direct_sink
-    {
-        None
-    } else if class == ExposureClass::StaticUnknown
-        && evidence.reach.state == StageState::No
-        && !context.owner_assertion_shaped
-    {
-        // A new function no test calls yields several unclassifiable lines;
-        // "escalate to real mutation" is useless while no test reaches
-        // the owner at all. The class stays static_unknown.
-        Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
-    } else if class == ExposureClass::ReachableUnrevealed
-        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-        && !context.owner_assertion_shaped
-    {
-        Some(match &evidence.assertion_refusal {
-            Some(note) if note.calls_owner => format!(
-                "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
-                note.location
-            ),
-            _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
-        })
-    } else {
-        recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
-    };
+    let recommended_next_step =
+        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+            None
+        } else if class == ExposureClass::StaticUnknown
+            && evidence.reach.state == StageState::No
+            && !context.owner_assertion_shaped
+        {
+            // A new function no test calls yields several unclassifiable lines;
+            // "escalate to real mutation" is useless while no test reaches
+            // the owner at all. The class stays static_unknown.
+            Some(format!(
+                "{STATIC_UNKNOWN_UNREACHED_NEXT_STEP} {}",
+                recommended_next_step(
+                    context.probe,
+                    &class,
+                    context.owner_assertion_shaped,
+                    &stop_reasons
+                )
+                .unwrap_or_default()
+            ))
+        } else if class == ExposureClass::ReachableUnrevealed
+            && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            && !context.owner_assertion_shaped
+        {
+            Some(refused_assertion_next_step(
+                evidence.assertion_refusal.as_ref(),
+            ))
+        } else {
+            recommended_next_step(
+                context.probe,
+                &class,
+                context.owner_assertion_shaped,
+                &stop_reasons,
+            )
+        };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
@@ -115,6 +124,7 @@ pub(in crate::analysis) fn build_finding(
         annotate_related_test_misses(
             &mut related_tests,
             &class,
+            context.owner_fn.is_some(),
             &context.probe.family,
             &evidence.activation,
             unconfirmed,
@@ -184,6 +194,7 @@ enum Unconfirmed {
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
+    owner_is_function: bool,
     family: &ProbeFamily,
     activation: &ActivationEvidence,
     unconfirmed: Unconfirmed,
@@ -196,6 +207,25 @@ fn annotate_related_test_misses(
         .filter(|test| test.miss.is_none() && test.oracle.is_some())
         .map(|test| strength_rank(&test.oracle_strength))
         .min();
+    if matches!(class, ExposureClass::NoStaticPath) {
+        // #6580: reach is `No` only when no row establishes reach
+        // (`RelationReason::establishes_reach`, the rule `reach_evidence`
+        // reads, #7531), so such a row never calls the owner and that is why
+        // it misses. An
+        // assertion-level reason `reveal` recorded first
+        // (`assertion_not_credited`) would point the reader at assertion
+        // admission instead of the missing call. An `assertion_not_observing`
+        // row keeps its miss: that value is what marks it examined-only
+        // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
+        // and fix-site selection read `oracle_related_tests` through it.
+        for test in related_tests.iter_mut().filter(|test| {
+            test.relation_reason
+                .is_none_or(|reason| !reason.establishes_reach(owner_is_function))
+                && !test.is_unmatched()
+        }) {
+            test.miss = Some(RelatedTestMiss::NoCallPath);
+        }
+    }
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
             Unconfirmed::Confirmed => false,
@@ -469,6 +499,24 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
         .any(|window| window == expected)
 }
 
+/// The next step for a gap whose oracle rests on a refused `assert_eq!`.
+fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>) -> String {
+    match note {
+        Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
+            "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+            note.location
+        ),
+        // #6903: an ignored, cfg-off, conditional or rebound assertion is
+        // not a limit of ripr's reading, so offering a static-limit
+        // reading would let the reader dismiss a real gap.
+        Some(note) if note.calls_owner => format!(
+            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+            note.location
+        ),
+        _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -510,6 +558,7 @@ mod tests {
         annotate_related_test_misses(
             &mut rows,
             &crate::domain::ExposureClass::WeaklyExposed,
+            true,
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::StrongestRank,
@@ -524,6 +573,108 @@ mod tests {
     }
 
     #[test]
+    fn no_static_path_reports_the_missing_call_before_an_assertion_reason() {
+        let row = |name: &str, reason: RelationReason, miss| RelatedTest {
+            relation_reason: Some(reason),
+            miss,
+            ..matched_row(name, OracleStrength::None)
+        };
+        let mut rows = vec![
+            row(
+                "same_file_refused",
+                RelationReason::SameTestFile,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "same_module_no_assertion",
+                RelationReason::SameModule,
+                Some(crate::domain::RelatedTestMiss::NoAssertion),
+            ),
+            row(
+                "same_file_unmatched",
+                RelationReason::SameTestFile,
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+            ),
+            row(
+                "seam_callee_refused",
+                RelationReason::SeamCalleeCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "direct_call_refused",
+                RelationReason::DirectOwnerCall,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "owner_named_refused",
+                RelationReason::OwnerNamedTest,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+            row(
+                "assertion_target_refused",
+                RelationReason::AssertionTargetAffinity,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
+        ];
+        let mut module_owner_rows = rows.clone();
+        annotate_related_test_misses(
+            &mut rows,
+            &crate::domain::ExposureClass::NoStaticPath,
+            true,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+                // #7531: a test named after a function owner, or asserting
+                // a token it names, never has to run it (#5335).
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+            ]
+        );
+        // For an owner without a function, the assertion-target affinity is
+        // how the owner is observed, so that row keeps reveal's reason.
+        annotate_related_test_misses(
+            &mut module_owner_rows,
+            &crate::domain::ExposureClass::NoStaticPath,
+            false,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            module_owner_rows.last().and_then(|row| row.miss),
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+        );
+
+        let mut gap = vec![row(
+            "same_file_refused",
+            RelationReason::SameTestFile,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+        )];
+        annotate_related_test_misses(
+            &mut gap,
+            &crate::domain::ExposureClass::WeaklyExposed,
+            true,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            gap[0].miss,
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            "only no_static_path rewrites a recorded miss"
+        );
+    }
+
+    #[test]
     fn unverified_observation_marks_every_matched_row_unconfirmed() {
         let mut rows = vec![
             matched_row("strong_exact", OracleStrength::Strong),
@@ -532,6 +683,7 @@ mod tests {
         annotate_related_test_misses(
             &mut rows,
             &crate::domain::ExposureClass::WeaklyExposed,
+            true,
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::AllRows,
@@ -951,5 +1103,39 @@ mod tests {
             Some("calculate"),
             "let err = calculate(5).unwrap_err();",
         ));
+    }
+
+    #[test]
+    fn refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal() {
+        use super::{AssertionRefusalNote, refused_assertion_next_step};
+        let note = |calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            location: "`assert_eq!` in t at tests/t.rs:3".to_string(),
+            reason: "reason".to_string(),
+            calls_owner,
+            is_analyzer_limit,
+        };
+        let limit = refused_assertion_next_step(Some(&note(true, true)));
+        assert!(
+            limit.contains("this is a static limit, not a missing test"),
+            "{limit}"
+        );
+
+        // #6903: an `#[ignore]`d, cfg-off, conditional or rebound assertion.
+        let not_limit = refused_assertion_next_step(Some(&note(true, false)));
+        assert!(
+            not_limit.contains("this is not a static limit"),
+            "{not_limit}"
+        );
+        assert!(
+            !not_limit.contains("static limit, not a missing test"),
+            "{not_limit}"
+        );
+
+        for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
+            assert!(
+                refused_assertion_next_step(unrelated.as_ref())
+                    .starts_with("Establish that the test is collected")
+            );
+        }
     }
 }

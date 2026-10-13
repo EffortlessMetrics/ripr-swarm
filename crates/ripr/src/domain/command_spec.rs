@@ -10,6 +10,57 @@ use std::path::{Component, Path};
 const MAX_DISPLAY_LENGTH: usize = 512;
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 
+/// Recognize the closed verification-provenance set of actionable packets.
+///
+/// RIPR-SPEC-0057 admits an existing canonical command or the producer's
+/// bounded typed-related-test fallback. A recognized label does not
+/// authenticate its producer or grant command-execution authority.
+pub fn actionable_verify_source_is_supported(source: &str) -> bool {
+    matches!(
+        source,
+        "canonical_item.verify_command" | "related_test_or_observer.name"
+    )
+}
+
+/// Identify the broad snapshot comparison excluded from actionable verification.
+///
+/// This is the existing RIPR-SPEC-0057 display-policy predicate, shared by
+/// projection and passive admission. It is not a shell parser, a general cost
+/// estimate, or permission to execute any other command.
+pub fn verify_command_is_unbounded_repo_exposure_snapshot_compare(command: &str) -> bool {
+    let normalized = command_tokens(&command.trim().replace('\\', "/")).join(" ");
+    normalized.contains("ripr agent verify")
+        && normalized.contains("--before")
+        && normalized.contains("--after")
+        && normalized.contains("repo-exposure.json")
+}
+
+/// Decode the existing passive command display words for shared policy checks.
+///
+/// This preserves the LSP token interpretation; it does not execute a command
+/// or implement a general shell parser.
+pub(crate) fn command_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    for character in command.chars() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, value) if value.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(character),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommandSpec {
     pub schema_version: String,
@@ -47,6 +98,10 @@ pub enum CommandRole {
     Regeneration,
     Inspection,
     TargetedRerun,
+    /// Start one repair attempt for a single bound seam (#6305). The
+    /// task-first repair command offers this route only when its producer
+    /// binds exactly one eligible subject.
+    RepairStart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -131,6 +186,7 @@ pub enum CommandAuthorityBoundary {
     RegenerationRouteOnly,
     InspectionRouteOnly,
     TargetedRerunRouteOnly,
+    RepairStartRouteOnly,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,6 +426,9 @@ fn authority_matches_role(role: CommandRole, boundary: CommandAuthorityBoundary)
         ) | (
             CommandRole::TargetedRerun,
             CommandAuthorityBoundary::TargetedRerunRouteOnly
+        ) | (
+            CommandRole::RepairStart,
+            CommandAuthorityBoundary::RepairStartRouteOnly
         )
     )
 }
@@ -481,5 +540,40 @@ mod tests {
             return Err("a verify authority was accepted for a receipt command".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn broad_snapshot_recognition_preserves_permitted_command_word_spellings() {
+        // Literal policy cases, not a second tokenizer or general cost oracle.
+        for prefix in [
+            "ripr  agent verify",
+            "ripr\tagent verify",
+            "ripr agent\tverify",
+            "ripr \t agent \t verify",
+            "r'i'pr agent verify",
+            "\"ripr\" agent verify",
+            "ripr 'agent' verify",
+            "ripr ag\"en\"t verify",
+            "ripr agent \"verify\"",
+            "ripr agent v\"er\"ify",
+        ] {
+            let command = format!(
+                "{prefix} --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+            );
+            assert!(
+                verify_command_is_unbounded_repo_exposure_snapshot_compare(&command),
+                "the shared owner must retain the known broad-snapshot exclusion: {command:?}"
+            );
+        }
+        for bounded in [
+            "cargo test -p ordinary_shop above_threshold_discounts",
+            "cargo  test\t-p ordinary_shop above_threshold_discounts",
+            "ripr agent verify --root . --json",
+        ] {
+            assert!(
+                !verify_command_is_unbounded_repo_exposure_snapshot_compare(bounded),
+                "recognition must remain limited to the known before/after snapshot command: {bounded:?}"
+            );
+        }
     }
 }

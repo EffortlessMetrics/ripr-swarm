@@ -55,6 +55,20 @@ suite('Standard LSP compatibility probe', () => {
     assert.ok(result.status === 'incompatible' && ['framing_failure', 'process_failure'].includes(result.kind));
   });
 
+  test('a probe target that cannot start is a spawn failure naming the cause', async function () {
+    // #5891: on win32 the PowerShell wrapper used to swallow the start
+    // exception for a nonexistent target, exit 0, and read back as a
+    // process failure with a nonsensical code 0.
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-missing-'));
+    temporaryRoots.push(root);
+    const missing = path.join(root, 'no-such-ripr.exe');
+    const result = await probeStandardLspCompatibility(missing, false, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'incompatible', JSON.stringify(result));
+    assert.strictEqual(result.status === 'incompatible' ? result.kind : undefined, 'spawn_failure');
+    assert.ok(result.status === 'incompatible' && result.detail.length > 0, JSON.stringify(result));
+  });
+
   test('an initialize capability observer failure settles as a process failure', async () => {
     const fake = fakeServer('valid');
     const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs, () => {
@@ -179,6 +193,34 @@ suite('Standard LSP compatibility probe', () => {
     const descendantPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.throws(() => process.kill(descendantPid, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH');
+  });
+
+  test('version classification waits for the probe output streams to close', async function () {
+    // #5891 review: the wrapper's exit-code and start-failure markers ride
+    // stderr, so classification must happen after stdio drains, not at bare
+    // process exit. A descendant that inherits stderr holds the stream open
+    // past the script's own exit.
+    if (process.platform === 'win32') {
+      this.skip();
+      return;
+    }
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-version-drain-'));
+    temporaryRoots.push(root);
+    const sentinel = path.join(root, 'stderr-drained');
+    const script = path.join(root, 'ripr');
+    fs.writeFileSync(
+      script,
+      `#!/bin/sh\n(sleep 1; rm -f "${sentinel}") &\necho "ripr 9.9.9"\nexit 0\n`,
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(sentinel, 'held');
+    const result = await probeServerVersion(script, 'fixture', false);
+    assert.strictEqual('binaryVersion' in result, true, JSON.stringify(result));
+    if ('binaryVersion' in result) {
+      assert.strictEqual(result.binaryVersion, 'ripr 9.9.9');
+    }
+    assert.ok(!fs.existsSync(sentinel), 'classified before the probe output streams closed');
   });
 
   for (const [mode, succeeds] of [

@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_path",
   "test_shape": "happy_path_only_assert_eq",
-  "hard_case": "ripr's error_path finding reads exposed, borrowing the strong `matches!(refund(20_000), Err(PayError::Limit))` pin from a test of a different function in the same file; the line still scores gap because a weakly_exposed return_value finding outranks it.",
+  "hard_case": "Before #7063 ripr's error_path finding read exposed by borrowing the strong `matches!(refund(20_000), Err(PayError::Limit))` pin from a test of a different function in the same file. Under RIPR-SPEC-0094 (#7063) a same-file pin of a shared error variant cannot confirm this owner beside the test that calls `deposit_cap`, so both findings read weakly_exposed and the line scores gap.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",

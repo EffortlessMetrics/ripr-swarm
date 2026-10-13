@@ -1,0 +1,13 @@
+diff --git a/lib/Account.pm b/lib/Account.pm
+index 1e1ba56..1df8797 100644
+--- a/lib/Account.pm
++++ b/lib/Account.pm
+@@ -30,7 +30,7 @@ sub transfer {
+ 
+ sub close_out {
+     my ($balance) = @_;
+-    die "balance must be zero\n" if $balance > 100;
++    die "balance must be zero\n" if 100 < $balance;
+     return 'closed';
+ }
+ 

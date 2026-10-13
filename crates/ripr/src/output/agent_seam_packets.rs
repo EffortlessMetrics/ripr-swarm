@@ -2,13 +2,15 @@
 //! RIPR-SPEC-0005 (and the agent-packet shape in
 //! `docs/OUTPUT_SCHEMA.md` § "Agent Seam Packets").
 //!
-//! Packets are emitted for actionable classes:
+//! Packets are emitted for queue-visible classes
+//! (`repair_packet_queue_visible`):
 //!
-//! - Headline-eligible classes (`Ungripped`, `WeaklyGripped`,
-//!   `ReachableUnrevealed`, the four `*_unknown` classes) emit a
-//!   `task: "write_targeted_test"` packet.
-//! - `Opaque` emits a conservative `task: "inspect_static_limitation"`
-//!   packet so the agent at least sees the static boundary.
+//! - Gap classes (`Ungripped`, `WeaklyGripped`, `ReachableUnrevealed`)
+//!   emit a `task: "write_targeted_test"` packet when the producer-owned
+//!   repair route is ready, else `task: "inspect_static_limitation"`.
+//! - Static limitations (the four `*_unknown` classes and `Opaque`) emit
+//!   a conservative `task: "inspect_static_limitation"` packet so the
+//!   agent at least sees the static boundary that hides evidence (#6775).
 //!
 //! `StronglyGripped`, `Intentional`, and `Suppressed` produce no
 //! packet — there is nothing for the agent to do.
@@ -30,14 +32,16 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command, agent_verify_command,
     check_analysis_outcome_command, check_repo_exposure_command, shell_arg,
 };
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
     NewTestKind, RepairTargetSelection, cross_language_test_target_unresolved,
     is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
 };
-use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
+use crate::analysis::seams::{
+    ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
+};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
 pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
@@ -56,6 +60,7 @@ use crate::output::receipt_lifecycle::{
     RECEIPT_GAP_MISMATCH, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_STALE,
     normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
 };
+use crate::output::repo_exposure::RepoExposureLimit;
 use crate::repair_guidance::{
     AssertionBasis, AssertionGuidance, AssertionGuidanceView, AssertionKind, AssertionState,
     DiscriminatorAvailability, DiscriminatorState, GapRouteGuidanceFacts, GuidanceReason,
@@ -96,6 +101,15 @@ pub(crate) const EDIT_CAGE_PRODUCTION_STATEMENT: &str =
 /// The terminality warning carried in the packet's `must_not_change` field
 /// and the before-phase TTY narration (#4330): violating the unstated cage
 /// used to be the only way an agent learned it existed.
+/// The `must_not_change` statement for a repair confined to a production
+/// file's inline test module (#5210): the cage admits only new test functions
+/// (and `use` items) inserted into that module's body.
+pub(crate) fn inline_test_module_edit_statement(file: &str, module: &str) -> String {
+    format!(
+        "in {file}, only insert new test functions inside the existing `#[cfg(test)] mod {module}`; production code, the module declaration, and existing tests must stay byte-identical"
+    )
+}
+
 pub(crate) const EDIT_CAGE_TERMINALITY_WARNING: &str =
     "editing any file outside allowed_edit_surface fails the repair attempt terminally";
 
@@ -145,25 +159,26 @@ fn push_analysis_outcome_projection(
     out.push_str(",\n");
 }
 
-/// Render every actionable `ClassifiedSeam` in `classified` as an agent
+/// Render every queue-visible `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
-/// intentional, and suppressed seams are skipped. `Opaque` seams emit a
-/// conservative `inspect_static_limitation` packet so the agent at least
-/// sees the static boundary that hides evidence.
+/// intentional, and suppressed seams are skipped. Static-limitation seams
+/// (opaque and the `*_unknown` classes) emit a conservative
+/// `inspect_static_limitation` packet so the agent at least sees the static
+/// boundary that hides evidence.
 ///
 /// When `limit_info` is `Some`, the artifact carries a `limitations[]` block
-/// so consumers know the output is bounded and can opt out via the env var.
+/// so consumers know which cap bounded the output and how to lift that cap.
 #[cfg(test)]
 pub(crate) fn render_agent_seam_packets_json(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
 ) -> String {
     render_agent_seam_packets_json_with_causal(classified, limit_info, None)
 }
 
 pub(crate) fn render_agent_seam_packets_json_with_causal(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> String {
     render_agent_seam_packets_json_with_causal_and_outcome(
@@ -177,7 +192,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal(
 
 pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -198,7 +213,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
 /// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
 pub(crate) fn render_agent_seam_packets_json_for_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
 ) -> String {
@@ -225,9 +240,26 @@ pub(crate) enum PacketCommandContext<'a> {
     },
 }
 
+/// Render an agent-seam-packets refusal document (#7332) for a run that
+/// never analyzed. Keeps the format's own envelope conventions:
+/// `scope: "repo"`, the `run_status`/`limitations[]` pair (here `refused`
+/// with the typed refusal identity as the limitation category), and an
+/// empty `packets` array with `packets_total: 0` — parseable as
+/// `agent-seam-packets-json`, never zero bytes, and no `next` block because
+/// there is no packet to act on.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n  \"packets_total\": 0,\n  \"packets\": []\n}}\n",
+        AGENT_SEAM_PACKET_SCHEMA_VERSION,
+        notice.identity,
+        notice.repair_route,
+        crate::output::json::escape(&notice.message),
+    )
+}
+
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -249,31 +281,25 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
-    // was capped, "seam_limit_applied" when the pilot budget fired.
+    // was capped, "seam_limit_applied" when either cap fired.
     match limit_info {
         None => out.push_str("  \"run_status\": \"complete\",\n"),
         Some(_) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
-    if let Some(info) = limit_info {
-        let repair_route = match info.source {
-            SeamLimitSource::Default => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            SeamLimitSource::Configured => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-        };
+    if let Some(limit) = limit_info {
+        let info = limit.info();
+        let repair_route = limit.repair_route();
         out.push_str("  \"limitations\": [\n");
         out.push_str("    {\n");
-        out.push_str("      \"category\": \"pilot_seam_budget_applied\",\n");
+        out.push_str(&format!("      \"category\": \"{}\",\n", limit.category()));
         out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
         out.push_str(&format!("      \"seams_total\": {},\n", info.total));
         out.push_str(&format!(
             "      \"limit_source\": \"{}\",\n",
             info.source.as_str()
         ));
-        out.push_str("      \"control\": \"RIPR_PILOT_SEAM_BUDGET\",\n");
+        out.push_str(&format!("      \"control\": \"{}\",\n", limit.control()));
         out.push_str(&format!(
             "      \"repair_route\": \"{}\"\n",
             crate::output::json::escape(repair_route)
@@ -504,11 +530,16 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// stdout gets the attempt identity, the retained manifest, and the exact
 /// `--phase after` command — the same facts the stderr narration names —
 /// so the before → edit → after loop closes without reading stderr.
+/// `baseline_ambiguous` marks an attempt the capture already knows it
+/// cannot score (#7204): the rendered document discloses it and the plain
+/// summary replaces the after-edit directive with the ambiguity warning
+/// and the clean-state restart route.
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,
     pub(crate) manifest_path: String,
     pub(crate) next_command: String,
     pub(crate) packet_path: String,
+    pub(crate) baseline_ambiguous: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -543,15 +574,18 @@ pub(crate) fn render_before_phase_attempt_stdout(
             "rendered agent packet envelope already carries a repair_attempt block".to_string(),
         );
     }
-    object.insert(
-        "repair_attempt".to_string(),
-        json!({
-            "attempt_id": continuation.attempt_id,
-            "manifest_path": continuation.manifest_path,
-            "next_command": continuation.next_command,
-            "packet_path": continuation.packet_path,
-        }),
-    );
+    let mut attempt_block = json!({
+        "attempt_id": continuation.attempt_id,
+        "manifest_path": continuation.manifest_path,
+        "next_command": continuation.next_command,
+        "packet_path": continuation.packet_path,
+    });
+    // #7204: additive and present only when true, so every scorable
+    // attempt's stdout bytes stay exactly as before.
+    if continuation.baseline_ambiguous {
+        attempt_block["baseline_ambiguous"] = json!(true);
+    }
+    object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("render before-phase attempt stdout failed: {error}"))?;
     rendered.push('\n');
@@ -1554,6 +1588,7 @@ fn format_command_role(role: CommandRole) -> &'static str {
         CommandRole::Regeneration => "regeneration",
         CommandRole::Inspection => "inspection",
         CommandRole::TargetedRerun => "targeted_rerun",
+        CommandRole::RepairStart => "repair_start",
     }
 }
 
@@ -2140,16 +2175,13 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     // (`repair_packet_queue_visible`); under that filter the authority's
     // fail-closed flip reduces to producer route readiness.
     //
-    // The recommended target must also be a test surface (#4330 cage
-    // contract): a producer-owned inline-module proposal names a production
-    // file, and advertising it as `allowed_edit_surface` alongside the
-    // must-not-change production statement would promise an edit surface the
-    // cage's own policy text forbids. Those seams render as inspection
-    // packets, matching the evidence-record and pilot-command gating of the
-    // same check.
-    if is_safe_for_repair_packet(entry)
-        && crate::analysis::is_test_surface_path(&recommended_test_for(entry).file)
-    {
+    // The recommended target must also be one the edit cage can route
+    // (#4330 cage contract): a test surface, or the seam's own production
+    // Rust file confined to its one governed inline `#[cfg(test)]` module
+    // (#5210). Any other production file would promise an edit surface the
+    // cage refuses, so those seams render as inspection packets, matching
+    // the evidence-record and pilot-command gating of the same predicate.
+    if is_safe_for_repair_packet(entry) && recommended_test_is_repair_edit_target(entry) {
         TASK_WRITE_TARGETED_TEST
     } else {
         "inspect_static_limitation"
@@ -2265,6 +2297,17 @@ fn push_packet_json(
             json_escape(&format!(
                 "{EDIT_CAGE_TERMINALITY_WARNING} (allowed: {})",
                 allowed_edit_surface.join(", ")
+            ))
+        ));
+    }
+    if actionable
+        && let Some(module) = recommended_inline_test_module(entry, recommended.file.as_str())
+    {
+        out.push_str(&format!(
+            ", \"{}\"",
+            json_escape(&inline_test_module_edit_statement(
+                recommended.file.as_str(),
+                module
             ))
         ));
     }
@@ -2478,6 +2521,7 @@ fn push_packet_json(
             suggested_assertions_for(
                 seam.kind(),
                 seam.owner(),
+                seam.owner_call(),
                 Some(seam.required_discriminator()),
                 evidence,
             )
@@ -2735,6 +2779,42 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Whether `ripr agent repair` can route its edit to the target that
+/// [`recommended_test_for`] names: a test surface, or the seam's own
+/// production Rust file whose one governed inline `#[cfg(test)]` module the
+/// InlineUnit producer admitted (#5210). Every surface that offers a repair
+/// start or states an allowed edit surface asks this one predicate; the edit
+/// cage re-captures the module at the before phase and enforces it at the
+/// after phase, so this projection can only under-offer, never widen.
+pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
+    let recommended = recommended_test_for(entry);
+    crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// The governed inline test module's name when `recommended_file` is the
+/// seam's own production Rust file and the InlineUnit producer admitted that
+/// file's one inline cfg-test module; `None` for a test surface or any other
+/// production file.
+pub(crate) fn recommended_inline_test_module<'a>(
+    entry: &'a ClassifiedSeam,
+    recommended_file: &str,
+) -> Option<&'a str> {
+    if recommended_file == "not_applicable"
+        || crate::analysis::is_test_surface_path(recommended_file)
+        || display_path(entry.seam.file()) != recommended_file
+    {
+        return None;
+    }
+    let region = entry
+        .evidence
+        .new_test_target
+        .as_ref()?
+        .owner_inline_region
+        .as_ref()?;
+    (display_path(&region.file) == recommended_file).then_some(region.module_name.as_str())
 }
 
 fn not_applicable_recommended_test(reason: &str) -> RecommendedTest {
@@ -3050,6 +3130,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
         assertion_guidance_for(
             entry.seam.kind(),
             entry.seam.owner(),
+            entry.seam.owner_call(),
             Some(entry.seam.required_discriminator()),
             &entry.evidence,
         )
@@ -3064,6 +3145,7 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> AssertionGuidance {
@@ -3073,7 +3155,7 @@ fn assertion_guidance_for(
         SeamKind::CallPresence => Some(ObserverKind::CallSite),
         _ => None,
     };
-    let derived_example = suggested_assertions_for(kind, owner, required, evidence)
+    let derived_example = suggested_assertions_for(kind, owner, owner_call, required, evidence)
         .into_iter()
         .find(|suggestion| {
             let trimmed = suggestion.trim_start();
@@ -3301,35 +3383,46 @@ fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
 fn suggested_assertions_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> Vec<String> {
     let owner_short = owner.rsplit("::").next().unwrap_or(owner);
+    // #5357: the owner's parser facts decide the call syntax, so a method
+    // reads `<receiver>.name(..)` and an unestablished shape names the owner
+    // in a comment instead of presenting a free-function call.
+    let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
-                "assert_eq!({owner_short}(/* {hint} */), /* expected */)"
+                "assert_eq!({}, /* expected */)",
+                call(&format!("/* {hint} */"))
             )]
         }
         SeamKind::ErrorVariant => {
             let (trigger_hint, expected_label, pattern_hint) =
                 error_variant_assertion_hint(required);
             vec![format!(
-                "let err = {owner_short}(/* trigger {trigger_hint} */).expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));"
+                "let err = {}.expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));",
+                call(&format!("/* trigger {trigger_hint} */"))
             )]
         }
         SeamKind::ReturnValue => vec![format!(
-            "assert_eq!({owner_short}(/* input */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input */")
         )],
         SeamKind::FieldConstruction => vec![format!(
-            "let result = {owner_short}(/* input */); assert_eq!(result.field, /* expected */);"
+            "let result = {}; assert_eq!(result.field, /* expected */);",
+            call("/* input */")
         )],
         SeamKind::SideEffect => vec![format!(
-            "// arrange a mock/observer; assert {owner_short}(...) produced the expected effect"
+            "// arrange a mock/observer; assert {} produced the expected effect",
+            call("...")
         )],
         SeamKind::MatchArm => vec![format!(
-            "assert_eq!({owner_short}(/* input selecting this arm */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input selecting this arm */")
         )],
         SeamKind::CallPresence => vec![format!(
             "// assert that {owner_short} called the expected target"
@@ -3386,6 +3479,43 @@ mod tests {
     };
     use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
+
+    #[test]
+    fn refusal_document_keeps_the_packet_envelope_with_no_packets() -> Result<(), String> {
+        // #7332: a refused agent-seam-packets run parses as
+        // agent-seam-packets-json — the format's own run_status/limitations
+        // pair, packets_total 0, an empty packets array, and no `next` block
+        // because there is no packet to act on.
+        let notice = crate::core_error::CoreError::gap_ledger_unusable(
+            "read gap ledger nope.json failed: missing",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_json(&notice);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", AGENT_SEAM_PACKET_SCHEMA_VERSION),
+            ("/scope", "repo"),
+            ("/run_status", "refused"),
+            ("/limitations/0/category", "gap_ledger_unusable"),
+            ("/limitations/0/repair_route", "analysis/gap-ledger"),
+        ] {
+            let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value["packets_total"] != 0 {
+            return Err(format!("packets_total must be 0: {value}"));
+        }
+        if value["packets"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("packets must be empty: {value}"));
+        }
+        if value.get("next").is_some() {
+            return Err(format!("a refused run must not grow a next block: {value}"));
+        }
+        Ok(())
+    }
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -3507,6 +3637,8 @@ mod tests {
             },
             ExpectedSink::ReturnValue,
         )
+        // `discounted_total` models a module-level function (#5357).
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn seam_with(
@@ -3525,6 +3657,7 @@ mod tests {
             required,
             sink,
         )
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn related_test_with(
@@ -3570,6 +3703,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class,
@@ -3647,6 +3781,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -3667,6 +3802,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3688,6 +3824,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -5838,6 +5975,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         let recommended = recommended_test_for(&entry);
         assert_eq!(
@@ -6541,6 +6679,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         // Pin both preconditions so the demotion below is attributable to the
         // non-test recommended target, not to route readiness.
@@ -6566,6 +6705,69 @@ mod tests {
             serde_json::json!([]),
             "the inspection packet must allow no edits: {json}"
         );
+        Ok(())
+    }
+
+    /// #5210: the same inline proposal, with the owner file's one governed
+    /// inline module recorded, is actionable. The packet's edit surface is
+    /// that production file, it is no longer forbidden, and `must_not_change`
+    /// states the module confinement the cage enforces.
+    #[test]
+    fn inline_module_proposal_with_a_recorded_region_is_actionable_and_confined()
+    -> Result<(), String> {
+        use crate::analysis::new_test_target::InlineTestRegionAuthority;
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        let region = InlineTestRegionAuthority {
+            file: PathBuf::from("src/pricing.rs"),
+            module_name: "tests".to_string(),
+            parent_modules: Vec::new(),
+            body_start: 0,
+            close_brace_start: 0,
+            source_digest: String::new(),
+        };
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: Some(region.clone()),
+            blocker: None,
+            owner_inline_region: Some(region),
+        });
+        let json = render_agent_seam_packets_json(&[entry], None);
+        let value = parsed_envelope(&json)?;
+        let packet = &value["packets"][0];
+        if packet["task"] != TASK_WRITE_TARGETED_TEST {
+            return Err(format!("expected an actionable packet: {json}"));
+        }
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["src/pricing.rs"])
+        );
+        assert_eq!(packet["forbidden_files"], serde_json::json!([]));
+        let confinement = inline_test_module_edit_statement("src/pricing.rs", "tests");
+        assert!(
+            packet["must_not_change"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| entry == &confinement)),
+            "must_not_change must state the inline module confinement: {json}"
+        );
+        // The cage authority reads the same packet and confines the target.
+        let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            &json,
+            packet["seam_id"].as_str().unwrap_or_default(),
+        )?;
+        assert!(policy.inline_test_module_target);
         Ok(())
     }
 
@@ -6913,19 +7115,84 @@ mod tests {
         );
     }
 
+    /// The boundary fixture re-shaped as the bytesize repro from #5357.
+    fn weakly_gripped_with_owner_call(owner_call: OwnerCallShape) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_classified();
+        entry.seam = entry.seam.with_owner_call(owner_call);
+        entry
+    }
+
+    /// #5357: every renderer reads the one call shape, so the JSON packet,
+    /// the editor/pilot suggested assertion and the brief outline agree.
+    /// Before the fix all three printed `discounted_total(..)` for a method.
+    #[test]
+    fn suggested_assertion_uses_method_syntax_for_self_receiver_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Method {
+            self_type: "Pricing".to_string(),
+        });
+        let expected = "assert_eq!(/* Pricing value */.discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)";
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            targeted_test_brief_outline_for_classified_seam(&entry).assertion_shape,
+            expected
+        );
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        assert!(
+            json.contains(&json_escape(expected)),
+            "packet must carry the method call: {json}"
+        );
+        assert!(
+            !json.contains("assert_eq!(discounted_total("),
+            "packet must not present a free call for a method: {json}"
+        );
+    }
+
+    #[test]
+    fn suggested_assertion_uses_type_path_for_associated_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Associated {
+            self_type: "Pricing".to_string(),
+        });
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(
+                "assert_eq!(Pricing::discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)"
+            )
+        );
+    }
+
+    /// An unestablished call shape keeps the concrete boundary guidance (the
+    /// actionability flip is unchanged) but names the owner in a comment
+    /// instead of presenting a call that may not compile.
+    #[test]
+    fn suggested_assertion_names_owner_without_call_when_shape_unknown() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Unknown);
+        assert!(assertion_shape_for_entry(&entry).is_concrete());
+        let suggestion = suggested_assertion_for_classified_seam(&entry).unwrap_or_default();
+        assert_eq!(
+            suggestion,
+            "assert_eq!(/* call discounted_total (receiver or path not established) with boundary input where amount >= discount_threshold */, /* expected */)"
+        );
+        assert!(!suggestion.contains("discounted_total("), "{suggestion}");
+    }
+
     // -- Pilot seam budget disclosure tests ----------------------------------
 
     #[test]
-    fn no_limit_info_emits_run_status_complete() {
+    fn no_limit_info_emits_run_status_complete() -> Result<(), String> {
         let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
-        assert!(
-            json.contains("\"run_status\": \"complete\""),
-            "expected run_status=complete when no limit_info: {json}"
-        );
-        assert!(
-            !json.contains("\"limitations\""),
-            "expected no limitations block when no limit_info: {json}"
-        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "complete", "{doc}");
+        assert!(doc.get("limitations").is_none(), "{doc}");
+        let packets = doc["packets"]
+            .as_array()
+            .ok_or("packets must be an array")?;
+        assert_eq!(packets.len(), 1, "{doc}");
+        assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        Ok(())
     }
 
     #[test]
@@ -6936,8 +7203,10 @@ mod tests {
             total: 23_113,
             source: SeamLimitSource::Default,
         };
-        let json =
-            render_agent_seam_packets_json(&[weakly_gripped_classified()], Some(&limit_info));
+        let json = render_agent_seam_packets_json(
+            &[weakly_gripped_classified()],
+            Some(RepoExposureLimit::PilotBudget(&limit_info)),
+        );
         assert!(
             json.contains("\"run_status\": \"seam_limit_applied\""),
             "expected run_status=seam_limit_applied: {json}"
@@ -6969,22 +7238,110 @@ mod tests {
     }
 
     #[test]
-    fn limit_info_configured_source_emits_configured_repair_route() {
+    fn limit_info_configured_source_emits_configured_repair_route() -> Result<(), String> {
         use crate::analysis::{SeamLimitInfo, SeamLimitSource};
         let limit_info = SeamLimitInfo {
             analyzed: 500,
             total: 1_000,
             source: SeamLimitSource::Configured,
         };
-        let json = render_agent_seam_packets_json(&[], Some(&limit_info));
-        assert!(
-            json.contains("Remove or raise RIPR_PILOT_SEAM_BUDGET"),
-            "expected configured repair route in disclosure: {json}"
+        let json =
+            render_agent_seam_packets_json(&[], Some(RepoExposureLimit::PilotBudget(&limit_info)));
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+        assert_eq!(
+            doc["limitations"],
+            serde_json::json!([{
+                "category": "pilot_seam_budget_applied",
+                "seams_analyzed": 500,
+                "seams_total": 1_000,
+                "limit_source": "configured",
+                "control": "RIPR_PILOT_SEAM_BUDGET",
+                "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            }]),
+            "{doc}"
         );
-        assert!(
-            json.contains("\"limit_source\": \"configured\""),
-            "expected limit_source=configured: {json}"
-        );
+        assert_eq!(doc["packets_total"], 0, "{doc}");
+        assert_eq!(doc["packets"], serde_json::json!([]), "{doc}");
+        Ok(())
+    }
+
+    // #7186: expected strings are authored independently of the shared
+    // authority; packet admission must not substitute its own denominator.
+    #[test]
+    fn packet_limit_disclosure_names_the_applied_cap() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+
+        for (source, source_name, inventory, category, control, route) in [
+            (
+                SeamLimitSource::Default,
+                "default",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Default,
+                "default",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 2,
+                total: 9,
+                source,
+            };
+            let limit = if inventory {
+                RepoExposureLimit::Inventory(&info)
+            } else {
+                RepoExposureLimit::PilotBudget(&info)
+            };
+            let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
+            let rendered =
+                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".");
+            let doc: serde_json::Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+            assert_eq!(
+                doc["limitations"],
+                serde_json::json!([{
+                    "category": category,
+                    "seams_analyzed": 2,
+                    "seams_total": 9,
+                    "limit_source": source_name,
+                    "control": control,
+                    "repair_route": route,
+                }]),
+                "{doc}"
+            );
+            let packets = doc["packets"]
+                .as_array()
+                .ok_or("packets must be an array")?;
+            assert_eq!(packets.len(), 1, "{doc}");
+            assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        }
+        Ok(())
     }
 
     // RIPR-SPEC-0103 fixtures: error-seam exemplar kind-gate.

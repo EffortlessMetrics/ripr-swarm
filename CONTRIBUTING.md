@@ -10,15 +10,37 @@ traceability without reconstructing intent from chat history.
    `rust-toolchain.toml` pins the exact toolchain version and its
    `rustfmt` and `clippy` components; `rustup` picks it up automatically
    the first time you run a `cargo` command in this repo.
-2. Clone the repo and build the workspace:
+2. Clone the repo:
 
    ```bash
    git clone <repo-url>
    cd ripr-swarm
-   cargo build --workspace
    ```
 
-3. Run a cheap sanity check before paying for the full test suite:
+3. For workflow-policy, agent-skill or executable-file edits, get focused feedback
+   before building the product:
+
+   ```bash
+   cargo policy check-workflows
+   cargo policy check-agent-skills
+   cargo policy check-executable-files
+   ```
+
+   Run the check that covers your edit. `cargo policy preflight` covers only
+   workflow and agent-skill checks; executable-file policy always reads the Git
+   index afresh and is not discharged by that receipt.
+   These commands build the small, unpublished `repo-policy` package without
+   compiling `xtask`, `ripr` or its parser dependencies. The first run downloads
+   and compiles the helper's dependencies; subsequent unchanged runs reuse them.
+   Run from the repository root with the pinned Rust toolchain on `PATH`.
+   Failures point to reports under `target/ripr/reports/`.
+
+   This is focused policy feedback, not all docs checks, product compilation,
+   `precommit`, or required merge qualification. Other edits still need their
+   applicable checks, and hosted required CI remains authoritative for merge.
+
+4. For Rust product work, check the workspace before building executables or
+   running the full test suite:
 
    ```bash
    cargo check --workspace --all-targets
@@ -31,7 +53,7 @@ traceability without reconstructing intent from chat history.
    cargo test --workspace
    ```
 
-4. Try the binary against the in-repo sample:
+5. Try the binary against the in-repo sample:
 
    ```bash
    cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
@@ -42,6 +64,10 @@ it is slower than later runs. Once the workspace builds, `cargo xtask
 worktree doctor` checks your working tree for common local hygiene issues
 (dirty `main`, stale branches, generated-artifact residue) before you start
 shaping a PR.
+
+For the local collect-all policy command, [RIPR-SPEC-0253](docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md)
+defines the selected checks and failure/report contract. Its five real-driver
+acceptance tests run with `cargo test -p xtask --test policy_all`.
 
 ## Product Contract
 

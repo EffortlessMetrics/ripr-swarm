@@ -1,0 +1,12 @@
+diff --git a/src/receipt.ts b/src/receipt.ts
+index 0000000..1111111 100644
+--- a/src/receipt.ts
++++ b/src/receipt.ts
+@@ -8,6 +8,6 @@
+   return {
+     id,
+     total,
+-    currency: "USD",
++    currency: "US" + "D",
+   };
+ }

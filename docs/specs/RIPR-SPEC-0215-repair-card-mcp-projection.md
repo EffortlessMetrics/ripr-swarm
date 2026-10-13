@@ -77,9 +77,16 @@ and without execution authority (ADR 0022):
   (`Current` / `AcceptedDirtyDraft`), are bound when `ripr_refresh` commits
   the snapshot — the adapter's single bounded analysis attempt. A seam is
   retained only when it owner-discriminated binds a snapshot canonical item:
-  the seam's readiness canonical gap id must name the item and the finding's
-  producer-recorded gap owner must be the seam's owner, so a gap id shared
-  with a sibling owner never credits this seam with another seam's item.
+  the seam's finding under the shared [`finding_for_seam`] join — the same
+  seam-finding join the CLI `ripr agent card` handoff consumes — names the
+  item it was projected from (#7162). The seam's content-hash gap id never
+  appears on produced findings (producers mint `gap:<lang>:…` identities),
+  so the join runs on the finding identity, never on id-string equality
+  across the two schemes. Owner discrimination and the ambiguity refusal
+  ride along from the shared authority: a gap id shared with a sibling owner
+  still never credits this seam with another seam's item. Binding is not
+  projection — the item binds even when the finding projects no witness,
+  exactly like the CLI card whose witness is optional.
   Any binding failure fails the whole refresh attempt with
   `analysis_failed`: the snapshot commits complete — items, findings, head,
   and card seams — or not at all, so the card surface can never silently
@@ -133,8 +140,11 @@ and without execution authority (ADR 0022):
   with another owner's item.
 - Wire controls: the SDK session discovers all eight tools and five
   templates; the stdio fail-closed control pins the typed pre-refresh
-  `no_snapshot` failure for the card tool; the inline-version recovery
-  control expects the eight-tool surface.
+  `no_snapshot` failure for the card tool; the stdio success control
+  refreshes the B4 repair-ready fixture, calls `ripr_get_repair_card`,
+  and pins `schema_version == ripr-mcp-repair-card-v1` plus inner-card
+  equality with `ripr agent card` for the same seam; the inline-version
+  recovery control expects the eight-tool surface.
 
 ## Non-Goals
 
@@ -181,12 +191,17 @@ and without execution authority (ADR 0022):
 
 - `crates/ripr/src/mcp/repair_card.rs::tests` — resource id parsing,
   fail-closed producer facts, the witness-bound shared card projection,
-  refusal wire spellings, and the owner-discrimination binding rule.
+  refusal wire spellings, the shared-join binding rule (producer-shaped
+  binds, witnessless binds, unambiguous-claim retention), and the
+  owner-discrimination binding rule.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, output schema, instructions, status surface lists, failure
   vocabulary, dispatch-edge rejections, and pre-refresh typed failures.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
-  hosted wire interop controls.
+  hosted wire interop controls, including the post-refresh
+  `get_repair_card_after_refresh_matches_cli_agent_card` success path and
+  the `resource_reads_match_tools_after_refresh` card tool/resource
+  parsed-document-equality control (#7145).
 
 ## Implementation Mapping
 

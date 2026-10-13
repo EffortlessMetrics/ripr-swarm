@@ -1,0 +1,590 @@
+//! RIPR-SPEC-0114/0117 on proximity-only reach: a `weakly_exposed` finding
+//! whose related tests only share the owner's file or a name token names the
+//! transitive or macro reach limit instead of reporting a gap. RIPR-SPEC-0120
+//! (#7089): a direct test whose only observer is an unread assertion macro
+//! names that limit beside a proximity-only weak oracle.
+use super::RustAdapter;
+use crate::analysis::language::LanguageAdapter;
+use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
+use crate::config::OraclePolicy;
+use crate::domain::{
+    ExposureClass, Finding, RelationReason, StageState, StaticLimitKind, StopReason,
+};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new(label: &str, lib: &str) -> Result<Self, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-proximity-reach-{label}-{stamp}"));
+        fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='reach'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(root.join("src/lib.rs"), lib).map_err(|e| e.to_string())?;
+        Ok(Self(root))
+    }
+
+    /// The finding on line 2, where `x * 3` became `3 * x`.
+    fn rate_finding(&self) -> Result<Finding, String> {
+        let diff_text = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn inner_rate(x: i64) -> i64 {\n-    x * 3\n+    3 * x\n }\n";
+        let changed_files = diff::parse_unified_diff(diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: self.0.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        result
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .ok_or_else(|| "no finding on the changed line".to_string())
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+const MACRO_ROUTED: &str = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+macro_rules! call_inner {
+    ($x:expr) => {
+        inner_rate($x)
+    };
+}
+pub fn outer(x: i64) -> i64 {
+    call_inner!(x)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn outer_triples() {
+        assert_eq!(outer(4), 12);
+    }
+";
+
+fn all_relations(finding: &Finding, wanted: impl Fn(RelationReason) -> bool) -> bool {
+    !finding.related_tests.is_empty()
+        && finding
+            .related_tests
+            .iter()
+            .all(|test| test.relation_reason.is_some_and(&wanted))
+}
+
+#[test]
+fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), String> {
+    let fixture = Fixture::new("macro", &format!("{MACRO_ROUTED}}}\n"))?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: the test reaches `inner_rate` only through
+    // `call_inner!`, so its relation is proximity.
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::MacroReachUnresolved)
+    );
+    // The witness is a candidate path, never a related test, and the gap's
+    // discriminator lines go with the gap.
+    assert_eq!(
+        finding.related_tests.len(),
+        1,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert_eq!(
+        finding.missing,
+        vec![
+            StaticLimitKind::RustMacroReachUnresolved
+                .describe()
+                .to_string()
+        ]
+    );
+    let next = finding.recommended_next_step.unwrap_or_default();
+    assert!(
+        next.contains("`outer_triples`") && next.contains("does not establish a missing test"),
+        "{next}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
+    // A same-file test that reaches a private helper through its forwarding
+    // caller relates by the chain, not file proximity.
+    let fixture = Fixture::new(
+        "transitive",
+        "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn outer(x: i64) -> i64 {
+    inner_rate(x)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn outer_triples() {
+        assert_eq!(outer(4), 12);
+    }
+}
+",
+    )?;
+    let finding = fixture.rate_finding()?;
+    // RIPR-SPEC-0159: the chain relation outranks file proximity, so the
+    // same-file test now relates to `inner_rate` through `outer` as a
+    // `helper_owner_call` and reach reads yes. The wrapper's return-value
+    // oracle is not credited for the helper's change (no return-value
+    // crediting through wrappers), so the class stays `weakly_exposed`
+    // without the transitive-reach limit.
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == Some(RelationReason::HelperOwnerCall)),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert!(
+        !finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved),
+        "{:?}",
+        finding.stop_reasons
+    );
+    Ok(())
+}
+
+#[test]
+fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<(), String> {
+    // The same macro witness exists, but a test calls the owner directly:
+    // reach is established, so the weak oracle stays a gap.
+    let fixture = Fixture::new(
+        "direct",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn rate_is_positive() {{\n        assert!(inner_rate(2) > 0);\n    }}\n}}\n"
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall)),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn proximity_only_reach_without_a_witness_keeps_the_gap() -> Result<(), String> {
+    // A function pointer names the owner, so reach stays weak, but no test
+    // walks toward it through a call chain or macro: nothing to name.
+    let fixture = Fixture::new(
+        "no-witness",
+        "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub const RATE: fn(i64) -> i64 = inner_rate;
+pub fn unrelated(x: i64) -> i64 {
+    x + 1
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unrelated_adds_one() {
+        assert_eq!(unrelated(4), 5);
+    }
+}
+",
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+const GENERATED: &str = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    macro_rules! rate_case {
+        ($name:ident, $input:expr, |$out:ident| $body:block) => {
+            #[test]
+            fn $name() {
+                let check = |$out: i64| $body;
+                check(inner_rate($input));
+            }
+        };
+    }
+    rate_case!(rate_triples, 4, |out| {
+        assert_eq!(out, 12);
+    });
+    #[test]
+    fn unrelated_is_true() {
+        assert!(true);
+    }
+}
+";
+
+#[test]
+fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Result<(), String> {
+    let fixture = Fixture::new("generator", GENERATED)?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: the generated test is not indexed, so the only
+    // related test is the hand-written one sharing the file.
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding.evidence.iter().any(|line| line.contains(
+            "test `rate_triples` (src/lib.rs:16) is generated by macro `rate_case!` at src/lib.rs:7"
+        )),
+        "{:?}",
+        finding.evidence
+    );
+    let next = finding.recommended_next_step.unwrap_or_default();
+    assert!(
+        next.contains("`rate_triples`") && next.contains("`rate_case!`"),
+        "{next}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_generator_without_a_test_attribute_names_no_limit() -> Result<(), String> {
+    // The same macro emitting a plain fn generates no test.
+    let fixture = Fixture::new(
+        "not-a-generator",
+        &GENERATED.replacen(
+            "            #[test]\n            fn $name",
+            "            #[inline]\n            fn $name",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn an_owner_no_macro_names_gets_no_generator_witness() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "other-owner",
+        &GENERATED.replacen("check(inner_rate($input))", "check($input * 3)", 1),
+    )?;
+    let finding = fixture.rate_finding()?;
+    // Nothing in the tests names the owner now, so reach is `no`; the
+    // generator still must not supply a witness on that path.
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn an_owner_named_only_in_a_generator_comment_or_string_gets_no_witness() -> Result<(), String> {
+    // The generated test never calls the owner; the name appears only in a
+    // comment and a string inside the generator body.
+    let lib = GENERATED.replacen(
+        "check(inner_rate($input));",
+        "check($input * 3); // inner_rate\n                let _label = \"inner_rate\";",
+        1,
+    );
+    // Fixture construction: the owner's name survives only in the comment and
+    // the string.
+    assert!(lib.contains("// inner_rate") && lib.contains("\"inner_rate\""));
+    assert!(!lib.contains("inner_rate($input)"));
+    let fixture = Fixture::new("owner-in-text", &lib)?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("generated by macro")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn a_generator_invoked_only_inside_a_macro_body_names_no_limit() -> Result<(), String> {
+    // An invocation inside another definition is part of that macro, not a
+    // generated test; with no outer invocation there is no witness.
+    let fixture = Fixture::new(
+        "nested-only",
+        &GENERATED.replacen(
+            "    rate_case!(rate_triples, 4, |out| {\n        assert_eq!(out, 12);\n    });\n",
+            "    macro_rules! unused_cases {\n        () => {\n            rate_case!(rate_triples, 4, |out| { assert_eq!(out, 12); });\n        };\n    }\n",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<(), String> {
+    // Name-only lookup cannot tell which `rate_case!` the invocation
+    // expands, so a duplicate definition withholds the witness.
+    let fixture = Fixture::new(
+        "duplicate-generator",
+        &GENERATED.replacen(
+            "    rate_case!(rate_triples",
+            "    #[cfg(any())]\n    macro_rules! rate_case {\n        ($($t:tt)*) => {};\n    }\n    rate_case!(rate_triples",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+/// #7089: the only test that calls the owner observes it through a custom
+/// assertion macro ripr cannot read; a weak oracle in a test that only shares
+/// the file made the finding `weakly_exposed`.
+const CUSTOM_ASSERT: &str = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn other(x: i64) -> i64 {
+    x + 1
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    macro_rules! assert_rate {
+        ($actual:expr, $expected:expr) => {
+            if $actual != $expected {
+                panic!(\"rate mismatch\");
+            }
+        };
+    }
+    #[test]
+    fn rate_triples() {
+        assert_rate!(inner_rate(4), 12);
+    }
+    #[test]
+    fn other_is_positive() {
+        assert!(other(1) > 0);
+    }
+}
+";
+
+/// Fixture construction for the #7089 cases: `rate_triples` is related by a
+/// direct relation with the given oracle presence, and a proximity-only test
+/// holds a recognized oracle.
+fn assert_custom_assert_construction(finding: &Finding, direct_has_oracle: bool) {
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples");
+    assert!(
+        direct.is_some_and(|test| test
+            .relation_reason
+            .is_some_and(|reason| !crate::analysis::classify::is_proximity_only(reason))
+            && test.oracle.is_some() == direct_has_oracle),
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.oracle.is_some()
+                && test
+                    .relation_reason
+                    .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+}
+
+#[test]
+fn an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit() -> Result<(), String> {
+    let fixture = Fixture::new("custom-assert", CUSTOM_ASSERT)?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: the direct test has no recognized oracle, and the
+    // only recognized one comes from a test that just shares the file.
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples")
+        .ok_or("rate_triples is not related")?;
+    assert!(direct.oracle.is_none(), "{direct:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.oracle.is_some())
+            .all(|test| test
+                .relation_reason
+                .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("`rate_triples`") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<(), String> {
+    // The owner's value reaches the macro only through a binding.
+    let fixture = Fixture::new(
+        "custom-assert-binding",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        let rate = inner_rate(4);\n        assert_rate!(rate, 12);",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> {
+    // The direct test's own weak oracle is what ripr judged; the custom macro
+    // beside it does not turn that judgment into a limit.
+    let fixture = Fixture::new(
+        "custom-assert-direct-oracle",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert!(inner_rate(4) > 0);\n        assert_rate!(inner_rate(4), 12);",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, true);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn an_owner_call_quoted_by_stringify_keeps_the_gap() -> Result<(), String> {
+    // `stringify!` turns the call into text; the owner never runs.
+    let fixture = Fixture::new(
+        "custom-assert-stringify",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert_rate!(stringify!(inner_rate(4)), \"inner_rate(4)\");",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_trait_default_method_owner_keeps_the_gap() -> Result<(), String> {
+    // A bare `inner_rate(` call cannot name a trait default method, so it is
+    // no evidence that the macro asserts on the owner.
+    let fixture = Fixture::new(
+        "custom-assert-trait-default",
+        &CUSTOM_ASSERT.replacen(
+            "fn inner_rate(x: i64) -> i64 {\n    3 * x\n}\n",
+            "pub trait Rate { fn inner_rate(x: i64) -> i64 {\n    3 * x\n} }\n",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .probe
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.0.ends_with("::inner_rate")),
+        "{:?}",
+        finding.probe.owner
+    );
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}

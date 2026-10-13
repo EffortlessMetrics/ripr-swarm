@@ -35,7 +35,8 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
-    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
+    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, UnavailableAdapterCoverage,
+    content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -1006,6 +1007,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -1016,6 +1018,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -3377,6 +3380,7 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
     );
     snapshot.gap_artifacts.push(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: Some(".".to_string()),
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -3697,13 +3701,18 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(commands[0].2[0]["label"], "first_repair_packet");
     assert_eq!(commands[0].2[0]["gap_identity"], "gap:py:pricing");
     assert_eq!(commands[0].2[0]["canonical_gap_id"], "gap:py:pricing");
+    // #4001: the artifact's portable `--root .` is bound to the selected
+    // workspace, so a copied command analyzes it from any directory.
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.path().to_string_lossy(),
+    ));
     assert_eq!(
         commands[0].2[0]["verify_command"],
-        "ripr agent verify --root . --json"
+        format!("ripr agent verify --root {bound} --json")
     );
     assert_eq!(
         commands[0].2[0]["receipt_command"],
-        "ripr agent receipt --root . --json"
+        format!("ripr agent receipt --root {bound} --json")
     );
     assert_eq!(
         commands[0].2[0]["command_specs"]["verify"]["command_id"],
@@ -3778,16 +3787,16 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         .as_str()
         .ok_or_else(|| "missing Python repair-card text".to_string())?;
     for needle in [
-        "Python repair card (preview/advisory)",
-        "Freshness: current validated GapRecord diagnostic.",
-        "Changed owner:\n  python:app/pricing.py::calculate_discount",
-        "Current test evidence:",
-        "Missing discriminator:\n  price(threshold) == expected",
-        "Verify:\n  ripr agent verify --root . --json",
-        "Receipt:\n  ripr agent receipt --root . --json",
-        "Static preview evidence only",
+        "Python repair card (preview/advisory)".to_string(),
+        "Freshness: current validated GapRecord diagnostic.".to_string(),
+        "Changed owner:\n  python:app/pricing.py::calculate_discount".to_string(),
+        "Current test evidence:".to_string(),
+        "Missing discriminator:\n  price(threshold) == expected".to_string(),
+        format!("Verify:\n  ripr agent verify --root {bound} --json"),
+        format!("Receipt:\n  ripr agent receipt --root {bound} --json"),
+        "Static preview evidence only".to_string(),
     ] {
-        assert!(card.contains(needle), "missing {needle:?} in:\n{card}");
+        assert!(card.contains(&needle), "missing {needle:?} in:\n{card}");
     }
     assert_eq!(
         commands[4].2[0]["uri"],
@@ -3798,12 +3807,12 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(commands[5].2[0]["label"], "gap_verify");
     assert_eq!(
         commands[5].2[0]["command"],
-        "ripr agent verify --root . --json"
+        format!("ripr agent verify --root {bound} --json")
     );
     assert_eq!(commands[6].2[0]["label"], "gap_receipt");
     assert_eq!(
         commands[6].2[0]["command"],
-        "ripr agent receipt --root . --json"
+        format!("ripr agent receipt --root {bound} --json")
     );
     assert!(
         commands[7].2[0]["note"]
@@ -4476,8 +4485,15 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
     assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
-    assert!(packet.contains("Verify command:\nripr agent verify --root . --json"));
-    assert!(packet.contains("Receipt command:\nripr agent receipt --root . --json"));
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.path().to_string_lossy(),
+    ));
+    assert!(packet.contains(&format!(
+        "Verify command:\nripr agent verify --root {bound} --json"
+    )));
+    assert!(packet.contains(&format!(
+        "Receipt command:\nripr agent receipt --root {bound} --json"
+    )));
     let static_limit_position = packet
         .find("Static limit: missing_import_graph")
         .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
@@ -4694,6 +4710,8 @@ fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), Strin
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    // The card must fail closed on the git probe, not on missing candidates.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4740,6 +4758,7 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> R
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4869,6 +4888,7 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         vec![finding.clone()],
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4916,6 +4936,216 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
     Ok(())
 }
 
+/// #7179 review: the card join must match against the complete raw seam
+/// inventory, never the diagnostic projection. The projection here hides the
+/// non-surfaced inner twin while the surfaced outer stays; with the raw
+/// candidates the outer never acquires the inner finding's witness, the inner
+/// seam keeps its uniquely identified witness, and a snapshot without usable
+/// candidates (deferred, disabled, or truncated inventory) omits the card
+/// entirely instead of binding against an incomplete set.
+#[test]
+fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(), String> {
+    use crate::analysis::seams::{
+        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, SeamSpan,
+    };
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, TestGripEvidence, TestTargetEvidence,
+    };
+
+    // One function, two same-kind predicate boundaries: the outer span
+    // strictly encloses the inner span and both contain the producer's probe
+    // line. Live rust-index owner spelling so the producer gap names both.
+    fn nested_card_seam(byte_offset: usize, span: SeamSpan) -> crate::analysis::ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            "src/pricing.rs::discounted_total",
+            SeamKind::PredicateBoundary,
+            byte_offset,
+            2,
+            "amount > discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount > discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_span(span);
+        let seam_id = seam.id().clone();
+        crate::analysis::ClassifiedSeam {
+            seam,
+            evidence: TestGripEvidence {
+                seam_id,
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    test_name: "discounted_total_boundary".to_string(),
+                    file: PathBuf::from("tests/pricing.rs"),
+                    line: 12,
+                    test_target: Some(TestTargetEvidence::fixture(
+                        "discounted_total_boundary",
+                        Path::new("tests/pricing.rs"),
+                        12,
+                    )),
+                    oracle_kind: OracleKind::ExactValue,
+                    oracle_strength: OracleStrength::Strong,
+                    evidence_summary: "asserts the discounted total".to_string(),
+                    relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+                    relation_confidence: crate::domain::RelationConfidence::High,
+                })],
+                reach: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::High,
+                    "related test calls owner",
+                ),
+                activate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::High,
+                    "test reaches branch",
+                ),
+                propagate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::Medium,
+                    "return value sink",
+                ),
+                observe: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::Medium,
+                    "exact assertion",
+                ),
+                discriminate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::No,
+                    crate::domain::Confidence::Medium,
+                    "boundary value missing",
+                ),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
+                new_test_target: None,
+            },
+            class: crate::analysis::seams::SeamGripClass::WeaklyGripped,
+        }
+    }
+
+    let root = unique_lsp_test_root("repair-card-raw-candidates")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let outer = nested_card_seam(
+        12,
+        SeamSpan {
+            start_line: 2,
+            start_column: 1,
+            end_line: 4,
+            end_column: 10,
+        },
+    );
+    let inner = nested_card_seam(
+        16,
+        SeamSpan {
+            start_line: 2,
+            start_column: 5,
+            end_line: 2,
+            end_column: 11,
+        },
+    );
+    // The finding's producer gap id is deliberately NOT the seam content-hash
+    // id, so the join must run the producer branch where the sibling
+    // most-specific selection lives.
+    let producer_gap_id = "gap:rust:src/pricing.rs:discounted_total:predicate_boundary:predicate:amount>discount_threshold";
+    let outer_canonical = repair_packet_eligibility(&outer)
+        .readiness
+        .canonical_gap_id
+        .clone()
+        .ok_or("fixture seam must own a canonical gap identity")?;
+    if outer_canonical == producer_gap_id {
+        return Err("the producer id must differ from the content-hash id".to_string());
+    }
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+        id: producer_gap_id.to_string(),
+        language: "rust".to_string(),
+        file: "src/pricing.rs".to_string(),
+        owner: "discounted_total".to_string(),
+        behavior_kind: "predicate_boundary".to_string(),
+        probe_kind: "predicate".to_string(),
+        normalized_discriminator: "amount>discount_threshold".to_string(),
+    });
+
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri,
+        Vec::new(),
+        vec![finding.clone()],
+    );
+    // The diagnostic projection hid the inner seam (its grip class is not
+    // surfaced); only the outer remained.
+    snapshot.classified_seams = vec![outer.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![outer.clone(), inner.clone()]);
+
+    let outer_card = super::repair_card::seam_repair_card(&outer, &snapshot)
+        .ok_or("the outer card must still assemble from a complete inventory")?;
+    if outer_card.subject.finding_id.is_some() {
+        return Err("the outer seam must never acquire the inner seam's witness".to_string());
+    }
+    let inner_card = super::repair_card::seam_repair_card(&inner, &snapshot)
+        .ok_or("the inner card must assemble")?;
+    if inner_card.subject.finding_id.as_deref() != Some(finding.id.as_str()) {
+        return Err("the uniquely most-specific inner seam must keep its witness".to_string());
+    }
+    // A snapshot without usable candidates (deferred, disabled, or truncated
+    // seam inventory) omits the card instead of binding against the projection.
+    snapshot.repair_card_candidate_seams = None;
+    if super::repair_card::seam_repair_card(&outer, &snapshot).is_some() {
+        return Err("no usable candidates must fail the card closed".to_string());
+    }
+    Ok(())
+}
+
+/// #7179 review: a full refresh carries the complete raw seam inventory for
+/// the repair-card sibling join (a superset of the diagnostic projection),
+/// and a deferred interactive refresh carries none.
+#[test]
+fn refresh_carries_repair_card_candidates_only_for_a_complete_inventory() -> Result<(), String> {
+    let fixture = boundary_gap_git_fixture_root("repair-card-candidates")?;
+    let root = fixture.path();
+    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+    let full = workspace_diagnostics_with_config(root, &config, false)?;
+    let candidates = full
+        .snapshot
+        .repair_card_candidate_seams
+        .as_ref()
+        .ok_or("a complete seam inventory must carry repair-card candidates")?;
+    if candidates.is_empty() {
+        return Err("the boundary-gap fixture must inventory at least one seam".to_string());
+    }
+    if full.snapshot.classified_seams.is_empty() {
+        return Err("the fixture must surface at least one seam diagnostic".to_string());
+    }
+    for seam in &full.snapshot.classified_seams {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.seam.id() == seam.seam.id())
+        {
+            return Err(format!(
+                "surfaced seam {} dropped from the raw candidates",
+                seam.seam.id().as_str()
+            ));
+        }
+    }
+    let deferred = workspace_diagnostics_with_config(root, &config, true)?;
+    if deferred.snapshot.repair_card_candidate_seams.is_some() {
+        return Err("a deferred seam inventory must carry no repair-card candidates".to_string());
+    }
+    Ok(())
+}
+
 /// #4668: a seam diagnostic the current snapshot no longer carries suppresses
 /// the repair card action with the rest of the seam surface — a stale card
 /// route is never offered as current.
@@ -4934,6 +5164,8 @@ fn repair_card_action_suppressed_for_stale_seam_diagnostic() -> Result<(), Strin
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    // The suppression must come from staleness, not from missing candidates.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4977,6 +5209,7 @@ fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Resul
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let markdown =
         match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
             HoverContents::Markup(markup) => markup.value,
@@ -7601,6 +7834,85 @@ fn unknown_stage_value_route_omits_suggested_assertion_action() -> Result<(), St
     {
         return Err(format!(
             "unknown-stage route must not offer suggested assertion: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_class_seam_omits_copy_agent_brief_and_keeps_packet() -> Result<(), String> {
+    use crate::analysis::seams::SeamGripClass;
+
+    let mut seam = sample_classified_seam();
+    seam.class = SeamGripClass::ActivationUnknown;
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let actions = code_action_response(
+        &code_action_params(vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND)
+    {
+        return Err(format!(
+            "unknown-class seam must keep the packet action: {commands:?}"
+        ));
+    }
+    if commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_BRIEF_COMMAND)
+    {
+        return Err(format!(
+            "unknown-class seam must omit the brief action: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_seam_still_offers_copy_agent_brief() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let actions = code_action_response(
+        &code_action_params(vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_BRIEF_COMMAND)
+    {
+        return Err(format!(
+            "ordinary gap-class seam must keep the brief action: {commands:?}"
+        ));
+    }
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND)
+    {
+        return Err(format!(
+            "ordinary gap-class seam must keep the packet action: {commands:?}"
         ));
     }
     Ok(())
@@ -12778,6 +13090,7 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
 fn validated_gap_artifact() -> ValidatedGapArtifact {
     ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: Some(".".to_string()),
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -12831,6 +13144,7 @@ fn sample_analysis_snapshot(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -12841,6 +13155,7 @@ fn sample_analysis_snapshot(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     }
 }
 
@@ -13229,6 +13544,10 @@ fn lsp_fixture_render(
     );
     snapshot.mode = Mode::Fast;
     snapshot.classified_seams = vec![seam.clone()];
+    // The fixture inventory is complete (one seam, no cap), so the raw
+    // candidate list equals the projection and the repair-card action keeps
+    // its pre-#7179-review golden behavior.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(
             uri.clone(),
@@ -13688,7 +14007,8 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
             description: "amount >= discount_threshold".to_string(),
         },
         ExpectedSink::ReturnValue,
-    );
+    )
+    .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
     let seam_id = seam.id().clone();
     crate::analysis::ClassifiedSeam {
         seam,
@@ -13734,6 +14054,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -13770,6 +14091,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
@@ -16364,6 +16686,7 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
             .gap_artifacts
             .push(ValidatedGapArtifact {
                 kind: GapArtifactKind::ActionableGaps,
+                corpus_currentness: None,
                 root: Some(".".to_string()),
                 identities: vec![GapArtifactIdentity {
                     canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
@@ -16418,13 +16741,18 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
             packet["canonical_gap_id"],
             "gap:rust:pricing:threshold-boundary"
         );
+        // #4001: the status packet binds the artifact's `--root .` to the
+        // selected workspace.
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root("/workspace"),
+        );
         assert_eq!(
             packet["verify_command"],
-            "ripr agent verify --root . --json"
+            format!("ripr agent verify --root {bound} --json")
         );
         assert_eq!(
             packet["receipt_command"],
-            "ripr agent receipt --root . --json"
+            format!("ripr agent receipt --root {bound} --json")
         );
         assert_eq!(packet["file"], "src/pricing.rs");
 
@@ -16472,6 +16800,8 @@ fn execute_command_collect_workspace_status_registered_in_capabilities() -> Resu
 
 // ── collect_repair_packet tests ──────────────────────────────────────────────
 
+// These are synthetic unit fixtures for packet selection/rendering. Their
+// metadata must satisfy the same full admission contract as the disk read.
 fn complete_actionable_gaps_report() -> serde_json::Value {
     let raw_finding = serde_json::json!({
         "file": "src/pricing.rs",
@@ -16486,11 +16816,30 @@ fn complete_actionable_gaps_report() -> serde_json::Value {
         "gap_state": "actionable",
         "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
         "repair_kind": "add_boundary_assertion",
+        "repair_route_source": "canonical_item.repair_route",
+        "verify_command_source": "canonical_item.verify_command",
+        "public_projection_eligible": true,
+        "projection_exclusion_reasons": [],
+        "target_test_type": "boundary_discriminator",
+        "assertion_shape": "assert_eq!(price(threshold), expected)",
+        "target_test_shape": "boundary_discriminator: assert_eq!(price(threshold), expected)",
+        "repair_route": {
+            "repair_kind": "add_boundary_assertion",
+            "target_test_type": "boundary_discriminator",
+            "assertion_shape": "assert_eq!(price(threshold), expected)"
+        },
+        "related_test_or_observer": {
+            "file": "tests/pricing.rs",
+            "name": "discount_threshold",
+            "line": 33
+        },
         "verify_command": "ripr agent verify --root . --json",
         "receipt_command": "ripr agent receipt --root . --json",
+        "receipt_command_or_path": "ripr agent receipt --root . --json",
         "allowed_edit_surface": ["tests/pricing.rs"],
         "must_not_change": ["Do not infer actionability from raw static class."],
-        "raw_evidence_refs": [raw_finding],
+        "raw_evidence_refs": [raw_finding.clone()],
+        "raw_findings": [raw_finding],
         "confidence_basis": "static_only"
     });
     serde_json::json!({
@@ -16539,6 +16888,9 @@ fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
 
 fn complete_gap_decision_ledger_json() -> &'static str {
     r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "gap_decision_ledger",
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
@@ -16656,29 +17008,14 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
         let root = unique_lsp_test_root("repair-packet-incomplete")?;
-        // Build a packet that looks actionable but is missing receipt_command.
-        let raw_finding = serde_json::json!({
-            "file": "src/pricing.rs", "line": 42,
-            "kind": "weakly_exposed", "language": "rust", "language_status": "stable"
-        });
-        let packet = serde_json::json!({
-            "canonical_gap_id": "gap:rust:pricing-boundary",
-            "gap_state": "actionable",
-            "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
-            "repair_kind": "add_boundary_assertion",
-            "verify_command": "ripr agent verify --root . --json",
-            // receipt_command intentionally omitted
-            "allowed_edit_surface": ["tests/pricing.rs"],
-            "must_not_change": ["Do not infer actionability from raw static class."],
-            "raw_evidence_refs": [raw_finding],
-            "confidence_basis": "static_only"
-        });
-        let report = serde_json::json!({
-            "schema_version": "0.1", "tool": "ripr", "report": "actionable-gaps",
-            "scope": "repo", "status": "advisory",
-            "summary": { "actionable_gaps": 1, "packets_emitted": 1 },
-            "run_limitations": [], "packets": [packet]
-        });
+        // Retain the complete admission metadata so this negative isolates
+        // the missing receipt route rather than a projection-field omission.
+        let mut report = complete_actionable_gaps_report();
+        let packet = report["packets"][0]
+            .as_object_mut()
+            .ok_or_else(|| "fixture packet must be an object".to_string())?;
+        packet.remove("receipt_command");
+        packet.remove("receipt_command_or_path");
         write_actionable_gaps_report(root.path(), &report)?;
 
         let (service, _socket) =
@@ -16940,12 +17277,18 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 .is_some_and(|v| !v.is_empty()),
             "raw_evidence_refs must be non-empty"
         );
+        // #4001: the copied commands name the selected workspace, not `.`.
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.path().to_string_lossy()),
+        );
         assert_eq!(
-            packet["verify_command"], "ripr agent verify --root . --json",
+            packet["verify_command"],
+            format!("ripr agent verify --root {bound} --json"),
             "must carry verify_command"
         );
         assert_eq!(
-            packet["receipt_command"], "ripr agent receipt --root . --json",
+            packet["receipt_command"],
+            format!("ripr agent receipt --root {bound} --json"),
             "must carry receipt_command"
         );
         assert_eq!(
@@ -17048,6 +17391,204 @@ fn execute_command_collect_repair_packet_never_substitutes_another_gaps_packet()
         assert_eq!(
             from_ledger["verify_command"],
             "cargo xtask fixtures boundary_gap"
+        );
+        Ok(())
+    })
+}
+
+/// These synthetic unit artifacts isolate exact selection from corpus admission;
+/// genuine public Actionables producer parity is qualified separately.
+#[test]
+fn execute_command_collect_repair_packet_unlisted_gap_uses_current_ledger_despite_stale_queue()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unrelated-stale-queue")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        write_gap_decision_ledger(root.path())?;
+        let queue_path = root.path().join("target/ripr/reports/actionable-gaps.json");
+        let queue_bytes = std::fs::read(&queue_path)
+            .map_err(|err| format!("read original queue failed: {err}"))?;
+        let queue: serde_json::Value = serde_json::from_slice(&queue_bytes)
+            .map_err(|err| format!("parse original queue failed: {err}"))?;
+        let original_ledger_bytes = std::fs::read(
+            root.path()
+                .join("target/ripr/reports/gap-decision-ledger.json"),
+        )
+        .map_err(|err| format!("read original ledger failed: {err}"))?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = |gap_id: Option<&str>| {
+            let arguments = gap_id
+                .map(|id| vec![serde_json::json!({ "gap_id": id })])
+                .unwrap_or_default();
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments,
+                work_done_progress_params: Default::default(),
+            })
+        };
+
+        let current_queue = collect(Some("gap:rust:pricing-boundary"))
+            .await
+            .map_err(|err| format!("collect current queue failed: {err}"))?
+            .ok_or_else(|| "expected the current queue packet".to_string())?;
+        assert_eq!(
+            current_queue["canonical_gap_id"],
+            "gap:rust:pricing-boundary"
+        );
+        assert!(
+            current_queue["verify_command"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+        let current_ledger = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect current ledger failed: {err}"))?
+            .ok_or_else(|| "expected the current ledger packet".to_string())?;
+        assert_eq!(
+            current_ledger["canonical_gap_id"],
+            "gap:rust:pricing:threshold-boundary"
+        );
+
+        // This new Rust file is named by neither artifact. The original queue
+        // and all its named subjects remain unchanged; only its corpus ages.
+        std::fs::create_dir_all(root.path().join("tests"))
+            .map_err(|err| format!("create test directory failed: {err}"))?;
+        std::fs::write(
+            root.path().join("tests/unclaimed_corpus.rs"),
+            "#[test] fn unclaimed_corpus() { assert_eq!(2 + 2, 4); }\n",
+        )
+        .map_err(|err| format!("write unclaimed test failed: {err}"))?;
+        let named_paths = queue["packets"]
+            .as_array()
+            .ok_or_else(|| "fixture queue must contain packets".to_string())?
+            .iter()
+            .flat_map(|packet| {
+                crate::output::gap_source_subject::actionable_packet_subject_paths(
+                    root.path(),
+                    packet,
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            crate::output::gap_source_subject::check_source_subject(
+                root.path(),
+                queue.get("source_subject"),
+                &named_paths,
+            ),
+            crate::output::gap_source_subject::SourceSubjectCheck::Current,
+            "the queue's named-file contract must remain current"
+        );
+        write_gap_decision_ledger(root.path())?;
+        let fresh_ledger: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                root.path()
+                    .join("target/ripr/reports/gap-decision-ledger.json"),
+            )
+            .map_err(|err| format!("read fresh ledger failed: {err}"))?,
+        )
+        .map_err(|err| format!("parse fresh ledger failed: {err}"))?;
+        assert_ne!(
+            queue["source_subject"]["corpus"]["files_content_hash"],
+            fresh_ledger["source_subject"]["corpus"]["files_content_hash"],
+            "the existing corpus owner must capture the unclaimed addition"
+        );
+
+        // A product-reader positive establishes that the fresh ledger can
+        // render its own nonempty packet before reintroducing the old queue.
+        std::fs::remove_file(&queue_path)
+            .map_err(|err| format!("remove owned queue for control failed: {err}"))?;
+        let fresh_packet = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect fresh ledger control failed: {err}"))?
+            .ok_or_else(|| "expected the fresh ledger control".to_string())?;
+        assert_eq!(
+            fresh_packet["canonical_gap_id"],
+            "gap:rust:pricing:threshold-boundary"
+        );
+        assert_eq!(
+            fresh_packet["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        std::fs::write(&queue_path, &queue_bytes)
+            .map_err(|err| format!("restore original queue failed: {err}"))?;
+        assert_eq!(
+            std::fs::read(&queue_path)
+                .map_err(|err| format!("read restored queue failed: {err}"))?,
+            queue_bytes
+        );
+
+        for gap_id in [None, Some("gap:rust:pricing-boundary")] {
+            let refused = collect(gap_id)
+                .await
+                .map_err(|err| format!("collect stale queue failed: {err}"))?
+                .ok_or_else(|| "expected a stale queue refusal".to_string())?;
+            assert_eq!(refused["status"], "not_actionable_or_incomplete");
+            assert!(
+                refused["reason"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("stale_corpus:"))
+            );
+            assert!(
+                refused.get("verify_command").is_none() && refused.get("receipt_command").is_none()
+            );
+        }
+        let selected = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect selected ledger failed: {err}"))?
+            .ok_or_else(|| "expected the selected ledger packet".to_string())?;
+        assert_eq!(
+            selected["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "an unrelated stale queue must not shadow the selected current ledger: {selected}"
+        );
+        assert_eq!(
+            selected["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        // Isolate the ledger repair reader too: an unlisted ID selects no
+        // stale record, while selected/top B still requires full admission.
+        std::fs::remove_file(&queue_path)
+            .map_err(|err| format!("remove owned queue for ledger selector failed: {err}"))?;
+        std::fs::write(
+            root.path()
+                .join("target/ripr/reports/gap-decision-ledger.json"),
+            &original_ledger_bytes,
+        )
+        .map_err(|err| format!("restore original ledger failed: {err}"))?;
+        for gap_id in [None, Some("gap:rust:pricing:threshold-boundary")] {
+            let refused = collect(gap_id)
+                .await
+                .map_err(|err| format!("collect stale selected ledger failed: {err}"))?
+                .ok_or_else(|| "expected a selected stale ledger refusal".to_string())?;
+            assert_eq!(refused["status"], "not_actionable_or_incomplete");
+            assert!(
+                refused["reason"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("stale_corpus:"))
+            );
+            assert!(
+                refused.get("verify_command").is_none() && refused.get("receipt_command").is_none()
+            );
+        }
+        let unknown = collect(Some("gap:rust:absent"))
+            .await
+            .map_err(|err| format!("collect absent ledger gap failed: {err}"))?
+            .ok_or_else(|| "expected the absent-gap sentinel".to_string())?;
+        assert_eq!(unknown["status"], "not_actionable_or_incomplete");
+        assert!(
+            unknown["reason"]
+                .as_str()
+                .is_some_and(|s| { s.contains("no repair packet for gap `gap:rust:absent`") }),
+            "an absent ID must not select an unrelated stale ledger record: {unknown}"
+        );
+        assert!(
+            unknown.get("verify_command").is_none() && unknown.get("receipt_command").is_none()
         );
         Ok(())
     })
@@ -19304,6 +19845,7 @@ fn quarantine_workspace_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -19314,6 +19856,7 @@ fn quarantine_workspace_diagnostics(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -19875,6 +20418,7 @@ fn partition_workspace_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -19885,6 +20429,7 @@ fn partition_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -19979,6 +20524,636 @@ async fn workspace_status_reports_outside_partition_document_not_analyzed() -> R
         return Err(format!(
             "an opened unchanged document must stay clean/served: {unchanged}"
         ));
+    }
+    Ok(())
+}
+
+/// #5998 must keep its reason on a dirty buffer. `state` becomes
+/// `quarantined` and line-local diagnostics are withdrawn, but the
+/// partition reason and recovery stay so a consumer can still see why
+/// the saved file was never analyzed.
+#[tokio::test]
+async fn workspace_status_keeps_outside_partition_reason_when_quarantined() -> Result<(), String> {
+    let fixture = partition_fixture("outside-partition-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    for (uri, text) in fixture.uris.iter().zip(PARTITION_TEXTS.iter()) {
+        backend.did_open(quarantine_open_params(uri, text)).await;
+    }
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uris[1],
+            2,
+            "fn beyond() -> bool { false }\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let beyond = open_document_entry(&status, fixture.uris[1].as_str())?;
+    if beyond["state"].as_str() != Some("quarantined")
+        || beyond["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty outside-partition document must be quarantined/withdrawn: {beyond}"
+        ));
+    }
+    if beyond["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "quarantine must not clear the #5998 reason: {beyond}"
+        ));
+    }
+    let recovery = beyond["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("quarantined outside-partition must keep recovery: {beyond}"))?;
+    if !recovery.contains("RIPR_PARTIAL_DIFF_FILE_BUDGET") {
+        return Err(format!(
+            "quarantined #5998 recovery must name the budget: {recovery}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: a dirty disabled-language document is quarantined; do not attach
+/// the new reason until the buffer is saved. That keeps #1970's dirty-state
+/// disclosure as the document row's primary status.
+#[tokio::test]
+async fn workspace_status_omits_disabled_language_reason_while_quarantined() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.changed_python_uri,
+            2,
+            "def price():\n    return 2\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() != Some("quarantined")
+        || changed["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty disabled-language document must be quarantined/withdrawn: {changed}"
+        ));
+    }
+    if changed["not_analyzed_reason"].as_str() == Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "quarantine must not attach the #7205 reason on a dirty buffer: {changed}"
+        ));
+    }
+    if !changed["not_analyzed_reason"].is_null() {
+        return Err(format!(
+            "quarantined disabled-language reason must stay null: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+fn python_disabled_adapter_coverage(
+    sample_paths: &[&str],
+    file_count: usize,
+) -> UnavailableAdapterCoverage {
+    UnavailableAdapterCoverage::from_preview_advisories(&[
+        crate::analysis::PreviewLanguageAdvisory {
+            language: "python".to_string(),
+            file_count,
+            sample_paths: sample_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+            javascript_file_count: 0,
+            enabled: false,
+        },
+    ])
+}
+
+fn python_adapter_unavailable_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String>
+{
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let limitation = AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageAdapterUnavailable,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::EnableLanguage,
+            "Enable the python preview adapter and re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(1)?
+    .with_detail(
+        "python changed 1 file(s), but the preview adapter was not enabled or available",
+    )?;
+    AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity {
+            input_identity: Some("sha256:lsp-7205".to_string()),
+            ..AnalysisIdentity::default()
+        },
+        AnalysisOutcomeCounts {
+            changed_file_count: 3,
+            changed_line_count: 3,
+            ..AnalysisOutcomeCounts::default()
+        },
+        vec![limitation],
+    )
+}
+
+struct DisabledLanguageFixture {
+    _temp: TempLspRoot,
+    root: PathBuf,
+    rust_uri: tower_lsp_server::ls_types::Uri,
+    changed_python_uri: tower_lsp_server::ls_types::Uri,
+    unchanged_python_uri: tower_lsp_server::ls_types::Uri,
+}
+
+fn disabled_language_fixture(name: &str) -> Result<DisabledLanguageFixture, String> {
+    disabled_language_fixture_with_changed_python(name, "pricing.py")
+}
+
+fn disabled_language_fixture_with_changed_python(
+    name: &str,
+    changed_python_name: &str,
+) -> Result<DisabledLanguageFixture, String> {
+    let temp = unique_lsp_test_root(name)?;
+    let root = temp.path().to_path_buf();
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.join("zpy")).map_err(|err| format!("create zpy failed: {err}"))?;
+    let rust_path = root.join("src/main.rs");
+    let changed_python_path = root.join("zpy").join(changed_python_name);
+    let unchanged_python_path = root.join("zpy/helpers.py");
+    std::fs::write(&rust_path, "fn selected() -> bool { true }\n")
+        .map_err(|err| format!("write main.rs failed: {err}"))?;
+    std::fs::write(&changed_python_path, "def price():\n    return 1\n")
+        .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    std::fs::write(&unchanged_python_path, "def helper():\n    return 0\n")
+        .map_err(|err| format!("write helpers.py failed: {err}"))?;
+    Ok(DisabledLanguageFixture {
+        rust_uri: file_uri_for_path(&rust_path)
+            .map_err(|err| format!("main.rs URI failed: {err}"))?,
+        changed_python_uri: file_uri_for_path(&changed_python_path)
+            .map_err(|err| format!("pricing.py URI failed: {err}"))?,
+        unchanged_python_uri: file_uri_for_path(&unchanged_python_path)
+            .map_err(|err| format!("helpers.py URI failed: {err}"))?,
+        _temp: temp,
+        root,
+    })
+}
+
+fn disabled_language_workspace_diagnostics(
+    fixture: &DisabledLanguageFixture,
+    partial_scope: Option<crate::analysis::PartialDiffScope>,
+    unavailable_adapter: UnavailableAdapterCoverage,
+) -> Result<WorkspaceDiagnostics, String> {
+    let finding = quarantine_finding("probe:selected:1:predicate", "src/main.rs");
+    let diagnostic = diagnostic_for_finding(&fixture.root, &finding);
+    let mut diagnostics_by_uri = BTreeMap::new();
+    diagnostics_by_uri.insert(fixture.rust_uri.clone(), vec![diagnostic.clone()]);
+    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
+        fixture.root.clone(),
+        1,
+        &LspAnalysisConfig::default(),
+    );
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(
+        Path::new("src/main.rs"),
+        Some(b"fn selected() -> bool { true }\n"),
+    );
+    let snapshot = AnalysisSnapshot {
+        root: fixture.root.clone(),
+        rust_consumed_sources,
+        input_identity: Some(input_identity),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: vec![finding],
+        analysis_outcome: Some(python_adapter_unavailable_outcome()?),
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri,
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter,
+    };
+    Ok(WorkspaceDiagnostics {
+        snapshot,
+        batches: vec![DiagnosticBatch {
+            uri: fixture.rust_uri.clone(),
+            diagnostics: vec![diagnostic],
+        }],
+    })
+}
+
+/// #7205: an opened changed document of a disabled language must not read
+/// as `clean`/`served` when the same snapshot names `language_adapter_unavailable`.
+/// The reason is a new token, not a reuse of #5998's `outside_analyzed_partition`.
+/// An unchanged file of that language stays clean when the producer named
+/// the changed paths completely.
+#[tokio::test]
+async fn workspace_status_reports_disabled_language_document_not_analyzed() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-status")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.rust_uri,
+            "fn selected() -> bool { true }\n",
+        ))
+        .await;
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.unchanged_python_uri,
+            "def helper():\n    return 0\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let rust = open_document_entry(&status, fixture.rust_uri.as_str())?;
+    if rust["state"].as_str() != Some("clean")
+        || rust["line_local_diagnostics"].as_str() != Some("served")
+        || !rust["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "analyzed rust document must stay clean/served: {rust}"
+        ));
+    }
+
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["line_local_diagnostics"].as_str() == Some("served") {
+        return Err(format!(
+            "a changed disabled-language document must not claim served: {changed}"
+        ));
+    }
+    if changed["state"].as_str() == Some("clean") {
+        return Err(format!(
+            "a changed disabled-language document must not claim clean: {changed}"
+        ));
+    }
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+    {
+        return Err(format!("unexpected disabled-language state: {changed}"));
+    }
+    if changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "the disabled-language state must use a new reason, not outside_analyzed_partition: {changed}"
+        ));
+    }
+    let recovery = changed["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("disabled-language state must carry a recovery: {changed}"))?;
+    if LanguageId::Python.is_available() {
+        for needle in ["[languages] enabled", "restart", "python"] {
+            if !recovery.contains(needle) {
+                return Err(format!("recovery must name {needle:?}: {recovery}"));
+            }
+        }
+    } else if recovery != LanguageId::Python.unavailable_adapter_recovery() {
+        return Err(format!(
+            "uncompiled python must reuse LanguageId recovery, got: {recovery}"
+        ));
+    }
+
+    let unchanged = open_document_entry(&status, fixture.unchanged_python_uri.as_str())?;
+    if unchanged["state"].as_str() != Some("clean")
+        || unchanged["line_local_diagnostics"].as_str() != Some("served")
+        || !unchanged["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "an opened unchanged python document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: preview advisories keep a literal `%` in `sample_paths`. The
+/// opened-document relative path goes through `stable_path_text`, which
+/// encodes that `%` as `%25`. Both sides must still bind, or a complete
+/// listing revives the clean/served lie for that filename.
+#[tokio::test]
+async fn workspace_status_matches_disabled_language_path_with_literal_percent() -> Result<(), String>
+{
+    let fixture = disabled_language_fixture_with_changed_python(
+        "disabled-language-percent-path",
+        "pricing_%.py",
+    )?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing_%.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() == Some("clean")
+        || changed["line_local_diagnostics"].as_str() == Some("served")
+    {
+        return Err(format!(
+            "a disabled-language file whose name contains % must not claim clean/served: {changed}"
+        ));
+    }
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+        || changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled")
+    {
+        return Err(format!(
+            "literal-% disabled-language row must stay not_analyzed with the new reason: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205 vs #5998: when a budget stop already placed the disabled-language
+/// file outside the analyzed partition, keep the #5998 reason. Do not
+/// rewrite it to `language_adapter_not_enabled`.
+#[tokio::test]
+async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-partition-priority")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    let partial_scope = crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/main.rs".to_string()],
+        unselected_files: vec!["zpy/pricing.py".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        partition_identity: "sha256:partition".to_string(),
+    };
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            Some(partial_scope),
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "budget-bound outside-partition must keep the #5998 reason: {changed}"
+        ));
+    }
+    if changed["not_analyzed_reason"].as_str() == Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "must not rewrite #5998 onto language_adapter_not_enabled: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: preview advisories cap `sample_paths` at 3. When the listing is
+/// shorter than `file_count`, unnamed opened documents of that language
+/// fail closed as `not_analyzed` rather than claiming `clean`/`served`.
+#[tokio::test]
+async fn workspace_status_fail_closes_unnamed_disabled_language_when_listing_is_incomplete()
+-> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-incomplete-listing")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.unchanged_python_uri,
+            "def helper():\n    return 0\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 4),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let unnamed = open_document_entry(&status, fixture.unchanged_python_uri.as_str())?;
+    if unnamed["state"].as_str() == Some("clean")
+        || unnamed["line_local_diagnostics"].as_str() == Some("served")
+    {
+        return Err(format!(
+            "an incomplete disabled-language listing must not leave unnamed files clean/served: {unnamed}"
+        ));
+    }
+    if unnamed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "incomplete listing must use language_adapter_not_enabled: {unnamed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: default features omit `lang-perl`, but the producer still emits a
+/// disabled Perl advisory. The document row must stay `not_analyzed` and
+/// must not tell the user that `[languages] enabled` is enough.
+#[tokio::test]
+async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -> Result<(), String>
+{
+    let temp = unique_lsp_test_root("disabled-perl-status")?;
+    let root = temp.path().to_path_buf();
+    std::fs::write(root.join("pricing.pl"), "sub price { 1 }\n")
+        .map_err(|err| format!("write pricing.pl failed: {err}"))?;
+    let uri = file_uri_for_path(&root.join("pricing.pl"))
+        .map_err(|err| format!("pricing.pl URI failed: {err}"))?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&uri, "sub price { 1 }\n"))
+        .await;
+
+    let limitation = {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                "Enable the perl preview adapter and re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(1)?
+        .with_detail(
+            "perl changed 1 file(s), but the preview adapter was not enabled or available",
+        )?;
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity {
+                input_identity: Some("sha256:lsp-7205-perl".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?
+    };
+    let snapshot = AnalysisSnapshot {
+        root: root.clone(),
+        rust_consumed_sources: Default::default(),
+        input_identity: Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            root.clone(),
+            1,
+            &LspAnalysisConfig::default(),
+        )),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: Vec::new(),
+        analysis_outcome: Some(limitation),
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope: None,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter: UnavailableAdapterCoverage::from_preview_advisories(&[
+            crate::analysis::PreviewLanguageAdvisory {
+                language: "perl".to_string(),
+                file_count: 1,
+                sample_paths: vec!["pricing.pl".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            },
+        ]),
+    };
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            snapshot,
+            batches: Vec::new(),
+        })
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, uri.as_str())?;
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+        || changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled")
+    {
+        return Err(format!(
+            "perl disabled document must be not_analyzed: {changed}"
+        ));
+    }
+    let recovery = changed["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("perl disabled document must carry a recovery: {changed}"))?;
+    if LanguageId::Perl.is_available() {
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so workspace-status recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in perl recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+    } else {
+        if recovery != LanguageId::Perl.unavailable_adapter_recovery() {
+            return Err(format!(
+                "uncompiled perl must reuse LanguageId recovery, got: {recovery}"
+            ));
+        }
+        if recovery.contains("[languages] enabled") {
+            return Err(format!(
+                "uncompiled perl must not claim enablement is enough: {recovery}"
+            ));
+        }
     }
     Ok(())
 }
@@ -20691,6 +21866,55 @@ where
     }
 }
 
+/// Send one `workspace/diagnostic` pull and read the response, answering
+/// any `window/workDoneProgress/create` request arriving in between.
+/// Returns the response `result` payload (the workspace report object).
+async fn framed_pull_workspace_report<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    id: u64,
+) -> Result<serde_json::Value, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "workspace/diagnostic",
+            "params": { "previousResultIds": [] }
+        }),
+    )
+    .await?;
+    loop {
+        let message = read_lsp_message(reader).await?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("window/workDoneProgress/create")
+        {
+            let request_id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "workDoneProgress/create request carried no id".to_string())?;
+            write_lsp_message(
+                writer,
+                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+            )
+            .await?;
+            continue;
+        }
+        if message.get("method").is_none()
+            && message.get("id").and_then(serde_json::Value::as_u64) == Some(id)
+        {
+            if message.get("error").is_some() {
+                return Err(format!("workspace diagnostic pull failed: {message}"));
+            }
+            return Ok(message["result"].clone());
+        }
+    }
+}
+
 #[test]
 #[serial]
 fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> Result<(), String> {
@@ -21037,6 +22261,1332 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
                 return Err("LSP server did not stop after exit notification".to_string());
             }
         }
+        drop(temp);
+        Ok(())
+    })
+}
+
+// ---- #1747: document version binding on push and workspace pull ----
+
+/// Collect the `version` values of every `publishDiagnostics` notification
+/// for `uri`, in arrival order. A missing field decodes as null.
+fn published_versions_for_uri(
+    notifications: &[serde_json::Value],
+    uri: &str,
+) -> Vec<serde_json::Value> {
+    notifications
+        .iter()
+        .filter(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message["params"]["uri"].as_str() == Some(uri)
+        })
+        .map(|message| {
+            message["params"]
+                .get("version")
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Shut a framed session down cleanly: shutdown → exit → server stop.
+async fn shutdown_framed_session<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    server_task: &mut tokio::task::JoinHandle<()>,
+    id: u64,
+) -> Result<(), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "shutdown",
+            "params": null
+        }),
+    )
+    .await?;
+    let shutdown = read_lsp_response(reader, id).await?;
+    if shutdown.get("error").is_some() {
+        return Err(format!("shutdown failed: {shutdown}"));
+    }
+    write_lsp_message(
+        writer,
+        serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+    )
+    .await?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|err| format!("failed to close test client: {err}"))?;
+    match tokio::time::timeout(Duration::from_secs(2), &mut *server_task).await {
+        Ok(join_result) => {
+            join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+        }
+        Err(_) => {
+            server_task.abort();
+            return Err("LSP server did not stop after exit notification".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Collect the `params` of every `publishDiagnostics` notification for
+/// `uri`, in arrival order.
+fn published_params_for_uri<'a>(
+    notifications: &'a [serde_json::Value],
+    uri: &str,
+) -> Vec<&'a serde_json::Value> {
+    notifications
+        .iter()
+        .filter(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message["params"]["uri"].as_str() == Some(uri)
+        })
+        .map(|message| &message["params"])
+        .collect()
+}
+
+/// Read until the method-less response with `id` arrives, collecting
+/// every notification seen and answering any
+/// `window/workDoneProgress/create` request in between. Server-originated
+/// requests carry low ids that can collide with a client command id, so
+/// the response match requires the absence of `method`.
+async fn read_lsp_response_with_notifications_and_progress<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    id: u64,
+) -> Result<(serde_json::Value, Vec<serde_json::Value>), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut notifications = Vec::new();
+    loop {
+        let message = read_lsp_message(reader).await?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("window/workDoneProgress/create")
+        {
+            let request_id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "workDoneProgress/create request carried no id".to_string())?;
+            write_lsp_message(
+                writer,
+                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+            )
+            .await?;
+            continue;
+        }
+        if message.get("method").is_none()
+            && message.get("id").and_then(serde_json::Value::as_u64) == Some(id)
+        {
+            return Ok((message, notifications));
+        }
+        if message.get("method").is_some() {
+            notifications.push(message);
+        }
+    }
+}
+
+/// Read messages until one `publishDiagnostics` for `uri` arrives or
+/// the window elapses, answering any `window/workDoneProgress/create`
+/// request in between. Returns the publication when seen, or an empty
+/// vec on timeout (a missing lifecycle publication is a test failure,
+/// never a hang). Lifecycle events (open/change/save) publish outside
+/// any refresh, so the refresh-settled waiter cannot drain them.
+async fn drain_until_publish<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    uri: &str,
+) -> Result<Vec<serde_json::Value>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        let message = match tokio::time::timeout(remaining, read_lsp_message(reader)).await {
+            Ok(Ok(message)) => message,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => return Ok(Vec::new()),
+        };
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("window/workDoneProgress/create")
+        {
+            let request_id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "workDoneProgress/create request carried no id".to_string())?;
+            write_lsp_message(
+                writer,
+                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+            )
+            .await?;
+            continue;
+        }
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && message["params"]["uri"].as_str() == Some(uri)
+        {
+            return Ok(vec![message["params"].clone()]);
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), String> {
+    // #1747: a client that negotiates `versionSupport` receives the
+    // observed document version on every push publication for that
+    // document, so stale deliveries are recognizable on the wire.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-version-bound")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // The didOpen refresh analyzes an empty diff, so nothing publishes
+        // yet. Make the boundary edit the analyzed saved content: didChange
+        // moves the buffer (and the observed version) to the dirty text,
+        // the write persists it, and didSave schedules the refresh that
+        // publishes diagnostics for the opened document.
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let versions = published_versions_for_uri(&notifications, &text_uri);
+        if versions.is_empty() {
+            return Err(format!(
+                "the didSave refresh must publish diagnostics for the opened document: {notifications:?}"
+            ));
+        }
+        if !versions.iter().all(|version| version.as_i64() == Some(8)) {
+            return Err(format!(
+                "every push publication must bind the observed version 8: {versions:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_diagnostics_omit_version_without_negotiation() -> Result<(), String> {
+    // #1747 negative: without `versionSupport` the push publication
+    // carries no version — the fail-closed wire shape is unchanged.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-version-unnegotiated")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // Same analyzed-save flow as the positive test: the didOpen
+        // refresh sees an empty diff and publishes nothing.
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let versions = published_versions_for_uri(&notifications, &text_uri);
+        if versions.is_empty() {
+            return Err(format!(
+                "the didSave refresh must publish diagnostics for the opened document: {notifications:?}"
+            ));
+        }
+        if !versions.iter().all(serde_json::Value::is_null) {
+            return Err(format!(
+                "no push publication may bind a version without negotiation: {versions:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_workspace_pull_binds_the_observed_document_version() -> Result<(), String> {
+    // #1747: the workspace pull report binds the observed document
+    // version for a client that negotiated `versionSupport`.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("pull-version-bound")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": {"dynamicRegistration": false},
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        if initialize["result"]["capabilities"]["diagnosticProvider"].is_null() {
+            return Err(format!(
+                "the pull-diagnostic route must be negotiated: {initialize}"
+            ));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // The didOpen refresh sees an empty diff, so the workspace report
+        // would not cover the opened document yet. Analyze the boundary
+        // edit first (same flow as the push tests).
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let report = framed_pull_workspace_report(&mut client_read, &mut client_write, 2).await?;
+        let items = report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("workspace report carried no items array: {report}"))?;
+        let entry = items
+            .iter()
+            .find(|item| {
+                item.get("uri").and_then(serde_json::Value::as_str) == Some(text_uri.as_str())
+            })
+            .ok_or_else(|| format!("workspace report must cover the opened document: {report}"))?;
+        if entry.get("version").and_then(serde_json::Value::as_i64) != Some(8) {
+            return Err(format!(
+                "the workspace pull entry must bind the observed version 8: {entry}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), String> {
+    // #1747: a rejected incremental edit records the new version against
+    // frozen text the server cannot trust (#1746). Served content must
+    // not be tagged with that version; the quarantine decision itself is
+    // unchanged (content still serves), only the false currency is gone.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("reject-version-none")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // A ranged edit past the line end is rejected: the version moves
+        // to 9 but the buffer stays frozen at the version-8 text with
+        // unknown authority.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 9 },
+                    "contentChanges": [{
+                        "range": {
+                            "start": { "line": 0, "character": 500 },
+                            "end": { "line": 0, "character": 501 }
+                        },
+                        "text": "X"
+                    }]
+                }
+            }),
+        )
+        .await?;
+        let rejection = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        if rejection.is_empty() {
+            return Err("the rejected edit must withdraw the served diagnostics".to_string());
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 200,
+                "method": "workspace/executeCommand",
+                "params": { "command": REFRESH_COMMAND, "arguments": [] }
+            }),
+        )
+        .await?;
+        // The command refresh reports its own scope statuses, so bound
+        // the window by the command response (which follows publication)
+        // rather than the interactive settled needles. The high id
+        // cannot collide with server-originated request ids.
+        let (refresh, notifications) = read_lsp_response_with_notifications_and_progress(
+            &mut client_read,
+            &mut client_write,
+            200,
+        )
+        .await?;
+        if refresh.get("error").is_some() {
+            return Err(format!("refresh command failed: {refresh}"));
+        }
+
+        // The frozen buffer matches the analyzed digest, so the pending
+        // decision still serves content — but never tagged with the
+        // rejected version 9.
+        let served: Vec<&serde_json::Value> = published_params_for_uri(&notifications, &text_uri)
+            .into_iter()
+            .filter(|params| !params["diagnostics"].as_array().is_none_or(Vec::is_empty))
+            .collect();
+        if served.is_empty() {
+            return Err(format!(
+                "the refresh must serve content for the digest-matching frozen buffer: {notifications:?}"
+            ));
+        }
+        for params in served {
+            if !params.get("version").is_none_or(serde_json::Value::is_null) {
+                return Err(format!(
+                    "served content must not carry the rejected version: {params:?}"
+                ));
+            }
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_advance_while_quarantined_republishes_the_withdrawal() -> Result<(), String> {
+    // #1747: the decision-versioned withdrawal for version 9 is stale
+    // once version 10 advances under the same quarantine. A
+    // version-aware client discards it, so the advance must re-clear;
+    // otherwise the old diagnostics stay visible with no follow-up.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("advance-reclears")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // Dirty the buffer again (version 9 enters quarantine and
+        // withdraws), then advance once more under the same quarantine.
+        // Neither change schedules a refresh, so drain the lifecycle
+        // publications directly.
+        let dirtier_text = format!("{dirty_text}\n// touch\n");
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 9 },
+                    "contentChanges": [{ "text": dirtier_text }]
+                }
+            }),
+        )
+        .await?;
+        let first = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        if first.is_empty() {
+            return Err("entering quarantine must withdraw the served diagnostics".to_string());
+        }
+        let dirtiest_text = format!("{dirty_text}\n// touch\n// touch again\n");
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 10 },
+                    "contentChanges": [{ "text": dirtiest_text }]
+                }
+            }),
+        )
+        .await?;
+        let second = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        if second.is_empty() {
+            return Err(
+                "advancing under quarantine must republish the withdrawal for the new version"
+                    .to_string(),
+            );
+        }
+        let params = &second[0];
+        if !params["diagnostics"].as_array().is_none_or(Vec::is_empty) {
+            return Err(format!("the republish must clear, not serve: {params:?}"));
+        }
+        if params.get("version").and_then(serde_json::Value::as_i64) != Some(10) {
+            return Err(format!("the republish must bind version 10: {params:?}"));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_pull_only_client_receives_workspace_versions() -> Result<(), String> {
+    // #1747: `versionSupport` governs push publications only. A pull-only
+    // client that never advertises it still receives the observed
+    // version on each workspace report, which carries its version
+    // directly (LSP 3.17).
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("pull-only-version")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": {"dynamicRegistration": false}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        if initialize["result"]["capabilities"]["diagnosticProvider"].is_null() {
+            return Err(format!(
+                "the pull-diagnostic route must be negotiated: {initialize}"
+            ));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let report = framed_pull_workspace_report(&mut client_read, &mut client_write, 2).await?;
+        let items = report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("workspace report carried no items array: {report}"))?;
+        let entry = items
+            .iter()
+            .find(|item| item.get("uri").and_then(serde_json::Value::as_str) == Some(text_uri.as_str()))
+            .ok_or_else(|| {
+                format!("workspace report must cover the opened document: {report}")
+            })?;
+        if entry.get("version").and_then(serde_json::Value::as_i64) != Some(8) {
+            return Err(format!(
+                "the workspace pull entry must bind the observed version 8 without negotiation: {entry}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_plan_clear_carries_no_version() -> Result<(), String> {
+    // #1747: a clear must apply unconditionally. A no-op `didChange`
+    // advances the version with no quarantine edge and no refresh to
+    // follow up, so a versioned clear could be discarded as stale and
+    // leave removed diagnostics visible. Clears bind no version even
+    // for negotiating clients.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("clear-unversioned")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // Revert the boundary edit: the next refresh finds no findings
+        // and the plan clears the document.
+        std::fs::write(&lib_path, &saved_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 9 },
+                    "contentChanges": [{ "text": saved_text.clone() }]
+                }
+            }),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": saved_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let cleared = published_params_for_uri(&notifications, &text_uri)
+            .into_iter()
+            .any(|params| {
+                params["diagnostics"].as_array().is_none_or(Vec::is_empty)
+                    && params.get("version").is_none_or(serde_json::Value::is_null)
+            });
+        if !cleared {
+            return Err(format!(
+                "the plan clear must carry no version: {notifications:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
         drop(temp);
         Ok(())
     })
@@ -21949,6 +24499,401 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
         {
             return Err(format!(
                 "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 6).await?;
+        if shutdown.get("error").is_some() {
+            return Err(format!("shutdown failed: {shutdown}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<(), String> {
+    // #7147 / RIPR-SPEC-0141: a gap decision ledger that exists but cannot
+    // be parsed must degrade the refresh through the production path — the
+    // single shared ledger load records one typed `gap_ledger` outcome, the
+    // run leaves `full`, the client sees exactly one WARNING naming the
+    // component and its recovery, and ordinary findings still publish.
+    // Mirror of `framed_lsp_component_degradation_is_typed_logged_and_recovers`.
+    //
+    // The shared run status is `cache_limited`, not `limited`: the workspace
+    // gap-artifact report independently rejects the malformed ledger, and
+    // that rejection outranks the component-outcome rule in the spec's
+    // first-match-wins precedence (the acceptance example requires only
+    // "not full" for this reason).
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("gap-ledger-degradation")?;
+        let root = temp.path().to_path_buf();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Refresh 1 (baseline): a clean run must not warn about degradation.
+        let baseline = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let baseline_warnings = log_messages_of_type(&baseline, 2);
+        if baseline_warnings
+            .iter()
+            .any(|message| message.contains("ripr analysis limited"))
+        {
+            return Err(format!(
+                "a clean baseline run must not warn about degradation: {baseline_warnings:?}"
+            ));
+        }
+        let baseline_status = analysis_status_params(&baseline);
+        let Some(baseline_status) = baseline_status.last() else {
+            return Err("baseline refresh published no analysis status".to_string());
+        };
+        if baseline_status["run_status"].as_str() != Some("full") {
+            return Err(format!("baseline run must be full, got: {baseline_status}"));
+        };
+
+        // Seed an uncommitted behavior change alongside the degradation:
+        // the degraded refresh must still publish this diff finding's
+        // diagnostics, not merely a nonempty batch (a suppression
+        // regression that drops diff findings while keeping seam
+        // diagnostics would otherwise pass).
+        let seed_path = root.join("src/lib.rs");
+        let seed_source = std::fs::read_to_string(&seed_path)
+            .map_err(|err| format!("read seeded lib failed: {err}"))?;
+        let seed_changed = seed_source
+            .replace("amount >= discount_threshold", "amount > discount_threshold");
+        if seed_changed == seed_source {
+            return Err("seeded boundary text not found in the fixture lib".to_string());
+        }
+        std::fs::write(&seed_path, seed_changed)
+            .map_err(|err| format!("write seeded lib failed: {err}"))?;
+        let lib_diagnostics = |messages: &[serde_json::Value]| -> Vec<String> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        if let Some(text) =
+                            diagnostic.get("message").and_then(serde_json::Value::as_str)
+                        {
+                            found.push(text.to_string());
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
+        // The seeded boundary edit lands on `src/lib.rs` line 2 (1-based),
+        // so its diff finding diagnostic starts at 0-based LSP line 1.
+        // Finding codes are the verbatim `ExposureClass` labels while seam
+        // and gap diagnostics carry `ripr-`-prefixed codes. Matching code
+        // and range pins the seeded finding itself: message text alone also
+        // matches the pre-existing seam diagnostic the clean baseline
+        // already publishes for this file (#7170 review).
+        const SEEDED_LINE: u64 = 1;
+        let finding_codes: std::collections::BTreeSet<String> = [
+            crate::domain::ExposureClass::Exposed,
+            crate::domain::ExposureClass::WeaklyExposed,
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            crate::domain::ExposureClass::NoStaticPath,
+            crate::domain::ExposureClass::InfectionUnknown,
+            crate::domain::ExposureClass::PropagationUnknown,
+            crate::domain::ExposureClass::StaticUnknown,
+        ]
+        .into_iter()
+        .map(|class| super::diagnostic_catalog::finding_code(&class))
+        .collect();
+        let seeded_findings = |messages: &[serde_json::Value]| -> Vec<(String, u64, String)> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        let code = diagnostic
+                            .get("code")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        let line = diagnostic["range"]["start"]["line"].as_u64();
+                        let text = diagnostic
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        if finding_codes.contains(code) && line == Some(SEEDED_LINE) {
+                            found.push((code.to_string(), SEEDED_LINE, text.to_string()));
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
+
+        // Plant a malformed gap decision ledger at the production default
+        // path: the ledger exists but cannot be parsed, so the gap_ledger
+        // component fails while diff and seam evidence remain usable.
+        let ledger_path = root.join(
+            crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT,
+        );
+        std::fs::create_dir_all(
+            ledger_path
+                .parent()
+                .ok_or_else(|| "ledger path must have a parent".to_string())?,
+        )
+        .map_err(|err| format!("create ledger dir failed: {err}"))?;
+        std::fs::write(&ledger_path, "{not json")
+            .map_err(|err| format!("write malformed ledger failed: {err}"))?;
+
+        // Refresh 2 (degraded): typed status + one WARNING + limited progress
+        // + ordinary evidence still published.
+        let degraded = run_wire_refresh_collecting(&mut client_read, &mut client_write, 3).await?;
+        let degraded_status = analysis_status_params(&degraded);
+        let Some(status) = degraded_status.last() else {
+            return Err("degraded refresh published no analysis status".to_string());
+        };
+        if status["run_status"].as_str() != Some("cache_limited") {
+            return Err(format!(
+                "a malformed ledger must limit the run via the gap-artifact rejection, got: {status}"
+            ));
+        }
+        let components = status["components"]
+            .as_array()
+            .ok_or_else(|| format!("status must expose typed components: {status}"))?;
+        let ledger_outcomes: Vec<_> = components
+            .iter()
+            .filter(|outcome| outcome["component"].as_str() == Some("gap_ledger"))
+            .collect();
+        // The single shared ledger load records exactly one outcome: a
+        // wiring change that appends it twice must fail, not pass on `find`.
+        if ledger_outcomes.len() != 1 {
+            return Err(format!(
+                "components must include exactly one gap_ledger outcome: {components:?}"
+            ));
+        }
+        let ledger = ledger_outcomes[0];
+        if ledger["state"].as_str() != Some("failed")
+            || ledger["kind"].as_str() != Some("gap_ledger_parse_failed")
+            || ledger["findings_trustworthy"].as_bool() != Some(true)
+            || ledger["snapshot_identity"].is_null()
+        {
+            return Err(format!("unexpected gap_ledger outcome: {ledger}"));
+        }
+        let recovery = ledger["recovery"].as_str().unwrap_or("");
+        if !recovery.contains("ripr check") {
+            return Err(format!(
+                "the degraded outcome must name a concrete recovery route: {ledger}"
+            ));
+        }
+        let diff = components
+            .iter()
+            .find(|outcome| outcome["component"].as_str() == Some("diff"));
+        if diff.and_then(|outcome| outcome["state"].as_str()) != Some("complete") {
+            return Err(format!(
+                "ordinary diff findings must stay complete and disclosed: {components:?}"
+            ));
+        }
+        let warnings = log_messages_of_type(&degraded, 2);
+        let degradation_warnings = warnings
+            .iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if degradation_warnings != 1 {
+            return Err(format!(
+                "expected exactly one degradation warning, got {degradation_warnings}: {warnings:?}"
+            ));
+        }
+        if !warnings.iter().any(|message| {
+            message.contains("gap_ledger failed") && message.contains("recovery:")
+        }) {
+            return Err(format!(
+                "the degradation warning must name the recovery route: {warnings:?}"
+            ));
+        }
+        let progress_end_limited = degraded.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str) == Some("$/progress")
+                && message["params"]["value"]["kind"].as_str() == Some("end")
+                && message["params"]["value"]["message"].as_str()
+                    == Some("analysis completed with limited evidence")
+        });
+        if !progress_end_limited {
+            return Err(format!(
+                "progress must end limited for a degraded run: {degraded:?}"
+            ));
+        }
+        let degraded_lib = lib_diagnostics(&degraded);
+        if degraded_lib.is_empty() {
+            return Err(
+                "the degraded refresh must still publish the seeded diff finding diagnostics"
+                    .to_string(),
+            );
+        }
+        let degraded_seeded = seeded_findings(&degraded);
+        if degraded_seeded.is_empty() {
+            return Err(format!(
+                "the degraded refresh must still publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {degraded_lib:?}"
+            ));
+        }
+
+        // Refresh 3 (identical degradation): no repeated warning spam; the
+        // typed status still discloses the degradation.
+        let repeated = run_wire_refresh_collecting(&mut client_read, &mut client_write, 4).await?;
+        let repeated_warnings = log_messages_of_type(&repeated, 2)
+            .into_iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if repeated_warnings != 0 {
+            return Err("a byte-identical repeated degradation must not warn again".to_string());
+        }
+        let repeated_status = analysis_status_params(&repeated);
+        if repeated_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("cache_limited")
+        {
+            return Err(format!(
+                "the repeated degradation must stay typed on status: {repeated_status:?}"
+            ));
+        }
+
+        // Refresh 4 (repaired): one INFO recovery line, full status restored.
+        std::fs::remove_file(&ledger_path)
+            .map_err(|err| format!("remove malformed ledger failed: {err}"))?;
+        let recovered = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        // Match the aggregate recovery line exactly: a bare "recovered"
+        // substring would also accept an unrelated INFO message.
+        let recovery_infos = log_messages_of_type(&recovered, 3)
+            .into_iter()
+            .filter(|message| {
+                message.contains("ripr analysis recovered: all recorded analysis components are complete")
+            })
+            .count();
+        if recovery_infos != 1 {
+            return Err(format!(
+                "recovery must log exactly one INFO line, got {recovery_infos}"
+            ));
+        }
+        let recovered_status = analysis_status_params(&recovered);
+        if recovered_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("full")
+        {
+            return Err(format!(
+                "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+        // The degraded refresh must have published every diff finding
+        // diagnostic the clean run publishes: degradation suppresses
+        // nothing, it only limits the run status.
+        let recovered_lib = lib_diagnostics(&recovered);
+        if recovered_lib.is_empty() {
+            return Err(
+                "the repaired refresh must publish the seeded diff finding diagnostics".to_string(),
+            );
+        }
+        let suppressed: Vec<_> = recovered_lib
+            .iter()
+            .filter(|text| !degraded_lib.contains(text))
+            .collect();
+        if !suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed diff finding diagnostics: {suppressed:?}"
+            ));
+        }
+        let recovered_seeded = seeded_findings(&recovered);
+        if recovered_seeded.is_empty() {
+            return Err(format!(
+                "the repaired refresh must publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {recovered_lib:?}"
+            ));
+        }
+        let seeded_suppressed: Vec<_> = recovered_seeded
+            .iter()
+            .filter(|seeded| !degraded_seeded.contains(seeded))
+            .collect();
+        if !seeded_suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed seeded finding diagnostics: {seeded_suppressed:?}"
             ));
         }
 

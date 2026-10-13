@@ -8,6 +8,10 @@
 # `source` says where the number comes from:
 #   measured          the command measures it on this host
 #   file:<path>       read from a committed receipt in this repository
+#   verdict-corpus:<dir>#<rate>
+#                     derived from a verdict corpus's committed expected rows
+#                     (`spec_example_coverage.coverage` is derived from the
+#                     corpus cases, spec-coverage.toml, and docs/specs)
 #   ingest:<kind>     supplied by `--ingest <file>` from another harness
 #   pending           no instrument yet; always reported as not_measured
 #
@@ -196,8 +200,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_verdict_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_verdict_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_actionable"
@@ -209,8 +213,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_actionable_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_abstention"
@@ -222,8 +226,8 @@ target = 0.2
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/summary.json#abstention_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_silent"
@@ -235,8 +239,8 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_silent_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_exposed"
@@ -248,8 +252,221 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_exposed_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+# TypeScript verdict corpus (RIPR-SPEC-0245). Every TypeScript case is
+# authored to cover a test-library oracle or reach rule (RIPR-SPEC-0243) under
+# jest, vitest, mocha with chai or node:test, so these describe those cells,
+# not real-world code. One more wrong case out of 62 discriminated (0.016) or
+# 39 not fully discriminated (0.026) exceeds the floor and regresses.
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_actionable"
+board = "trust"
+title = "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.01
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_exposed"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_silent"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_spec_example_coverage"
+board = "trust"
+title = "In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites"
+unit = "ratio"
+direction = "higher_is_better"
+# Coverage, not correctness: the verdict rates above say whether ripr is
+# right on the covered cases. `verdict-corpus check` separately fails when
+# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a new spec lowers this displayed rate without lowering the count. The
+# committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
+# include this metric, so `--gate` reports it incomparable rather than as a
+# regression. The hard gate remains the ledger floor; seeding that snapshot
+# is a separate receipt refresh, not this producer.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
+
+# Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
+# cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),
+# so these describe those cells, not real-world code. One more wrong case
+# out of 33 discriminated (0.030) or 32 not fully discriminated (0.031)
+# exceeds the floor and regresses.
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_actionable"
+board = "trust"
+title = "Authored Python edits the project's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "verdict-corpus:fixtures/python-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/python-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_exposed"
+board = "trust"
+title = "Authored Python edits the project's tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/python-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/python-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_silent"
+board = "trust"
+title = "Authored Python edits the project's tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/python-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/python-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_verdict"
+board = "trust"
+title = "Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+# Perl metrics read producer-packet cases only: edited packets carry facts the
+# pinned producer does not emit, so they say nothing about what a Perl user
+# gets today. Floors are 0 because each Perl case is a large share of 27.
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_verdict_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_actionable"
+board = "trust"
+title = "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_exposed"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_silent"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_silent_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_abstention"
+board = "trust"
+title = "Hand-checked Perl edits where ripr gives no specific verdict (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.abstention_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_oracle_accuracy"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports the same oracle kind and strength"
+unit = "ratio"
+direction = "higher_is_better"
+# Scored apart from the verdict rates: a wrong oracle that leaves the line
+# verdict unchanged still scores ideal there. `verdict-corpus check`
+# separately fails when matches fall below `[oracle] match_floor` in
+# spec-coverage.toml. Labeling a case ripr gets wrong lowers this rate on
+# purpose: the advisory regression shows new known work.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_accuracy"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_oracle_overclaim_rate"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports a stronger oracle than the spec adopts"
+unit = "ratio"
+direction = "lower_is_better"
+# An overclaim grants credit the assertion does not earn ("Strong oracle
+# found", #5416 withholding a gap as static_unknown). `verdict-corpus check`
+# fails when overclaims rise above `[oracle] overclaim_ceiling`.
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_overclaim_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

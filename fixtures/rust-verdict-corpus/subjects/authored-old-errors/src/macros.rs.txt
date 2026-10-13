@@ -1,0 +1,39 @@
+//! Owners reached through a local macro that never names them and through a
+//! standard-library macro.
+
+macro_rules! twice {
+    ($f:ident) => {
+        $f() * 2
+    };
+}
+
+pub fn base_rate() -> u32 {
+    7
+}
+
+pub fn doubled_rate() -> u32 {
+    twice!(base_rate)
+}
+
+fn title() -> &'static str {
+    "ripr"
+}
+
+pub fn banner() -> String {
+    format!("[{}]", title())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doubled_rate_is_fourteen() {
+        assert_eq!(doubled_rate(), 14);
+    }
+
+    #[test]
+    fn banner_brackets_the_title() {
+        assert_eq!(banner(), "[ripr]");
+    }
+}

@@ -24,15 +24,17 @@ Runs: `cargo fmt --check`, `check-static-language`, `check-no-panic-family`,
 
 Cost: ~0 LEM (local only, no CI runners).
 
-### Step 2 — PR Plan (advisory, always runs on PR)
+### Step 2 — Candidate shaping (local)
 
-Current behavior: writes the changed-file list to
-`target/ripr/reports/pr-plan-changes.txt`, checks that the CI economics
-ledgers exist, and writes a step-summary placeholder. It does not block and
-does not comment. The numeric changed-file → risk-pack → lane → LEM forecast
-and `target/ci/ci-plan.json` output are target behavior for a follow-up PR.
+Use the existing `cargo xtask pr-ready`, `cargo xtask check-fast`, and
+`cargo xtask check-pr` surfaces as appropriate before requesting Ready
+qualification. The automatic PR Plan placeholder is retired under #4987;
+its optional [local diagnostic](pr-plan.md#local-advisory-diagnostic) lists
+changed files and checks ledger presence without making a qualification decision.
+The numeric changed-file → risk-pack → lane → LEM forecast, `cargo xtask ci plan`,
+and `target/ci/ci-plan.json` remain planned.
 
-Cost: 1–2 LEM.
+Cost: no PR Plan hosted runner. Local work is not a measured runner-minute saving.
 
 ### Step 3 — Required gates (blocking on relevant PRs)
 

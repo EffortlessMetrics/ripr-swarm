@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231-oracle-some-at-literal",
+  "subject_id": "authored-spec0231-23b",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "option_return",
+  "test_shape": "matches_some_at_literal",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#23"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "lookup_one_is_three",
+        "kind": "exact_value",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
+}

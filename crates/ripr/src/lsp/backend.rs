@@ -28,7 +28,7 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullState, DocumentStalenessReason, DocumentStore, QuarantineTransition,
+    ConfigPullState, DocumentStalenessReason, DocumentState, DocumentStore, QuarantineTransition,
     WorkspaceFolderEntry, WorkspaceFolderEventRejection, WorkspaceFolderSelection,
     WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState, content_digest,
     format_duration,
@@ -814,7 +814,7 @@ impl Backend {
                     return cancellation_outcome(request);
                 }
                 self.client
-                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .publish_diagnostics(uri.clone(), Vec::new(), Self::clear_version())
                     .await;
             }
             // Documents that enter quarantine under this transaction's
@@ -840,9 +840,23 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
+                // One projection couples the disclosure decision to the
+                // bound version (#1747). Unknown buffer authority binds no
+                // version: the recorded version tags text the server
+                // cannot trust (#1746 rejection).
+                let (pending_quarantine, raw_version) = self
+                    .with_document_state(uri, |state| {
+                        let pending = quarantine_for_pending_from_state(state, &pending_analyzed);
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (pending, version)
+                    })
+                    .unwrap_or((None, None));
                 if !snapshot.served_diagnostics_for_uri(uri).is_empty()
-                    && let Some((path, reason)) =
-                        self.document_quarantine_for_pending(uri, &pending_analyzed)
+                    && let Some((path, reason)) = pending_quarantine
                 {
                     self.client
                         .log_message(
@@ -851,8 +865,9 @@ impl Backend {
                         )
                         .await;
                 }
+                let version = self.negotiated_version(raw_version);
                 self.client
-                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .publish_diagnostics(uri.clone(), Vec::new(), version)
                     .await;
             }
         }
@@ -1228,6 +1243,11 @@ impl Backend {
                 previous_omissions.get(uri.as_str()),
                 self.document_quarantine(&uri).is_some(),
             );
+            // Rollback restores the pre-refresh client state, whose version
+            // binding is unknown — the previous diagnostics predate this
+            // transaction. Bind no version (fail-closed unknown) rather
+            // than sampling a live version the restored content was never
+            // analyzed against.
             self.client
                 .publish_diagnostics(uri, diagnostics, None)
                 .await;
@@ -1434,6 +1454,51 @@ impl Backend {
             .lock()
             .map(|supported| *supported)
             .unwrap_or(false)
+    }
+
+    /// Whether the client negotiated `publishDiagnostics` version support
+    /// (#1747). Unnegotiated or poisoned stores fail closed to `None`
+    /// versions — the previous wire shape.
+    fn publish_version_negotiated(&self) -> bool {
+        self.client_features
+            .lock()
+            .map(|features| features.publish_version)
+            .unwrap_or(false)
+    }
+
+    /// Gate a decision-captured version on the negotiation: `None` unless
+    /// the client interprets the version property.
+    fn negotiated_version(&self, version: Option<i32>) -> Option<i32> {
+        if self.publish_version_negotiated() {
+            version
+        } else {
+            None
+        }
+    }
+
+    /// Project owned values from one live document-state read under a
+    /// single lock hold (#1747). Publish decisions derive both the
+    /// quarantine reading and the bound version from this one projection,
+    /// so a concurrent edit cannot slip between the decision and the
+    /// version sample and make analyzed diagnostics look current. The
+    /// closure must not lock (it runs under the documents lock); gate
+    /// the projected version on negotiation after it returns.
+    fn with_document_state<R>(
+        &self,
+        uri: &Uri,
+        project: impl FnOnce(&DocumentState) -> R,
+    ) -> Option<R> {
+        self.documents.lock().ok()?.state_for_uri(uri).map(project)
+    }
+
+    /// Clears intentionally bind no version (#1747): a clear must apply
+    /// unconditionally, and a versioned clear can be discarded as stale
+    /// when the document advances (a no-op `didChange` bumps the version
+    /// with no quarantine edge and no refresh to follow up). Withdrawals
+    /// carry their decision version because ordering against a later
+    /// restore matters; clears drop everything.
+    fn clear_version() -> Option<i32> {
+        None
     }
 
     fn diagnostic_refresh_support_enabled(&self) -> bool {
@@ -2353,7 +2418,9 @@ impl Backend {
             let uris = self.clear_all_diagnostic_uris();
             if !self.pull_diagnostics_enabled() {
                 for uri in uris {
-                    self.client.publish_diagnostics(uri, Vec::new(), None).await;
+                    self.client
+                        .publish_diagnostics(uri, Vec::new(), Self::clear_version())
+                        .await;
                 }
             }
             self.reset_health_for_input_change();
@@ -2929,16 +2996,22 @@ impl Backend {
         Some((uri, transition))
     }
 
+    /// Record a save, returning the quarantine transition plus the
+    /// document version captured under the same lock hold (#1747):
+    /// `didSave` carries no version, so the decision version must come
+    /// from the store read that produced the transition — never from a
+    /// later re-sample a concurrent edit could move.
     fn save_document(
         &self,
         uri: &Uri,
         saved_digest: Option<String>,
         text: Option<String>,
-    ) -> Option<QuarantineTransition> {
-        self.documents
-            .lock()
-            .ok()
-            .map(|mut documents| documents.save(uri, saved_digest, text))
+    ) -> Option<(QuarantineTransition, Option<i32>)> {
+        self.documents.lock().ok().map(|mut documents| {
+            let transition = documents.save(uri, saved_digest, text);
+            let version = documents.state_for_uri(uri).and_then(|state| state.version);
+            (transition, version)
+        })
     }
 
     fn close_document(&self, params: DidCloseTextDocumentParams) {
@@ -3019,32 +3092,7 @@ impl Backend {
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let documents = self.documents.lock().ok()?;
         let state = documents.state_for_uri(uri)?;
-        let quarantine = state.quarantine.as_ref()?;
-        Some((state.path.clone(), quarantine.reason))
-    }
-
-    /// The quarantine state of an open document against a refresh
-    /// transaction's pending analyzed identity (#1970): what the state will
-    /// be once this snapshot commits. Publication filters on this so a
-    /// document is withdrawn or re-served against the identity the
-    /// in-flight snapshot carries, while the committed state only advances
-    /// at commit time.
-    fn document_quarantine_for_pending(
-        &self,
-        uri: &Uri,
-        pending_analyzed: &BTreeMap<Uri, Option<String>>,
-    ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        let documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri(uri)?;
-        let Some(analyzed) = pending_analyzed.get(&state.uri) else {
-            return state
-                .quarantine
-                .as_ref()
-                .map(|quarantine| (state.path.clone(), quarantine.reason));
-        };
-        state
-            .staleness_for_analyzed(analyzed.as_ref())
-            .map(|reason| (state.path.clone(), reason))
+        quarantine_from_state(state)
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
@@ -3116,17 +3164,39 @@ impl Backend {
     /// Apply a quarantine edge from a document lifecycle event
     /// (open/change/save): entering withdraws the document's line-local
     /// diagnostics, exiting re-serves them from the committed snapshot.
+    /// `decision_version` is the document version captured with the
+    /// transition decision (#1747) — the store records exactly the
+    /// open/change params version, and the save path reads it under the
+    /// same lock hold — so the published version cannot be moved by a
+    /// concurrent edit after the decision.
     async fn handle_document_quarantine_transition(
         &self,
         uri: &Uri,
         transition: QuarantineTransition,
+        decision_version: Option<i32>,
     ) {
         match transition {
-            QuarantineTransition::Entered => self.withdraw_document_diagnostics(uri).await,
-            QuarantineTransition::Exited { was_disclosed } => {
-                self.restore_document_diagnostics(uri, was_disclosed).await;
+            QuarantineTransition::Entered => {
+                self.withdraw_document_diagnostics(uri, decision_version)
+                    .await;
             }
-            QuarantineTransition::Unchanged => {}
+            QuarantineTransition::Exited { was_disclosed } => {
+                self.restore_document_diagnostics(uri, was_disclosed, decision_version)
+                    .await;
+            }
+            QuarantineTransition::Unchanged => {
+                // An edit that advances the version while quarantine holds
+                // must re-clear (#1747): the earlier decision-versioned
+                // withdrawal is now stale and a version-aware client
+                // discards it, which would leave the old diagnostics
+                // visible with no follow-up publish. Negotiation-gated so
+                // unnegotiated clients see no extra traffic; the withdraw
+                // itself suppresses when nothing is visible.
+                if self.publish_version_negotiated() && self.document_quarantine(uri).is_some() {
+                    self.withdraw_document_diagnostics(uri, decision_version)
+                        .await;
+                }
+            }
         }
     }
 
@@ -3134,7 +3204,7 @@ impl Backend {
     /// an empty set (push delivery) and disclose the withdrawal once per
     /// episode. A document with nothing served stays silent — there is no
     /// stale line identity to withdraw.
-    async fn withdraw_document_diagnostics(&self, uri: &Uri) {
+    async fn withdraw_document_diagnostics(&self, uri: &Uri, decision_version: Option<i32>) {
         let had_visible = !self.committed_served_diagnostics_for_uri(uri).is_empty()
             || self.last_diagnostics_has_any(uri);
         if !had_visible {
@@ -3142,8 +3212,9 @@ impl Backend {
         }
         self.disclose_withdrawal_once(uri).await;
         if !self.pull_diagnostics_enabled() {
+            let version = self.negotiated_version(decision_version);
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .publish_diagnostics(uri.clone(), Vec::new(), version)
                 .await;
         }
         self.set_last_diagnostics_for_uri(uri, Vec::new());
@@ -3152,11 +3223,17 @@ impl Backend {
     /// Re-serve a document whose quarantine lifted (#1970): the buffer again
     /// matches the analyzed saved content, so the committed snapshot's
     /// line-local diagnostics are valid for the client's buffer.
-    async fn restore_document_diagnostics(&self, uri: &Uri, was_disclosed: bool) {
+    async fn restore_document_diagnostics(
+        &self,
+        uri: &Uri,
+        was_disclosed: bool,
+        decision_version: Option<i32>,
+    ) {
         let diagnostics = self.committed_served_diagnostics_for_uri(uri);
         if !self.pull_diagnostics_enabled() {
+            let version = self.negotiated_version(decision_version);
             self.client
-                .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
+                .publish_diagnostics(uri.clone(), diagnostics.clone(), version)
                 .await;
         }
         self.set_last_diagnostics_for_uri(uri, diagnostics);
@@ -3181,21 +3258,33 @@ impl Backend {
         diagnostics: Vec<Diagnostic>,
         pending_analyzed: &BTreeMap<Uri, Option<String>>,
     ) {
-        if self
-            .document_quarantine_for_pending(uri, pending_analyzed)
-            .is_some()
-        {
+        // One projection couples the quarantine decision to the bound
+        // version (#1747): both derive from one read, so a concurrent
+        // edit cannot make analyzed diagnostics look current. Unknown
+        // buffer authority binds no version (see the pending-entered
+        // pass).
+        let (pending_quarantine, raw_version, is_quarantined) = self
+            .with_document_state(uri, |state| {
+                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+                let version = if state.buffer_authority_unknown {
+                    None
+                } else {
+                    state.version
+                };
+                (pending, version, quarantine_from_state(state).is_some())
+            })
+            .unwrap_or((None, None, false));
+        let version = self.negotiated_version(raw_version);
+        if pending_quarantine.is_some() {
             if !diagnostics.is_empty() {
                 // When the quarantine episode is already registered the
                 // once-per-episode marker applies; a pending-entered episode
                 // is disclosed by the pending_entered publication pass (or
                 // here directly when the batch covers it) and marked at
                 // commit.
-                if self.document_quarantine(uri).is_some() {
+                if is_quarantined {
                     self.disclose_withdrawal_once(uri).await;
-                } else if let Some((path, reason)) =
-                    self.document_quarantine_for_pending(uri, pending_analyzed)
-                {
+                } else if let Some((path, reason)) = pending_quarantine {
                     self.client
                         .log_message(
                             MessageType::WARNING,
@@ -3205,12 +3294,12 @@ impl Backend {
                 }
             }
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .publish_diagnostics(uri.clone(), Vec::new(), version)
                 .await;
             return;
         }
         self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .publish_diagnostics(uri.clone(), diagnostics, version)
             .await;
     }
 
@@ -5200,7 +5289,9 @@ impl LanguageServer for Backend {
         let uris = self.clear_all_diagnostic_uris();
         if !self.pull_diagnostics_enabled() {
             for uri in uris {
-                self.client.publish_diagnostics(uri, Vec::new(), None).await;
+                self.client
+                    .publish_diagnostics(uri, Vec::new(), Self::clear_version())
+                    .await;
             }
         }
         drop(transition);
@@ -5226,6 +5317,9 @@ impl LanguageServer for Backend {
         // didSave, whose content is persisted by definition. Opening with a
         // buffer that diverges from the analyzed saved content quarantines
         // the document and withdraws its line-local diagnostics (#1970).
+        // The store records exactly the params version with the open
+        // decision (#1747); capture it before `params` moves.
+        let decision_version = Some(params.text_document.version);
         let Some((uri, transition)) = self.open_document(params) else {
             // A failed store lock means the document was never registered;
             // skip every downstream mutation so the store, the workspace
@@ -5239,7 +5333,7 @@ impl LanguageServer for Backend {
             return;
         };
         self.advance_workspace_revision();
-        self.handle_document_quarantine_transition(&uri, transition)
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
@@ -5258,6 +5352,9 @@ impl LanguageServer for Backend {
         // content crosses a quarantine edge (#1970): withdraw or re-serve
         // the document's line-local diagnostics immediately rather than
         // waiting for the next save-triggered refresh.
+        // The store records exactly the params version with the change
+        // decision (#1747); capture it before `params` moves.
+        let decision_version = Some(params.text_document.version);
         let Some((uri, transition)) = self.change_document(params) else {
             self.client
                 .log_message(
@@ -5267,7 +5364,7 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.handle_document_quarantine_transition(&uri, transition)
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
     }
 
@@ -5319,7 +5416,8 @@ impl LanguageServer for Backend {
         // refresh is scheduled. A failed store lock means the save was never
         // registered; skip every downstream mutation so the store, the
         // dedup ledger, and the committed snapshot cannot diverge.
-        let Some(transition) = self.save_document(&uri, digest.clone(), text) else {
+        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
+        else {
             self.client
                 .log_message(
                     MessageType::ERROR,
@@ -5331,7 +5429,7 @@ impl LanguageServer for Backend {
         if let Some(digest) = &digest
             && self.saved_content_digest_matches(&uri, digest)
         {
-            self.handle_document_quarantine_transition(&uri, transition)
+            self.handle_document_quarantine_transition(&uri, transition, decision_version)
                 .await;
             self.client
                 .log_message(
@@ -5344,7 +5442,7 @@ impl LanguageServer for Backend {
         if let Some(digest) = digest {
             self.record_saved_content_digest(&uri, digest);
         }
-        self.handle_document_quarantine_transition(&uri, transition)
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
         self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
@@ -5732,10 +5830,28 @@ impl Backend {
         // selection so push and pull agree.
         let mut disclosed = false;
         for uri in uris {
+            // One projection couples the quarantine decision to the
+            // bound version (#1747): a concurrent edit between them could
+            // otherwise serve analyzed content under a newer version.
+            // Unknown buffer authority binds no version. Pull versions
+            // are unconditional: `versionSupport` governs push
+            // publications only, while the workspace report carries its
+            // version directly (LSP 3.17).
+            let (quarantined, raw_version) = self
+                .with_document_state(&uri, |state| {
+                    let quarantined = quarantine_from_state(state).is_some();
+                    let version = if state.buffer_authority_unknown {
+                        None
+                    } else {
+                        state.version
+                    };
+                    (quarantined, version)
+                })
+                .unwrap_or((false, None));
             // Quarantined (dirty-buffer) documents serve an empty set under
             // a distinct result id, same as the document pull handler
             // (#1970); other documents are unaffected.
-            let quarantined = self.document_quarantine(&uri).is_some();
+            let version = raw_version.map(i64::from);
             let mut result_id = result_ids.document_id(&snapshot, &uri);
             if quarantined {
                 result_id = quarantined_document_result_id(&result_id);
@@ -5749,7 +5865,7 @@ impl Backend {
                 items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
                     WorkspaceUnchangedDocumentDiagnosticReport {
                         uri,
-                        version: None,
+                        version,
                         unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
                             result_id,
                         },
@@ -5776,7 +5892,7 @@ impl Backend {
             items.push(WorkspaceDocumentDiagnosticReport::Full(
                 WorkspaceFullDocumentDiagnosticReport {
                     uri,
-                    version: None,
+                    version,
                     full_document_diagnostic_report:
                         tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
                             result_id: Some(result_id),
@@ -5920,7 +6036,13 @@ impl Backend {
         let snapshot = self.latest_analysis.lock().ok()?.clone();
         if let Some(gap_id) = args.get("gap_id").and_then(|v| v.as_str()) {
             let snapshot = snapshot.as_ref()?;
-            return collect_gap_record_context_packet(&snapshot.root, args, gap_id);
+            let config = self.analysis_config()?;
+            return collect_gap_record_context_packet(
+                &snapshot.root,
+                config.repo_config(),
+                args,
+                gap_id,
+            );
         }
         if let Some(seam_id) = args.get("seam_id").and_then(|v| v.as_str()) {
             let Some(snapshot) = snapshot.as_ref() else {
@@ -6088,6 +6210,12 @@ impl Backend {
     /// snapshot's analyzed partition is reported `not_analyzed` — never
     /// `clean`/`served` — with the budget raise and sidecar restart as the
     /// recovery, so "no diagnostics" can never read as "analyzed and clean".
+    ///
+    /// #7205: a changed document whose language is configured but not
+    /// enabled has the same honesty gap when no budget stop exists (the
+    /// selector skips disabled languages, so `partial_scope` is never
+    /// recorded). Those rows use a distinct `language_adapter_not_enabled`
+    /// reason so they cannot be mistaken for the #5998 partition case.
     fn open_document_statuses_json(
         &self,
         snapshot: Option<&AnalysisSnapshot>,
@@ -6100,22 +6228,34 @@ impl Backend {
             .values()
             .map(|state| {
                 let quarantined = state.is_quarantined();
-                let outside_partition = snapshot
-                    .and_then(|snapshot| {
-                        super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
-                    })
-                    .is_some_and(|relative| {
-                        snapshot
-                            .and_then(|snapshot| snapshot.partial_scope.as_ref())
-                            .is_some_and(|scope| scope.changed_outside_partition(&relative))
+                let relative = snapshot.and_then(|snapshot| {
+                    super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
+                });
+                let outside_partition = relative.as_ref().is_some_and(|relative| {
+                    snapshot
+                        .and_then(|snapshot| snapshot.partial_scope.as_ref())
+                        .is_some_and(|scope| scope.changed_outside_partition(relative))
+                });
+                // #5998 wins when both apply: a budget-bound partial run
+                // already named the file `outside_analyzed_partition`.
+                let adapter_language = (!outside_partition)
+                    .then_some(relative.as_ref())
+                    .flatten()
+                    .and_then(|relative| {
+                        snapshot.and_then(|snapshot| {
+                            snapshot
+                                .unavailable_adapter
+                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                        })
                     });
+                let not_analyzed = outside_partition || adapter_language.is_some();
                 serde_json::json!({
                     "uri": state.uri.as_str(),
                     "path": state.path.display().to_string(),
                     "version": state.version,
                     "state": if quarantined {
                         "quarantined"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "clean"
@@ -6123,21 +6263,34 @@ impl Backend {
                     "diagnostics_authority": "saved_workspace",
                     "line_local_diagnostics": if quarantined {
                         "withdrawn"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "served"
                     },
+                    // #5998 reason/recovery stay on a quarantined document:
+                    // `state`/`line_local_diagnostics` already say
+                    // quarantined/withdrawn. The new #7205 reason is gated
+                    // off while dirty so it cannot overwrite that disclosure.
                     "not_analyzed_reason": if outside_partition {
                         serde_json::Value::String("outside_analyzed_partition".to_string())
+                    } else if !quarantined && adapter_language.is_some() {
+                        serde_json::Value::String("language_adapter_not_enabled".to_string())
                     } else {
                         serde_json::Value::Null
                     },
-                    "not_analyzed_recovery": match (outside_partition, snapshot) {
-                        (true, Some(snapshot)) => serde_json::Value::String(
-                            outside_partition_recovery(snapshot.partial_scope.as_ref()),
-                        ),
-                        _ => serde_json::Value::Null,
+                    "not_analyzed_recovery": if outside_partition {
+                        snapshot
+                            .map(|snapshot| {
+                                serde_json::Value::String(outside_partition_recovery(
+                                    snapshot.partial_scope.as_ref(),
+                                ))
+                            })
+                            .unwrap_or(serde_json::Value::Null)
+                    } else if let (false, Some(language)) = (quarantined, adapter_language) {
+                        serde_json::Value::String(language_adapter_not_enabled_recovery(language))
+                    } else {
+                        serde_json::Value::Null
                     },
                     "staleness_reason": state
                         .quarantine
@@ -6175,6 +6328,7 @@ impl Backend {
                         "reason": "no_snapshot",
                     },
                     "top_actionable_packet": serde_json::Value::Null,
+                    "gap_artifact_currentness": [],
                     "top_limitation": top_limitation,
                     "open_documents": open_documents,
                     "report_paths": workspace_status_report_paths(),
@@ -6211,6 +6365,11 @@ impl Backend {
             .filter(|a| a.is_actionable_gap())
             .count();
         let gap_artifact_rejections = snapshot.gap_artifact_rejections.len();
+        let gap_artifact_currentness = snapshot
+            .gap_artifacts
+            .iter()
+            .filter_map(|artifact| artifact.corpus_currentness_json())
+            .collect::<Vec<_>>();
 
         // Project the stored delivery selection (#1973): the same outcome
         // push publication and both pull handlers serve, not a re-evaluated
@@ -6279,6 +6438,7 @@ impl Backend {
                     "diagnostic_budget": diagnostic_budget_json.clone(),
                     "diagnostic_budget_state": diagnostic_budget_state.clone(),
                     "top_actionable_packet": top_actionable_packet,
+                    "gap_artifact_currentness": gap_artifact_currentness,
                     "top_limitation": top_limitation,
                     "receipt_status_summary": serde_json::Value::Null,
                     "open_documents": open_documents,
@@ -6314,6 +6474,7 @@ impl Backend {
             "diagnostic_budget": diagnostic_budget_json,
             "diagnostic_budget_state": diagnostic_budget_state,
             "top_actionable_packet": top_actionable_packet,
+            "gap_artifact_currentness": gap_artifact_currentness,
             "top_limitation": top_limitation,
             "receipt_status_summary": receipt_status_summary,
             "harness_registry": workspace_status_harness_summary(&snapshot),
@@ -6745,6 +6906,38 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
     )
 }
 
+/// The quarantine reading for one pre-read document state (#1747): the
+/// lock-free core behind [`Backend::document_quarantine`]. Publish sites
+/// read the state once via `with_document_state` and derive both the
+/// decision and the bound version from that one read, so a concurrent
+/// edit cannot slip between them.
+fn quarantine_from_state(state: &DocumentState) -> Option<(PathBuf, DocumentStalenessReason)> {
+    let quarantine = state.quarantine.as_ref()?;
+    Some((state.path.clone(), quarantine.reason))
+}
+
+/// The quarantine state of an open document against a refresh
+/// transaction's pending analyzed identity (#1970): what the state will
+/// be once this snapshot commits. Publication filters on this so a
+/// document is withdrawn or re-served against the identity the
+/// in-flight snapshot carries, while the committed state only advances
+/// at commit time. Takes the pre-read state (#1747) so the decision and
+/// the bound version derive from one read.
+fn quarantine_for_pending_from_state(
+    state: &DocumentState,
+    pending_analyzed: &BTreeMap<Uri, Option<String>>,
+) -> Option<(PathBuf, DocumentStalenessReason)> {
+    let Some(analyzed) = pending_analyzed.get(&state.uri) else {
+        return state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| (state.path.clone(), quarantine.reason));
+    };
+    state
+        .staleness_for_analyzed(analyzed.as_ref())
+        .map(|reason| (state.path.clone(), reason))
+}
+
 /// Disclosure emitted when a document's quarantine lifts and its line-local
 /// diagnostics are served again (#1970).
 fn quarantine_restored_log_message(path: &Path) -> String {
@@ -6930,6 +7123,120 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
     )
 }
 
+/// #7205: recovery for a changed document whose adapter was not enabled.
+/// Refreshing the session cannot enable a language the process did not
+/// load. When the adapter is compiled in, the route names `[languages]
+/// enabled` and the sidecar restart, then appends
+/// [`crate::domain::LanguageId::enable_prerequisite`] so compiled-in Perl
+/// does not claim enablement plus restart is sufficient. When it is not
+/// compiled in (Perl on the default build), enablement is not enough —
+/// reuse the shared
+/// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
+fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+    if !language.is_available() {
+        return language.unavailable_adapter_recovery();
+    }
+    let enablement = format!(
+        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
+         so the enabled adapter is read",
+        language.as_str()
+    );
+    match language.enable_prerequisite() {
+        Some(prerequisite) => format!("{enablement}; {prerequisite}"),
+        None => enablement,
+    }
+}
+
+#[cfg(test)]
+mod language_adapter_recovery_tests {
+    use super::language_adapter_not_enabled_recovery;
+    use crate::domain::LanguageId;
+
+    #[test]
+    fn compiled_in_preview_recovery_names_languages_enabled() -> Result<(), String> {
+        // rust-only (`--features lang-rust`) has no preview adapter compiled
+        // in; that lane is covered by the uncompiled-adapter sibling.
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && language.is_available())
+        else {
+            return Ok(());
+        };
+        let recovery = language_adapter_not_enabled_recovery(language);
+        for needle in ["[languages] enabled", "restart", language.as_str()] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+        if let Some(prerequisite) = language.enable_prerequisite()
+            && !recovery.contains(&prerequisite)
+        {
+            return Err(format!(
+                "compiled-in recovery must append enable_prerequisite: {recovery}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_in_perl_recovery_names_fact_packet_prerequisite() -> Result<(), String> {
+        // Default and rust-only builds omit `lang-perl`; the uncompiled
+        // sibling covers that lane. `--all-features` compiles Perl in, and
+        // enablement plus restart is still not enough.
+        if !LanguageId::Perl.is_available() {
+            return Ok(());
+        }
+        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl);
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so LSP recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in perl recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uncompiled_adapter_recovery_reuses_language_owner_text() -> Result<(), String> {
+        // `--all-features` compiles every adapter, so there is no uncompiled
+        // preview language to prove here; the compiled-in sibling covers that
+        // lane.
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && !language.is_available())
+        else {
+            return Ok(());
+        };
+        let recovery = language_adapter_not_enabled_recovery(language);
+        let expected = language.unavailable_adapter_recovery();
+        if recovery != expected {
+            return Err(format!(
+                "uncompiled adapter must reuse LanguageId recovery, got {recovery:?} expected {expected:?}"
+            ));
+        }
+        if recovery.contains("[languages] enabled") {
+            return Err(format!(
+                "uncompiled adapter must not claim enablement is enough: {recovery}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
     super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
@@ -6955,16 +7262,17 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
-    let verify_command = artifact
-        .verify_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
-    let receipt_command = artifact
-        .receipt_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
+    // #4001: the status packet names the selected workspace, like the
+    // diagnostic, hover and action projections of the same artifact.
+    let bind = |command: Option<&String>| {
+        command
+            .and_then(|command| {
+                super::gap_artifacts::bind_portable_command(&snapshot.root, command)
+            })
+            .unwrap_or_default()
+    };
+    let verify_command = bind(artifact.verify_commands.first());
+    let receipt_command = bind(artifact.receipt_commands.first());
     let file = artifact
         .related_paths
         .first()
@@ -7505,6 +7813,7 @@ mod top_limitation_selection_tests {
             analysis_outcome: Some(outcome),
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -7515,6 +7824,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 
@@ -7818,11 +8128,15 @@ fn workspace_status_rejection_repair(
         ),
         GapArtifactRejection::StaleSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts describe other source file contents; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
+        ),
+        GapArtifactRejection::StaleCorpus => (
+            "regenerate_gap_artifacts",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::UnverifiableSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts carry no usable source_subject stamp; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::WrongRoot(_) => (
             "verify_workspace_root",
@@ -7888,6 +8202,7 @@ fn limitation_sample_sources(
         GapArtifactRejection::UnverifiableSubject(reason) => vec![(*reason).to_string()],
         GapArtifactRejection::MalformedArtifact(_)
         | GapArtifactRejection::MissingIdentity
+        | GapArtifactRejection::StaleCorpus
         | GapArtifactRejection::StaleArtifact => vec![],
     }
 }
@@ -7924,6 +8239,7 @@ fn limitation_non_claims(category: &str) -> Vec<&'static str> {
 
 fn collect_gap_record_context_packet(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     args: &serde_json::Map<String, serde_json::Value>,
     gap_id: &str,
 ) -> Option<LSPAny> {
@@ -7962,7 +8278,7 @@ fn collect_gap_record_context_packet(
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
     }
     let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
@@ -7972,37 +8288,60 @@ fn collect_gap_record_context_packet(
 /// #4544: a command-time packet read re-checks the ledger's `source_subject`
 /// stamp through the shared validator, so a packet computed for other file
 /// contents is a typed stale disclosure instead of a current repair route.
-fn ledger_source_subject_sentinel(root: &Path, contents: &str) -> Option<LSPAny> {
+fn ledger_source_subject_sentinel(
+    root: &Path,
+    repo_config: &crate::config::RiprConfig,
+    contents: &str,
+) -> Option<LSPAny> {
     let Ok(artifact) = serde_json::from_str::<serde_json::Value>(contents) else {
         return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
     };
     source_subject_sentinel(
         root,
+        repo_config,
         &artifact,
         super::gap_artifacts::GapArtifactKind::GapDecisionLedger,
         "gap-decision-ledger.json",
-        "ripr reports gap-ledger",
+        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json",
     )
 }
 
 fn source_subject_sentinel(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     artifact: &serde_json::Value,
     kind: super::gap_artifacts::GapArtifactKind,
     artifact_name: &str,
     regenerate: &str,
 ) -> Option<LSPAny> {
     use super::gap_artifacts::GapArtifactRejection;
-    match super::gap_artifacts::validate_source_subject(artifact, kind, root) {
-        Ok(()) => None,
+    let context = super::gap_artifacts::GapArtifactValidationContext {
+        root,
+        enabled_languages: repo_config.languages().enabled(),
+        repo_config,
+    };
+    let recovery = format!(
+        "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json then {regenerate}"
+    );
+    match super::gap_artifacts::validate_gap_artifact(artifact, &context) {
+        Ok(validated) if validated.kind == kind => None,
+        Ok(_) => Some(repair_packet_sentinel(&format!(
+            "unsupported_kind: expected {artifact_name}"
+        ))),
         Err(GapArtifactRejection::StaleSubject(path)) => Some(repair_packet_sentinel(&format!(
-            "stale_subject: {path} changed since {artifact_name} was written; regenerate it for the current source with {regenerate}"
+            "stale_subject: {path} changed since {artifact_name} was written; {recovery}"
+        ))),
+        Err(GapArtifactRejection::StaleCorpus) => Some(repair_packet_sentinel(&format!(
+            "stale_corpus: the analyzed Rust source/test corpus changed since {artifact_name} was written; {recovery}"
         ))),
         Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
             Some(repair_packet_sentinel(&format!(
-                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current source files; regenerate it with {regenerate}"
+                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current analyzed source inputs; {recovery}"
             )))
         }
+        Err(GapArtifactRejection::WrongRoot(_)) => Some(repair_packet_sentinel(&format!(
+            "wrong_root: {artifact_name} belongs to another workspace; select its producer workspace or regenerate it for the selected workspace"
+        ))),
         Err(other) => Some(repair_packet_sentinel(other.as_str())),
     }
 }
@@ -8027,16 +8366,20 @@ impl Backend {
         let root = self.root.lock().ok()?.clone();
 
         // Try actionable-gaps.json first (preferred: projection-validated).
+        let config = self.analysis_config()?;
         let actionable_path = absolute_join(&root, Path::new(DEFAULT_ACTIONABLE_GAPS_OUT));
-        if let Some(result) =
-            collect_repair_packet_from_actionable_gaps(&root, &actionable_path, gap_id)
-        {
+        if let Some(result) = collect_repair_packet_from_actionable_gaps(
+            &root,
+            config.repo_config(),
+            &actionable_path,
+            gap_id,
+        ) {
             return Some(result);
         }
 
         // Fallback: gap-decision-ledger.json using the existing GapRecord machinery.
         let ledger_path = absolute_join(&root, Path::new(DEFAULT_GAP_DECISION_LEDGER_OUT));
-        collect_repair_packet_from_ledger(&root, &ledger_path, gap_id)
+        collect_repair_packet_from_ledger(&root, config.repo_config(), &ledger_path, gap_id)
             // Neither source holds a packet: say so and name the route,
             // instead of a null the client can only render as "no response".
             .or_else(|| Some(repair_packet_sentinel(&no_repair_packet_reason(gap_id))))
@@ -8183,11 +8526,10 @@ fn collect_receipt_status_fields(
                 .first()
                 .map(String::as_str)
                 .unwrap_or("");
-            if super::gap_artifacts::command_payload_is_safe(root, cmd) {
-                serde_json::Value::String(cmd.to_string())
-            } else {
-                serde_json::Value::String("not_available".to_string())
-            }
+            let bound = super::gap_artifacts::command_payload_is_safe(root, cmd)
+                .then(|| super::gap_artifacts::bind_portable_command(root, cmd))
+                .flatten();
+            serde_json::Value::String(bound.unwrap_or_else(|| "not_available".to_string()))
         } else {
             // Incomplete packet — no receipt command shown.
             serde_json::Value::String("not_available".to_string())
@@ -8409,6 +8751,7 @@ fn workspace_receipt_status_report_paths() -> serde_json::Value {
 
 fn collect_repair_packet_from_actionable_gaps(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     path: &Path,
     gap_id: Option<&str>,
 ) -> Option<LSPAny> {
@@ -8447,6 +8790,17 @@ fn collect_repair_packet_from_actionable_gaps(
             .or_else(|| packets.first())?
     };
 
+    if let Some(sentinel) = source_subject_sentinel(
+        root,
+        repo_config,
+        &report,
+        super::gap_artifacts::GapArtifactKind::ActionableGaps,
+        "actionable-gaps.json",
+        "cargo xtask lane1-evidence-audit",
+    ) {
+        return Some(sentinel);
+    }
+
     // Require the packet to be actionable to emit a complete repair packet.
     if packet
         .get("gap_state")
@@ -8458,20 +8812,13 @@ fn collect_repair_packet_from_actionable_gaps(
             "gap is not actionable in actionable-gaps.json",
         ));
     }
-    if let Some(sentinel) = source_subject_sentinel(
-        root,
-        &report,
-        super::gap_artifacts::GapArtifactKind::ActionableGaps,
-        "actionable-gaps.json",
-        "cargo xtask lane1-evidence-audit",
-    ) {
-        return Some(sentinel);
-    }
-
-    validate_and_render_actionable_gap_packet(packet)
+    validate_and_render_actionable_gap_packet(root, packet)
 }
 
-fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Option<LSPAny> {
+fn validate_and_render_actionable_gap_packet(
+    root: &Path,
+    packet: &serde_json::Value,
+) -> Option<LSPAny> {
     use super::gap_artifacts::{GapArtifactRejection, require_actionable_packet_render_fields};
 
     // The render-field contract is owned by the ingest boundary
@@ -8516,6 +8863,13 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
         return Some(repair_packet_sentinel(
             "actionable packet is missing receipt_command",
         ));
+    };
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let (Some(verify_command), Some(receipt_command)) = (
+        super::gap_artifacts::bind_portable_command(root, &verify_command),
+        super::gap_artifacts::bind_portable_command(root, &receipt_command),
+    ) else {
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
     };
 
     let allowed_edit_surface: Vec<serde_json::Value> = packet
@@ -8597,6 +8951,7 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
 
 fn collect_repair_packet_from_ledger(
     root: &Path,
+    repo_config: &crate::config::RiprConfig,
     path: &Path,
     gap_id: Option<&str>,
 ) -> Option<LSPAny> {
@@ -8620,10 +8975,9 @@ fn collect_repair_packet_from_ledger(
     } else {
         records.iter().find(|r| r.gap_state == "actionable")?
     };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
         return Some(sentinel);
     }
-
     // Use the existing validator for completeness gate.
     if let Err(reason) = validate_agent_gap_record_packet(record) {
         return Some(serde_json::json!({
@@ -8636,8 +8990,14 @@ fn collect_repair_packet_from_ledger(
     }
 
     let route = record.repair_route.as_ref()?;
-    let verify_command = record.verification_commands.first()?.clone();
-    let receipt_command = record.receipt_command.as_deref().map(ToOwned::to_owned)?;
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let bind = |command: &str| super::gap_artifacts::bind_portable_command(root, command);
+    let (Some(verify_command), Some(receipt_command)) = (
+        bind(record.verification_commands.first()?),
+        bind(record.receipt_command.as_deref()?),
+    ) else {
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
+    };
     let allowed_edit_surface =
         crate::output::agent_seam_packets::allowed_edit_surface_for_gap_route(route);
     let must_not_change: Vec<String> =
@@ -8717,6 +9077,9 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
 /// client must be able to tell "no packet" apart from "packet source corrupt;
 /// artifact regeneration required before exposure can be assessed".
 const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const UNBOUND_PACKET_COMMANDS_REASON: &str =
+    "packet commands cannot be bound to the selected workspace";
+
 const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
 
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
@@ -8856,6 +9219,7 @@ mod gap_record_context_tests {
         };
         ValidatedGapArtifact {
             kind: GapArtifactKind::ActionableGaps,
+            corpus_currentness: None,
             root: None,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some(canonical_gap_id.to_string()),
@@ -8922,9 +9286,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(packet["source"], "gap_decision_ledger");
         let gap_packet = &packet["packets"][0];
@@ -8956,9 +9324,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:rust:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:rust:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(
             packet["packets"][0]["gap_id"],
@@ -8981,9 +9353,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
 
         assert_eq!(packet["source"], "gap_decision_ledger");
         assert_eq!(
@@ -8992,6 +9368,74 @@ mod gap_record_context_tests {
         );
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    /// Synthetic unit ledger: unknown IDs select no record even when the
+    /// unrelated artifact is stale; selected records still require admission.
+    #[test]
+    fn collect_context_unknown_gap_does_not_project_an_unrelated_stale_ledger() -> Result<(), String>
+    {
+        let owned_root =
+            super::super::tests::unique_lsp_test_root("context-unrelated-stale-ledger")?;
+        let root = owned_root.path();
+        fs::create_dir_all(root.join("target/ripr/reports"))
+            .map_err(|err| format!("create reports directory failed: {err}"))?;
+        write_gap_ledger(root)?;
+        let args_value = serde_json::json!({ "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let selected_id = "gap:rust:pricing:threshold-boundary";
+        let current = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected the current selected context".to_string())?;
+        assert_eq!(current["source"], "gap_decision_ledger");
+        assert_eq!(
+            current["packets"][0]["gap_id"],
+            "gap:pr:pricing:threshold-boundary"
+        );
+        assert_eq!(
+            current["packets"][0]["verification_commands"][0],
+            "cargo xtask fixtures boundary_gap"
+        );
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none()
+        );
+        let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+        let ledger_bytes =
+            fs::read(&ledger_path).map_err(|err| format!("read original ledger failed: {err}"))?;
+        let ledger: serde_json::Value = serde_json::from_slice(&ledger_bytes)
+            .map_err(|err| format!("parse original ledger failed: {err}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create test directory failed: {err}"))?;
+        fs::write(
+            root.join("tests/unclaimed_corpus.rs"),
+            "#[test] fn unclaimed_corpus() { assert_eq!(2 + 2, 4); }\n",
+        )
+        .map_err(|err| format!("write unclaimed test failed: {err}"))?;
+        let key = crate::analysis::workspace_cache_key_at_with_config(root, &config)?;
+        assert_ne!(
+            ledger["source_subject"]["corpus"]["files_content_hash"], key.files_content_hash,
+            "the existing corpus owner must detect the unclaimed addition"
+        );
+        assert_eq!(
+            fs::read(&ledger_path).map_err(|err| format!("read retained ledger failed: {err}"))?,
+            ledger_bytes
+        );
+        let stale = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected a stale selected-record refusal".to_string())?;
+        assert_eq!(stale["status"], "not_actionable_or_incomplete");
+        assert!(
+            stale["reason"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("stale_corpus:"))
+        );
+        assert!(stale.get("packets").is_none() && stale.get("verify_command").is_none());
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none(),
+            "an unknown gap selects no record from the unchanged stale ledger"
+        );
         Ok(())
     }
 
@@ -9039,8 +9483,13 @@ mod gap_record_context_tests {
             let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
             let gap_id = "gap:pr:pricing:threshold-boundary";
 
-            let current = collect_gap_record_context_packet(&root, args, gap_id)
-                .ok_or_else(|| "expected a current packet".to_string())?;
+            let current = collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                gap_id,
+            )
+            .ok_or_else(|| "expected a current packet".to_string())?;
             if current["status"] == "not_actionable_or_incomplete" {
                 return Err(format!(
                     "a current ledger must render its packet: {current}"
@@ -9052,8 +9501,18 @@ mod gap_record_context_tests {
             fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
                 .map_err(|err| err.to_string())?;
             for packet in [
-                collect_gap_record_context_packet(&root, args, gap_id),
-                collect_repair_packet_from_ledger(&root, &ledger_path, Some(gap_id)),
+                collect_gap_record_context_packet(
+                    &root,
+                    &crate::config::RiprConfig::default(),
+                    args,
+                    gap_id,
+                ),
+                collect_repair_packet_from_ledger(
+                    &root,
+                    &crate::config::RiprConfig::default(),
+                    &ledger_path,
+                    Some(gap_id),
+                ),
             ] {
                 let packet = packet.ok_or_else(|| "expected a stale sentinel".to_string())?;
                 let reason = packet["reason"].as_str().unwrap_or_default();
@@ -9067,8 +9526,13 @@ mod gap_record_context_tests {
 
             // A ledger without a stamp cannot be matched to the workspace.
             fs::write(&ledger_path, gap_ledger_json()).map_err(|err| err.to_string())?;
-            let packet = collect_gap_record_context_packet(&root, args, gap_id)
-                .ok_or_else(|| "expected an unverifiable sentinel".to_string())?;
+            let packet = collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                gap_id,
+            )
+            .ok_or_else(|| "expected an unverifiable sentinel".to_string())?;
             if !packet["reason"]
                 .as_str()
                 .unwrap_or_default()
@@ -9085,6 +9549,10 @@ mod gap_record_context_tests {
 
     fn gap_ledger_json() -> &'static str {
         r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "gap_decision_ledger",
+  "root": ".",
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
@@ -9146,7 +9614,15 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        assert!(collect_gap_record_context_packet(&root, args, "   ").is_none());
+        assert!(
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "   "
+            )
+            .is_none()
+        );
 
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
@@ -9167,8 +9643,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none()
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none()
         );
 
         fs::remove_dir_all(&root)
@@ -9192,9 +9673,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected malformed-artifact sentinel, not null".to_string())?;
         assert_eq!(packet["kind"], "repair_packet");
         assert_eq!(packet["status"], "not_actionable_or_incomplete");
         assert_eq!(packet["reason"], MALFORMED_GAP_LEDGER_REASON);
@@ -9233,8 +9718,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none()
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none()
         );
 
         fs::remove_dir_all(&outside)
@@ -9259,9 +9749,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
         assert_eq!(packet["source"], "gap_decision_ledger");
 
         fs::remove_dir_all(&root)
@@ -9307,8 +9801,13 @@ mod gap_record_context_tests {
             .ok_or_else(|| "expected object args".to_string())?;
 
         assert!(
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .is_none(),
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:pricing:threshold-boundary"
+            )
+            .is_none(),
             "symlink escape out of the workspace root must be rejected"
         );
 
@@ -9332,7 +9831,15 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        assert!(collect_gap_record_context_packet(&root, args, "gap:pr:unknown:missing").is_none());
+        assert!(
+            collect_gap_record_context_packet(
+                &root,
+                &crate::config::RiprConfig::default(),
+                args,
+                "gap:pr:unknown:missing"
+            )
+            .is_none()
+        );
 
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
@@ -9353,9 +9860,13 @@ mod gap_record_context_tests {
             .as_object()
             .ok_or_else(|| "expected object args".to_string())?;
 
-        let packet =
-            collect_gap_record_context_packet(&root, args, "gap:pr:pricing:threshold-boundary")
-                .ok_or_else(|| "expected gap packet".to_string())?;
+        let packet = collect_gap_record_context_packet(
+            &root,
+            &crate::config::RiprConfig::default(),
+            args,
+            "gap:pr:pricing:threshold-boundary",
+        )
+        .ok_or_else(|| "expected gap packet".to_string())?;
         assert_eq!(
             packet["packets"][0]["repair_card"]["source_artifact"],
             display_path(&root.join(DEFAULT_GAP_DECISION_LEDGER_OUT))
@@ -10123,6 +10634,7 @@ mod delivery_selection_parity_tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -10133,6 +10645,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -11102,6 +11615,7 @@ mod list_actionable_items_tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -11112,6 +11626,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 

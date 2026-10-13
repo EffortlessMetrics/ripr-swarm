@@ -116,6 +116,10 @@ candidate review. Missing hosted evidence keeps it in flight, not local-only.
 Only a current published-head `REVIEW_READY` proceeds to merge convergence.
 After acceptance, return to the parent goal and the next ready claim.
 
+For a phase change or bounded worker return, use `deliver-pr`'s continuation
+handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
+challenge both useful continuation and genuine stop boundaries.
+
 Use implementation agents for independent ready claims when available, each
 with a candidate-owned worktree and one writer. Delegate the claim, input
 identity, question, non-goals, write boundary, proof and handback. The root
@@ -178,6 +182,10 @@ Do not promote static evidence to `killed`, `survived`, `untested`, `proven` or
 ## Architecture and implementation
 
 Keep one published package/library/binary `ripr`, plus unpublished `xtask`.
+The unpublished `repo-policy` package is the bounded #7158/#7324 automation
+exception: it owns only workflow-policy, agent-skill and Git-index executable-file
+checks and has no normal/build dependency on the product or its parser stack.
+It does not expose a product API.
 Do not split it into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
 `ripr-schema` without a real external contract.
 
@@ -328,6 +336,7 @@ cargo doc --workspace --no-deps
 cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 cargo xtask check-static-language
+cargo xtask check-policy-all
 cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-local-context
@@ -375,9 +384,9 @@ then refreshes the summary. `pr-summary`, `pr-triage-report`, `gh-pr-status`,
 operational evidence; advisory reports do not independently block merge. `worktree doctor` reports local
 hygiene, not an instruction to chase main. See `docs/PR_AUTOMATION.md`.
 
-Large-repo scans are build-heavy. Prefer `repo-badge-json`, generated receipts,
+Large-repo scans are build-heavy. Prefer `ripr check --format repo-badge-json`, generated receipts,
 an explicit gap ledger or `repo-exposure-summary-report` for ordinary counts,
-badges and packet queues. Full `repo-exposure-json` is for intentional refresh,
+badges and packet queues. Full `ripr check --format repo-exposure-json` is for intentional refresh,
 not ordinary interactive routing. Run at most one no-ledger full scan at a time;
 only intentional refreshes set `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS`. Remove
 ad-hoc large JSON after inspection without deleting retained evidence.

@@ -8,6 +8,8 @@ Created: 2026-10-06
 
 Linked issues:
 
+- #7314 (optional tool arguments reject explicit null consistently with
+  their advertised non-null input types)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
   resources)
 - #5267 (every pre-initialize typed-shape violation recovers with the
@@ -59,6 +61,12 @@ official SDK transport:
   templates `ripr://snapshot/{snapshot_id}` and
   `ripr://gap/{canonical_id}`. Tool names and templates follow the
   registry established in #3088's slice.
+- Optional tool arguments are omittable, not nullable. `snapshot_id` must
+  be a string when present; `ripr_list_gaps`'s `offset` and `limit` must
+  be integers within their advertised ranges. Explicit null returns a
+  correlated `-32602` Invalid Params error naming the field before session
+  lookup. Omitted fields retain their defaults, valid values reach session
+  lookup, and a subsequent request can recover on the same connection.
 - Pre-initialize typed-shape violations recover on the wire (#5267): a
   request that arrives before `initialize` and lacks the SDK's required
   `_meta` fields — and any other pre-initialize message the SDK refuses —
@@ -93,8 +101,14 @@ official SDK transport:
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority (identical in-process analysis to
-  `ripr check` and the LSP) and commits the completed snapshot. The call
+  `app::check_workspace` authority on the committed default-branch diff
+  and commits the completed snapshot. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose before invocation
+  that staged and unstaged tracked edits and untracked files are excluded.
+  Shared authority does not mean identical input: `ripr check` defaults
+  to the working tree when staged or unstaged tracked edits exist, while
+  `ripr check --committed` selects committed input. The response scope
+  disclosure and MCP's runtime input remain unchanged. The call
   blocks to a terminal state and reports it. An attempt runs to a terminal
   state: cancelling the MCP request never rolls an attempt back or
   manufactures a snapshot, and a cancelled or superseded attempt is never
@@ -172,8 +186,12 @@ official SDK transport:
   evidence: identity, typed outcome, the full item index, and the stored
   selection summary.
 - Reads may bind an explicit `snapshot_id`; a mismatch fails closed with
-  `stale_snapshot` and the current identity. Reads before the first
-  successful refresh fail closed with `no_snapshot`; reads during an
+  `stale_snapshot` and the current identity. Snapshot-dependent reads on
+  a root resolved unavailable at startup fail closed with
+  `workspace_unavailable` and the same restart-with-root recovery as
+  `ripr_refresh`; the adapter does not discover or recheck the root again.
+  On a usable root, reads before the first successful refresh fail closed
+  with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
   `item_not_found`; a document that cannot fit the 128-KiB response bound
   fails closed with `result_too_large` — for tool responses the envelope
@@ -217,7 +235,19 @@ official SDK transport:
 - `crates/ripr/tests/mcp_stdio.rs` — raw-wire controls: tool/resource
   equality, rejection arms, and the new fail-closed control proving a
   stock-shaped client receives typed `no_snapshot` failures (and the
-  resource-miss mapping) before the first refresh.
+  resource-miss mapping) before the first refresh on a usable root.
+  `unavailable_workspace_evidence_names_restart_before_any_refresh`
+  exercises four snapshot tools and three evidence resources before and
+  after refresh for markerless and missing explicit roots: each names
+  `workspace_unavailable` and the actionable restart recovery, while
+  status remains readable. Removing the shared snapshot availability
+  guard restores the misleading `no_snapshot` recovery and fails it.
+  `resource_reads_match_tools_after_refresh` pins gap tool/resource
+  parsed-document equality plus the snapshot envelope
+  (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
+  (#7145). Resource payloads are pretty-printed while tool payloads are
+  compact by design, so the control compares parsed documents, not
+  serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
   receive a correlated `-32602` answer, the session then completes a normal
@@ -257,8 +287,11 @@ official SDK transport:
    `ripr://workspace/status`, `ripr://snapshot/{snapshot_id}`, and
    `ripr://gap/{canonical_id}` — no report-file, clipboard, log, or
    LSP-protocol archaeology involved.
-2. Before any refresh, list/get/snapshot reads fail closed with typed
-   `no_snapshot`; during an attempt they report `analysis_in_flight`; a
+2. An unavailable startup root makes snapshot-dependent reads fail closed
+   with `workspace_unavailable` and the restart-with-root recovery before
+   any refresh. On a usable root, pre-refresh list/get/snapshot reads fail
+   closed with typed `no_snapshot`; during an attempt they report
+   `analysis_in_flight`; a
    named snapshot that is not current fails with `stale_snapshot` naming
    the current identity.
 3. A refresh whose outcome is `unsupported_input` or `analysis_failed`
@@ -298,6 +331,9 @@ official SDK transport:
 - `crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit`
   — the #6021 wire contract: `offset`/`limit` accepted, the window
   disclosed, an over-selection offset an empty final page.
+- `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
+  — the #7314 schema/dispatch contract for all six optional argument
+  positions, with omission, valid-type, wrong-type and recovery controls.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —

@@ -3850,7 +3850,17 @@ fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), B
     assert!(!set.contains("disabled by `RIPR_UPLOAD_SARIF`"), "{set}");
     assert!(set.contains("\n- Mode: `inline`"), "{set}");
 
-    assert!(unset.contains("--base origin/main --head HEAD"), "{unset}");
+    // #7368: with no base anywhere in the environment the summary must name
+    // the missing base, not invent `origin/main` for a repository whose
+    // default branch may be anything else.
+    assert!(
+        !unset.contains("--base origin/"),
+        "no base may be invented: {unset}"
+    );
+    assert!(
+        unset.contains("no base is derivable from the event payload"),
+        "{unset}"
+    );
     assert!(
         unset.contains("\n- SARIF upload: disabled by `RIPR_UPLOAD_SARIF`"),
         "{unset}"

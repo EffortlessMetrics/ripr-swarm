@@ -524,6 +524,9 @@ fn why_not_actionable_for_category(category: &str) -> String {
         "repo_seam_limit_applied" => {
             "Seam inventory was capped; not all seams were analyzed in this run.".to_string()
         }
+        "pilot_seam_budget_applied" => {
+            "RIPR_PILOT_SEAM_BUDGET capped the pilot artifacts; not all seams were rendered in this run.".to_string()
+        }
         "full_repo_context_not_run" => {
             "Full-repo context was not run; diff-scoped analysis only.".to_string()
         }
@@ -1383,6 +1386,39 @@ mod tests {
             top_lim.why_not_actionable.contains("capped"),
             "{}",
             top_lim.why_not_actionable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_budget_disclosure_is_preserved_in_pr_summary() -> Result<(), String> {
+        let repo = json!({
+            "run_status": "seam_limit_applied",
+            "limitations": [{
+                "category": "pilot_seam_budget_applied",
+                "control": "RIPR_PILOT_SEAM_BUDGET",
+                "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+            }]
+        });
+        let summary = build_pr_evidence_summary(None, None, Some(&repo), None, None, None);
+        let rendered: Value = serde_json::from_str(&render_pr_evidence_summary_json(&summary))
+            .map_err(|err| format!("parse pilot-cap summary failed: {err}"))?;
+        assert_eq!(
+            rendered["top_limitation"],
+            json!({
+                "category": "pilot_seam_budget_applied",
+                "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+                "why_not_actionable": "RIPR_PILOT_SEAM_BUDGET capped the pilot artifacts; not all seams were rendered in this run."
+            })
+        );
+        let markdown = crate::app::pr_summary::render_evidence_summary_md(&summary);
+        assert_eq!(
+            markdown
+                .lines()
+                .find(|line| line.starts_with("- why not actionable:")),
+            Some(
+                "- why not actionable: RIPR_PILOT_SEAM_BUDGET capped the pilot artifacts; not all seams were rendered in this run."
+            )
         );
         Ok(())
     }

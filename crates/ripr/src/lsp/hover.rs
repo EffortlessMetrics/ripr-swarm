@@ -1007,14 +1007,22 @@ fn push_editor_commands(
             loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
         )
     ));
-    lines.push(format!(
-        "- brief: `{}`",
-        loop_commands::agent_brief_command(
-            &root,
-            seam_id,
-            loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
-        )
-    ));
+    // Gate the brief handoff rather than reroute or annotate it: `ripr
+    // agent brief --seam-id` already refuses static-limitation classes
+    // (opaque and `*_unknown`) with an empty brief and a named omission
+    // warning (#6775, #7126). Offering the command would advertise a
+    // handoff the brief itself will not populate. The packet line stays:
+    // packets still render `inspect_static_limitation` for those seams.
+    if !entry.class.is_static_limitation() {
+        lines.push(format!(
+            "- brief: `{}`",
+            loop_commands::agent_brief_command(
+                &root,
+                seam_id,
+                loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+            )
+        ));
+    }
     lines.push(format!(
         "- after snapshot: `{}`",
         loop_commands::check_repo_exposure_command_with_base(
@@ -1287,8 +1295,8 @@ fn seam_class_reason(entry: &ClassifiedSeam) -> &'static str {
 /// kind and class. Mirrors the shape of `agent_seam_packets`'
 /// `missing_oracle_shape` so hover and packets stay in sync.
 fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
-    use crate::analysis::seams::{SeamGripClass, SeamKind};
-    if matches!(entry.class, SeamGripClass::Opaque) {
+    use crate::analysis::seams::SeamKind;
+    if entry.class.is_static_limitation() {
         return "Inspect the static limitation: helper, macro, or fixture that hides evidence."
             .to_string();
     }
@@ -1349,7 +1357,8 @@ mod seam_hover_tests {
                 description: "amount >= discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
@@ -1387,6 +1396,7 @@ mod seam_hover_tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -1494,6 +1504,7 @@ mod seam_hover_tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -1504,6 +1515,7 @@ mod seam_hover_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
         }
     }
 
@@ -2050,6 +2062,81 @@ mod seam_hover_tests {
         let md = extract_markup(&hover)?;
         if !md.contains("Inspect the static limitation") {
             return Err(format!("expected opaque next-step text in:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_class_seam_hover_advises_inspecting_static_limitation() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ActivationUnknown;
+        let diagnostic = sample_diagnostic();
+        let hover = classified_seam_hover_response(&seam, &diagnostic, None);
+        let md = extract_markup(&hover)?;
+        let next_step = md
+            .split("## Next step")
+            .nth(1)
+            .ok_or_else(|| format!("missing Next step section in unknown-class hover:\n{md}"))?;
+        if !next_step.contains(
+            "Inspect the static limitation: helper, macro, or fixture that hides evidence.",
+        ) {
+            return Err(format!(
+                "unknown-class next-step should inspect the static limitation:\n{md}"
+            ));
+        }
+        if next_step.contains("Add an exact-value assertion") {
+            return Err(format!(
+                "unknown-class next-step must not advise adding an assertion:\n{md}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_class_seam_hover_omits_brief_handoff_and_keeps_packet() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ActivationUnknown;
+        let diagnostic = sample_diagnostic();
+        let snapshot = sample_snapshot(Mode::Ready);
+        let hover = classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot));
+        let md = extract_markup(&hover)?;
+        let handoff = md
+            .split("## Handoff, verify, and receipt commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Handoff section in unknown-class hover:\n{md}"))?;
+        if !handoff.contains("- packet: `ripr agent packet --root") {
+            return Err(format!(
+                "unknown-class hover must keep the packet handoff:\n{md}"
+            ));
+        }
+        if handoff.contains("- brief:") {
+            return Err(format!(
+                "unknown-class hover must omit the brief handoff:\n{md}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_seam_hover_still_offers_brief_handoff() -> Result<(), String> {
+        let seam = weakly_gripped_classified();
+        let diagnostic = sample_diagnostic();
+        let snapshot = sample_snapshot(Mode::Ready);
+        let hover = classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot));
+        let md = extract_markup(&hover)?;
+        let handoff = md
+            .split("## Handoff, verify, and receipt commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Handoff section in ordinary-seam hover:\n{md}"))?;
+        if !handoff.contains("- brief: `ripr agent brief --root") {
+            return Err(format!(
+                "ordinary gap-class hover must keep the brief handoff:\n{md}"
+            ));
+        }
+        if !handoff.contains("- packet: `ripr agent packet --root") {
+            return Err(format!(
+                "ordinary gap-class hover must keep the packet handoff:\n{md}"
+            ));
         }
         Ok(())
     }

@@ -1,18 +1,41 @@
+use super::test_stub::{StubRoute, StubRouteDecision};
 use super::{CheckInput, Mode};
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use std::path::Path;
 
-/// What tree content a check run analyzed (#6304): the live working tree
-/// (`--worktree`), a fixed supplied scope (`--diff`, `--candidate-tree`),
-/// or committed history (an explicit or resolved base). The canonical triage
+/// What tree content a check run analyzed (#6304, #7257): the live working
+/// tree (explicit `--worktree` or the dirty-workspace default), a fixed
+/// supplied scope (`--diff`, `--candidate-tree`), or committed history (an
+/// explicit or resolved base, including `--committed`). The canonical triage
 /// adapter binds the DTO diff-source from this, never by deriving it from
 /// `output.base`: both committed and worktree runs resolve a base, while a
-/// supplied scope has none — base presence identifies neither mode.
+/// supplied scope has none — base presence identifies neither mode. Bind it
+/// from the effective analysis source, not from the `--worktree` flag alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckDiffProvenance {
     Worktree,
     SuppliedScope,
     CommittedHistory,
+}
+
+impl CheckDiffProvenance {
+    /// Provenance of the tree this check actually analyzed (#7257).
+    ///
+    /// `worktree_run` is the effective live source already used for analysis
+    /// (explicit `--worktree` **or** the dirty-workspace default). Selecting
+    /// from the `--worktree` flag alone misattributes that dirty default as
+    /// committed history. `--diff` / `--candidate-tree` stay a supplied
+    /// scope even when the checkout is dirty. Explicit `--committed` keeps
+    /// `worktree_run` false.
+    pub(crate) fn from_effective_source(worktree_run: bool, supplied_scope: bool) -> Self {
+        if worktree_run {
+            Self::Worktree
+        } else if supplied_scope {
+            Self::SuppliedScope
+        } else {
+            Self::CommittedHistory
+        }
+    }
 }
 
 /// Copy-pasteable sibling commands for a selected finding.
@@ -22,6 +45,9 @@ pub(crate) struct FindingNavigation {
     context_prefix: String,
     list_prefix: String,
     stub_prefix: String,
+    /// The `ripr agent stub` decision the check pipeline computed for its
+    /// selected finding (#5471). Absent means no route is printed.
+    stub_route: Option<StubRoute>,
 }
 
 impl FindingNavigation {
@@ -31,7 +57,23 @@ impl FindingNavigation {
             context_prefix: "ripr context".to_string(),
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
+            stub_route: None,
         }
+    }
+
+    /// Carry the check pipeline's stub-route decision to the renderer.
+    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
+        self.stub_route = stub_route;
+        self
+    }
+
+    /// The stub-route decision for `finding_id`, when one was computed for
+    /// that finding.
+    pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
+        self.stub_route
+            .as_ref()
+            .filter(|route| route.finding_id == finding_id)
+            .map(|route| &route.decision)
     }
 
     pub(crate) fn explain_command(&self, selector: &str) -> String {
@@ -44,11 +86,14 @@ impl FindingNavigation {
 
     /// The one-step `ripr agent stub` route from a finding location to a
     /// runnable test (#5355). It reads the working tree at the same root.
-    pub(crate) fn stub_command(&self, file: &str, line: usize) -> String {
+    /// `kind` is the finding's probe family, so the stub targets the seam
+    /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
-            "{} --at {}",
+            "{} --at {} --kind {}",
             self.stub_prefix,
-            shell_arg(&format!("{file}:{line}"))
+            shell_arg(&format!("{file}:{line}")),
+            shell_arg(kind)
         )
     }
 
@@ -103,6 +148,7 @@ pub(crate) fn finding_navigation_with_worktree(
             "ripr agent stub --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
+        stub_route: None,
     }
 }
 
@@ -324,7 +370,7 @@ mod tests {
             navigation.explain_command("probe:id"),
             navigation.context_command("probe:id"),
             navigation.list_command(),
-            navigation.stub_command("src/lib.rs", 5),
+            navigation.stub_command("src/lib.rs", 5, "predicate"),
         ] {
             assert!(
                 command.contains(&root_arg),
@@ -374,6 +420,44 @@ mod tests {
         assert!(
             command.contains("--diff -"),
             "stdin sentinel must stay `-`: {command}"
+        );
+    }
+
+    /// #7257: selecting provenance from `worktree_explicitly_provided` alone
+    /// labels a dirty-default run `CommittedHistory` while analysis used the
+    /// working tree. The effective-source helper must disagree with that
+    /// flag-only selector on this case.
+    #[test]
+    fn worktree_flag_alone_misattributes_a_dirty_default_run() {
+        let worktree_explicitly_provided = false;
+        let worktree_run = true;
+        let supplied_scope = false;
+        let flag_only = if worktree_explicitly_provided {
+            CheckDiffProvenance::Worktree
+        } else if supplied_scope {
+            CheckDiffProvenance::SuppliedScope
+        } else {
+            CheckDiffProvenance::CommittedHistory
+        };
+        assert_eq!(flag_only, CheckDiffProvenance::CommittedHistory);
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(worktree_run, supplied_scope),
+            CheckDiffProvenance::Worktree
+        );
+        // Explicit `--committed` and a clean default stay committed.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(false, false),
+            CheckDiffProvenance::CommittedHistory
+        );
+        // `--diff` / `--candidate-tree` cannot become live-tree claims.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(false, true),
+            CheckDiffProvenance::SuppliedScope
+        );
+        // Explicit `--worktree` agrees with the dirty default.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(true, false),
+            CheckDiffProvenance::Worktree
         );
     }
 }

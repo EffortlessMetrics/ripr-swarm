@@ -5,6 +5,7 @@ pub(crate) mod agent_seam_packets;
 #[path = "agent_seam_packets.rs"]
 mod agent_seam_packets_legacy;
 pub(crate) mod agent_workflow;
+pub(crate) mod analyzed_revisions;
 pub(crate) mod assistant_loop_health;
 pub(crate) mod badge;
 pub(crate) mod baseline;

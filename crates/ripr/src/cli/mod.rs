@@ -137,24 +137,50 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     // first side-effecting step (workflow execution and attempt publication),
     // so a lock loser fails closed without producing any workflow artifacts.
     let before_attempt = before_repair_attempt(&args)?;
-    let _before_lock = before_attempt
-        .as_ref()
-        .map(|options| lock_before_repair_attempt(&options.root))
-        .transpose()?;
     if let Some(options) = before_attempt {
-        let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-            "before-phase repair attempt is missing its seam identity".to_string()
-        })?;
-        let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
-            &options.root,
-            seam_id,
-        )?;
-        commands::run_before_repair_with_identity(options.clone(), &identity)?;
-        persist_before_repair_attempt(&options, &identity)?;
+        drive_before_phase(options)?;
     } else {
         execute::execute(parse::parse_args(args)?)?;
     }
     Ok(())
+}
+
+/// Drive one before phase through the locked publication path: serialize
+/// against concurrent before phases, prepare the attempt identity, run the
+/// shared workflow, and persist the attempt. Shared by the advanced
+/// `agent repair --phase before` spelling and the task-first `ripr repair`
+/// façade (#6305), so both produce the same attempt from the same subject.
+/// Returns the published attempt id so the façade can name the started
+/// attempt when its follow-on card render fails (#7032).
+pub(in crate::cli) fn drive_before_phase(
+    options: agent::AgentRepairOptions,
+) -> Result<String, CommandError> {
+    let (attempt_id, stdout_document) = drive_before_phase_deferring_stdout(options)?;
+    // The advanced spelling prints its success document immediately; only
+    // the façade holds stdout across its follow-on card render (#7032).
+    print!("{stdout_document}");
+    Ok(attempt_id)
+}
+
+/// The publication path of [`drive_before_phase`] with the success stdout
+/// returned instead of printed: the published attempt id plus the exact
+/// document the immediate route would have written. The task-first façade
+/// composes this with its card render so `cmd:repair` can keep
+/// `EXIT_TYPED_REFUSAL_EMPTY_STDOUT` honest when the card refuses after
+/// the attempt already exists (#7032).
+pub(in crate::cli) fn drive_before_phase_deferring_stdout(
+    options: agent::AgentRepairOptions,
+) -> Result<(String, String), CommandError> {
+    let _before_lock = lock_before_repair_attempt(&options.root)?;
+    let seam_id = options
+        .seam_id
+        .as_deref()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+    let identity =
+        crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
+    commands::run_before_repair_with_identity(options.clone(), &identity)?;
+    let stdout_document = persist_before_repair_attempt(&options, &identity)?;
+    Ok((identity.attempt_id().to_string(), stdout_document))
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -208,10 +234,32 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
     }
 }
 
+/// The before-phase disclosure for an attempt whose captured baseline is
+/// already ambiguous (#7204): the cage cannot prove the exact worktree state
+/// the attempt measures, so the attempt can never earn a compliant verdict.
+/// Printed in place of the unqualified "Next: add ..." edit directive, so an
+/// ambiguous attempt opens with one coherent route instead of contradictory
+/// next steps; the attempt manifest records the same limitation.
+fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "warning: the captured edit-cage baseline for this attempt records `ambiguous: true` ({}); the cage cannot prove the exact worktree state the attempt measures, so its after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface.",
+            baseline_path.display()
+        ),
+        "the attempt manifest records this limitation. To invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and run the same --phase before command again from the clean state; continuing with this attempt ends in a terminal refusal either way."
+            .to_string(),
+    ]
+}
+
+/// Publish one before attempt and return its success stdout: the exact
+/// document the caller prints (or holds, façade-side, until its follow-on
+/// card renders). Composing the document without printing keeps one owner
+/// for the bytes, so the immediate and deferred routes cannot drift
+/// (#7032).
 fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
@@ -313,6 +361,12 @@ fn persist_before_repair_attempt(
         },
         identity,
     )?;
+    // #7204: the staged baseline artifact — read back through the
+    // publication result, the same authority that decided the manifest's
+    // limitations entry — is the one disclosure source. Narration, the
+    // continuation, and the manifest cannot drift apart when the
+    // workflow-path capture is replaced between capture and staging.
+    let baseline_ambiguous = result.baseline_ambiguous;
     // The persist total stops at publication: everything below is success
     // narration and stdout rendering, and a slow stdout reader must not
     // inflate the persistence measurement (#6917).
@@ -330,6 +384,7 @@ fn persist_before_repair_attempt(
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
+        baseline_ambiguous,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -337,16 +392,44 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
-    eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
-    );
+    // #7204: an attempt whose captured baseline is already ambiguous can
+    // never be scored, so the disclosure comes BEFORE any edit directive and
+    // the ambiguous branch replaces the unqualified "Next: add ..." line —
+    // one coherent route instead of contradictory next steps.
+    if baseline_ambiguous {
+        for line in baseline_ambiguous_disclosure_lines(&edit_cage_baseline) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+    } else if policy.inline_test_module_target {
+        // #5210: the cage admits only new test functions inserted into the
+        // target's inline test module, so "strengthen" an existing test, or
+        // any other byte of the production file, would fail the attempt.
+        eprintln!(
+            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the --attempt command printed below. Any other edit fails the attempt terminally.",
+            policy.selected_target.path()
+        );
+    } else {
+        eprintln!(
+            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
+        );
+    }
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
-    eprintln!(
-        "ripr: repair attempt {} is awaiting the focused test edit",
-        result.manifest.repair_attempt_id.as_str()
-    );
+    if baseline_ambiguous {
+        eprintln!(
+            "ripr: repair attempt {} is awaiting the focused test edit, though its ambiguous baseline (above) means this attempt ends in a terminal Incomparable refusal either way; for a scorable attempt, restart from a clean state as described above.",
+            result.manifest.repair_attempt_id.as_str()
+        );
+    } else {
+        eprintln!(
+            "ripr: repair attempt {} is awaiting the focused test edit",
+            result.manifest.repair_attempt_id.as_str()
+        );
+    }
     eprintln!(
         "{}",
         crate::output::human::terminal_safe(format!(
@@ -363,25 +446,15 @@ fn persist_before_repair_attempt(
     if let Some(form) = &next_powershell {
         eprintln!("ripr: attempt next command (PowerShell): {form}");
     }
-    print!(
-        "{}",
-        commands::before_phase_stdout(
-            &packet_text,
-            &agent_packet.display().to_string(),
-            options.json,
-            &continuation,
-        )?
-    );
-    if !options.json {
-        println!(
-            "Next, after the test edit: {}",
-            result.manifest.next_command
-        );
-        if let Some(form) = &next_powershell {
-            println!("(PowerShell) {form}");
-        }
-    }
-    Ok(())
+    // The stdout document owns its trailer: the after-edit directive, or the
+    // #7204 ambiguity warning and clean-state restart for an unscorable
+    // attempt.
+    commands::before_phase_stdout(
+        &packet_text,
+        &agent_packet.display().to_string(),
+        options.json,
+        &continuation,
+    )
 }
 
 #[cfg(test)]
@@ -426,6 +499,26 @@ mod tests {
         assert_eq!(EXIT_COMPLETED, 0);
         assert_eq!(EXIT_COULD_NOT_COMPLETE, 2);
         assert_eq!(EXIT_DECISION_OR_REFUSAL, 3);
+    }
+
+    /// The #7204 before-phase disclosure names the recorded ambiguity, the
+    /// artifact that records it, and the honest consequence, so an agent can
+    /// choose a clean state before investing the focused test edit.
+    #[test]
+    fn baseline_ambiguous_disclosure_names_flag_artifact_and_consequence() {
+        let baseline = Path::new("target/ripr/workflow/attempt-baseline.json");
+        let joined = baseline_ambiguous_disclosure_lines(baseline).join("\n");
+        for fragment in [
+            "ambiguous: true",
+            "attempt-baseline.json",
+            "Incomparable",
+            "--phase before",
+        ] {
+            assert!(
+                joined.contains(fragment),
+                "ambiguity disclosure must name `{fragment}`:\n{joined}"
+            );
+        }
     }
 
     #[test]

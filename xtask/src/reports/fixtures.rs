@@ -10,7 +10,7 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run, run_output_owned, run_output_owned_with_envs};
+use crate::run::{run, run_output_optional, run_output_owned, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
@@ -119,13 +119,20 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn goldens_check() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    // One provenance snapshot backs both the drift report and the console
+    // failure card, so the two always name the same build (#7401).
+    let provenance = golden_drift_provenance();
+    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
         Ok(())
     } else {
-        Err(goldens_check_failure_message(&entries, &run_set.violations))
+        Err(goldens_check_failure_message(
+            &entries,
+            &run_set.violations,
+            &provenance,
+        ))
     }
 }
 
@@ -150,10 +157,17 @@ pub(crate) fn golden_assistant_loop_health_contract_violations_at(
 pub(crate) fn goldens_check_failure_message(
     entries: &[GoldenDriftEntry],
     violations: &[String],
+    provenance: &GoldenDriftProvenance,
 ) -> String {
     let mut message = String::from(
         "goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md\n",
     );
+    // The actual side came from one specific build; name it so a CI log and
+    // a local run can be told apart without guessing (#7401).
+    message.push_str(&format!(
+        "  produced by: {} (binary `{}`, revision `{}`)\n",
+        provenance.ripr_version, provenance.binary, provenance.revision
+    ));
     for entry in entries {
         let blessing = if entry.blessing_reason_present {
             "blessing CHANGELOG present"
@@ -198,7 +212,8 @@ pub(crate) fn goldens_check_failure_message(
 
 pub(crate) fn golden_drift_impl() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    let provenance = golden_drift_provenance();
+    write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     if run_set
         .violations
         .iter()
@@ -431,6 +446,9 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
                     | "rust-verdict-corpus"
+                    | "typescript-verdict-corpus"
+                    | "python-verdict-corpus"
+                    | "perl-verdict-corpus"
                     | "release_control"
                     | "release_denominator"
                     | "release_scope"
@@ -438,6 +456,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
+                    | "work_selection_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -799,6 +818,38 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     })
 }
 
+/// Memoized result of the one `cargo build -p ripr --features lang-perl` this
+/// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
+static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// The debug binary with the `lang-perl` preview adapter compiled in, for the
+/// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
+/// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
+/// the Perl build is copied to its own `ripr-lang-perl` name and the default
+/// build is restored, so a Rust run in this process never gets the Perl
+/// feature set. A default build from another process can still land between
+/// the Perl build and its copy; the corpus run then refuses every packet case
+/// rather than scoring it (see `run_case`). No build lock is taken: the
+/// fixture-cache tests hold Cargo's own lock and need the child to wait there.
+/// Only the `ripr` crate recompiles.
+pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
+    let shared = ripr_debug_binary();
+    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        fs::copy(&shared, &perl).map_err(|err| {
+            format!(
+                "copy {} to {} failed: {err}",
+                shared.display(),
+                perl.display()
+            )
+        })?;
+        // Restore the default binary. Cargo keeps both feature sets'
+        // artifacts, so this only relinks.
+        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+    })
+}
+
 /// Resolve `binary` after ensuring `build` has run exactly once for `build_once`.
 ///
 /// The build is unconditional with respect to the binary already existing — that
@@ -894,6 +945,14 @@ fn compare_golden(
 ) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
     let actual_text = read_text_lossy(actual)?;
+    let (expected_text, actual_text) = if surface == "check.json" {
+        (
+            normalize_check_json_golden_document(&expected_text),
+            normalize_check_json_golden_document(&actual_text),
+        )
+    } else {
+        (expected_text, actual_text)
+    };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
     Ok(GoldenComparison {
@@ -965,7 +1024,68 @@ fn snapshot_line_preview(line: &str) -> String {
     preview
 }
 
+/// Classification goldens pin analyzer findings, not the check-JSON
+/// canonical next-action projection (#7258). Strip that one last member so
+/// embedding it on the public CLI path does not force a corpus-wide golden
+/// refresh. Dedicated CLI/schema tests own the field.
+fn strip_canonical_next_action_member(value: &str) -> String {
+    const MARKER: &str = "\n  \"canonical_next_action\": ";
+    let Some(start) = value.rfind(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    // The check JSON adapter appends a compact one-line value, then the
+    // object's closing brace. The first newline after the marker is that
+    // terminator (`\n}` plus an optional trailing newline), not a later
+    // trailing newline that would drop the brace.
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    let mut stripped = value[..start].to_string();
+    if stripped.ends_with(',') {
+        stripped.pop();
+    }
+    stripped.push_str(&rest[end..]);
+    stripped
+}
+
+/// Last-member append reconstitutes a pretty root closer (`]\n}`). One
+/// classification golden still stores compact `]}`. Normalize both so
+/// embedding `canonical_next_action` does not look like findings drift.
+fn split_compact_root_object_closer(value: &str) -> String {
+    let trailing_newline = value.ends_with('\n');
+    let trimmed = value.trim_end();
+    let Some(without_brace) = trimmed.strip_suffix('}') else {
+        return value.to_string();
+    };
+    if without_brace.ends_with('\n') {
+        return value.to_string();
+    }
+    let Some(without_bracket) = without_brace.strip_suffix(']') else {
+        return value.to_string();
+    };
+    // Keep one-line documents such as `{"findings":[]}` intact. Compact
+    // fixture goldens place `]}` after indent: `  ]}`.
+    if !without_bracket.ends_with(|ch: char| ch.is_whitespace()) {
+        return value.to_string();
+    }
+    let mut split = String::with_capacity(value.len() + 1);
+    split.push_str(without_bracket);
+    split.push(']');
+    split.push('\n');
+    split.push('}');
+    if trailing_newline {
+        split.push('\n');
+    }
+    split
+}
+
+fn normalize_check_json_golden_document(value: &str) -> String {
+    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+}
+
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    let value = normalize_check_json_golden_document(value);
     // #2337: match the human normalizer's approach — replace ALL backslashes
     // with forward slashes, not just the escaped double-backslash form. On
     // Windows, ripr check --json can emit single-backslash paths inside
@@ -1155,14 +1275,60 @@ fn goldens_check_report_body(
     body
 }
 
+/// Build identity for the actual side of a golden drift report (#7401).
+/// `goldens check` compares committed `expected/` bytes against bytes a
+/// freshly built binary just produced, but neither the console failure card
+/// nor the drift report recorded which build the actual side came from — a
+/// drift entry could not be tied to the binary that generated it. Every
+/// field fails soft to an explicit `unavailable` note: identity here is
+/// disclosure, not gate authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GoldenDriftProvenance {
+    /// The worktree-absolute debug binary every fixture spawn used.
+    pub(crate) binary: String,
+    /// Its `ripr --version` line: `ripr <version> (<commit>[-dirty])`.
+    pub(crate) ripr_version: String,
+    /// `git rev-parse HEAD` of the checkout the report ran in.
+    pub(crate) revision: String,
+}
+
+fn golden_drift_provenance() -> GoldenDriftProvenance {
+    let binary = ripr_fixture_binary().unwrap_or_else(|_| "unavailable".to_string());
+    let ripr_version = if binary == "unavailable" {
+        "unavailable".to_string()
+    } else {
+        run_output_optional(&binary, &["--version"])
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "unavailable".to_string())
+    };
+    let revision = run_output_optional("git", &["rev-parse", "HEAD"])
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "unavailable".to_string());
+    GoldenDriftProvenance {
+        binary,
+        ripr_version,
+        revision,
+    }
+}
+
 fn write_golden_drift_reports(
     runs: &[FixtureRun],
     violations: &[String],
+    provenance: &GoldenDriftProvenance,
 ) -> Result<Vec<GoldenDriftEntry>, String> {
     let changed_paths = collect_changed_paths_set().unwrap_or_default();
     let entries = golden_drift_entries(runs, &changed_paths)?;
-    let markdown = golden_drift_markdown(&entries, violations);
-    let json = golden_drift_json(&entries, violations);
+    let markdown = golden_drift_markdown(&entries, violations, provenance);
+    let json = golden_drift_json(&entries, violations, provenance);
     write_report("golden-drift.md", &markdown)?;
     write_report("golden-drift.json", &json)?;
     Ok(entries)
@@ -1318,7 +1484,11 @@ pub(crate) fn golden_drift_semantics(
     }
 }
 
-fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) -> String {
+fn golden_drift_markdown(
+    entries: &[GoldenDriftEntry],
+    violations: &[String],
+    provenance: &GoldenDriftProvenance,
+) -> String {
     let status = if violations
         .iter()
         .any(|violation| !violation.contains("drift for fixture"))
@@ -1331,7 +1501,11 @@ fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) ->
     };
     let mut body = format!("# ripr golden drift report\n\nStatus: {status}\n\n");
     body.push_str("This report summarizes expected-output drift for reviewer inspection. It never blesses goldens.\n\n");
-    body.push_str("## Summary\n\n");
+    body.push_str("## Provenance\n\n");
+    body.push_str(&format!("- binary: `{}`\n", provenance.binary));
+    body.push_str(&format!("- ripr version: `{}`\n", provenance.ripr_version));
+    body.push_str(&format!("- revision: `{}`\n", provenance.revision));
+    body.push_str("\n## Summary\n\n");
     body.push_str(&format!("- drift entries: {}\n", entries.len()));
     body.push_str(&format!(
         "- fixture errors: {}\n",
@@ -1416,7 +1590,11 @@ fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) ->
     body
 }
 
-fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> String {
+fn golden_drift_json(
+    entries: &[GoldenDriftEntry],
+    violations: &[String],
+    provenance: &GoldenDriftProvenance,
+) -> String {
     let status = if violations
         .iter()
         .any(|violation| !violation.contains("drift for fixture"))
@@ -1431,6 +1609,20 @@ fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> Str
     body.push_str("  \"schema_version\": \"0.1\",\n");
     body.push_str(&format!("  \"status\": \"{}\",\n", json_escape(status)));
     body.push_str(&format!("  \"drift_count\": {},\n", entries.len()));
+    body.push_str("  \"provenance\": {\n");
+    body.push_str(&format!(
+        "    \"binary\": \"{}\",\n",
+        json_escape(&provenance.binary)
+    ));
+    body.push_str(&format!(
+        "    \"ripr_version\": \"{}\",\n",
+        json_escape(&provenance.ripr_version)
+    ));
+    body.push_str(&format!(
+        "    \"revision\": \"{}\"\n",
+        json_escape(&provenance.revision)
+    ));
+    body.push_str("  },\n");
     body.push_str("  \"entries\": [\n");
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
@@ -1453,6 +1645,23 @@ fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> Str
             "      \"actual\": \"{}\",\n",
             json_escape(&entry.actual)
         ));
+        // Each entry carries the build identity too, so a copied or
+        // retained single entry stays tied to the binary that produced its
+        // actual side (#7401).
+        body.push_str("      \"provenance\": {\n");
+        body.push_str(&format!(
+            "        \"binary\": \"{}\",\n",
+            json_escape(&provenance.binary)
+        ));
+        body.push_str(&format!(
+            "        \"ripr_version\": \"{}\",\n",
+            json_escape(&provenance.ripr_version)
+        ));
+        body.push_str(&format!(
+            "        \"revision\": \"{}\"\n",
+            json_escape(&provenance.revision)
+        ));
+        body.push_str("      },\n");
         body.push_str(&format!(
             "      \"changed_line_count\": {},\n",
             entry.semantics.changed_line_count
@@ -2019,6 +2228,55 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn golden_drift_reports_record_the_producing_build() -> Result<(), String> {
+        // #7401: neither the drift report nor the console card recorded which
+        // binary build produced the actual side; both now carry binary,
+        // version, and revision in the header and in each JSON entry.
+        let provenance = GoldenDriftProvenance {
+            binary: "/work/target/debug/ripr".to_string(),
+            ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+            revision: "abc123".to_string(),
+        };
+        let entries = vec![GoldenDriftEntry {
+            fixture: "python_field_assignment_shape".to_string(),
+            surface: "check.json".to_string(),
+            expected: "fixtures/x/expected/check.json".to_string(),
+            actual: "target/x/actual/check.json".to_string(),
+            blessing_reason_required: true,
+            blessing_reason_present: false,
+            semantics: GoldenDriftSemantics::default(),
+        }];
+        let markdown = golden_drift_markdown(&entries, &[], &provenance);
+        assert!(markdown.contains("## Provenance"), "{markdown}");
+        assert!(
+            markdown.contains("- binary: `/work/target/debug/ripr`"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("- ripr version: `ripr 0.11.0 (abc123)`"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("- revision: `abc123`"), "{markdown}");
+
+        let json = golden_drift_json(&entries, &[], &provenance);
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| format!("golden drift JSON must parse: {error}"))?;
+        assert_eq!(value["provenance"]["binary"], "/work/target/debug/ripr");
+        assert_eq!(value["provenance"]["ripr_version"], "ripr 0.11.0 (abc123)");
+        assert_eq!(value["provenance"]["revision"], "abc123");
+        assert_eq!(
+            value["entries"][0]["provenance"]["binary"],
+            "/work/target/debug/ripr"
+        );
+        assert_eq!(
+            value["entries"][0]["provenance"]["ripr_version"],
+            "ripr 0.11.0 (abc123)"
+        );
+        assert_eq!(value["entries"][0]["provenance"]["revision"], "abc123");
+        Ok(())
+    }
+
+    #[test]
     fn cwd_projection_unquotes_a_spaced_checkout_and_keeps_needed_quotes() {
         let prefix = "/tmp/my checkout/";
         // A bare tail renders quoted only because of the prefix: golden form.
@@ -2117,6 +2375,94 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn normalize_json_strips_canonical_next_action_without_touching_findings() -> Result<(), String>
+    {
+        let input = "{\n  \"findings\": [{\"id\":\"gap-1\"}],\n  \"source_subject\": {\"digest_algorithm\":\"sha256\"},\n  \"canonical_next_action\": {\"schema_version\":\"canonical_next_action.v1\",\"action_class\":\"inspect_details\"}\n}\n";
+        let out = normalize_fixture_json_output(input);
+        if out.contains("canonical_next_action") {
+            return Err(format!(
+                "fixture goldens must not absorb the check JSON action: {out}"
+            ));
+        }
+        if !(out.contains("\"findings\"") && out.contains("source_subject")) {
+            return Err(format!(
+                "strip must keep the classification document: {out}"
+            ));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|error| format!("stripped output must remain JSON: {error}"))?;
+        if parsed.get("canonical_next_action").is_some() {
+            return Err("parsed document still has canonical_next_action".to_string());
+        }
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        if parsed["source_subject"]["digest_algorithm"] != "sha256" {
+            return Err(format!(
+                "closing brace after the compact member must survive strip: {out}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn simulate_append_canonical_next_action(rendered: &str) -> String {
+        let trimmed = rendered.trim_end();
+        let Some(body) = trimmed.strip_suffix('}') else {
+            return rendered.to_string();
+        };
+        let body = body.trim_end();
+        let newline = if rendered.ends_with('\n') { "\n" } else { "" };
+        format!(
+            "{body},\n  \"canonical_next_action\": {{\"schema_version\":\"canonical_next_action.v1\"}}\n}}{newline}"
+        )
+    }
+
+    #[test]
+    fn compact_findings_closer_golden_matches_after_last_member_strip() -> Result<(), String> {
+        let compact = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let pretty = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]\n}\n";
+        let appended = simulate_append_canonical_next_action(compact);
+        let compact_out = normalize_check_json_golden_document(compact);
+        let appended_out = normalize_check_json_golden_document(&appended);
+        let pretty_out = normalize_check_json_golden_document(pretty);
+        if compact_out != appended_out {
+            return Err(format!(
+                "compact findings closer golden must match reconstituted last-member strip\ncompact: {compact_out:?}\nappended: {appended_out:?}"
+            ));
+        }
+        if compact_out != pretty_out {
+            return Err(format!(
+                "compact and pretty findings closers must share one normalized form\ncompact: {compact_out:?}\npretty: {pretty_out:?}"
+            ));
+        }
+        if compact_out.contains("canonical_next_action") {
+            return Err(format!("strip leaked the last member: {compact_out}"));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&compact_out)
+            .map_err(|error| format!("normalized compact closer must stay JSON: {error}"))?;
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_findings_document_keeps_its_compact_closer() {
+        let input = r#"{"findings":[{"id":"gap-1"}]}"#;
+        assert_eq!(normalize_check_json_golden_document(input), input);
+    }
+
+    #[test]
+    fn compact_closer_normalization_still_sees_finding_id_drift() {
+        let left = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let right = "{\n  \"findings\": [\n    {\"id\":\"gap-2\"}\n  ]}\n";
+        assert_ne!(
+            normalize_check_json_golden_document(left),
+            normalize_check_json_golden_document(right)
+        );
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};

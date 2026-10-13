@@ -34,14 +34,18 @@ pub(crate) use classification::{
     ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_NOT_CREDITED_PREFIX,
     ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP, ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
     ASSERTION_SHAPED_OWNER_REASON, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
-    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, LIMITATION_ANALYZER_ROUTE_PREFIX,
-    LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
-    LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, CALLEE_ONLY_REACH_PREFIX,
+    LIMITATION_ANALYZER_ROUTE_PREFIX, LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+    LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX, LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP,
+    TRANSITIVE_REACH_WITNESS_PREFIX,
 };
+pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, CommandSpecValidationError, EnvironmentAssignment,
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy,
+    actionable_verify_source_is_supported,
+    verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,

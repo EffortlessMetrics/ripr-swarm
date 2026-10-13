@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -77,7 +77,7 @@ def perr_split_tests(text):
+ 
+ def perr_match_anything(text):
+     if not text:
+-        raise KeyError("empty")
++        raise KeyError("blank")
+     return int(text)
+ 
+ 

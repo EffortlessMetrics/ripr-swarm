@@ -1,0 +1,12 @@
+diff --git a/src/priceAlias.ts b/src/priceAlias.ts
+index 0000000..1111111 100644
+--- a/src/priceAlias.ts
++++ b/src/priceAlias.ts
+@@ -1,6 +1,6 @@
+ export function priceAlias(amount: number): number {
+   if (amount > 100) {
+-    return amount - 10;
++    return amount - 20;
+   }
+   return amount;
+ }

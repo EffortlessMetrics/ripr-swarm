@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-nodetest-footer-unasserted",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-footer-unasserted.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 64
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "no_test_references_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return `Thanks for shopping at ${storeName}!`;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the footer reads \"Thanks for shopping\" instead of \"Thank you for shopping\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test references receiptFooter, so the wording change passes. ripr reports no_static_path, an acceptable limit; the ideal verdict is a gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

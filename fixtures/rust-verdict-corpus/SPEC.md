@@ -10,10 +10,16 @@ itoa, bytesize, rusqlite, strsim, atuin; semver and bytesize at two pins) under
 with license files (Rust sources stored as `.rs.txt`), small authored
 crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
-`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`
-and `authored-roles` for test shapes other RIPR specs define, each case naming
-its specs in its reasoning; one `authored-specNNNN-<k>` crate per acceptance
-example of RIPR-SPEC-0225 to 0228, isolated so no other example's test relates
+`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
+`authored-roles`, `authored-old-errors`, `authored-old-tool`,
+`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
+define, each case naming its specs in its reasoning; one
+`authored-specNNNN-<k>` crate per acceptance
+example of RIPR-SPEC-0225 to 0229 and of the reach, macro and miss-evidence
+specs 0114, 0115, 0117, 0118, 0119, 0120, 0125 and 0224 (examples that
+describe the same fixture share one crate, and an example with two tests on
+different inputs splits into `<k>a` and `<k>b`), isolated so no other
+example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
 invariant, helper-wrapped assert and no assertion; `authored-trap-kit` and
@@ -29,7 +35,9 @@ oracle confirmation (RIPR-SPEC-0094), non-escaping sinks (0096), owner-result
 field bindings and same-name owner resolution (0005) and owner-return
 identity traps (0197); `authored-spec-harness` for harness and package-reach
 cells: libtest-mimic trials (RIPR-SPEC-0173), `cargo_bin` subprocess output
-(0166) and xtask edits (0153)), and
+(0166) and xtask edits (0153); four `authored-grid-*` crates for
+control-flow, changed-binding, Result-match and bitwise or input-length
+cells), and
 one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
@@ -40,10 +48,11 @@ checkout (for an authored crate, the whole stored crate).
 `corpus.json` holds only the corpus header. Each subject is
 `subjects/<subject_id>.json` beside its retained files, and each case is
 `cases/<case_id>.json` beside its `cases/<case_id>.diff`. A file must be
-named after the id it holds. The expected state is `expected/summary.json`
-(aggregate rates) and one `expected/rows/<case_id>.json` per case. Adding a
-case therefore adds files; only the summary's counts are lines another PR
-may also change.
+named after the id it holds. The expected state is one
+`expected/rows/<case_id>.json` per case and nothing else. Each row carries
+its own contradiction counts, so the aggregate rates are derived from the
+rows when they are read; no summary file is committed. Adding a case
+therefore adds files and changes no line another case PR changes.
 
 ## When
 
@@ -59,8 +68,26 @@ named cases and compares only their rows. The required Rust gate runs
 Each case scores as ideal, abstained, false actionable, false exposed, or
 false silent against its label; contradictions inside ripr's own output are
 counted; authored rates are reported apart from upstream rates; and every
-row must equal its expected row file, the summary must equal
-`expected/summary.json`, and `expected/` holds nothing else.
+row must equal its expected row file and `expected/` holds nothing else
+(a leftover `expected/summary.json` is reported as stale).
+
+A case may cite the numbered spec acceptance examples it labels in
+`spec_examples` (`RIPR-SPEC-NNNN#K`). `spec-coverage.toml` scopes every spec
+with numbered acceptance examples in or out, waives in-scope examples no
+case can label (each with a reason), lists in-scope specs with prose
+examples as unmeasured, and records `floor`. The report's
+`spec_example_coverage` section gives covered over in-scope minus waived
+examples and the uncovered example numbers per spec; `validate` and `check`
+fail when covered falls below `floor`; in CI the xtask test
+`committed_ledger_is_valid_and_meets_its_floor` enforces it.
+
+A case may also carry `expected_oracle` (`kind`, `strength`, optional
+`test`, `spec`): the related-test oracle kind and strength a spec adopts.
+The report's `oracle_accuracy` section scores ripr's strongest reported
+entry for that test as `match`, `overclaim`, `underclaim`, `kind_mismatch`
+or `unobserved`, apart from the verdict rates; `check` fails when matches
+fall below `[oracle] match_floor` or overclaims rise above
+`[oracle] overclaim_ceiling` in `spec-coverage.toml`.
 
 ## Must Not
 
@@ -73,13 +100,17 @@ row must equal its expected row file, the summary must equal
 
 Write `cases/<id>.diff` and `cases/<id>.json`, run
 `cargo xtask verdict-corpus check --cases <id>` while iterating, then
-`cargo xtask verdict-corpus bless` once to add its row and refresh the
-summary. When two case PRs both change `expected/summary.json`, merge main
-and run `bless` again; the rows themselves do not conflict.
+`cargo xtask verdict-corpus bless` once to add its row. A case PR does not
+refresh `docs/PUBLIC_PROOF.md` or `metrics/public-proof/verdict-corpus.json`:
+that page is a snapshot of the corpus, refreshed on its own with
+`cargo xtask public-proof --refresh-receipts` when the nightly Public Proof
+Drift lane reports that it lags.
 
 A branch written against the one-file layout (subjects and cases inside
 `corpus.json`) resolves its merge conflict by keeping its own
 `corpus.json`, running `cargo xtask verdict-corpus split`, and then `bless`.
+A branch that still carries `expected/summary.json` deletes it when it
+merges main and runs `bless` again.
 
 ## Refreshing
 
@@ -88,6 +119,12 @@ case. Read `target/ripr/reports/verdict-corpus/report.md`. A row
 marked `changed_since_labeling` must be re-checked against the full pinned
 checkout (for an authored crate, the stored crate itself) before the
 expected state is refreshed with `cargo xtask verdict-corpus bless`.
+
+When a new case labels a spec example, add its id to the case's
+`spec_examples` and re-bless; raise `floor` in
+`spec-coverage.toml` to the new covered count (`check` prints it). A new
+spec with numbered acceptance examples fails `validate` until it has a
+`[[spec]]` entry.
 
 ## Re-deriving truth
 
@@ -99,3 +136,8 @@ and `failing_test` must be one exact test name. Upstream cases replay with
 `--checkouts <dir>` holding `<dir>/<subject_id>` at the pinned commit, with
 its dependencies already fetched, because cargo runs offline. Run it
 on every new or relabeled case before opening the PR.
+
+When a spec states the oracle kind and strength for a case's related test,
+add `expected_oracle`, re-bless, and set `[oracle]` `match_floor` and
+`overclaim_ceiling` to the report's counts. When ripr's oracle reading
+improves, `check` prints the tighter numbers to commit.

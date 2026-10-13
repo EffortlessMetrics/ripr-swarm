@@ -46,7 +46,7 @@
       "limited"
     ]
   },
-  "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0197, RIPR-SPEC-0001, RIPR-SPEC-0231.",
+  "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0001, RIPR-SPEC-0231.",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

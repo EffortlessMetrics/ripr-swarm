@@ -39,7 +39,8 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No schema version bump.
+- No output schema version bump. The seam cache schema moves (1.48) because
+  cached verdicts change.
 
 ## Problem
 
@@ -173,6 +174,38 @@ rejected alternative. Any can be reversed later without touching the rest.
    withholding route with its own `static_limit_kind`, so a refused equality
    gate reads as an analyzer limit instead of a gap.
 
+4. **First implementation scope (2026-10-07, false-verdict push before
+   0.11).** Field credit is an owner-return pin
+   (`OwnerReturnPin::establish_whole_value_field`), so rule 1's call
+   identity and execution gates are RIPR-SPEC-0197's own. Adopted, each
+   narrower than the text above and failing closed:
+   - the owner's tail is the literal, or `Ok(..)`/`Some(..)` around it
+     matching a declared `Result`/`Option` return; a workspace enum wrapper
+     is not read yet, so example 14 is refused at the wrapper;
+   - the body has no `return` and no macro that may hide an exit, and `?`
+     only around a wrapped tail; the changed field's value evaluates on every
+     input;
+   - a `let` binding of the owner call counts only when the test names the
+     binding exactly twice (the `let` and the compared operand), which also
+     refuses examples 12, 13 and 15;
+   - an expected field value may be a literal (negated too), a tuple or
+     array of admissible values, a CamelCase variant or struct constructor of
+     such values, or a string literal's `.to_string()`,
+     `.to_owned()`, `String::from(..)` or (for a `String` field) `.into()`;
+     constants are refused, since a `const` may be computed by a workspace
+     `const fn`; generic types and `.into()` inside nested constructors are
+     refused too. `String::from(..)` counts only when `String` names the
+     standard type workspace-wide: a workspace `mod String`, type, fn,
+     const, static, trait, macro or variant of that name, a rename to it, or
+     a non-std `use` of it refuses the pin, because the shadowed `from` can
+     return the owner's own field and both compared operands then move
+     together (#7066 review);
+   A field read inside the braces of an expected literal no longer clears the
+   `FieldValue` missing discriminator (example 12, which had read `exposed`).
+   The parser-backed `whole_object_equality` classifier change is not part of
+   this step: field credit parses the expected literal itself, so a brace
+   elsewhere cannot earn it.
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
@@ -239,9 +272,13 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/observation_unverified_field_construction`,
   `fixtures/rust_field_construction_token_coincidence`.
 - Verdict corpus: 17 cases `spec0225-*` in
-  `fixtures/rust-verdict-corpus/corpus.json`, one per buildable acceptance
+  `fixtures/rust-verdict-corpus/cases/`, one per buildable acceptance
   example, each naming its example in its reasoning and labeled with runtime
   mutant truth.
+- Honesty corpus: `rust_owner_pin_whole_value_string_from_shadow` in
+  `fixtures/evidence-promotion-honesty-corpus/corpus.json`, the
+  should-stay-`weakly_exposed` control for the `String::from` shadow
+  refusal (#7066 review).
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 
@@ -252,7 +289,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 - `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
   named field in an admitted whole-value literal.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
-  execution admission.
+  execution admission (`establish_whole_value_field`, `whole_value_tail`,
+  `WholeValueField::admits`, `bound_owner_call`).
 
 ## Metrics
 

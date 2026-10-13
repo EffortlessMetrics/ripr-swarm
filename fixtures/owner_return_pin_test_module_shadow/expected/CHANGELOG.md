@@ -24,3 +24,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_test_module_shadow (3)
+
+Reason:
+RIPR-SPEC-0122 #5312: widen the before span-cut from predicates to every canonical-shape family (match arms exempt); human-full before: drops the `,` framing to match after
+
+Command:
+`cargo xtask goldens bless owner_return_pin_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

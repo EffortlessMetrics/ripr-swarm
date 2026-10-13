@@ -62,3 +62,20 @@ byte-compare — the routed CI run at the same merge head re-executes this test
 against the hosted build and compares the committed bytes bit for bit, so the
 hosted run remains the binding check. The original hosted-only capture above
 stays the protocol for unchanged-behavior refreshes.
+
+## 2026-10-07 refresh — intentional stub-route drift (#5471, PR #6306)
+
+The ten `human.txt` reports that print a stub route were regenerated because
+#6306 changes that line on purpose: the route now names the finding's probe
+family (`ripr agent stub ... --at src/lib.rs:2 --kind return_value`), and
+check prints it only when the stub resolver would answer with a stub (spec
+RIPR-SPEC-0122). The diff is exactly that one line in each of the ten files.
+`check.json` and every `human-full.txt` are byte-identical to the 2026-10-05
+bytes, and the four exact/guarded asserting wrappers print no route, so
+classifications, counts, probe families, oracle kinds/strengths and
+consumers are unchanged.
+
+Provenance: local build of the PR head tree, regenerated with the same
+commands the CLI-control test executes, with `--root` relative to the
+workspace root. As above, these are provisional local bytes; the routed
+hosted run on the same head is the binding byte-compare.

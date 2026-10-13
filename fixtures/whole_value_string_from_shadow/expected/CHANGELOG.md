@@ -1,0 +1,52 @@
+# Golden Output Changes
+
+## Pending — whole_value_string_from_shadow (1)
+
+Reason:
+RIPR-SPEC-0225: #7066 review control - a test-file mod String shadows the String::from conversion, so the whole-value field pin must refuse it and the finding stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — whole_value_string_from_shadow (2)
+
+Reason:
+RIPR-SPEC-0225: #7066 review control - a test-file mod String shadows the String::from conversion, so the whole-value field pin must refuse it and the finding stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — whole_value_string_from_shadow (3)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — whole_value_string_from_shadow (4)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

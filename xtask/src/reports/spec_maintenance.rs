@@ -999,14 +999,23 @@ fn render_markdown(report: &SpecMaintenanceReportV1) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static FIXTURE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+    // The clock alone collides when tests run in parallel, so a sibling
+    // test's spec file can land in a root another test expects to be empty.
     fn fixture_root() -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("ripr-spec-maintenance-{stamp}"));
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-spec-maintenance-{}-{stamp}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(root.join("docs/specs")).map_err(|error| error.to_string())?;
         Ok(root)
     }

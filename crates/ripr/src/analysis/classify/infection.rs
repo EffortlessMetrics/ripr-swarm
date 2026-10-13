@@ -27,18 +27,18 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
     match probe.family {
         ProbeFamily::Predicate => {
             let probe_literals = boundary_literals(&probe.expression);
-            let test_literals = related_tests
+            // A number, a char (`'x'`) and a byte (`b'x'`) share no
+            // comparable boundary in this report, so only literals of a kind
+            // the changed boundary uses count. The rest are kept to name the
+            // mismatch when nothing comparable is left.
+            let (test_literals, other_kind_literals): (Vec<_>, Vec<_>) = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
-                // A number, a char (`'x'`) and a byte (`b'x'`) share no
-                // comparable boundary in this report, so only literals of a
-                // kind the changed boundary uses count.
-                .filter(|literal| {
+                .partition(|literal| {
                     probe_literals
                         .iter()
                         .any(|boundary| literal_kind(boundary) == literal_kind(literal))
-                })
-                .collect::<Vec<_>>();
+                });
             // Only a literal that flows into the changed owner's inputs can
             // activate the boundary. The activation authority separates
             // owner-call arguments (and table/builder inputs) from assertion
@@ -128,6 +128,24 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                     format!(
                         "Tests have literals [{}], but no detected value matches changed boundary [{}]",
                         test_literals.join(", "),
+                        probe_literals.join(", ")
+                    ),
+                )
+            } else if !other_kind_literals.is_empty() {
+                // #6902: the tests do pass literals, just not of the
+                // boundary's kind, so the strings/fixtures reading below
+                // would send the reader after the wrong cause.
+                let mut other_kind_literals = other_kind_literals;
+                other_kind_literals.sort();
+                other_kind_literals.dedup();
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "The only literals ripr reads in related tests are {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
+                        literal_kinds_label(&other_kind_literals),
+                        other_kind_literals.join(", "),
+                        literal_kinds_label(&probe_literals),
                         probe_literals.join(", ")
                     ),
                 )
@@ -293,6 +311,25 @@ fn literal_kind(literal: &str) -> (bool, bool) {
     (quoted, quoted && literal.starts_with("b'"))
 }
 
+/// The kinds present in `literals`, in a fixed order: `numeric`, `char`,
+/// `byte`, joined with `/`.
+fn literal_kinds_label(literals: &[String]) -> String {
+    [
+        ((false, false), "numeric"),
+        ((true, false), "char"),
+        ((true, true), "byte"),
+    ]
+    .iter()
+    .filter(|(kind, _)| {
+        literals
+            .iter()
+            .any(|literal| literal_kind(literal) == *kind)
+    })
+    .map(|(_, label)| *label)
+    .collect::<Vec<_>>()
+    .join("/")
+}
+
 /// Why a changed predicate with no literal boundary stays unknown. A
 /// boundary that names a constant says so: ripr could not see that
 /// constant's value in the owner's file (or it is declared more than once),
@@ -448,10 +485,9 @@ mod tests {
         let chars = test_with_literals(&["'x'", "b','"]);
         let evidence = infection_evidence(&numeric, &[&chars], &ActivationEvidence::default());
         assert_eq!(evidence.state, StageState::Unknown);
-        assert!(
-            evidence
-                .summary
-                .starts_with("Related tests pass no literal")
+        assert_eq!(
+            evidence.summary,
+            "The only literals ripr reads in related tests are char/byte literals ['x', b','], which ripr does not compare with the changed numeric boundary [1]; activation/infection is unknown"
         );
 
         // A byte boundary counts byte literals only, not the char `'x'`.
@@ -677,12 +713,10 @@ mod tests {
         let only_chars = test_with_literals(&["'x'"]);
         let evidence = infection_evidence(&mixed, &[&only_chars], &ActivationEvidence::default());
         assert_eq!(evidence.state, StageState::Unknown);
-        assert!(
-            evidence.summary.starts_with(
-                "Related tests pass no literal ripr can compare with the changed boundary [10]"
-            ),
-            "{}",
-            evidence.summary
+        // #6902: the char literal is named as a kind mismatch.
+        assert_eq!(
+            evidence.summary,
+            "The only literals ripr reads in related tests are char literals ['x'], which ripr does not compare with the changed numeric boundary [10]; activation/infection is unknown"
         );
     }
 

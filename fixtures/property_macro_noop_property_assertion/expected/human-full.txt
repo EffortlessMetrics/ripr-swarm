@@ -40,7 +40,7 @@ Stop reasons:
   - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand
 
 Static limitation
-  rust_macro_reach_unresolved — A test may reach this change through a Rust macro path ripr cannot expand. The classification stays no_static_path because the macro edge is unresolved; this is a named limitation, not a coverage claim.
+  rust_macro_reach_unresolved — A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim.
 
 Limitation detail
   last established edge: source invocation `prop_assert_eq!` at src/lib.rs:11

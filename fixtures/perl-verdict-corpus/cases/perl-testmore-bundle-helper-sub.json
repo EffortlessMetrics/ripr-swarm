@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testmore-bundle-helper-sub",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-bundle-helper-sub.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 72
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_helper_sub_wraps_is",
+  "hard_case": "The is() lives in a test-file helper sub that receives the expected value as an argument.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return $sum - (3 < @$items ? 5 : 0);",
+        "mutated_line": "return $sum - (3 < @$items ? 5 : 0);",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: three items earn the bundle discount",
+        "equivalence_review": "not equivalent: three items lose the discount"
+      },
+      {
+        "replacement": "return $sum - (2 <= @$items ? 5 : 0);",
+        "mutated_line": "return $sum - (2 <= @$items ? 5 : 0);",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: two items do not",
+        "equivalence_review": "not equivalent: two items earn the discount"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "check_bundle() asserts both three items (discount) and two items (none), so moving the threshold either way fails. Spec cells: RIPR-SPEC-0064 helper_call (deferred).",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-bundle-helper-sub.json",
+    "sha256": "ee2d3dad1cf92a35d6c1cfae0aed19fff2d7f3230a95c52de57f82f73b1e0c52",
+    "provenance": "producer"
+  }
+}

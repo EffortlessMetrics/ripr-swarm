@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-lineitem-deep-equal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/entry.ts:11",
+  "behavior_family": "field_construction",
+  "test_shape": "mocha_chai_expect_to_deep_equal_object",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

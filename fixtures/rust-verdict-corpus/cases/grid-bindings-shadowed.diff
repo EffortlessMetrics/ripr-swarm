@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 55be37b..dca2ea4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ //! reassignment, or a helper called with a computed argument.
+ 
+ pub fn within_quota(used: u32) -> bool {
+-    let quota = 100;
++    let quota = 50 * 2;
+     let quota = quota * 2;
+     used <= quota
+ }

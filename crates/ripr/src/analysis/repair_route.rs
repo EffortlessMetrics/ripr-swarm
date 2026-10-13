@@ -895,6 +895,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
             class,
         }
@@ -910,6 +911,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         }
     }
 

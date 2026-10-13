@@ -871,13 +871,23 @@ suite('Extension Smoke', () => {
       );
       assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
 
+      // #4001: the copied gap route names the selected workspace (either
+      // spelling when the folder is a symlink), not the portable `--root .`.
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
+        serverShellArg(root.replace(/\\/g, '/'))
+      );
+      const boundGapCommand = (verb: string) => (text: string) =>
+        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
+
       await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.includes('ripr agent verify --root . --json'));
-      assert.strictEqual(verifyText, 'ripr agent verify --root . --json');
+      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
+      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
 
       await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.includes('ripr agent receipt --root . --json'));
-      assert.strictEqual(receiptText, 'ripr agent receipt --root . --json');
+      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
+      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
 
       await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
       const activeEditor = vscode.window.activeTextEditor;
@@ -3982,9 +3992,61 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(document);
       context.controller.markWorkspaceClosed(document);
-      assert.ok(context.status.text.includes('ripr: queued'));
+      // #7340: for a no-save close the on-disk file is unchanged, so the
+      // status restores the last completed state (diagnostics describe the
+      // saved workspace) and names the close instead of claiming a queued
+      // analysis.
+      assert.ok(context.status.text.includes('ripr: diagnostics'));
+      assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
+      // The dirty-buffer overlay must not survive into the restored status:
+      // the buffer is closed, so no unsaved-changes wording may remain.
+      assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('analysis is queued'));
+      assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing an unsaved buffer before any completed refresh reports paused analysis, not queued', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      context.controller.markWorkspaceStale(document);
+      context.controller.markWorkspaceClosed(document);
+      // No refresh has completed yet, so there is no completed state to
+      // restore; the status must still not claim a queued analysis that a
+      // debounced did_close refresh may silently never resolve.
+      assert.ok(context.status.text.includes('ripr: ready'));
+      assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
+      assert.ok(String(context.status.tooltip).includes('without saving'));
+      await context.controller.showStatus();
+      assert.ok(context.infoMessages.at(-1)?.includes('saved workspace'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing a clean buffer leaves a stale status from a cancelled refresh unchanged', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      // A typed cancelled refresh sets 'stale' without any dirty buffer; the
+      // close path must not overwrite that failure state with a completed or
+      // ready status, because the closed document was never dirty.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'cancelled',
+        retry_command: 'ripr.refresh'
+      });
+      assert.ok(context.status.text.includes('ripr: stale'));
+
+      context.controller.markWorkspaceClosed(document);
+      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(String(context.status.tooltip).includes('retained evidence is stale'));
     } finally {
       await context.dispose();
     }
@@ -4145,6 +4207,38 @@ suite('Extension Smoke', () => {
     await vscode.commands.executeCommand('ripr.copyTargetedTestBrief');
   });
 
+  test('diagnostic-scoped copy commands guide palette invocations instead of claiming missing evidence (#7341)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.copySuggestedAssertion();
+      await context.controller.copyTargetedTestBrief();
+      await context.controller.openRelatedTest();
+
+      assert.strictEqual(context.infoMessages.length, 3);
+      for (const message of context.infoMessages) {
+        assert.ok(
+          message.includes('use Quick Fix (Ctrl+. or Cmd+.)'),
+          `palette invocation should point at Quick Fix, got: ${message}`
+        );
+        assert.ok(
+          !message.includes('No ripr'),
+          `palette invocation must not claim missing evidence: ${message}`
+        );
+      }
+
+      context.infoMessages.length = 0;
+      // A supplied-but-empty target is a real evaluated miss and keeps the
+      // original missing-evidence message (#7341).
+      await context.controller.copySuggestedAssertion({ assertion: '' });
+      assert.strictEqual(
+        context.infoMessages[0],
+        'No ripr suggested assertion is available for this diagnostic.'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('copyAgentLoopCommand copies command text', async () => {
     const relativePath = 'src/agent-loop-command.rs';
     const uri = workspaceFileUri(relativePath);
@@ -4202,6 +4296,15 @@ suite('Extension Smoke', () => {
         agentLoopCommandTarget(
           'gap_receipt',
           'ripr agent receipt --root . --json'
+        ),
+        // #4001: the server binds gap routes to the selected workspace.
+        agentLoopCommandTarget(
+          'gap_verify',
+          `ripr agent verify --root ${rootArg} --json`
+        ),
+        agentLoopCommandTarget(
+          'gap_receipt',
+          `ripr agent receipt --root ${rootArg} --json`
         )
       ];
 
@@ -4398,6 +4501,14 @@ suite('Extension Smoke', () => {
     )));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json $(touch pwned)')));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json <(touch pwned)')));
+    // #4001: a gap route bound to the selected workspace is accepted, even
+    // with the workspace path's quoted `&` and `$`; another root, or an
+    // operator after the bound root, is not.
+    assert.ok(accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json`)));
+    assert.ok(accepts(agentLoopCommandTarget('gap_receipt', `ripr agent receipt --root ${commandRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
     // The double-quoted base the client used to expect, and a base the payload
     // does not carry.
     assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));

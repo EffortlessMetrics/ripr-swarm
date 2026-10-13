@@ -175,16 +175,17 @@ exception assertions, dict/object field assertions, output assertions through
 status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
-- bare `assert expr` → smoke oracle
-- `assert a == b` and `assert a != b` → exact-value oracle (for `==`) or
-  smoke-style negative oracle (for `!=`, recorded as broad)
-- `assert isinstance(value, SomeType)` → broad-type oracle
-- `pytest.raises(...)` context manager → error-path oracle
-- `self.assertEqual(a, b)` and `assertNotEqual` → exact-value oracle
-- `self.assertRaises(...)` → error-path oracle
-- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle
+- bare `assert expr` â†’ smoke oracle
+- `assert a == b` â†’ exact-value oracle; `assert a != b` and other
+  non-equality comparisons â†’ relational check, weak
+- `assert isinstance(value, SomeType)` â†’ relational check, weak
+- `pytest.raises(...)` context manager â†’ error-path oracle
+- `self.assertEqual(a, b)` â†’ exact-value oracle; `assertNotEqual` â†’
+  relational check, weak
+- `self.assertRaises(...)` â†’ error-path oracle
+- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
-  `assert_called_with`, `assert_called`, `assert_not_called`) →
+  `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
 - `unittest.mock` patches recognised syntactically as call-context only
 
@@ -395,7 +396,7 @@ spine as other languages:
   through unresolved control, object, or side-effect flow
 - revealability: the strongest extracted pytest or unittest oracle and whether
   it discriminates the changed behavior. A strong oracle is credited as
-  discriminating — and the finding classified `exposed` — only when its
+  discriminating â€” and the finding classified `exposed` â€” only when its
   assertion observes the changed sink: it must reference the changed owner (by
   name or import alias) or a changed-sink identifier/literal from the changed
   line. A strong oracle that reaches the owner but observes a *different* value
@@ -495,15 +496,15 @@ not credit `exposed`, via four additive optional output fields. They are a pure
 read-out: the boolean the classifier uses is derived from the surfaced
 `oracle_alignment`, so the visible value can never disagree with the decision.
 
-- `changed_sink` — the comma-joined significant tokens of the changed line.
-- `observed_sink` — the strongest related oracle's assertion text.
-- `oracle_alignment` — a controlled enum mapping to the existing branches:
+- `changed_sink` â€” the comma-joined significant tokens of the changed line.
+- `observed_sink` â€” the strongest related oracle's assertion text.
+- `oracle_alignment` â€” a controlled enum mapping to the existing branches:
   `direct` / `alias` / `changed_sink_token` appear only on `exposed` findings
   (strong oracle observes the owner name, an import alias, or a changed-sink
   token); `orthogonal` appears only on the fail-closed `weakly_exposed` branch
   (strong oracle observes a different sink); `unknown` covers every other
   finding (no strong oracle, or a `<module>` owner with no usable token).
-- `alignment_reason` — a stable snake_case token explaining the value
+- `alignment_reason` â€” a stable snake_case token explaining the value
   (e.g. `strong_oracle_observes_different_sink`).
   `strong_oracle_observes_owner_call_through_module` (`direct`) credits a free
   function whose strong oracle calls it through a module-identified spelling
@@ -515,6 +516,12 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
+  changed write (`print`, a file write, a call on a passed collaborator, or
+  a `self` field) whose strong oracle compares the channel that write
+  reaches: captured output, the file read back, a mock call pinned with
+  arguments, or the field read through a bound receiver (RIPR-SPEC-0238
+  rule 17).
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
@@ -789,6 +796,15 @@ Follow-up implementation belongs to Campaign 27 work item
 and additive output metadata land first under RIPR-SPEC-0026 work items.
 This spec PR records the per-language contract; no analyzer behavior
 changes in the spec PR.
+
+## Later Amendment
+
+RIPR-SPEC-0238 (2026-10-04) owns the Python assertion table, per-test
+oracle selection, the error-path gate, relation order and static-limit
+precedence. It corrects three oracle lines in place above: `!=`,
+`isinstance` and `assertNotEqual` were listed as broad, broad-type and
+exact-value oracles, but the code records all three as
+`relational_check` / weak, and no broad-type kind exists.
 
 ## Metrics
 

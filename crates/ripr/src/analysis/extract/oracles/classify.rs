@@ -4,11 +4,13 @@ use super::arguments::{
     assertion_oracle_text, ensure_assertion_arguments, is_unguarded_wildcard_assertion,
     outer_assertion_condition,
 };
+use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
     contains_exact_comparison, is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
-    is_exact_error_variant_assertion, is_exact_value_assertion, is_mock_expectation_line,
-    is_side_effect_observer_assertion, is_snapshot_assertion, is_whole_object_equality_assertion,
+    is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
+    is_exact_membership_any_assertion, is_exact_value_assertion, is_mock_expectation_line,
+    is_smoke_check, is_snapshot_assertion, is_whole_object_equality_assertion, tests_both_sides,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +35,11 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Weak,
         };
     }
+    // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
+    // strong as its pattern, ahead of every step that reads `matches!`.
+    if let Some(classification) = pattern_assertion_classification(line) {
+        return classification;
+    }
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
@@ -40,6 +47,13 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
+        }
+    } else if tests_both_sides(line) {
+        // RIPR-SPEC-0231 rule 4: a condition that tests both sides accepts
+        // every value, so it is neither a broad error nor a smoke check.
+        OracleClassification {
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
         }
     } else if is_broad_error_assertion(line) {
         OracleClassification {
@@ -66,12 +80,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             kind: OracleKind::Snapshot,
             strength: OracleStrength::Medium,
         }
-    } else if line.contains(".unwrap(")
-        || line.contains(".expect(")
-        || line.contains("is_ok")
-        || line.contains("is_some")
-        || line.contains("is_none")
-    {
+    } else if is_smoke_check(line) {
         OracleClassification {
             kind: OracleKind::SmokeOnly,
             strength: OracleStrength::Smoke,
@@ -81,7 +90,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             kind: OracleKind::RelationalCheck,
             strength: OracleStrength::Weak,
         }
-    } else if is_mock_expectation_line(line) || is_side_effect_observer_assertion(line) {
+    } else if is_mock_expectation_line(line) || is_effect_observer_subject_assertion(line) {
         OracleClassification {
             kind: OracleKind::MockExpectation,
             strength: OracleStrength::Medium,
@@ -95,6 +104,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         OracleClassification {
             kind: OracleKind::Unknown,
             strength: OracleStrength::Unknown,
+        }
+    } else if is_exact_membership_any_assertion(line) {
+        // RIPR-SPEC-0231 rule 7 (#6991): an exact-equality `.any()`
+        // membership check fails for any wrong member value, so it pins
+        // an exact value. It sits after the custom-helper steps and
+        // before the bare-`assert!` catch-all below, which keeps every
+        // wider `.any()` shape (and `.contains()`) weak.
+        OracleClassification {
+            kind: OracleKind::ExactValue,
+            strength: OracleStrength::Strong,
         }
     } else if line.contains("> 0")
         || line.contains('<')
@@ -165,6 +184,11 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
         })
+    } else if tests_both_sides(&condition) {
+        Some(OracleClassification {
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
+        })
     } else if is_broad_error_assertion(&condition) {
         Some(OracleClassification {
             kind: OracleKind::BroadError,
@@ -177,12 +201,7 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
         })
-    } else if condition.contains(".unwrap(")
-        || condition.contains(".expect(")
-        || condition.contains("is_ok")
-        || condition.contains("is_some")
-        || condition.contains("is_none")
-    {
+    } else if is_smoke_check(&condition) {
         Some(OracleClassification {
             kind: OracleKind::SmokeOnly,
             strength: OracleStrength::Smoke,
@@ -199,6 +218,89 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
 mod tests {
     use super::classify_assertion;
     use crate::domain::{OracleKind, OracleStrength};
+
+    fn require_classification(
+        text: &str,
+        expected_kind: OracleKind,
+        expected_strength: OracleStrength,
+    ) -> Result<(), String> {
+        let actual = classify_assertion(text);
+        if actual.kind != expected_kind || actual.strength != expected_strength {
+            return Err(format!(
+                "oracle classification mismatch for {text}: got {actual:?}, want {expected_kind:?}/{expected_strength:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exact_membership_any_assertion_admits_exact_equality() -> Result<(), String> {
+        for text in [
+            // Issue #6991 repro: exact membership over a captured log buffer.
+            r#"assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}");"#,
+            "assert!(xs.iter().any(|x| x == Config::LIMIT));",
+            "assert!(xs.iter().any(|x| x == None));",
+            "assert!(counts.into_iter().any(|n| n == 42));",
+            "debug_assert!(buf.iter_mut().any(|b| *b == 0xFF));",
+            "assert!(vals.iter().any(|v| v == 0x1E));",
+            "assert!(chars.iter().any(|c| c == 'a'));",
+            // Operator-lookalikes inside the literal must not defeat the shape.
+            r#"assert!(xs.iter().any(|x| x == "a>b"));"#,
+            r#"assert!(xs.iter().any(|x| x == "a|b"));"#,
+            r##"assert!(xs.iter().any(|x| x == r#"raw"#));"##,
+            "assert!(rows.iter().any(|r| r.total == 33));",
+            "assert!(xs.iter().any(|x| x == -1));",
+            "assert!(xs.iter().any(|x| x == 1e-3));",
+            "assert!(xs.iter().any(|x| x == 1.5E+6));",
+            r#"assert!(lines.iter().any(|l: &String| l == "audited 42"));"#,
+            // A comma nested in the type ascription is not a second parameter.
+            "assert!(pairs.iter().any(|pair: &(u32, u32)| pair.0 == 7));",
+        ] {
+            require_classification(text, OracleKind::ExactValue, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exact_membership_any_assertion_rejects_non_exact_shapes() -> Result<(), String> {
+        for text in [
+            "assert!(xs.iter().any(|x| x > 1));",
+            "assert!(xs.iter().any(|x| x != 1));",
+            "assert!(!xs.iter().any(|x| x == 1));",
+            "assert!(ready && xs.iter().any(|x| x == 1));",
+            "assert!(xs.iter().any(|x| x == 1 || x == 2));",
+            "assert!(xs.iter().any(|x| x == 1 && ready));",
+            "assert!(xs.iter().any(|x| x == expected()));",
+            "assert!(xs.iter().any(|x| x == other));",
+            "assert!(ready.any(|x| x == 1));",
+            "assert!(xs.any(|x| x == 1));",
+            "assert!(xs.iter().any(|x| x.len() == 1));",
+            "assert!(xs.iter().all(|x| x == 1));",
+            // Rule 12 keeps `.contains()` weak; out of scope for #6991.
+            "assert!(lines.contains(&expected));",
+            // The shape inside a string literal is not an assertion shape.
+            r#"assert!(x == ".any(|l| l == 1");"#,
+            // Constructor calls stay weak: only literals and const paths pin.
+            "assert!(xs.iter().any(|x| x == Some(1)));",
+            // Bare uppercase names may be locals (`let EXPECTED = xs[0]`),
+            // so only `::` paths and `None` pin.
+            "assert!(ids.iter().any(|id| id == EXPECTED_ID));",
+            "assert!(xs.iter().any(|x| x == Some));",
+            // Malformed exponents never pin.
+            "assert!(xs.iter().any(|x| x == 1e));",
+            // Angle-nested commas stay rejected (fail-closed residual).
+            "assert!(pairs.iter().any(|pair: Pair<u32, u32>| pair.0 == 7));",
+            // A comment inside the operand stays weak (fail-closed residual).
+            "assert!(xs.iter().any(|x| x == /* budget */ 7));",
+            "assert!(xs.iter().any(|a, b| a == b));",
+            "assert!(xs.iter().any(move |x| x == 1));",
+            "assert!(xs.iter().any(|x| { x == 1 }));",
+            "assert!(a.any(b).iter().any(|x| x == 1));",
+        ] {
+            require_classification(text, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn exact_fallible_oracle_requires_an_explicit_value_comparison() -> Result<(), String> {
@@ -272,6 +374,215 @@ mod tests {
                     "fallible oracle classification mismatch for {text}: {actual:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spec_0231_rules_4_to_6_match_whole_names() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactValue, MockExpectation, RelationalCheck, SmokeOnly};
+        use OracleStrength::{Medium, Smoke, Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            // Acceptance examples 8 (not mock), 9, 10, 12, 15, 16 and 26.
+            ("assert!(is_present());", RelationalCheck, Weak),
+            ("assert_eq!(events_sent.len(), 1);", ExactValue, Strong),
+            (
+                "assert!(events_sent.contains(&id));",
+                MockExpectation,
+                Medium,
+            ),
+            ("assert_json_eq(actual, expected);", ExactValue, Strong),
+            ("assert!(opt.is_some_and(|v| v > 1));", SmokeOnly, Smoke),
+            ("assert!(!events.is_empty());", MockExpectation, Medium),
+            ("assert!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
+            // Rule 4: whole method names only.
+            ("assert!(r.is_okay());", RelationalCheck, Weak),
+            ("assert!(this_errs(r));", RelationalCheck, Weak),
+            ("assert!(r.is_err());", BroadError, Weak),
+            ("assert!(Option::is_some(&r));", SmokeOnly, Smoke),
+            (
+                "assert!(o.is_some() || o.is_none());",
+                RelationalCheck,
+                Weak,
+            ),
+            ("ensure!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
+            ("assert!(o.is_none_or(|v| v > 1));", SmokeOnly, Smoke),
+            // Both sides only on one receiver; a field is not a method.
+            ("assert!(left.is_ok() || right.is_err());", BroadError, Weak),
+            (
+                "assert!(get(1).is_some() || get(1).is_none());",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert!(status.is_err);", RelationalCheck, Weak),
+            (
+                "assert!(r.is_ok() && r.is_err() || fallback);",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(ready && (r.is_ok() || r.is_err()));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(r?.is_some() || r?.is_none());",
+                RelationalCheck,
+                Weak,
+            ),
+            // Rule 5: whole identifier segments, outside free calls.
+            (
+                "assert!(sentEvents.contains(&id));",
+                MockExpectation,
+                Medium,
+            ),
+            ("assert!(state.ready);", MockExpectation, Medium),
+            ("assert!(statement.is_empty());", RelationalCheck, Weak),
+            ("assert!(consent_given());", RelationalCheck, Weak),
+            ("assert!(ready /* events_sent */);", RelationalCheck, Weak),
+            (
+                "assert!(ready, \"events_sent was {}\", n);",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(store.saved().is_empty());",
+                MockExpectation,
+                Medium,
+            ),
+            // Rule 6: equality names only.
+            (
+                "assert_equalish(score(2), 4);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            ),
+            (
+                "assert_eqv(score(2), 4);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            ),
+            ("assert_values_equals(score(2), 4);", ExactValue, Strong),
+            (
+                "assert_snapshot_matches(actual, expected);",
+                ExactValue,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            if actual.kind != expected_kind || actual.strength != expected_strength {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Rules 2 and 3 through the classifier and the scanner that feed
+    /// related tests, not only through the pattern reader.
+    #[test]
+    fn spec_0231_pattern_readings_reach_the_classifier_and_scanner() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, ExactValue, RelationalCheck, SmokeOnly};
+        use OracleStrength::{Smoke, Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            ("assert!(matches!(check(20), Err(_e)));", BroadError, Weak),
+            ("assert!(matches!(check(5), Ok(_)));", SmokeOnly, Smoke),
+            (
+                "assert!(matches!(lookup(1), Some(_) | None));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(1..=5)));",
+                RelationalCheck,
+                Weak,
+            ),
+            ("ensure!(matches!(check(5), Ok(_)));", SmokeOnly, Smoke),
+            (
+                "assert_matches!(check(20), Err(ref e) if e.len() > 1);",
+                BroadError,
+                Weak,
+            ),
+            ("assert!(matches!(check(5), Ok(5)));", ExactValue, Strong),
+            (
+                "assert!(matches!(check(20), Err(e @ E::Bad)));",
+                ExactErrorVariant,
+                Strong,
+            ),
+            (
+                "assert!(matches!(value, _ if value == 2));",
+                ExactValue,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            let facts = crate::analysis::extract::extract_assertions(text, 7);
+            let scanned = facts
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if actual.kind != expected_kind
+                || actual.strength != expected_strength
+                || scanned != vec![(expected_kind.clone(), expected_strength.clone())]
+            {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, classifier {actual:?}, scanner {scanned:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The parser path (`syntax/ra.rs`) that builds related tests reads the
+    /// same pattern strengths.
+    #[test]
+    fn spec_0231_pattern_readings_reach_the_parser_path() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = r#"
+#[test]
+fn err_binding() {
+    assert!(matches!(check(20), Err(_e)));
+}
+
+#[test]
+fn ok_wildcard() {
+    assert!(matches!(check(5), Ok(_)));
+}
+
+#[test]
+fn ok_literal() {
+    assert!(matches!(check(5), Ok(5)));
+}
+"#;
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), source)?;
+        let readings = facts
+            .tests
+            .iter()
+            .map(|test| {
+                let oracle = test.assertions.first();
+                (
+                    test.name.as_str(),
+                    oracle.map(|fact| (fact.kind.clone(), fact.strength.clone())),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected = vec![
+            (
+                "err_binding",
+                Some((OracleKind::BroadError, OracleStrength::Weak)),
+            ),
+            (
+                "ok_wildcard",
+                Some((OracleKind::SmokeOnly, OracleStrength::Smoke)),
+            ),
+            (
+                "ok_literal",
+                Some((OracleKind::ExactValue, OracleStrength::Strong)),
+            ),
+        ];
+        if readings != expected {
+            return Err(format!("parser readings {readings:?}"));
         }
         Ok(())
     }

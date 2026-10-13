@@ -145,6 +145,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.95.0
+          components: llvm-tools-preview
 
       - name: Formatting preflight
         id: formatting
@@ -168,20 +169,25 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
           sccache --start-server || true
 
-      # Keep each required producer independently visible in Actions. Policy
-      # failures stop before the later check/Clippy/test stages; xtask still
-      # needs its normal build, shared with the subsequent evidence commands.
+      # The two extracted policy checks fail before allocating the product build.
+      # Precommit verifies their source/toolchain/input-bound receipt and retains
+      # every other policy obligation without executing workflow checks twice.
+      - name: Agent skill contracts
+        id: agent_skills
+        run: cargo policy preflight
+
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
       - name: Repository policy preflight
         id: precommit
+        env:
+          RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: cargo xtask precommit
 
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty
-
-      - name: Agent skill contracts
-        id: agent_skills
-        run: cargo xtask check-agent-skills
 
       - name: Dependency policy
         id: dependencies

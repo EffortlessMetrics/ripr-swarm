@@ -113,6 +113,13 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
 
+// Palette invocations of diagnostic-scoped commands arrive without the
+// payload a code action carries. Say how to invoke them with a target
+// instead of reporting evidence the handler never evaluated (#2083, #7341).
+// Platform-neutral: Quick Fix is Ctrl+. on Windows/Linux and Cmd+. on macOS.
+const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
+  'ripr targeted-test commands run from a ripr diagnostic: open a file with ripr diagnostics, use Quick Fix (Ctrl+. or Cmd+.) on one, and pick the targeted-test command from there.';
+
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
 // Editor selector language -> ripr.toml [languages] enablement name. The
 // server's `typescript` entry covers the JavaScript variants
@@ -449,6 +456,14 @@ export class RiprClientController {
     detail: 'Open a workspace or run ripr: Restart Server.',
     nextStep: 'Open a workspace folder, then run ripr: Restart Server.'
   };
+  /**
+   * The last refresh-completed status observed with no unsaved routed
+   * documents (#7340). Closing an unsaved buffer without saving starts no
+   * refresh — the on-disk file is unchanged — so the close path restores
+   * this state instead of claiming a queued analysis that nothing will
+   * start. Reset whenever the session stops.
+   */
+  private lastCompletedStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -592,9 +607,9 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail);
+      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
       return;
     }
     this.server = server;
@@ -915,6 +930,7 @@ export class RiprClientController {
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
+    this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus({
       kind: 'stopped',
@@ -957,14 +973,34 @@ export class RiprClientController {
     if (!isRiprFileDocument(document)) {
       return;
     }
-    this.dirtyRiprDocuments.delete(document.uri.toString());
-    if (this.client && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
-      this.updateStatus({
-        kind: 'analysisQueued',
-        summary: 'ripr saved-workspace analysis is queued after close.',
-        detail: `Closed unsaved ${document.languageId} buffer: ${document.uri.fsPath}`,
-        nextStep: 'Wait for ripr to refresh diagnostics.'
-      });
+    const closedWasDirty = this.dirtyRiprDocuments.delete(document.uri.toString());
+    if (this.client && closedWasDirty && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
+      // #7340: for a no-save close the on-disk file is byte-identical to the
+      // analyzed snapshot, so the last completed state still describes current
+      // diagnostics. Restore it instead of claiming a queued analysis: the
+      // did_close-triggered refresh is debounced and can silently no-op (no
+      // configured root, configuration failure), in which case a 'queued'
+      // claim would spin until an unrelated event overwrote it — the defect
+      // this fixes. A typed cancelled or superseded refresh can also leave
+      // 'stale' with no dirty buffer, so only a close that actually discards
+      // a dirty buffer restores the completed state. When the close-triggered
+      // refresh does run, its started/completed log lines supersede this
+      // restored status. Before the first completed refresh there is nothing
+      // to restore, so report the paused state with the real refresh
+      // triggers.
+      const closedUnsaved = `Closed unsaved ${document.languageId} buffer without saving: ${document.uri.fsPath}`;
+      const restored = this.lastCompletedStatus;
+      this.updateStatus(restored
+        ? {
+            ...restored,
+            detail: [restored.detail, closedUnsaved].filter((line): line is string => Boolean(line)).join('\n')
+          }
+        : {
+            kind: 'ready',
+            summary: 'ripr diagnostics describe the saved workspace.',
+            detail: closedUnsaved,
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
     }
   }
 
@@ -1159,6 +1195,10 @@ export class RiprClientController {
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const assertion = typeof target?.assertion === 'string' ? target.assertion.trim() : '';
     if (!assertion) {
       this.runtime.showInformationMessage('No ripr suggested assertion is available for this diagnostic.');
@@ -1175,6 +1215,10 @@ export class RiprClientController {
   }
 
   async copyTargetedTestBrief(target?: RiprTargetedTestBriefTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const brief = typeof target?.brief === 'string' ? target.brief.trim() : '';
     if (!brief) {
       this.runtime.showInformationMessage('No ripr targeted test brief is available for this diagnostic.');
@@ -1381,6 +1425,10 @@ export class RiprClientController {
   }
 
   async openRelatedTest(target?: RiprRelatedTestTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const uri = uriFromTarget(target);
     if (!uri) {
       this.runtime.showInformationMessage('No ripr related test location is available for this diagnostic.');
@@ -1577,7 +1625,16 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh completed')) {
-      this.updateStatus(this.statusAfterRefreshCompleted(message));
+      const completed = this.statusAfterRefreshCompleted(message);
+      // Remember the saved-workspace result so closing an unsaved buffer
+      // without saving can restore it instead of inventing a queue that no
+      // close-path refresh may resolve (#7340). A completed refresh always
+      // describes the saved workspace — dirty buffers are unsaved client-side
+      // state — so store the clean completion form even while documents are
+      // dirty; the dirty-buffer overlay applies to the visible status only
+      // and must not survive into the restored close-path status.
+      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }
@@ -2404,11 +2461,11 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail);
+    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string): Promise<void> {
+  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2421,8 +2478,9 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
+    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
-      `ripr server is not available: ${cause}${separator} ${missingServerRemedy(this.runtime.getConfig().autoDownload)}`,
+      `ripr server is not available: ${cause}${separator} ${guidance}`,
       'Open Settings',
       'Copy Diagnostic',
       'Copy Install Command',
@@ -4365,8 +4423,12 @@ function validateActionableGapQueue(
         detail: 'actionable-gaps packet path is outside the workspace'
       };
     }
-    for (const command of actionableGapQueuePacketCommands(packetObject)) {
-      if (!actionableGapQueueCommandIsSafe(command, redirectRoots)) {
+    const relatedVerifyIsBounded = actionableGapQueueRelatedVerifyIsBounded(packetObject);
+    for (const { command, role } of actionableGapQueuePacketCommands(packetObject)) {
+      if (
+        !actionableGapQueueCommandIsSafe(command, redirectRoots)
+        && !(role === 'verify' && relatedVerifyIsBounded)
+      ) {
         return {
           ...base,
           state: 'unsafeCommand',
@@ -4375,6 +4437,37 @@ function validateActionableGapQueue(
       }
     }
     if (stringField(packetObject, 'gap_state') === 'actionable') {
+      const exclusions = packetObject.projection_exclusion_reasons;
+      if (
+        stringField(packetObject, 'repair_route_source') !== 'canonical_item.repair_route'
+        || !(stringField(packetObject, 'verify_command_source') === 'canonical_item.verify_command' || relatedVerifyIsBounded)
+        || packetObject.public_projection_eligible !== true
+        || !Array.isArray(exclusions)
+        || !exclusions.every(reason => typeof reason === 'string')
+        || exclusions.length > 0
+      ) {
+        return {
+          ...base, state: 'blocked',
+          detail: Array.isArray(exclusions) && exclusions.length > 0
+            && exclusions.every(reason => typeof reason === 'string')
+            ? `producer excluded packet from projection: ${exclusions.join(', ')}`
+            : 'producer did not mark every actionable packet safe for public projection'
+        };
+      }
+      if (!stringField(packetObject, 'canonical_gap_id')) {
+        return {
+          ...base,
+          state: 'blocked',
+          detail: 'actionable packet is missing canonical_gap_id'
+        };
+      }
+      if (!stringField(packetObject, 'verify_command') || !stringField(packetObject, 'receipt_command_or_path')) {
+        return {
+          ...base,
+          state: 'malformed',
+          detail: 'actionable packet is missing verify or receipt payload'
+        };
+      }
       topActionable ??= packetObject;
     } else if (packetIsStaticLimitOnly(packetObject)) {
       staticLimitOnlyGaps += 1;
@@ -4423,38 +4516,9 @@ function validateActionableGapQueue(
     };
   }
 
-  const projectionReasons = stringArrayField(topActionable, 'projection_exclusion_reasons');
-  if (
-    stringField(topActionable, 'repair_route_source') !== 'canonical_item.repair_route' ||
-    stringField(topActionable, 'verify_command_source') !== 'canonical_item.verify_command' ||
-    topActionable['public_projection_eligible'] !== true ||
-    projectionReasons.length > 0
-  ) {
-    return {
-      ...base,
-      state: 'blocked',
-      detail: projectionReasons.length > 0
-        ? `producer excluded packet from projection: ${projectionReasons.join(', ')}`
-        : 'producer did not mark the actionable packet safe for public projection'
-    };
-  }
   const verifyCommand = stringField(topActionable, 'verify_command');
   const receiptCommandOrPath = stringField(topActionable, 'receipt_command_or_path');
   const canonicalGapId = stringField(topActionable, 'canonical_gap_id');
-  if (!canonicalGapId) {
-    return {
-      ...base,
-      state: 'blocked',
-      detail: 'actionable packet is missing canonical_gap_id'
-    };
-  }
-  if (!verifyCommand || !receiptCommandOrPath) {
-    return {
-      ...base,
-      state: 'malformed',
-      detail: 'actionable packet is missing verify or receipt payload'
-    };
-  }
   return {
     ...base,
     state: 'topActionableGap',
@@ -4583,13 +4647,25 @@ function actionableGapQueuePacketPaths(packet: Record<string, unknown>): string[
   ].filter((value): value is string => value !== undefined);
 }
 
-function actionableGapQueuePacketCommands(packet: Record<string, unknown>): string[] {
-  const commands = [stringField(packet, 'verify_command')];
-  const receipt = stringField(packet, 'receipt_command_or_path');
-  if (receipt && looksLikeActionableQueueCommand(receipt)) {
-    commands.push(receipt);
+function actionableGapQueuePacketCommands(packet: Record<string, unknown>): Array<{
+  command: string; role: 'verify' | 'receipt';
+}> {
+  // Preserve raw bytes for the safety check; trimming first could hide a
+  // leading/trailing line break in a copied shell command.
+  const rawString = (field: string): string | undefined => {
+    const value = packet[field];
+    return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+  };
+  const commands: Array<{ command: string; role: 'verify' | 'receipt' }> = [];
+  const verify = rawString('verify_command');
+  if (verify) {
+    commands.push({ command: verify, role: 'verify' });
   }
-  return commands.filter((value): value is string => value !== undefined);
+  const receipt = rawString('receipt_command_or_path');
+  if (receipt && looksLikeActionableQueueCommand(receipt)) {
+    commands.push({ command: receipt, role: 'receipt' });
+  }
+  return commands;
 }
 
 function actionableGapQueueReceiptPath(packet: Record<string, unknown>): string | undefined {
@@ -4670,14 +4746,47 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
+  if (hasUnsafeShellMetacharacter(command)) {
+    return false;
+  }
   const normalized = command.trim().replace(/\s+/g, ' ');
+  // Decode the single-quoted words permitted by the existing passive safety
+  // grammar, including quoted fragments of flags. This is display admission,
+  // not a shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  const decoded = words.join(' ').replace(/\\/g, '/');
+  const broadSnapshot = decoded.includes('ripr agent verify')
+    && decoded.includes('--before') && decoded.includes('--after')
+    && decoded.includes('repo-exposure.json');
   return normalized !== ''
-    && !hasUnsafeShellMetacharacter(normalized)
+    && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
     && redirectStaysInWorkspace(normalized, redirectRoots)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
+}
+
+function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown>): boolean {
+  if (stringField(packet, 'verify_command_source') !== 'related_test_or_observer.name') {
+    return false;
+  }
+  const related = objectField(packet, 'related_test_or_observer');
+  const file = related ? stringField(related, 'file') : undefined;
+  const name = related ? stringField(related, 'name') : undefined;
+  const command = packet.verify_command;
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+    return false;
+  }
+  // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
+  // exactly this package/filter pair from its related target. Do not broaden
+  // the command-prefix list to all Cargo tests or infer another proof route.
+  const target = file.replace(/\\/g, '/');
+  const packageName = target.startsWith('crates/') ? target.split('/')[1]
+    : target.startsWith('xtask/') ? 'xtask' : undefined;
+  return Boolean(packageName && /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(packageName)
+    && /^[A-Za-z0-9_][A-Za-z0-9_:-]*$/.test(name)
+    && command.trim() === `cargo test -p ${packageName} ${name}`);
 }
 
 const ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES = [
@@ -4879,8 +4988,10 @@ interface AgentLoopCommandContract {
   // payload cannot have produced one. Equality leaves no room for an extra
   // token such as `$(cmd)` (#4225).
   expectedBody?: (target: RiprAgentLoopCommandTarget, commandRoot: string) => string | undefined;
-  // Labels the payload does not pin down are checked by prefix and substrings.
-  startsWith?: string;
+  // Labels the payload does not pin down are checked by `<rootedPrefix> --root
+  // <root>` and substrings, where `<root>` is `.` or a selected workspace
+  // spelling (#4001).
+  rootedPrefix?: string;
   includes?: string[];
   // The command ends in `> <targetArtifact>`. Since #3938 the server anchors
   // that redirect at the resolved `--root`, so the tail is checked by
@@ -4924,11 +5035,11 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
     )
   },
   gap_verify: {
-    startsWith: 'ripr agent verify --root .',
+    rootedPrefix: 'ripr agent verify',
     includes: ['--json']
   },
   gap_receipt: {
-    startsWith: 'ripr agent receipt --root .',
+    rootedPrefix: 'ripr agent receipt',
     includes: ['--json']
   }
 };
@@ -4986,17 +5097,7 @@ export function validatedAgentLoopCommand(
     // entire server-rendered body and, when present, its redirect against the
     // SAME selected spelling. An absolute command with a relative or other-root
     // redirect is never equivalent (#4396).
-    for (const root of redirectRoots) {
-      if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
-        continue;
-      }
-      const displayRoot = path.normalize(root).replace(/\\/g, '/');
-      // Apostrophe/backslash quoting is not portable across supported shells;
-      // likewise refuse characters that can end or alter a quoted span.
-      if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
-        continue;
-      }
-      const commandRoot = serverShellArg(displayRoot);
+    for (const { displayRoot, commandRoot } of selectedCommandRoots(redirectRoots)) {
       let body = command;
       if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
         const expectedTail = serverShellArg(
@@ -5032,18 +5133,54 @@ export function validatedAgentLoopCommand(
     }
     body = command.slice(0, redirectAt);
   }
-  if (hasUnsafeShellMetacharacter(body)) {
+  // Since #4001 the server binds the gap route's `--root .` to the selected
+  // workspace; the legacy portable form is still accepted. The root token is
+  // replaced by `.` before the metacharacter check, as for exact bodies, so a
+  // workspace path's quoted `&` or `;` is not read as an operator.
+  const rootArgs = ['.', ...selectedCommandRoots(redirectRoots).map(({ commandRoot }) => commandRoot)];
+  const rootArg = rootArgs.find((candidate) => {
+    const prefix = `${contract.rootedPrefix ?? ''} --root ${candidate}`;
+    return body === prefix || body.startsWith(`${prefix} `);
+  });
+  if (rootArg === undefined) {
+    return undefined;
+  }
+  const portableBody = body.replace(`--root ${rootArg}`, '--root .');
+  if (hasUnsafeShellMetacharacter(portableBody)) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.
   if (
-    body.includes('>') ||
-    !body.startsWith(contract.startsWith ?? '') ||
-    !(contract.includes ?? []).every((expected) => body.includes(expected))
+    portableBody.includes('>') ||
+    !(contract.includes ?? []).every((expected) => portableBody.includes(expected))
   ) {
     return undefined;
   }
   return command;
+}
+
+/**
+ * The selected workspace spellings a bound command may name, each with the
+ * `shell_arg` rendering the server writes after `--root`. Apostrophe and
+ * backslash quoting is not portable across supported shells, so roots that
+ * would need it, or that carry characters able to end or alter a quoted span,
+ * are skipped.
+ */
+function selectedCommandRoots(
+  redirectRoots: readonly string[]
+): { displayRoot: string; commandRoot: string }[] {
+  const roots: { displayRoot: string; commandRoot: string }[] = [];
+  for (const root of redirectRoots) {
+    if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
+      continue;
+    }
+    const displayRoot = path.normalize(root).replace(/\\/g, '/');
+    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+      continue;
+    }
+    roots.push({ displayRoot, commandRoot: serverShellArg(displayRoot) });
+  }
+  return roots;
 }
 
 /**

@@ -11,7 +11,8 @@
 //! from the manifests themselves (RIPR-SPEC-0197):
 //!
 //! - the owner must compose under its package's library root, the default
-//!   `src/lib.rs` with no `[lib] path` and `autolib` on, because another
+//!   `src/lib.rs` (an explicit `[lib] path` naming exactly that file is
+//!   still the default root, #7097) with `autolib` on, because another
 //!   crate can only import a library;
 //! - a test in the same package names it by its library identifier (`[lib]
 //!   name`, else the package name with hyphens as underscores);
@@ -62,6 +63,13 @@ impl MemberCrates {
             names: Arc::default(),
             foreign_exports: Arc::default(),
         }
+    }
+
+    /// Whether manifest authority is available: synthetic indexes built
+    /// without a workspace root have none, so crate-identity checks that
+    /// need it fall back to the index's package names (#7097).
+    pub(crate) fn has_manifest_root(&self) -> bool {
+        self.root.is_some()
     }
 
     /// `compute`'s answer for (`owner_root`, `name`), computed once per
@@ -310,10 +318,16 @@ fn ancestor_manifests(chain: &[PathBuf]) -> Option<Vec<(PathBuf, toml::Table)>> 
 /// but no other crate can import it.
 fn is_default_library_root(package: &Package, owner_root: &Path) -> bool {
     let manifest = &package.manifest;
+    // An explicit `[lib] path` that still names the default root is not a
+    // move (#7097): fixtures and real manifests spell `src/lib.rs` out.
+    // Anything else — or an unreadable value — keeps refusing.
     let moved = manifest
         .get("lib")
         .and_then(|lib| lib.get("path"))
-        .is_some();
+        .is_some_and(|path| {
+            path.as_str()
+                .is_none_or(|text| lexical(Path::new(text)) != Path::new("src").join("lib.rs"))
+        });
     let autolib_off = manifest
         .get("package")
         .and_then(|package| package.get("autolib"))
@@ -467,6 +481,40 @@ mod tests {
         let files = [
             ("Cargo.toml", ROOT),
             ("pricing/Cargo.toml", shadowing.as_str()),
+            ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
+        ];
+        assert_eq!(
+            names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
+            Vec::<String>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_explicit_default_lib_path_still_names_the_library() -> Result<(), String> {
+        // #7097: `[lib] path = "src/lib.rs"` spells the default root out —
+        // with or without an explicit `[lib] name` — so the owner's own
+        // package still names its library. A genuinely moved root
+        // (`src/core.rs`, pinned by "moved library" below) and an
+        // unreadable value keep naming nothing.
+        for manifest in [
+            format!("{PRICING}[lib]\npath = \"src/lib.rs\"\n"),
+            format!("{PRICING}[lib]\nname = \"pricing\"\npath = \"src/lib.rs\"\n"),
+        ] {
+            let files = [
+                ("Cargo.toml", ROOT),
+                ("pricing/Cargo.toml", manifest.as_str()),
+                ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
+            ];
+            assert_eq!(
+                names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
+                ["pricing"]
+            );
+        }
+        let unreadable = format!("{PRICING}[lib]\npath = 5\n");
+        let files = [
+            ("Cargo.toml", ROOT),
+            ("pricing/Cargo.toml", unreadable.as_str()),
             ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
         ];
         assert_eq!(

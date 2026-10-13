@@ -11,7 +11,7 @@ use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::output;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{non_empty_path_arg, non_empty_string_arg, write_text_file};
 use crate::output::gate::GATE_STATUS_CONFIG_ERROR;
@@ -46,11 +46,6 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     }
 
     let options = parse_gate_options(rest)?;
-    if let Some(warning) =
-        default_visible_only_warning(options.mode_explicit, !std::io::stderr().is_terminal())
-    {
-        eprintln!("{warning}");
-    }
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     if options.input.pr_guidance.is_none()
@@ -62,6 +57,16 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         ));
     }
     let report = output::gate::build_gate_decision_report(&options.input)?;
+    // Mode disclosure is only meaningful after a completed evaluation (#7447).
+    // A config_error report is a written fail-closed artifact, not a mode
+    // decision: the run never applied visible-only to findings.
+    if let Some(warning) = default_visible_only_warning_for_completed_report(
+        options.mode_explicit,
+        !std::io::stderr().is_terminal(),
+        output::gate::gate_decision_status(&report),
+    ) {
+        eprintln!("{warning}");
+    }
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -200,6 +205,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     }
 
     let out_md = out_md.unwrap_or_else(|| output::gate::markdown_path_for(&out));
+    require_existing_gate_root(&root)?;
     Ok(GateOptions {
         input: output::gate::GateEvaluateInput {
             root,
@@ -224,7 +230,18 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     })
 }
 
-const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
+fn require_existing_gate_root(root: &Path) -> Result<(), String> {
+    if root.is_dir() {
+        Ok(())
+    } else {
+        Err(format!(
+            "gate evaluate --root {} is not a directory; pass --root naming an existing repository directory",
+            root.display()
+        ))
+    }
+}
+
+const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks on findings, but exception-policy violations still can. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
 
 fn default_visible_only_warning(
     mode_explicit: bool,
@@ -237,13 +254,26 @@ fn default_visible_only_warning(
     }
 }
 
+fn default_visible_only_warning_for_completed_report(
+    mode_explicit: bool,
+    non_interactive: bool,
+    status: &str,
+) -> Option<&'static str> {
+    if status == GATE_STATUS_CONFIG_ERROR {
+        None
+    } else {
+        default_visible_only_warning(mode_explicit, non_interactive)
+    }
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{args, unique_command_test_dir};
+    use super::super::tests::{args, unique_command_test_dir, unique_repo_relative_test_dir};
     use super::*;
     use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
+    use std::path::Path;
 
     #[test]
     fn gate_evaluate_exit_mapping_matches_the_typed_contract() {
@@ -265,11 +295,59 @@ mod tests {
         );
     }
 
+    fn assert_gate_root_refusal(
+        result: Result<(), CommandError>,
+        root: &str,
+        out: &Path,
+    ) -> Result<(), CommandError> {
+        let Err(error) = result else {
+            return Err(CommandError::Failure(
+                "expected a missing-root refusal, got Ok".to_string(),
+            ));
+        };
+        if error.exit_code() != crate::cli::EXIT_COULD_NOT_COMPLETE {
+            return Err(CommandError::Failure(format!(
+                "expected exit 2, got {}: {error:?}",
+                error.exit_code()
+            )));
+        }
+        let CommandError::Failure(message) = &error else {
+            return Err(CommandError::Failure(format!(
+                "expected Failure, got {error:?}"
+            )));
+        };
+        if !message.contains(root) {
+            return Err(CommandError::Failure(format!(
+                "refusal must name the root {root:?}: {message}"
+            )));
+        }
+        if !message.contains("is not a directory") {
+            return Err(CommandError::Failure(format!(
+                "refusal must say the root is not a directory: {message}"
+            )));
+        }
+        if message.contains("required PR guidance") || message.contains("not found") {
+            return Err(CommandError::Failure(format!(
+                "refusal must not look like a missing input file: {message}"
+            )));
+        }
+        if out.exists() {
+            return Err(CommandError::Failure(format!(
+                "missing root must not write {}",
+                out.display()
+            )));
+        }
+        Ok(())
+    }
+
     #[test]
-    fn gate_parses_full_option_surface() {
+    fn gate_parses_full_option_surface() -> Result<(), String> {
+        let root = unique_command_test_dir("gate-parse-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create parse root: {err}"))?;
+        let root_arg = root.display().to_string();
         let options = parse_gate_options(&args(&[
             "--root",
-            "repo",
+            &root_arg,
             "--repo-exposure",
             "target/ripr/reports/repo-exposure.json",
             "--pr-guidance",
@@ -304,7 +382,7 @@ mod tests {
             options,
             Ok(GateOptions {
                 input: output::gate::GateEvaluateInput {
-                    root: PathBuf::from("repo"),
+                    root: root.clone(),
                     repo_exposure: Some(PathBuf::from("target/ripr/reports/repo-exposure.json")),
                     pr_guidance: Some(PathBuf::from("target/ripr/review/comments.json")),
                     gap_ledger: Some(PathBuf::from(
@@ -331,6 +409,8 @@ mod tests {
                 mode_explicit: true,
             })
         );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove parse root: {err}"))?;
+        Ok(())
     }
 
     #[test]
@@ -404,6 +484,22 @@ mod tests {
     }
 
     #[test]
+    fn default_visible_only_warning_says_findings_never_block_but_exception_policy_still_can() {
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("never blocks on findings"),
+            "visible-only warning must qualify that findings do not block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("exception-policy violations still can"),
+            "visible-only warning must disclose that exception-policy can still block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            !DEFAULT_VISIBLE_ONLY_WARNING.contains("and never blocks."),
+            "unqualified 'never blocks' contradicts exception-policy blocking in visible-only: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+    }
+
+    #[test]
     fn default_visible_only_warning_requires_omitted_mode_and_non_interactive_use() {
         assert_eq!(
             default_visible_only_warning(false, true),
@@ -411,6 +507,22 @@ mod tests {
         );
         assert_eq!(default_visible_only_warning(false, false), None);
         assert_eq!(default_visible_only_warning(true, true), None);
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(
+                false,
+                true,
+                GATE_STATUS_CONFIG_ERROR
+            ),
+            None
+        );
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(false, true, "advisory"),
+            Some(DEFAULT_VISIBLE_ONLY_WARNING)
+        );
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(false, true, GATE_STATUS_BLOCKED),
+            Some(DEFAULT_VISIBLE_ONLY_WARNING)
+        );
         assert_eq!(
             parse_gate_options(&args(&["--label", "--mode"])).map(|options| options.mode_explicit),
             Ok(false)
@@ -525,5 +637,102 @@ mod tests {
         assert!(json_text.contains(&format!("\"status\": \"{GATE_STATUS_CONFIG_ERROR}\"")));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gate dir: {err}"))?;
         Ok(())
+    }
+
+    const CLEAN_PR_GUIDANCE_JSON: &str = r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
+  "summary": {"unchanged_tests": true},
+  "comments": [],
+  "summary_only": [],
+  "suppressed": []
+}"#;
+
+    #[test]
+    fn gate_evaluate_refuses_missing_root() -> Result<(), CommandError> {
+        let missing = unique_command_test_dir("gate-missing-root");
+        if missing.exists() {
+            return Err(CommandError::Failure(format!(
+                "precondition: {} must not exist",
+                missing.display()
+            )));
+        }
+        let scratch = unique_command_test_dir("gate-missing-root-scratch");
+        std::fs::create_dir_all(&scratch)
+            .map_err(|err| format!("create missing-root scratch: {err}"))?;
+        let guidance = scratch.join("guidance.json");
+        std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+            .map_err(|err| format!("write absolute guidance: {err}"))?;
+        let out = scratch.join("gate-decision.json");
+        let root = missing.display().to_string();
+        let result = gate(&args(&[
+            "evaluate",
+            "--root",
+            &root,
+            "--pr-guidance",
+            &guidance.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+        ]));
+        assert_gate_root_refusal(result, &root, &out)?;
+        std::fs::remove_dir_all(&scratch)
+            .map_err(|err| format!("remove missing-root scratch: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluate_refuses_file_root() -> Result<(), CommandError> {
+        let dir = unique_command_test_dir("gate-file-root");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create file-root dir: {err}"))?;
+        let file = dir.join("not-a-directory");
+        std::fs::write(&file, b"not a directory")
+            .map_err(|err| format!("write file root: {err}"))?;
+        let guidance = dir.join("guidance.json");
+        std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+            .map_err(|err| format!("write absolute guidance: {err}"))?;
+        let out = dir.join("gate-decision.json");
+        let root = file.display().to_string();
+        let result = gate(&args(&[
+            "evaluate",
+            "--root",
+            &root,
+            "--pr-guidance",
+            &guidance.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+        ]));
+        assert_gate_root_refusal(result, &root, &out)?;
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove file-root dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluate_refuses_relative_missing_root() -> Result<(), CommandError> {
+        let relative = unique_repo_relative_test_dir("gate-rel-missing");
+        if relative.exists() {
+            return Err(CommandError::Failure(format!(
+                "precondition: {} must not exist",
+                relative.display()
+            )));
+        }
+        if relative.is_absolute() {
+            return Err(CommandError::Failure(format!(
+                "precondition: {} must stay relative",
+                relative.display()
+            )));
+        }
+        let out = unique_command_test_dir("gate-rel-missing-out").join("gate-decision.json");
+        let root = relative.display().to_string();
+        let result = gate(&args(&[
+            "evaluate",
+            "--root",
+            &root,
+            "--pr-guidance",
+            "guidance.json",
+            "--out",
+            &out.display().to_string(),
+        ]));
+        assert_gate_root_refusal(result, &root, &out)
     }
 }

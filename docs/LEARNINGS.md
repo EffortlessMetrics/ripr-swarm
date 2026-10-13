@@ -3,6 +3,237 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: An oversized `ripr_get_gap` must not recover by calling itself (#7462)
+
+The MCP response bound is 128 KiB. One canonical item can exceed it. The
+failure used to say "read narrower evidence (one item through ripr_get_gap)",
+which is the call that just failed. A too-large item now names `ripr check
+--committed --format json` outside MCP — `--committed` because the snapshot
+analyzed the committed default-branch diff, and a plain `ripr check` on a
+dirty tracked worktree silently analyzes a different diff — and discloses
+that the CLI JSON is a bounded summary (related tests cap per finding, a
+large findings array can omit findings). Recovery advice must be reachable:
+`ripr_list_gaps` byte-fits every page and refuses when nothing fits (#6021),
+so its overflow guard says there is no narrower read instead of promising a
+smaller-limit page no caller can need. Other tools name their own next read,
+or say there is no narrower MCP read.
+## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
+
+`ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
+cannot tell a same-repo mutant from a foreign record that happens to share
+a path and line. `ripr outcome` already discloses missing or differing heads
+on the same snapshot family. Calibrate must print the same class of caveat
+on stderr and in `--help`. Do not treat a file+line match as proof the
+artifacts share a subject, and do not refuse that join in the provenance
+fix. Do not fold producer-help (#7450), `matched_total` meaning (#7451), or
+the xtask duplicate renderer (#6691) into this disclosure.
+## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
+
+Config discovery walks ancestors of the *selected analysis root*, not of the
+invocation cwd. Implicit `ripr check` rebinds that root to the enclosing
+workspace, so a member `ripr.toml` is never a candidate. `doctor` and `pilot`
+keep `--root` (default cwd) and load that closer file. Do not retarget which
+file `check` loads — that is per-crate config (#2671) — and do not fold
+doctor/pilot into `resolve_project_root` just to make the three commands agree.
+Name the skipped directory entry and the file that governed on stderr.
+Recovery is `--root .` (cwd is still the invocation directory; that spelling
+is shell-neutral). A member symlink to the workspace file is the same
+config, not a skip; a symlink to a *different* file still names the member
+entry, not the canonical target. Human-header `config:` and JSON
+`config_path` remain a follow-up: they churn every golden and need
+`docs/OUTPUT_SCHEMA.md`.
+
+## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
+
+`ripr check`'s `resolve_project_root` walks *up* and can return a git top
+level or a JS/Python workspace marker that is not a `Cargo.toml`. Sharing it
+as the doctor `cargo_toml` existence test would leave `rust/Cargo.toml` under
+a polyglot git root failing, and could pass a pnpm/uv root that has no Cargo
+manifest. Doctor keeps the selected-root `exists()` check, then a cargo-only
+ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
+512 directories) that skips `target/`, `.git`, `node_modules`, `.direnv`,
+`.venv`, `vendor`, `fixtures/`, and `.ripr/`, and that skips every symlink
+fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
+is which `ripr.toml` applies). Empty roots and Rust sources with no
+manifest must still fail.
+A TypeScript marker at the git root can still skip `cargo_toml` before the
+locator runs (`detect_languages` is shallow); that is a separate claim.
+
+## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
+
+Check's human evidence window may say `--format json`, because `ripr check`
+accepts that flag. `ripr explain` reuses the same window and does not. A
+footnote on explain must name check's JSON format, not a flag of the command
+the reader is already running. Do not emit a bare `ripr check --format json`
+line from explain: the printed-command paste suite will try to run it, and
+that invocation has no root or diff.
+
+## 2026-10-11: Digest `Related test (1 of N)` counts matched rows, not tests (#6807)
+
+`Finding::related_tests_total()` is `related_tests_matched_total`: matched
+related-test/oracle rows after dedup and before bounded packing, one row per
+admitted assertion plus examined-miss rows. The human digest used to print
+`Related test (1 of N)` from that count, so one test with 81 `assert_eq!`
+rows read as 81 tests. Name the unit (`matched rows`) in the renderer; do
+not treat the packed `related_tests` window as a distinct-test census, and
+do not add a JSON distinct-test field without a schema change. The
+all-no-path note already splits tests vs rows after #5359 (RIPR-SPEC-0090).
+
+## 2026-10-10: A helper-chain uniqueness refusal is not `no_static_path` (#7080)
+
+`callee_is_unique` / `test_call_is_shadowed` correctly refuse a hop when
+the callee name has more than one workspace definition. That refusal is
+not "no test reaches the owner": tests may call `parse` / `from_str`
+while ripr cannot tell which same-named function they invoke. When no
+other relation remains, classify as `static_unknown` naming the
+ambiguous entry. Keep `no_static_path` only when no test enters that
+name — a unique wrapper of a non-unique helper (`outer` → second
+`inner`) is the negative control (`helper_chain_controls`,
+`rust_transitive_reach_positive`). A receiver call of the same name
+(`req.parse()`, including the raw-identifier spelling `req.r#parse()`)
+is not an entry; `Version::parse(...)` is when it targets the hop, not a
+qualified sibling (`B::parse` must not credit hop `A::parse`; bind the
+stop-name branch to that hop's `FunctionSummary` like extras already use
+`tests_call_function`) (#7268). Bare unresolved `parse(` still enters.
+`call_name_bounds_before_paren`
+walks only `[A-Za-z0-9_]`, so skip one preceding `r#` before the
+receiver / path / `fn`-item checks or `raw_before` is `#` and the
+occurrence falls through to Free (#7270). Bare `r#parse(` stays an
+entry. `CallFact.text`
+is the original source line, so match after masking comments and strings
+and reuse the extractor's call-paren bounds (`parse (...)`,
+`parse::<T>(...)`); a receiver sharing a line with `"parse("` is still
+not an entry. A path-qualified call enters only when some workspace
+function of that name could be the `T` in `T::name(`
+(`VersionReq::from_str` yes; `serde_json::from_str` no). A non-unique
+wrapper counts only when it invokes the refused helper the same way, not
+a wrapper-local `parse`. A test-local `fn`/`let` of that name is not an
+entry, including on lexical-fallback files. A `fn parse()` item on
+`CallFact.text` is not a call (`property_macro_noop_named_test` names
+its test after the owner). Do not credit `helper_owner_call` through
+the ambiguous name. After the class rewrite, reach is `unknown` naming
+that identity limit — not `no` with a leftover no-path summary — and
+the stop reason is `helper_identity_unresolved`, not
+`static_probe_unknown`'s probe-shape gloss (#7272). Bless only
+verdict-corpus rows `verdict-corpus check` actually moves: neighboring
+`semver-max-comparators` and the rusqlite `no_static_path` sibling stay
+as labeled, because they are not uniqueness-only refusals that tests
+enter.
+
+## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
+
+#6836 was reviewed and gated on an Oct-5 tree. By merge time, main had changed
+the same file's callee signature and walker logic in disjoint hunks, so git
+auto-merged cleanly and the squash landed an inconsistent tree: E0061 at
+`seam_inventory.rs:2667` plus a silently dropped twin filter. PR-head CI
+cannot see the combined tree, and squash merges do not re-run CI.
+
+Durable rules:
+
+- Before merging a PR whose base is older than the files it touches, verify
+  the combined tree: merge current main into a scratch checkout and run at
+  least `cargo check` on the affected crates. `mergeable: MERGEABLE` answers
+  conflicts, not coherence.
+- A semantic mirror (bounded copy of a walker, second implementation of a
+  rule) must be re-compared against the CURRENT source at merge time, not the
+  reviewed base; the oracle fixtures that pinned the old tree may not cover
+  what main added (here: no twin case).
+- Reconciliation must include a compile check of the landed tree, not just a
+  content check of the squash.
+- A draft-to-ready re-route does NOT refresh GitHub's merge ref: after #7151
+  repaired main, #6686's re-routed gate still tested `Merge ... into
+  551456df5` (pre-fix main) and failed on the old E0061. Pushing the branch
+  recomputes the ref, so after main moves under a PR, merge main into the
+  branch (or push) instead of toggling alone, and distrust a re-routed gate
+  until `git fetch origin pull/N/merge` shows the expected base as an
+  ancestor.
+
+## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
+
+Round-tripping a file through `Get-Content`/`Set-Content` or `>` redirection
+re-encodes it: one merge repair gained a UTF-8 BOM plus Latin-1-decoded
+em-dashes in `process_allowlist.txt` (failing `check-process-policy`), a BOM
+in a test file, and a BOM plus a dropped sentence in a corpus SPEC.md, across
+three lanes (#6306, #5745, #6577). Worse, PowerShell string pipelines are
+BOM-blind on read, so grepping the diff for damage finds nothing. Resolve
+merges with byte-exact tools, never a shell string round-trip, and verify
+with byte reads (`[IO.File]::ReadAllBytes`, `git cat-file` through `cmd`,
+or a script that opens files in binary) before pushing.
+
+## 2026-10-07: Diff-routed gates let a broken main hide; prove behavior changes fully (#7114)
+
+#5997's dirty-tree default flipped a `hostile_repos` assertion (the 0112
+deleted-file notice fires only on committed-history reads), but its gate ran
+a diff-routed subset that never executed that binary, so main broke silently
+at `9cc79a167`. Only full-suite gates (#6638's, then #6715's) caught the
+single FAIL. A green diff-routed gate on a behavior change proves the
+touched paths, not the suite. Behavior changes that alter CLI defaults,
+output contracts, or shared validators need full-suite evidence (or an
+explicit routing justification) before merge.
+
+## 2026-10-07: Split corpus records must match the writer's null/empty conventions (#6577)
+
+Two comparisons guard a split, and they disagree about missing keys. `split`
+itself re-reads an existing record through its type before comparing, so a
+key serde fills (`mutated_line` omitted becomes `None`, then `null`) is not
+a conflict — but a field with no `#[serde(default)]` fails to parse before
+any comparison. The round-trip test then reassembles `corpus.json` from the
+raw record files, where a missing key differs from `null` and from `[]`.
+And `validate` separately refuses a `behavior_preserving_rewrite` mutant
+without `mutated_line`. So a hand-grafted record must carry every key the
+writer emits (nulls and empty arrays included) while still satisfying the
+struct and the validate laws; a new optional `Vec` needs both
+`#[serde(default)]` and `skip_serializing_if` (`spec_examples` is the
+precedent). Migrate through the real `split` writer where possible.
+
+## 2026-10-04: Generated tests need indexing and admission in the expansion (#5334)
+
+Tests written through a same-file `macro_rules!` generator were invisible:
+the parser sees token trees, so an owner they fully test read `ungripped`
+(repo mode) or `no_static_path` (diff mode). Indexing them alone is not
+enough. Assertion admission (`classify/owner_pin.rs`) looks a test up in the
+file text by its lines, so a generated test's `assert_eq!` was refused and
+diff mode turned the old `no_static_path` into a `reachable_unrevealed` gap.
+Admission now reruns over the invocation's expansion. Two more traps: the
+test-style normalizer rebuilds tests from parsed functions, so generated
+tests must be registered after it; and wrapping a single-literal `expr`
+argument in parentheses hid the boundary value from activation.
+## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
+
+`called_paths` walked bytes with an ASCII identifier set. `módulo` became
+the tail `dulo`, and `rfind(..) + 1` sliced inside `ó`, aborting `ripr
+check`. Non-ASCII bytes are identifier bytes there; the qualifier slice
+skips the whole found character. ASCII paths stay unchanged. Do not
+assume an ASCII identifier vocabulary is a char-boundary walk.
+## 2026-10-07: Pin-side refusals need reach mirrors, and raw spellings need every matching site (#7067)
+
+The owner pin refused single-file receiver renames while reach kept
+`direct_owner_call` for the same file: `owner_call_relation_reason`
+shared the module and parent shadow checks but never the file-wide rename
+check. A trust fix on one side must audit the other before claiming the
+hole closed. Separately, `r#Name` denotes `Name` at every matching site,
+not just declarations: the rename matcher tested the plain spelling only,
+so `use x::Y as r#Window` escaped while `struct r#Window` was already
+caught. Audit all spellings at all related sites when changing one.
+
+## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
+
+The module-declaration producer emits top-level `mod` declarations only, so
+a recorded parent edge's scope is always the parent file's root: reasoning
+about inline modules enclosing a `mod` declaration is vacuous against real
+provenance. A test-local shadow in a parent file therefore sits at the
+parent root, and only the owner's own root (a root-level owner in that
+file) is exempt.
+
+Separately, the owner-side pin gates fail closed before the test-side
+receiver check ever runs: `derived_equality` refuses a type declared in
+two files (rule 6), and method competition refuses a compiling shadow
+method (rules 1-2). The #6950 code-reading traced only the test-side
+check; the end-to-end fail-open was in reach (`direct_owner_call`), not
+the pin. Reproduce a trust hole end-to-end before designing the fix, and
+keep honest fixtures compiling: a `tests/` child naming parent items
+breaks dual crate-root compilation, while `src/`-nested layouts compile.
+
 ## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
 
 Serializing the same document twice into one tool response — pretty
@@ -157,6 +388,25 @@ selectors, but do not trim the file part or reject interior whitespace. Walk
 slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
+
+## 2026-10-09: first-pr preflight and agent receipts still treated a dangling `ripr.toml` as absent (#6690)
+
+#5455 routed workspace status and the two Python repair config-profile sites
+through `config_present_at_root`. First-pr preflight still used
+`Path::is_file()`, and agent-receipt fingerprinting mapped `ErrorKind::NotFound`
+to `Ok(None)`, so a dangling `ripr.toml` looked like built-in defaults.
+
+Do not consult `config_present_at_root` first and treat `false` as absent:
+`symlink_metadata` `PermissionDenied` also returns false, which would map an
+unreadable lookup to built-in defaults. Read first; only a `NotFound` read
+consults presence to distinguish a dangling link from a missing file.
+`Path::is_file()` is also not readability: a chmod-000 regular file is still
+a file, so preflight must bounded-read before emitting `ok`. Stat the resolved
+target first: `bounded_input::read_to_string` opens FIFOs and can wait for a
+writer, so a FIFO named `ripr.toml` must be classified unreadable without
+opening. Keep a dangling-link control and a non-`NotFound` unreadable control
+at each leftover site. Chmod-000 tests skip when a privileged process can still
+read.
 
 ## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
 
@@ -375,6 +625,28 @@ fallback fail-closes to the whole argument list so a buried literal in the
 aliased slot cannot restore pairing. The reverse direction, helper-built
 inputs that read as gaps, is #6615.
 
+## 2026-10-07: A reassigned boundary binding is a stale pairing, not an observed result (#7004)
+
+Same-test pairing kept a `let`-bound boundary name live until a re-`let`
+shadowed it. `let mut got = gate(10); got = true; assert_eq!(got, true)`
+therefore paired the assertion with a call whose result it no longer
+observed, promoting the predicate toward `exposed`. A post-`let`
+reassignment, compound assignment, or `&mut` borrow now voids the binding
+fail-closed. `let mut` alone still pairs, and a mutation before the
+boundary `let` does not void the fresh binding. Compound assignment voids
+even when the shift preserves the value (`got += 1`): without value
+analysis the rule cannot tell a preserving shift from a destroying one
+(`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
+field/index mutation stay unmodeled by design. A per-line `;` scan still
+missed `got` then `= true;` on the next line (#7042 item 4): identifier and
+operator never shared a segment, so the later exact assertion kept pairing.
+Voiding now masks the whole body and walks `;` statements in order. Do not
+reintroduce a line-at-a-time mutation scan; unmutated bindings, including a
+`let` on its own line inside a block, must keep pairing. Register a `let`
+only when the masked line still looks like one; `CallFact` text stays on the
+original line. Otherwise a string-interior `let got = gate(10);` can replace
+a real binding, while `gate("alpha")` must still pair.
+
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
 A SideEffect `items.push(...)` on a passed collection can be confirmed by
@@ -389,6 +661,26 @@ existing Part C path. `cache.insert` is a delivered CallDeletion fixture, not
 this family's `push` admission; sharing the `insert` method name must not
 rewrite that golden. Reuse `PropagationWitnessV1`; do not mint a second
 witness DTO.
+
+## 2026-10-09: A collection value-read with a trailing operator is not a discriminator (#7135)
+
+`subject_names_collection` used to accept any trailing operator after the
+first read method, and `capacity` was on the value-read list. That credited
+`assert_eq!(items.capacity() >= 1, true)` as observing an `items.push`
+mutation even though capacity does not constrain the pushed values, and
+credited `assert_eq!(items.is_empty() || true, true)` and
+`assert_eq!(items.len() * 0, 0)`, which stay true if the push is deleted.
+A `Vec::new()` fixture can make `capacity() >= 1` notice a deleted push;
+that is not a reason to treat capacity as a contents discriminator.
+
+The subject must be exactly the root, an index/slice of the root that ends
+there, or one value-read call that ends there. Drop `capacity`. Pin the three
+refused shapes as should-stay-`weakly_exposed` controls; keep ordinary
+`len()`, index, and whole-collection equalities as the credit controls.
+
+This is cause 1 of #7135 only. A snapshot of the same collection, a twin that
+also ran the owner, and a right-hand-side owner call under `&&`/`||` are
+separate observers and were not taken here.
 
 ## 2026-09-29: Missing git and a missing cwd share `NotFound` (#4735)
 
@@ -2685,7 +2977,7 @@ Durable rules:
   first one is, so inventory the cleaners (other repositories and host
   services included) before calling it fixed.
 - Test the lock, not the story. The harness in
-  `xtask/src/policy/ci_scratch/tests.rs` runs the action's own script, and two
+  `tools/repo-policy/src/ci_scratch/tests.rs` runs the action's own script, and two
   negative controls (lock check removed; lock check replaced by an mtime test)
   must make the same harness fail. Also wait on the lock, not the PID, when
   simulating job death: in containers without a reaping init, `kill -0` keeps

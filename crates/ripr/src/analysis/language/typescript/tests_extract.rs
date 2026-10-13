@@ -1569,6 +1569,30 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
     }
 }
 
+/// Whether a test callback's first parameter is an object pattern that binds
+/// `expect` under its own name (`({ expect }) => ...`).
+fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) -> bool {
+    let params = match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return false,
+    };
+    let Some(first) = params.items.first() else {
+        return false;
+    };
+    let oxc_ast::ast::BindingPattern::ObjectPattern(object) = &first.pattern else {
+        return false;
+    };
+    object.properties.iter().any(|property| {
+        property.key.static_name().as_deref() == Some("expect")
+            && matches!(
+                &property.value,
+                oxc_ast::ast::BindingPattern::BindingIdentifier(ident)
+                    if ident.name.as_str() == "expect"
+            )
+    })
+}
+
 /// Names declared in `statements` that are visible to a later sibling
 /// statement: every declaration at this level, plus the `var` and function
 /// declarations nested blocks hoist out. Block-scoped `let`/`const`/`class`
@@ -1776,12 +1800,36 @@ pub(crate) fn test_name_and_assertions_from_call(
             names
         })
         .unwrap_or_default();
-    let bindings = bindings.without_shadowed(|name| {
-        parameters.iter().any(|parameter| parameter == name)
-            || body_declarations.iter().any(|declared| declared == name)
-            || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
-    });
+    // The registration callee resolves at the call site, so the runner is
+    // decided before the callback's own declarations shadow anything.
+    let bindings = bindings
+        .for_registration(callee_root_name(&call.callee))
+        .without_shadowed(|name| {
+            parameters.iter().any(|parameter| parameter == name)
+                || body_declarations.iter().any(|declared| declared == name)
+                || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
+        });
+    // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
+    // destructures the runner `expect` from the test context, unless the body
+    // re-declares it.
+    let bindings = if first_parameter_destructures_expect(callback)
+        && !body_declarations
+            .iter()
+            .any(|declared| declared == "expect")
+        && !super::related_tests::local_identifier_declared_in_test_body(call_text, "expect")
+    {
+        bindings.with_context_expect()
+    } else {
+        bindings
+    };
     let bindings = &bindings;
+    // An inline literal `test.each` table reads as one concrete case per
+    // row; any other table keeps the row-parameter assertions.
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(
@@ -1793,6 +1841,17 @@ pub(crate) fn test_name_and_assertions_from_call(
         })
         .unwrap_or_default();
     Some((name, assertions))
+}
+
+/// The identifier a registration callee starts from: `test` for `test`,
+/// `test.only` or `test.each(...)`; `None` for any other shape.
+fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
+    match callee {
+        Expression::Identifier(identifier) => Some(identifier.name.as_str()),
+        Expression::StaticMemberExpression(member) => callee_root_name(&member.object),
+        Expression::CallExpression(call) => callee_root_name(&call.callee),
+        _ => None,
+    }
 }
 
 /// Extract the name bound to the test callback's first parameter.

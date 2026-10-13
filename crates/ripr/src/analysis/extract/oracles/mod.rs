@@ -1,5 +1,6 @@
 mod arguments;
 mod classify;
+mod pattern_admission;
 mod patterns;
 mod scan;
 
@@ -14,8 +15,9 @@ pub(crate) use patterns::{
 };
 pub(crate) use scan::unwrap_err_bound_variables;
 pub(crate) use scan::{
-    err_return_guard_oracles, extract_assertions, extract_line_scanned_oracles,
-    guarded_result_match_scan_with_shadow_authority, terminal_err_return_guard_oracle,
+    err_return_guard_oracles, err_return_guard_twin, extract_assertions,
+    extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
+    terminal_err_return_guard_oracle,
 };
 
 #[cfg(test)]

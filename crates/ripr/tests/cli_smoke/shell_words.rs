@@ -52,6 +52,28 @@ pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
     Ok(words)
 }
 
+/// Split a printed `ripr … > path` command after POSIX word splitting, so a
+/// quoted root that contains ` > ` stays one argument (#6942). `split_once(" > ")`
+/// would cut inside that quoted path.
+pub(crate) fn posix_words_with_redirect(command: &str) -> Result<(Vec<String>, String), String> {
+    let words = posix_words(command)?;
+    let Some(at) = words.iter().position(|word| word == ">") else {
+        return Err(format!("no redirect in `{command}`"));
+    };
+    if at == 0 {
+        return Err(format!("redirect with no command in `{command}`"));
+    }
+    let redirect = words
+        .get(at + 1)
+        .ok_or_else(|| format!("redirect with no path in `{command}`"))?;
+    if words.len() != at + 2 {
+        return Err(format!(
+            "after command redirect is not one word: `{command}`"
+        ));
+    }
+    Ok((words[..at].to_vec(), redirect.clone()))
+}
+
 #[test]
 fn posix_words_keep_quoted_checkout_paths_whole() -> Result<(), String> {
     let words = posix_words(
@@ -77,6 +99,34 @@ fn posix_words_keep_quoted_checkout_paths_whole() -> Result<(), String> {
                 "`{rejected}` split into {words:?} instead of failing"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn posix_words_with_redirect_keep_quoted_gt_inside_the_root() -> Result<(), String> {
+    let command = "ripr check --root '/tmp/foo > bar/repo' --mode draft > '/tmp/foo > bar/repo/after.repo-exposure.json'";
+    let (words, redirect) = posix_words_with_redirect(command)?;
+    assert_eq!(
+        words,
+        [
+            "ripr",
+            "check",
+            "--root",
+            "/tmp/foo > bar/repo",
+            "--mode",
+            "draft"
+        ]
+    );
+    assert_eq!(redirect, "/tmp/foo > bar/repo/after.repo-exposure.json");
+    // The review-era `split_once(" > ")` cut inside the quoted root.
+    let (check_part, _redirect) = command
+        .split_once(" > ")
+        .ok_or("fixture command must contain a redirect")?;
+    if check_part.contains("/tmp/foo > bar/repo") {
+        return Err(format!(
+            "split_once(\" > \") unexpectedly kept the quoted root whole: {check_part}"
+        ));
     }
     Ok(())
 }

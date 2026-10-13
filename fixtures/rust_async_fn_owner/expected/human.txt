@@ -18,7 +18,11 @@ Start here:
   Changed behavior: capacity > threshold
   Missing discriminator (1 of 4): capacity == threshold
   Related test: src/lib.rs:10 above_threshold_gets_reduced (assertion not credited: ripr could not establish that it runs as the standard macro)
-  Next step: Escalate to real mutation testing or deep static analysis for this probe.
+  Next step: Trace the changed value to its output or effect, and inspect what the related test
+    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown.
   Evidence: reach yes · infection weak · propagation unknown · observation no · discriminator no
     - reach yes: Related tests appear to reach fetch_limit: above_threshold_gets_reduced
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
@@ -27,8 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_async_fn_owner/input --diff <cwd>/fixtures/rust_async_fn_owner/diff.patch --mode fast probe:src_lib.rs:predicate:736b22b0
   ripr context --root <cwd>/fixtures/rust_async_fn_owner/input --diff <cwd>/fixtures/rust_async_fn_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:736b22b0
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_async_fn_owner/input --at src/lib.rs:2
+No test stub here: the owner is async and needs a runtime the stub cannot pick
 
 More:
   Full evidence: rerun with --format human-full

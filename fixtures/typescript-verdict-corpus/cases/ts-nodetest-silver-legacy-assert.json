@@ -1,0 +1,66 @@
+{
+  "case_id": "ts-nodetest-silver-legacy-assert",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-silver-legacy-assert.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "node_assert_legacy_equal_boundary_pinned",
+  "hard_case": "the spec reads legacy assert.equal as relational, yet the loose comparison discriminates these values",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "tiers far from their thresholds",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "silver starts at one thousand points",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (1000 < points) {",
+        "mutated_line": "if (1000 < points) {",
+        "outcome": "tests_failed",
+        "failing_test": "silver starts at one thousand points",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (1000 > points) {",
+        "mutated_line": "if (1000 > points) {",
+        "outcome": "tests_failed",
+        "failing_test": "tiers far from their thresholds",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "silver.test.ts imports legacy node:assert, whose equal compares with loose `==`; RIPR-SPEC-0027 reads it as relational, not exact. Comparing these strings loosely still pins 999 and 1000, so every mutant of `1000 <= points` fails. ripr reports weakly_exposed, a false actionable verdict that follows the spec's own reading.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

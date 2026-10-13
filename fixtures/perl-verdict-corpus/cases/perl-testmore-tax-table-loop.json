@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testmore-tax-table-loop",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-tax-table-loop.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 64
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_selection",
+  "test_shape": "testmore_table_driven_loop",
+  "hard_case": "Table-driven: the assertion runs inside a for loop over a data table, and the call is an Exporter import.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "my $rate = $region ne 'north' ? 0.2 : 0.2;",
+        "mutated_line": "my $rate = $region ne 'north' ? 0.2 : 0.2;",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: tax for south",
+        "equivalence_review": "not equivalent: south pays 20%"
+      },
+      {
+        "replacement": "my $rate = $region ne 'north' ? 0.1 : 0.25;",
+        "mutated_line": "my $rate = $region ne 'north' ? 0.1 : 0.25;",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: tax for north",
+        "equivalence_review": "not equivalent: north pays 25%"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Both regions are asserted with exact expected tax, so changing either rate fails one row of the table. Spec cells: RIPR-SPEC-0064 relation kinds.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-tax-table-loop.json",
+    "sha256": "81dafc5c1dff615d1621d3fcaad85933c7e4d0dba78bcb8db031772d9b6db6b4",
+    "provenance": "producer"
+  }
+}

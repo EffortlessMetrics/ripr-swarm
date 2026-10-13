@@ -227,3 +227,63 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (16)
+
+Reason:
+RIPR-SPEC-0096: infection note names the char-vs-numeric literal mismatch (#6902)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (9)
+
+Reason:
+RIPR-SPEC-0122: #5471 the stub route carries the finding probe family as --kind, and seams of that kind are tried first; refusals name that seam
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (17)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (18)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (19)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

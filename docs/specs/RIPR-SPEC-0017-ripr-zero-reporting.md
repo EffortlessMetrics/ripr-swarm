@@ -157,10 +157,12 @@ metadata state as `missing`, `partial`, or `unknown`. Missing metadata is a
 review signal, not a suppression and not a reason to drop the entry.
 
 Campaign 18 metadata support is intentionally additive: baseline create writes
-the full object for new ledgers, baseline diff reports any present metadata on
-baseline-derived delta items, and shrink-only update preserves existing entry
-objects while removing resolved debt. Older Campaign 17 ledgers with partial or
-absent review metadata remain valid inputs.
+the full object shape for new ledgers with `owner` and `review_after` as
+`null`, baseline diff reports any present metadata on baseline-derived delta
+items, and shrink-only update preserves existing entry objects while removing
+resolved debt. Review ownership and deadlines are operator-set ledger content:
+no binary command writes non-null `owner` or `review_after` values. Older
+Campaign 17 ledgers with partial or absent review metadata remain valid inputs.
 
 Baseline review status values:
 
@@ -442,6 +444,9 @@ The implementation adds tests for:
 - metadata classification for current, stale, missing, and unknown entries,
   including past-due ISO `YYYY-MM-DD` deadlines, unix_ms deadlines, and
   incomparable `review_after` values that must not fail open to `current`;
+- a deadline on an incomplete review record (missing owner, reason,
+  `created_at`, or `review_after`) remaining `missing_metadata`, pinning the
+  operator-set review metadata contract;
 - RIPR 0 achieved, not yet, and unknown state calculation;
 - top debt area grouping by repo-relative path or configured area name;
 - repair-route selection from PR guidance, baseline debt delta, gate decision,

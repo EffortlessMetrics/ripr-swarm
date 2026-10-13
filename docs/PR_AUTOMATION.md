@@ -239,6 +239,35 @@ sections of the reviewer packet without being treated as production behavior.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+`cargo xtask check-fast` also runs `check-support-tiers` for committed spec
+Markdown, the support map, root README, Rust repair trust corpus, xtask source,
+and referenced workflow/script path changes. It runs before compilation-bearing
+Rust checks and Clippy, reuses the existing leaf diagnostics, and records actual
+execution or non-applicability in its report. See
+[RIPR-SPEC-0060](specs/RIPR-SPEC-0060-source-of-truth-stack.md#early-local-support-tier-validation).
+The established selector remains `origin/main...HEAD`; while authoring
+uncommitted or untracked specs, run `cargo xtask check-support-tiers` explicitly.
+This is one applicable local scan; precommit and hosted routing are unchanged.
+
+Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
+records diff-check and selected Clippy children, `file-policy.md` records actual
+covered-by warmup/list children, and `check-fast.md` records fmt and workspace
+Clippy children. Other commands are outside this bounded capture scope. Reused
+selectors and skipped warmups create no execution rows. Precommit diagnostics
+remain bound by its report digest; they add no acceptance or waiver authority.
+Structured argv preserves argument boundaries (`$REPO` substitutes the repository
+root in precommit). Captured elapsed time runs from runner start through observed
+exit, with polling. Enforced timeout duration includes termination and reaping,
+and Unix process-group confirmation where applicable; its distinct scope records
+this cleanup. Both captured scopes exclude pipe drain. Inherited-status elapsed
+includes the launch/status call and preserves inherited streams. Missing values
+are unavailable evidence. Cargo counts normalize existing ANSI color sequences
+and recognize `Compiling`, `Checking` and `Fresh` stderr progress lines only; they do not identify compiler units, prove
+artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
+base and paths supply invocation context rather than immutable source identity.
+Successful report-write failures still return an I/O error; interrupted execution
+retains its original error and separately reports publication failures.
+
 `doctor` is the shortest agent hygiene entry point and is equivalent to
 `worktree doctor`. It reports dirty `main` worktrees, branches behind
 `origin/main`, generated badge/target residue, and broad source-of-truth diffs
@@ -277,6 +306,24 @@ Different bytes or semantics can require separate witnesses. A hash, source/vers
 test alone does not establish the actual executable's dependency/source identity
 or replace a required original witness. Bind qualification to the explicitly
 selected compiler artifact and observed behavior under its admitted ownership.
+
+The qualification-only #4510 installed-candidate harness retains the actual
+Cargo-install executable message and observed toolchain. Installation uses the
+same absolute PATH-selected rustc invocation entry for version observation and
+compilation, with compiler selectors pinned and wrappers disabled in its owned
+command/configuration. Relative PATH entries resolve from the extracted working
+directory; ambiguous drive-relative entries refuse. This preserves a rustup
+proxy's rustc basename and observes versions without authenticating SDK bytes.
+The harness checks compiler and installed bytes agree and captures those retained
+bytes in an exclusive slot
+before qualified consumption. Reuse the same captured handle; another capture
+must refuse an occupied slot even if its bytes match. Failed captures publish no
+handle and remove only an observed owned partial; where native file ownership
+cannot be established they name and retain it. The qualification producer-root
+guard also names and retains its whole root after capture failure for verification;
+successful capture restores normal cleanup. These unlocked checks do not
+qualify a hostile filesystem race, crash durability, general test-artifact reuse,
+or the final installed release candidate.
 
 Before the next batch, and at merge, closure, cancellation or handoff, reconcile
 resources with the actual writer and all queued, running and independent consumers.
@@ -821,7 +868,22 @@ file-surface checks, spec format, fixture contract validation, and Droid
 workflow invariant checks. It should not run release packaging, marketplace
 packaging, real mutation work, or slow full-matrix checks.
 
-The current `precommit` command runs:
+For local policy triage, `cargo xtask check-policy-all` runs nine independent
+source/Git scans in precommit-relative order: static-language, no-panic-family,
+allow-attributes, local-context, covered-by, executable-files, process-policy,
+network-policy, and lint-policy. It runs every selected check even after a
+failure, preserves each leaf report/error, and writes
+`target/ripr/reports/check-policy-all.md` with every outcome and failure's rerun
+command. Any leaf error or aggregate report-write error returns nonzero.
+`check-file-policy` is excluded because it can compile tests. The selected
+leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
+compiles the driver when needed. This is a local workflow improvement; existing
+precommit/check-fast behavior and hosted gate routing remain unchanged.
+
+[RIPR-SPEC-0253](specs/RIPR-SPEC-0253-local-collect-all-policy.md) maps this
+command's five acceptance cases to its actual-driver tests and production owner.
+
+The precommit inventory is:
 
 ```bash
 cargo fmt --check

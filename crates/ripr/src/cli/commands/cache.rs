@@ -3,6 +3,7 @@ use crate::analysis::seam_cache::{
     inspect_cache_root,
 };
 use crate::cli::suggest::unknown_argument;
+use crate::output;
 use serde_json::json;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
@@ -140,14 +141,53 @@ fn resolve_status_base(cache_dir: &Path) -> (PathBuf, Option<PathBuf>) {
     }
 }
 
+/// Human `Cache dir:` header for `cache status` and `cache clear`. Routes
+/// through the shared CLI path renderer so a Windows drive-letter verbatim
+/// prefix is stripped the same way `ripr doctor` already shows this directory
+/// (#7326). JSON status keeps [`Path::display`].
+fn cache_dir_human_line(cache_dir: &Path) -> String {
+    cache_dir_human_line_for_host(cache_dir, cfg!(windows))
+}
+
+fn cache_dir_human_line_for_host(cache_dir: &Path, windows: bool) -> String {
+    format!(
+        "Cache dir: {}",
+        output::path::human_path_text(&cache_dir.to_string_lossy(), windows)
+    )
+}
+
+/// Human `Real dir:` alias line for `cache status`. Same host-parameterised
+/// renderer as [`cache_dir_human_line_for_host`]; JSON `real_cache_dir` keeps
+/// [`Path::display`] (#7343).
+fn real_dir_human_line_for_host(real_dir: &Path, windows: bool) -> String {
+    format!(
+        "Real dir: {} (inspected through the symlink/junction alias; \
+         ripr check reads and writes the cache through it, while \
+         `ripr cache clear` requires the real path)",
+        output::path::human_path_text(&real_dir.to_string_lossy(), windows)
+    )
+}
+
 fn render_status(
     cache_dir: &Path,
     real_dir: Option<&Path>,
     status: &CacheStatus,
     is_json: bool,
 ) -> Result<String, String> {
-    let cache_dir_str = cache_dir.display().to_string();
+    render_status_for_host(cache_dir, real_dir, status, is_json, cfg!(windows))
+}
+
+fn render_status_for_host(
+    cache_dir: &Path,
+    real_dir: Option<&Path>,
+    status: &CacheStatus,
+    is_json: bool,
+    windows: bool,
+) -> Result<String, String> {
     if is_json {
+        // Machine identity keeps Path::display, including a Windows verbatim
+        // prefix; human Cache dir (#7326) and Real dir (#7343) use human_path.
+        let cache_dir_str = cache_dir.display().to_string();
         serde_json::to_string_pretty(&json!({
             "schema_version": CACHE_STATUS_SCHEMA_VERSION,
             "cache_dir": cache_dir_str,
@@ -162,18 +202,13 @@ fn render_status(
         .map_err(|error| error.to_string())
     } else {
         let mut lines = vec![
-            format!("Cache dir: {cache_dir_str}"),
+            cache_dir_human_line_for_host(cache_dir, windows),
             format!("Status: {}", status.state),
             format!("Total size: {} bytes", status.total_size_bytes),
             format!("Entries: {}", status.entry_count),
         ];
         if let Some(real) = real_dir {
-            lines.push(format!(
-                "Real dir: {} (inspected through the symlink/junction alias; \
-                 ripr check reads and writes the cache through it, while \
-                 `ripr cache clear` requires the real path)",
-                real.display()
-            ));
+            lines.push(real_dir_human_line_for_host(real, windows));
         }
         if status.foreign_entry_count > 0 {
             lines.push(format!(
@@ -412,17 +447,38 @@ fn verify_layer_before_delete(cache_dir: &Path, layer: &CacheLayerPlan) -> Resul
     }
 }
 
+/// Failure text for a cache-layer removal that the OS refused (#7388). The
+/// user meets this message exactly while recovering from an error, so the
+/// layer path renders through the shared human renderer — the same plain
+/// forward-slash spelling as the `Cache dir:` header in the same output —
+/// instead of the verbatim `\\?\` canonicalized form that pastes poorly into
+/// editors, other shells, and issue reports.
+fn layer_removal_failure_message(
+    layer_path: &Path,
+    error: &std::io::Error,
+    windows: bool,
+) -> String {
+    format!(
+        "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
+        output::path::human_path_text(&layer_path.to_string_lossy(), windows)
+    )
+}
+
 fn remove_owned_layers(cache_dir: &Path, plan: &ClearPlan) -> Result<(), String> {
+    remove_owned_layers_for_host(cache_dir, plan, cfg!(windows))
+}
+
+fn remove_owned_layers_for_host(
+    cache_dir: &Path,
+    plan: &ClearPlan,
+    windows: bool,
+) -> Result<(), String> {
     for layer in &plan.layers {
         verify_layer_before_delete(cache_dir, layer)?;
     }
     for layer in &plan.layers {
-        std::fs::remove_dir_all(&layer.path).map_err(|error| {
-            format!(
-                "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
-                layer.path.display()
-            )
-        })?;
+        std::fs::remove_dir_all(&layer.path)
+            .map_err(|error| layer_removal_failure_message(&layer.path, &error, windows))?;
     }
     Ok(())
 }
@@ -520,7 +576,7 @@ fn run_clear(args: &[String]) -> Result<(), String> {
     let current_dir =
         std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
     let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
-    println!("Cache dir: {}", cache_dir.display());
+    println!("{}", cache_dir_human_line(&cache_dir));
     println!("{}", clear_cache_dir(&cache_dir, options)?);
 
     Ok(())
@@ -643,6 +699,149 @@ mod tests {
         }
         if parse_clear_args(&["--forced".to_string()]).is_ok() {
             return Err("unknown cache clear argument was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7326: `cache status` / `cache clear` printed `Path::display()` of a
+    /// canonical Windows path, leaking the verbatim prefix that `ripr doctor`
+    /// already strips through `output::path::human_path`. JSON keeps the raw
+    /// spelling. `run_clear` prints the same `cache_dir_human_line` helper.
+    #[test]
+    fn render_status_human_cache_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let cache_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        let expected = format!("Cache dir: {drive}/code/myrepo/target/ripr/cache");
+        let first = human.lines().next().unwrap_or("");
+        if first != expected {
+            return Err(format!(
+                "Windows human Cache dir leaked verbatim spelling: {human}"
+            ));
+        }
+        if first.contains(r"\\?\") {
+            return Err(format!(
+                "Windows human Cache dir still has verbatim prefix: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, None, &status, false, false)?;
+        let unix_first = unix.lines().next().unwrap_or("");
+        if unix_first != format!("Cache dir: {verbatim}") {
+            return Err(format!(
+                "Unix human Cache dir must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, None, &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let machine = cache_dir.display().to_string();
+        if value.get("cache_dir").and_then(serde_json::Value::as_str) != Some(machine.as_str()) {
+            return Err(format!(
+                "JSON cache_dir must keep Path::display identity, got: {json}"
+            ));
+        }
+        let hosted = render_status(cache_dir, None, &status, false)?;
+        if hosted.lines().next() != Some(cache_dir_human_line(cache_dir).as_str()) {
+            return Err(format!(
+                "host render_status Cache dir must use human_path: {hosted}"
+            ));
+        }
+        if cache_dir_human_line_for_host(cache_dir, true) != expected {
+            return Err("cache clear header helper drifted from status renderer".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7343: the human `Real dir:` alias line still used `Path::display()`
+    /// after #7326 routed only `Cache dir:` through `human_path`. JSON
+    /// `real_cache_dir` keeps the raw spelling. Proved through
+    /// `render_status_for_host` so Windows stripping is covered without a
+    /// native Windows host.
+    #[test]
+    fn render_status_human_real_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        let drive = "F:";
+        let alias = format!(r"{drive}\code\myrepo\target\ripr\cache-alias");
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let cache_dir = Path::new(&alias);
+        let real_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let none_human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        if none_human.lines().any(|line| line.starts_with("Real dir:")) {
+            return Err(format!(
+                "Real dir line must appear only when real_dir is Some: {none_human}"
+            ));
+        }
+        let human = render_status_for_host(cache_dir, Some(real_dir), &status, false, true)?;
+        let expected_path = format!("{drive}/code/myrepo/target/ripr/cache");
+        let expected = format!(
+            "Real dir: {expected_path} (inspected through the symlink/junction alias; \
+             ripr check reads and writes the cache through it, while \
+             `ripr cache clear` requires the real path)"
+        );
+        let real_line = human
+            .lines()
+            .find(|line| line.starts_with("Real dir:"))
+            .unwrap_or("");
+        if real_line != expected {
+            return Err(format!(
+                "Windows human Real dir leaked verbatim spelling: {human}"
+            ));
+        }
+        if real_line.contains(r"\\?\") {
+            return Err(format!(
+                "Windows human Real dir still has verbatim prefix: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, Some(real_dir), &status, false, false)?;
+        let unix_real = unix
+            .lines()
+            .find(|line| line.starts_with("Real dir:"))
+            .unwrap_or("");
+        if !unix_real.starts_with(&format!("Real dir: {verbatim} ")) {
+            return Err(format!(
+                "Unix human Real dir must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, Some(real_dir), &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let machine = real_dir.display().to_string();
+        if value
+            .get("real_cache_dir")
+            .and_then(serde_json::Value::as_str)
+            != Some(machine.as_str())
+        {
+            return Err(format!(
+                "JSON real_cache_dir must keep Path::display identity, got: {json}"
+            ));
+        }
+        if value
+            .get("via_symlink")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            return Err(format!(
+                "JSON via_symlink must stay true for an alias: {json}"
+            ));
+        }
+        if real_dir_human_line_for_host(real_dir, true) != expected {
+            return Err("real dir helper drifted from status renderer".to_string());
         }
         Ok(())
     }
@@ -1136,6 +1335,50 @@ mod tests {
         let aliased_human = render_status(cache_dir, Some(alias_real), &owned_only, false)?;
         if !aliased_human.contains("Real dir: resolved-cache-target") {
             return Err(format!("human alias disclosure drifted: {aliased_human}"));
+        }
+        Ok(())
+    }
+
+    /// #7388: a failed layer removal used to interpolate `Path::display()` of
+    /// the canonicalized layer path, leaking the verbatim `\\?\` spelling on
+    /// the error path while the same command's `Cache dir:` header renders
+    /// the plain forward-slash form (#7326). The failure text now routes
+    /// through the shared human renderer on every host that produces
+    /// verbatim prefixes; Unix keeps the text unchanged.
+    #[test]
+    fn layer_removal_failure_message_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim =
+            format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\cache\repo-file-facts");
+        let layer_path = Path::new(&verbatim);
+        let error = std::io::Error::from(std::io::ErrorKind::Other);
+        let windows = layer_removal_failure_message(layer_path, &error, true);
+        let expected_path =
+            format!("{drive}/tmp/ripr-audit-scratch/target/ripr/cache/repo-file-facts");
+        if !windows.contains(&format!(
+            "failed to remove ripr cache layer {expected_path}:"
+        )) {
+            return Err(format!(
+                "windows failure message leaked the verbatim spelling: {windows}"
+            ));
+        }
+        if windows.contains(r"\\?\") || windows.contains('\\') {
+            return Err(format!(
+                "windows failure message must use plain forward-slash spelling: {windows}"
+            ));
+        }
+        if !windows.contains("the cache root and unrelated siblings were preserved") {
+            return Err(format!(
+                "failure message dropped the preservation disclosure: {windows}"
+            ));
+        }
+        let unix = layer_removal_failure_message(layer_path, &error, false);
+        if !unix.contains(&format!("failed to remove ripr cache layer {verbatim}:")) {
+            return Err(format!(
+                "unix failure message must keep verbatim text as a filename: {unix}"
+            ));
         }
         Ok(())
     }

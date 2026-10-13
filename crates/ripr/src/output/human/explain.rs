@@ -72,6 +72,18 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
             out.push_str(&format!("  - {need}\n"));
         }
     }
+    if matches!(
+        finding.class,
+        ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown
+    ) {
+        let step = crate::output::next_step::reconcile_next_step(finding);
+        if !step.is_empty() {
+            out.push_str("  To investigate this uncertainty:\n");
+            out.push_str(&format!("  - {step}\n"));
+        }
+    }
     if !finding.stop_reasons.is_empty() {
         out.push_str("  Stop reasons:\n");
         for reason in &finding.stop_reasons {
@@ -210,13 +222,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         StopReason::DynamicDispatchUnresolved => {
             "the path goes through a trait object or generic call ripr cannot resolve"
         }
-        StopReason::ProcMacroOpaque => "a procedural macro hides the code ripr would need to read",
-        StopReason::FixtureOpaque => "a test fixture builds the input in a way ripr cannot read",
+        StopReason::ProcMacroOpaque | StopReason::FixtureOpaque => reason.describe(),
         StopReason::FeatureUnknown => "a cfg or feature gate may change whether the code runs",
-        StopReason::AsyncBoundaryOpaque => {
-            "the path crosses an async boundary ripr does not follow"
-        }
-        StopReason::NoChangedRustLine => "the diff changed no Rust line ripr can probe",
+        StopReason::AsyncBoundaryOpaque | StopReason::NoChangedRustLine => reason.describe(),
         StopReason::InfectionEvidenceUnknown => {
             "ripr could not tell whether a test input changes this value"
         }
@@ -233,6 +241,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         StopReason::GapEvidenceUnresolved => {
             "a related test asserts, but ripr could not tie that assertion to this change"
         }
+        // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
+        // a second identity-unknown sentence here.
+        StopReason::HelperIdentityUnresolved => reason.describe(),
     }
 }
 
@@ -311,6 +322,27 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("assert the exact `Kind::Beta`"), "{text}");
+    }
+
+    #[test]
+    fn helper_identity_unresolved_explain_uses_domain_describe() {
+        let reason = StopReason::HelperIdentityUnresolved;
+        assert_eq!(stop_reason_meaning(&reason), reason.describe());
+        assert!(
+            reason.describe().contains("workspace function")
+                && reason.describe().contains("not unique"),
+            "{}",
+            reason.describe()
+        );
+        assert!(
+            !reason.describe().contains("probe"),
+            "{}",
+            reason.describe()
+        );
+        assert_ne!(
+            stop_reason_meaning(&StopReason::StaticProbeUnknown),
+            reason.describe()
+        );
     }
 
     /// #5508: a Perl row whose observation ripr could not confirm is an

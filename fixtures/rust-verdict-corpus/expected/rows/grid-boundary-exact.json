@@ -15,5 +15,8 @@
     "exposed"
   ],
   "outcome": "ideal",
-  "contradictions": []
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
 }

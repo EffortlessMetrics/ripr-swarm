@@ -25,8 +25,9 @@ The configuration layer should:
 - use behavior-preserving defaults when the file is absent;
 - treat a present `ripr.toml` directory entry, including a dangling or
   self-referencing symlink, as present rather than as built-in defaults
-  (`load_for_root`, workspace-status presence, and Python repair
-  config-profile detection share that presence rule);
+  (`load_for_root`, workspace-status presence, Python repair
+  config-profile detection, first-pr preflight, and agent-receipt
+  config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - keep explicit CLI options ahead of repository config;
@@ -165,6 +166,17 @@ then doctor reports the config path or default state and never prints the
 config source text.
 ```
 
+### Implicit check names a closer config it skipped
+
+```text
+Given a Cargo workspace with ripr.toml at the workspace root and a different
+ripr.toml in a member crate,
+when ripr check runs from that member without --root,
+then the workspace file still governs the run,
+and stderr names both files and which one governed,
+and `--root .` from that directory loads the closer file instead.
+```
+
 ### Doctor enable tip produces a loadable configuration
 
 ```text
@@ -177,6 +189,16 @@ already enabled, names only values `languages.enabled` accepts (JavaScript
 maps to `typescript`), and names the enable step beside the recommended first
 command;
 and a workspace with no such language gets neither.
+```
+
+### Present dangling or unreadable config is not built-in defaults
+
+```text
+Given a workspace whose ripr.toml is a symlink to a missing file,
+or a regular file whose lookup or read fails with a non-absence error,
+when first-pr preflight or an agent-receipt config fingerprint runs,
+then the config is present but unreadable,
+and it is not described as using built-in defaults.
 ```
 
 ### Doctor separates analysis readiness from source-build prerequisites
@@ -194,12 +216,24 @@ Given the same workspace,
 when ripr doctor runs with --profile source-build,
 then the cargo and rustc checks fail, the report status is fail, and doctor
 exits 2;
+and a missing cargo or rustc names an install route on its own failing line;
+and the run does not print the analysis-profile start-here packet, recovery
+states, proof-rail note, or "Recommended first command: ripr check";
 and enabled language runtimes are reported but do not decide that profile's
 status.
 
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
+
+Given a git root whose Cargo workspace lives in a subdirectory (for example
+`rust/Cargo.toml` with `[workspace]` and no Cargo.toml at the git top level),
+when ripr doctor runs from that git root,
+then the cargo_toml check passes and names the nested manifest (Cargo.toml
+found at rust/Cargo.toml via workspace root rust/);
+and a root with Rust sources but no Cargo.toml, or an empty root under the
+Rust-only default, still fails cargo_toml;
+and doctor's selected --root is not rebound to the nested workspace.
 ```
 
 ## Test Mapping
@@ -210,7 +244,26 @@ Current tests:
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_analysis_root_is_the_workspace`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_workspace_has_no_ripr_toml`
+- `crates/ripr/src/config.rs::tests::closer_config_from_a_nested_source_dir_is_still_skipped`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_files_have_identical_contents`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_invocation_is_the_analysis_root`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file`
+- `crates/ripr/src/config.rs::tests::closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_stays_quiet_at_the_analysis_root`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_the_member_entry_when_it_is_a_symlink_to_a_different_file`
+- `crates/ripr/tests/cli_smoke.rs::check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml`
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
@@ -227,6 +280,20 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
+- `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`
+- `crates/ripr/src/output/doctor.rs::tests::nested_workspace_under_git_root_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::nested_package_under_git_root_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_target_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_venv_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_fixtures_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_ripr_dir_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::sibling_nested_workspaces_pass_naming_one`
+- `crates/ripr/src/output/doctor.rs::tests::ancestor_workspace_from_member_src_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
+- `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
+- `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root`
 - `crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools`
 - `crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing`
@@ -248,7 +315,7 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_does_not_treat_a_repo_local_prove_cmd_as_path_prove`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd`
 - `crates/ripr/tests/cli_smoke.rs::doctor_discloses_missing_verification_tools_but_still_checks_manifest`
-- `crates/ripr/tests/cli_help_hierarchy.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build`
+- `xtask/tests/ripr_public_guide_contract.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build`
 
 Planned tests:
 
@@ -262,11 +329,19 @@ Planned tests:
 Current implementation:
 
 - `crates/ripr/src/config.rs` owns config parsing, defaults, validation,
-  presence (`config_entry_present` / `config_present_at_root`), and
-  precedence helpers. Workspace status and Python repair config-profile
-  detection consume that presence rule instead of `Path::is_file`.
+  presence (`config_entry_present` / `config_present_at_root`), skipped-closer
+  detection after an implicit analysis-root rebind
+  (`closer_config_skipped_by_analysis_root`), and precedence helpers.
+  Workspace status and Python repair config-profile detection consume that
+  presence rule instead of `Path::is_file`.
 - `crates/ripr/src/cli/commands.rs` loads repo config for `check`, `explain`,
   and `context`, and reports config status through `doctor`.
+- `crates/ripr/src/output/doctor.rs` projects missing cargo/rustc as analysis
+  advisories or source-build failures with an install route. The `cargo_toml`
+  check locates a selected-root, git-bounded ancestor, or nested Cargo.toml
+  without rebinding doctor's `--root`.
+- `crates/ripr/src/cli/commands/doctor.rs` prints start-here / first-command
+  guidance for the analysis profile only.
 - `crates/ripr/src/app.rs` provides config-aware orchestration for CLI and LSP
   adapters.
 - `crates/ripr/src/lsp/config.rs` merges repo config with LSP initialization

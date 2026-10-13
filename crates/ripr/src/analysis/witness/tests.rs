@@ -285,6 +285,7 @@ impl SeamSpec {
                         flow_sink: None,
                     })
                     .collect(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class: self.class,

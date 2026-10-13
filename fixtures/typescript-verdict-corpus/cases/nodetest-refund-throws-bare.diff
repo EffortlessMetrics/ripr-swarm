@@ -1,0 +1,12 @@
+diff --git a/src/refund.ts b/src/refund.ts
+index 0000000..1111111 100644
+--- a/src/refund.ts
++++ b/src/refund.ts
+@@ -1,6 +1,6 @@
+ export function refundAmount(amount: number): number {
+   if (amount < 0) {
+-    throw new Error("negative refund");
++    throw new Error("negative " + "refund");
+   }
+   return amount;
+ }
