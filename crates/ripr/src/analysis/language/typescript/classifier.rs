@@ -3450,6 +3450,21 @@ pub(crate) fn strongest_family_matching_oracle(
                 {
                     (OracleKind::BroadError, OracleStrength::Weak)
                 }
+                // #7315 under the #6798 verdict owner: a literal rejection
+                // equality promoted to `exact_error_variant` carries its
+                // pinned reason in `expected_value_or_variant` while
+                // `error_payload` stays `None`. A reason the changed line
+                // never throws observes a different throw site, so it reads
+                // `broad_error` / weak for this change.
+                (None, _)
+                    if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
+                        && !literal_rejection_credits(
+                            assertion.expected_value_or_variant.as_deref(),
+                            error_facts,
+                        ) =>
+                {
+                    (OracleKind::BroadError, OracleStrength::Weak)
+                }
                 (_, Some(payload))
                     if effect_family
                         && matches!(assertion.oracle_kind, OracleKind::MockExpectation)

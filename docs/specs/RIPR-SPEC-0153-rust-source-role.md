@@ -208,6 +208,22 @@ validated grant, so the degradation is identical everywhere, and the
 classified-seam caches bump their schema generations so pre-#3634
 entries cannot serve classifications that bypass the validation.
 
+The classified workspace key also binds raw Cargo configuration used by that
+metadata premise: both Cargo configuration filenames at the selected root and
+its ancestors, effective Cargo-home configuration, repository toolchain files,
+and the Cargo/toolchain command environment. Creation, edits, renames, deletion,
+and malformed bytes participate independently of HEAD and Rust source bytes.
+Cargo-home discovery follows Cargo's canonical resolver, including OS-home
+fallback for absent or empty environment values. Relative home paths resolve at
+the metadata command's selected root, independently of the RIPR caller's cwd.
+Only genuinely unavailable discovery withholds classified provenance and reuse;
+successful fallback still binds the discovered home's configuration bytes.
+An unreadable, non-regular, or over-budget configuration identity cannot admit or
+publish full or compact classified evidence. Per-file parser facts remain usable;
+prior entries are preserved so reverting the configuration restores warm reuse.
+This identity does not apply the separate Anyhow eligibility policy or establish
+an atomic snapshot under concurrent filesystem changes.
+
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
 the repo-exposure consumed-config list; the workspace cache key already

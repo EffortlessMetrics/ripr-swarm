@@ -2195,8 +2195,10 @@ mod tests {
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
         // A golden whose missing discriminator carries a `null` flow sink.
         // `helper_chain_one_hop` no longer names one since #6796 made its
-        // computed helper-hop boundary unresolved rather than missing.
-        let golden = read_json(root.join("fixtures/rust_async_fn_owner/expected/check.json"))?;
+        // computed helper-hop boundary unresolved rather than missing, and
+        // `rust_async_fn_owner` no longer names one since #6781 resolved its
+        // tail `if`/`else` propagation sink.
+        let golden = read_json(root.join("fixtures/ts_no_verify_command/expected/check.json"))?;
         // The first finding that names a missing discriminator.
         let finding = golden["findings"]
             .as_array()
