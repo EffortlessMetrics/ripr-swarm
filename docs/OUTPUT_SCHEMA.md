@@ -1959,9 +1959,12 @@ JSON fields:
   select the same packet-established direct/reachable test, preferring admitted
   exact evidence and then stable test/relation identity. If that test has no
   command, another row's command is not substituted. Multiple commands for the
-  selected test use stable command-ID order; array permutations cannot change
-  the recommendation (RIPR-SPEC-0235 rule 13, #6734). This selection grants no
-  additional class, oracle strength or execution authority.
+  selected test exclude empty argv before stable command-ID ordering. Canonical
+  gap and probe assertion shapes use that row's oracle only when its test and
+  target-owner identities bind, with the behavior default otherwise. Array
+  permutations cannot change the recommendation or its gap identity
+  (RIPR-SPEC-0235 rule 13, #6734). This selection grants no additional class,
+  oracle strength or execution authority.
   `verify.command` is copied from fact evidence with
   `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
   `null` even though receipt evidence is required internally, and

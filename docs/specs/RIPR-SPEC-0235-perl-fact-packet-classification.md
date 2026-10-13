@@ -269,9 +269,12 @@ For each change, the first match wins:
       is admitted as `weakly_exposed`; break ties by stable `test_id`, then
       `relation_id`. Location and verification come from that same row, and
       a missing command stays missing. Multiple commands for that test use
-      stable `command_id` order. Array permutations cannot redirect advice to
-      an advisory test (#6734). This selection changes no exposure class or
-      oracle strength.
+      stable `command_id` order after excluding empty `argv`. Array permutations
+      cannot redirect advice to an advisory test (#6734). Canonical gap and
+      probe assertion shapes use only the selected row's oracle when its test
+      and target-owner identities bind; otherwise use the behavior default.
+      An advisory or foreign oracle cannot change that identity. This selection
+      changes no exposure class or oracle strength.
 14. **Fingerprint scope.** The packet fingerprint is a consistency check
     on identity facts, not an authenticity control: it is an unkeyed
     SHA-256 that any writer can recompute. No output, doc or comment may

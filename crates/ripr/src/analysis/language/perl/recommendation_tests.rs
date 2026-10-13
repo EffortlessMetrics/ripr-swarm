@@ -169,6 +169,196 @@ fn perl_guidance_verify_choice_is_stable_within_selected_test() -> Result<(), St
 }
 
 #[test]
+fn perl_guidance_review_empty_command_cannot_hide_usable_same_test_command() -> Result<(), String> {
+    for (base, test) in [(MORE_PACKET, "total_more"), (TEST2_PACKET, "total_test2")] {
+        let text = edited_packet(base, |packet| {
+            let commands = packet_array(packet, "verify_commands")?;
+            let mut empty = commands
+                .iter()
+                .find(|command| command["test_id"] == format!("test:t/{test}.t:line_item_total"))
+                .cloned()
+                .ok_or("missing direct-test command")?;
+            empty["command_id"] = "verify:a-empty".into();
+            empty["argv"] = serde_json::json!([]);
+            commands.insert(0, empty);
+            Ok(())
+        })?;
+        for text in [text.clone(), reversed_arrays(&text, &all_fact_arrays())?] {
+            let finding = only_finding(&text)?;
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+            assert_eq!(
+                guidance(&finding, "perl_verify_command: "),
+                Some(format!("prove -l t/{test}.t")),
+                "empty lower-ID command must not hide usable same-test verification"
+            );
+            let empty_only = edited_packet(&text, |packet| {
+                packet_array(packet, "verify_commands")?.retain(|command| {
+                    command["test_id"] == "test:t/load.t:can_total"
+                        || command["command_id"] == "verify:a-empty"
+                });
+                Ok(())
+            })?;
+            assert_eq!(
+                guidance(&only_finding(&empty_only)?, "perl_verify_command: "),
+                None,
+                "empty selected-test commands cannot borrow valid advisory verification"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_guidance_review_strict_actionability_keeps_usable_command_and_reference()
+-> Result<(), String> {
+    let fixture = include_str!(
+        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
+    );
+    let mut base = consume(fixture)?;
+    let test_id = "test:t/app.t:discount_smoke";
+    let change_id = "change:lib/My/App.pm:8:return";
+    let mut empty = base
+        .verify_command_for_test(test_id)
+        .cloned()
+        .ok_or("missing selected-test command")?;
+    empty.command_id = "verify:a-empty".to_string();
+    empty.argv.clear();
+    base.verify_commands.insert(0, empty);
+    let context = complete_perl_actionability_context();
+    for reverse in [false, true] {
+        let mut packet = base.clone();
+        if reverse {
+            packet.verify_commands.reverse();
+        }
+        packet.validate_ingestion(&packet_test_options())?;
+        let actionable = packet
+            .strict_actionability_for_change(change_id, &context)
+            .map_err(|error| format!("usable same-test verification rejected: {error:?}"))?;
+        assert_eq!(actionable.verify_command, ["prove", "t/app.t"]);
+        assert!(actionable.raw_evidence_refs.iter().any(|reference| {
+            reference.kind == "perl_verify_command"
+                && reference.source_id == "verify:t/app.t:prove"
+                && reference.path == "t/app.t"
+        }));
+        packet.verify_commands.retain(|command| {
+            command.test_id.as_deref() != Some(test_id) || command.argv.is_empty()
+        });
+        assert_eq!(
+            packet.strict_actionability_for_change(change_id, &context),
+            Err(PerlActionabilityBlocker::MissingVerifyCommand)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_guidance_review_mixed_oracles_keep_canonical_gap_and_probe_stable() -> Result<(), String> {
+    for (base, test) in [(MORE_PACKET, "total_more"), (TEST2_PACKET, "total_test2")] {
+        let text = edited_packet(base, |packet| {
+            let mut smoke = packet_array(packet, "oracles")?
+                .first()
+                .cloned()
+                .ok_or("missing direct oracle")?;
+            smoke["oracle_id"] = "oracle:load:smoke".into();
+            smoke["test_id"] = "test:t/load.t:can_total".into();
+            smoke["kind"] = "smoke_ok".into();
+            smoke["strength"] = "weak_smoke".into();
+            smoke["expression"] = "can_ok('Checkout', 'total_cents')".into();
+            smoke["range"] = serde_json::json!({
+                "start_line": 6, "start_column": 1, "end_line": 6, "end_column": 35
+            });
+            smoke["provenance_refs"] = serde_json::json!(["prov:load"]);
+            packet_array(packet, "oracles")?.push(smoke);
+            packet_array(packet, "relations")?
+                .iter_mut()
+                .find(|relation| relation["relation_kind"] == "package_reference")
+                .ok_or("missing advisory relation")?["oracle_id"] = "oracle:load:smoke".into();
+            Ok(())
+        })?;
+        let fingerprint = consume(&bless_fingerprint(&text))?.packet_fingerprint;
+        for text in [text.clone(), reversed_arrays(&text, &all_fact_arrays())?] {
+            assert_eq!(
+                consume(&bless_fingerprint(&text))?.packet_fingerprint,
+                fingerprint
+            );
+            let finding = only_finding(&text)?;
+            assert_eq!(finding.related_tests.len(), 2);
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+            assert_eq!(
+                guidance(&finding, "perl_suggested_test_location: "),
+                Some(format!("t/{test}.t::line_item_total"))
+            );
+            assert_eq!(
+                guidance(&finding, "perl_verify_command: "),
+                Some(format!("prove -l t/{test}.t"))
+            );
+            let gap = finding.canonical_gap.ok_or("missing canonical gap")?;
+            assert_eq!(gap.id, "gap:perl:43741247fd8b9df5");
+            assert_eq!(gap.probe_kind, "exact_return_assertion");
+            assert_eq!(finding.probe.required_oracles, ["exact_return_assertion"]);
+            assert_eq!(finding.probe.expected_sinks, ["exact_return_assertion"]);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_guidance_review_shape_requires_selected_test_and_owner_binding() -> Result<(), String> {
+    for binding in [
+        "bound",
+        "foreign_test",
+        "foreign_owner",
+        "absent",
+        "advisory_only",
+    ] {
+        let text = edited_packet(MORE_PACKET, |packet| {
+            let oracle = packet_array(packet, "oracles")?
+                .first_mut()
+                .ok_or("missing oracle")?;
+            oracle["kind"] = "output_observer".into();
+            if binding == "foreign_test" {
+                oracle["test_id"] = "test:t/load.t:can_total".into();
+            } else if binding == "foreign_owner" {
+                let mut foreign = packet_array(packet, "owners")?
+                    .first()
+                    .cloned()
+                    .ok_or("missing owner")?;
+                foreign["owner_id"] = "perl:lib/Checkout.pm::Checkout::other".into();
+                foreign["name"] = "other".into();
+                packet_array(packet, "owners")?.push(foreign);
+                packet_array(packet, "oracles")?[0]["target_owner_id"] =
+                    "perl:lib/Checkout.pm::Checkout::other".into();
+            } else if binding == "absent" {
+                for relation in packet_array(packet, "relations")? {
+                    relation["oracle_id"] = serde_json::Value::Null;
+                }
+            } else if binding == "advisory_only" {
+                for relation in packet_array(packet, "relations")? {
+                    relation["relation_kind"] = "package_reference".into();
+                }
+            }
+            Ok(())
+        })?;
+        for text in [text.clone(), reversed_arrays(&text, &all_fact_arrays())?] {
+            let finding = only_finding(&text)?;
+            let expected = if binding == "bound" {
+                "output_observer"
+            } else {
+                "exact_return_assertion"
+            };
+            let gap = finding.canonical_gap.ok_or("missing canonical gap")?;
+            assert_eq!(gap.probe_kind, expected, "{binding}");
+            assert_eq!(finding.probe.required_oracles, [expected], "{binding}");
+            assert_eq!(finding.probe.expected_sinks, [expected], "{binding}");
+            if binding != "bound" {
+                assert_eq!(gap.id, "gap:perl:43741247fd8b9df5", "{binding}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn perl_guidance_real_fixtures_reach_check_and_json() -> Result<(), String> {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/perl_cpan_alpha/recommendation-controls");

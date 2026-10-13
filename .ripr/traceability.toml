@@ -14314,6 +14314,10 @@ tests = [
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_requires_a_direct_reachable_relation",
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_prefers_admitted_exact_row_then_stable_test_identity",
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_verify_choice_is_stable_within_selected_test",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_empty_command_cannot_hide_usable_same_test_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_strict_actionability_keeps_usable_command_and_reference",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_mixed_oracles_keep_canonical_gap_and_probe_stable",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_shape_requires_selected_test_and_owner_binding",
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_real_fixtures_reach_check_and_json",
 ]
 fixtures = ["fixtures/perl_cpan_alpha/recommendation-controls"]

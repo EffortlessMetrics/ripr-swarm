@@ -48,7 +48,13 @@ reachable test for both frameworks, regardless of relation-array ordering.
 A missing selected-test command stays missing. Advisory-only relations cannot
 supply a direct-test recommendation. Admitted exact evidence wins over broad
 or smoke evidence; stable test and relation IDs break equal-strength ties.
-Multiple commands for one selected test are ordered by stable command ID.
+Multiple commands for one selected test exclude empty argv before stable
+command-ID ordering; an empty-only selected test still cannot borrow another
+test's command. Strict actionability retains its existing validation and the
+usable command's evidence reference. Canonical gap and probe shapes come from
+the selected direct row's test/owner-bound oracle, defaulting otherwise.
+Mixed advisory/direct oracle permutations preserve the direct exact gap ID;
+foreign test/owner shapes are refused, while a bound alternate shape is kept.
 Complete and partial packet guidance remains advisory; partial packets still
 have no canonical gap. Exposure classes and displayed oracle strengths do not
 rise as a result of selection.

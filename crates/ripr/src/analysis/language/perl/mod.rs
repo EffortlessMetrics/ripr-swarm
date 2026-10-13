@@ -684,9 +684,13 @@ fn packet_to_findings_with_currentness(
 
         // Use the selected eligible oracle's assertion shape (the one actually
         // linked to this change), not a generic behavior-hint default.
-        let selected_assertion_shape = related_evidence
-            .iter()
-            .find_map(|ev| ev.oracle_shape.clone())
+        let selected_assertion_shape = suggested_test
+            .and_then(|selected| {
+                let oracle = packet.oracle(selected.oracle_id.as_deref()?)?;
+                (oracle.test_id == selected.test_id
+                    && oracle.target_owner_id.as_deref() == Some(change.owner_id.as_str()))
+                .then(|| oracle.kind.assertion_shape().to_string())
+            })
             .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string());
 
         // Canonical gap: only when a concrete discriminator exists, the packet
@@ -1539,7 +1543,9 @@ impl PerlFactPacket {
     fn verify_command_for_test(&self, test_id: &str) -> Option<&VerifyCommandFact> {
         self.verify_commands
             .iter()
-            .filter(|command| command.test_id.as_deref() == Some(test_id))
+            .filter(|command| {
+                command.test_id.as_deref() == Some(test_id) && !command.argv.is_empty()
+            })
             .min_by(|left, right| left.command_id.cmp(&right.command_id))
     }
 
