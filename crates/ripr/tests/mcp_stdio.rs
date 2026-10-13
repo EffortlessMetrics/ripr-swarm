@@ -1740,22 +1740,22 @@ fn install_b4_repair_ready_fixture() -> Result<PathBuf, String> {
 }
 
 /// Real committed multi-item input for RIPR-SPEC-0211 / #7464. The two
-/// pricing boundaries have strong test sites; the untested Rust predicates
+/// pricing boundaries have strong test sites; the uncovered Rust predicates
 /// and (when compiled) Python predicate provide distinct excluded subjects.
 fn install_gap_filter_fixture() -> Result<PathBuf, String> {
     let root = install_b4_repair_ready_fixture()?;
     std::fs::write(
         root.join("src/lib.rs"),
-        "pub mod pricing;\npub mod untested;\n",
+        "pub mod pricing;\npub mod uncovered;\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
         .map_err(|error| error.to_string())?;
     let pricing = "pub fn discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\npub fn fee(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount + 5 } else { amount }\n}\n";
-    let untested =
+    let uncovered =
         "pub fn accepts(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
     std::fs::write(root.join("src/pricing.rs"), pricing).map_err(|error| error.to_string())?;
-    std::fs::write(root.join("src/untested.rs"), untested).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/uncovered.rs"), uncovered).map_err(|error| error.to_string())?;
     std::fs::write(root.join("tests/pricing.rs"), "use mcp_journey_fixture::pricing::{discount, fee};\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(100, 100), 90);\n}\n#[test]\nfn fee_boundary() {\n    assert_eq!(fee(100, 100), 105);\n}\n").map_err(|error| error.to_string())?;
     let languages = if cfg!(feature = "lang-python") {
         std::fs::write(
@@ -1773,7 +1773,7 @@ fn install_gap_filter_fixture() -> Result<PathBuf, String> {
     fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
     std::fs::write(root.join("src/pricing.rs"), pricing.replace(">=", ">"))
         .map_err(|error| error.to_string())?;
-    std::fs::write(root.join("src/untested.rs"), untested.replace(">=", ">"))
+    std::fs::write(root.join("src/uncovered.rs"), uncovered.replace(">=", ">"))
         .map_err(|error| error.to_string())?;
     if cfg!(feature = "lang-python") {
         std::fs::write(root.join("src/cart.py"), "def accepts(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n    return amount\n").map_err(|error| error.to_string())?;
@@ -1817,10 +1817,10 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     const DISCOUNT: &str =
         "gap:rust:src/pricing.rs:discount:predicate_boundary:predicate:amount==threshold";
     const FEE: &str = "gap:rust:src/pricing.rs:fee:predicate_boundary:predicate:amount==threshold";
-    const UNTESTED: &str =
-        "gap:rust:src/untested.rs:accepts:predicate_boundary:predicate:amount==threshold";
+    const UNCOVERED: &str =
+        "gap:rust:src/uncovered.rs:accepts:predicate_boundary:predicate:amount==threshold";
     const RETURN: &str =
-        "gap:rust:src/untested.rs:accepts:return_value:return_value:amount>threshold";
+        "gap:rust:src/uncovered.rs:accepts:return_value:return_value:amount>threshold";
     const PYTHON: &str =
         "gap:python:src/cart.py:accepts:predicate_boundary:predicate:amount>=threshold";
     let timeout = Duration::from_mins(1);
@@ -1858,8 +1858,8 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     let snapshot_id = all["snapshot_id"]
         .as_str()
         .ok_or("list omitted snapshot ID")?;
-    let mut all_ids = vec![DISCOUNT, FEE, UNTESTED, RETURN];
-    let mut unready = vec![UNTESTED, RETURN];
+    let mut all_ids = vec![DISCOUNT, FEE, UNCOVERED, RETURN];
+    let mut unready = vec![UNCOVERED, RETURN];
     if cfg!(feature = "lang-python") {
         all_ids.insert(0, PYTHON);
         unready.insert(0, PYTHON);
@@ -1927,12 +1927,12 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     let mut cases = vec![
         (json!({"file": "./src/pricing.rs"}), vec![DISCOUNT, FEE]),
         (json!({"file": "pricing.rs"}), vec![DISCOUNT, FEE]),
-        (json!({"file": "src/untested.rs"}), vec![UNTESTED, RETURN]),
+        (json!({"file": "src/uncovered.rs"}), vec![UNCOVERED, RETURN]),
         (json!({"class": "exposed"}), vec![DISCOUNT, FEE]),
         (json!({"class": "no_static_path"}), unready.clone()),
         (
             json!({"language": "rust"}),
-            vec![DISCOUNT, FEE, UNTESTED, RETURN],
+            vec![DISCOUNT, FEE, UNCOVERED, RETURN],
         ),
         (json!({"repair_ready": true}), vec![DISCOUNT, FEE]),
         (json!({"repair_ready": false}), unready),
@@ -2010,11 +2010,11 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     // A different committed input replaces the snapshot. Replay the actual
     // old continuation unchanged; no fabricated stale identity is supplied.
     std::fs::write(
-        root.join("src/untested.rs"),
+        root.join("src/uncovered.rs"),
         "pub fn accepts(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n",
     )
     .map_err(|error| error.to_string())?;
-    commit_fixture(&root, "replace untested predicate")?;
+    commit_fixture(&root, "replace uncovered predicate")?;
     let replaced = session.call_tool(
         "replace-refresh",
         "ripr_refresh",
