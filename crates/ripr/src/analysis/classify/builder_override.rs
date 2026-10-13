@@ -73,6 +73,11 @@ impl<'a> OwnerCall<'a> {
         })
     }
 
+    /// The owner's bare name (`ship` for `impl Inventory::ship`).
+    pub(super) fn name(&self) -> &'a str {
+        self.name
+    }
+
     /// The owner type, when the owner is an associated function.
     pub(super) fn impl_type(&self) -> Option<&'a str> {
         self.impl_type
@@ -586,6 +591,67 @@ pub(in crate::analysis) fn setter_plainly_writes(
         }
     }
     stores
+}
+
+/// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
+/// takes only `&self` and its body is one tail expression returning the field
+/// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
+/// or `self.f.as_slice()`. A body that reads another field, computes a value
+/// from the field (`self.f.get(k).copied()`), or does anything else first,
+/// and an ambiguous or missing method, give `false`: a method named after the
+/// field is not evidence that it returns that field.
+pub(in crate::analysis) fn getter_plainly_reads(
+    index: &RustIndex,
+    impl_type: &str,
+    getter: &str,
+    field: &str,
+) -> bool {
+    let mut candidates = index.functions().iter().filter(|function| {
+        function.name == getter
+            && !function.source_role.is_evidence_role()
+            && OwnerCall::from_symbol(&function.id.0)
+                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+    });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(&function.body) else {
+        return false;
+    };
+    let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let takes_only_self_ref = method.param_list().is_some_and(|parameters| {
+        parameters.params().next().is_none()
+            && parameters.self_param().is_some_and(|receiver| {
+                receiver.amp_token().is_some() && receiver.mut_token().is_none()
+            })
+    });
+    let Some(body) = method.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if !takes_only_self_ref || body.statements().next().is_some() {
+        return false;
+    }
+    let Some(tail) = body.tail_expr() else {
+        return false;
+    };
+    let text: String = tail
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let read = format!("self.{field}");
+    [
+        read.clone(),
+        format!("&{read}"),
+        format!("&{read}[..]"),
+        format!("{read}.clone()"),
+        format!("{read}.as_slice()"),
+    ]
+    .contains(&text)
 }
 
 fn is_path_named(expression: &ast::Expr, name: &str) -> bool {

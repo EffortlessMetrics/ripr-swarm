@@ -585,6 +585,60 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
     subject_names_collection(&subject, receiver)
 }
 
+/// The field path of a collection write on `self` (`log` for
+/// `self.log.push(x)`, `stock` for `self.stock.insert(k, v)`, `a.b` for
+/// `self.a.b.push(x)`). RIPR-SPEC-0228 extends the direct-collection
+/// observer to these receivers; any other expression gives `None`.
+pub(in crate::analysis) fn field_collection_write_path(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let rest = trimmed.strip_prefix("self.")?;
+    let (target, _) = rest.split_once('(')?;
+    let (path, method) = target.rsplit_once('.')?;
+    let path = path.trim();
+    (matches!(method.trim(), "push" | "insert")
+        && path.split('.').all(|segment| is_bare_ident(segment.trim())))
+    .then_some(path)
+}
+
+/// How an assertion's primary subject reads the field collection `path`:
+/// from the local binding `binding`, directly (`inv.log`, `inv.log[0]`,
+/// `inv.log.len()`) or through a method with no arguments
+/// (`inv.history()`), named in `getter`.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct FieldCollectionRead {
+    pub(in crate::analysis) binding: String,
+    pub(in crate::analysis) getter: Option<String>,
+}
+
+/// The read of the field collection `path` by `assertion_text`'s primary
+/// subject (`assert_eq!(subject, ..)`), or `None` when the subject is not
+/// rooted at a local binding read of that field or of one method.
+pub(in crate::analysis) fn assertion_field_collection_read(
+    assertion_text: &str,
+    path: &str,
+) -> Option<FieldCollectionRead> {
+    let subject = assertion_primary_subject(assertion_text)?;
+    let mut bare = subject.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let (binding, after) = bare.split_once('.')?;
+    if !is_bare_ident(binding) {
+        return None;
+    }
+    if subject_names_collection(bare, &format!("{binding}.{path}")) {
+        return Some(FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: None,
+        });
+    }
+    let method = collection_read_method(&format!(".{after}"))?.to_string();
+    let getter_call = format!("{binding}.{method}()");
+    subject_names_collection(bare, &getter_call).then(|| FieldCollectionRead {
+        binding: binding.to_string(),
+        getter: Some(method),
+    })
+}
+
 fn assertion_primary_subject(text: &str) -> Option<String> {
     let payload = macro_payload(text, "assert_eq")
         .or_else(|| macro_payload(text, "assert_ne"))

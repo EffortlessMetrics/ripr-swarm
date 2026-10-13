@@ -8,7 +8,8 @@ use super::builder_override::{
     OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
 };
 use super::propagation_witness::{
-    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+    assertion_field_collection_read, assertion_observes_direct_collection,
+    direct_collection_mutation_receiver, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
@@ -49,6 +50,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// field (`builder_override::setter_plainly_writes`). Only a verified
     /// setter defeats a changed default.
     pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 getter credit: whether the owner type's method
+    /// `(type, getter, field)` returns that field path itself
+    /// (`builder_override::getter_plainly_reads`). Only a verified getter
+    /// lets a read through a method confirm a field-path collection write.
+    pub(in crate::analysis) getter_reads_field: &'a dyn Fn(&str, &str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -71,6 +77,7 @@ fn reveal_evidence(
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
+            getter_reads_field: &|_, _, _| false,
         },
         None,
     );
@@ -341,6 +348,44 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
     assertion_observes_direct_collection(&assertion.text, receiver)
 }
 
+/// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
+/// that the owner writes (`self.log.push(..)`). Its primary subject must read
+/// that field from the binding the test called the owner on (`inv.log`,
+/// `inv.log.len()`), or read it through a method whose body returns that
+/// field (`inv.history()` with `fn history(&self) -> &[Event] { &self.log }`).
+/// A shared name is not a read: `inv.log()` returning another field does not
+/// confirm.
+fn field_collection_observer_confirms(
+    path: &str,
+    owner: Option<OwnerCall<'_>>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    getter_reads_field: &dyn Fn(&str, &str, &str) -> bool,
+) -> bool {
+    let Some(owner) = owner else {
+        return false;
+    };
+    let Some(read) = assertion_field_collection_read(&assertion.text, path) else {
+        return false;
+    };
+    calls_method_on(&test.body, &read.binding, owner.name())
+        && read.getter.as_deref().is_none_or(|getter| {
+            owner
+                .impl_type()
+                .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+        })
+}
+
+/// Whether `body` calls `binding.method(..)` on that exact binding.
+fn calls_method_on(body: &str, binding: &str, method: &str) -> bool {
+    let call = format!("{binding}.{method}(");
+    body.match_indices(&call).any(|(start, _)| {
+        body[..start].chars().next_back().is_none_or(|before| {
+            !(before.is_ascii_alphanumeric() || before == '_' || before == '.')
+        })
+    })
+}
+
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
 /// the identifier segments that appear immediately after a `::` separator.
 /// These are the arm-specific tokens that can confirm an assertion targets
@@ -576,6 +621,9 @@ fn analyze_related_assertions(
         }
     }
     let override_owner = override_owner.map(|owner| owner.with_setters(&override_setters));
+    // RIPR-SPEC-0228: a field-path collection write (`self.log.push(..)`) is
+    // observed by a read of that field, never by a shared name alone.
+    let field_write = field_collection_write_path(&probe.expression);
     let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
@@ -765,6 +813,19 @@ fn analyze_related_assertions(
                 owner_pinned,
                 owner_bound,
             );
+            // A read of the written field collection matches the probe even
+            // when it shares no name with the changed line
+            // (`inv.history()` for `self.log.push(..)`).
+            let field_collection_read = field_write.is_some_and(|path| {
+                field_collection_observer_confirms(
+                    path,
+                    override_owner,
+                    test,
+                    assertion,
+                    return_admission.getter_reads_field,
+                )
+            });
+            let matched = matched || field_collection_read;
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -841,9 +902,10 @@ fn analyze_related_assertions(
                     && (!confirm_required
                         || (confirms_observation
                             && (collection_observer_confirms(&probe.expression, assertion)
+                                || field_collection_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
-                                    && (has_token_match
+                                    && ((has_token_match && field_write.is_none())
                                         || (is_effect_family(&probe.family)
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
@@ -3578,6 +3640,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -3672,6 +3735,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -4023,6 +4087,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -4093,6 +4158,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5716,6 +5782,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5771,6 +5838,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5797,6 +5865,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5842,6 +5911,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5889,6 +5959,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6061,6 +6132,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6090,6 +6162,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6478,6 +6551,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -6753,6 +6827,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6843,6 +6918,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             );
@@ -6876,6 +6952,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -7227,6 +7304,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -7525,6 +7603,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
