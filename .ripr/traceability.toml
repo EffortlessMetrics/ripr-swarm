@@ -12867,6 +12867,10 @@ id = "RIPR-SPEC-0202"
 name = "agent card typed refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_card_prose_agrees_with_typed_remedy",
+  "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_packet_preserves_refusal_channels",
+  "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_repair_before_preserves_refusal_channels",
+  "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy",
   "crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::refusal_envelope_names_kind_seam_message_and_remedy",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::opposite_remedy_pairs_stay_distinguishable",
