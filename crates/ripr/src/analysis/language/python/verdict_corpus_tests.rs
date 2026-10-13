@@ -1350,6 +1350,29 @@ fn a_mock_passed_to_a_classmethod_owner_pins_its_arguments() -> Result<(), Strin
         )?,
         ExposureClass::WeaklyExposed
     );
+    // `@classmethod` over `@staticmethod` binds no receiver: `h` is the
+    // handler, and `a`, which gets 2 either way, is not read.
+    assert_ne!(
+        classify(
+            "class Service:\n    @classmethod\n    @staticmethod\n    def run(handler, audit):\n        handler(2)\n        audit(2)\n",
+            5,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
+    );
+    // A later import of the same name binds another class.
+    assert_ne!(
+        class(
+            &["classmethod"],
+            "cls, handler",
+            "from src.other import Other as Service\n\n\ndef test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
     // Another decorator stacked on the classmethod may change what the call
     // returns, so the result is not the mock passed; the passed local still
     // reads it.
@@ -1363,11 +1386,16 @@ fn a_mock_passed_to_a_classmethod_owner_pins_its_arguments() -> Result<(), Strin
         ExposureClass::Exposed
     );
     // Not the owner on that class: an instance method called on the class, a
-    // decorator that only ends in `classmethod`, the same method on another
+    // decorator that only ends in `classmethod` or `staticmethod`, the same method on another
     // class, and a class name the test rebinds (rule 9).
     for (decorators, signature, test) in [
         (&[][..], "self, handler", passed),
         (&["lib.fake_classmethod"][..], "cls, handler", passed),
+        (
+            &["lib.fake_staticmethod"][..],
+            "handler",
+            "def test_run():\n    s = Service()\n    h = Mock()\n    s.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
         (
             &["classmethod"][..],
             "cls, handler",

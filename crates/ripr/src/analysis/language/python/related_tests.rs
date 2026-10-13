@@ -1425,6 +1425,13 @@ pub(super) fn owner_class_locals(
             && !import.alias.is_empty()
             && !locals.contains(&import.alias)
             && !test_rebinds_import_alias(test, &import.alias)
+            // A second import of the same name rebinds it at module level.
+            && test
+                .imports
+                .iter()
+                .filter(|other| other.alias == import.alias)
+                .count()
+                == 1
             && import_module_may_be_owners(import, owner, &test.file)
         {
             locals.push(import.alias.clone());
