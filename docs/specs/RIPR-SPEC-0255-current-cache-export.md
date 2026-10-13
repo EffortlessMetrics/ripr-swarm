@@ -1,4 +1,4 @@
-# RIPR-SPEC-0254: Current-input cache snapshot export
+# RIPR-SPEC-0255: Current-input cache snapshot export
 
 Status: proposed
 

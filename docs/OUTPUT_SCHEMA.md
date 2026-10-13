@@ -455,7 +455,7 @@ not describe allocated bytes, directory overhead or peak disk use. Missing
 optional file facts are counted; corrupt present entries and incomplete required
 references refuse success. There is no success JSON for incomplete export. Require
 exit zero before consuming the directory; failure names retained owned partial
-output. The live cache is unchanged. See [RIPR-SPEC-0254](specs/RIPR-SPEC-0254-current-cache-export.md).
+output. The live cache is unchanged. See [RIPR-SPEC-0255](specs/RIPR-SPEC-0255-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 

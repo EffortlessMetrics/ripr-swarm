@@ -14628,9 +14628,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0254"
+id = "RIPR-SPEC-0255"
 name = "Current-input cache snapshot export"
-spec = "docs/specs/RIPR-SPEC-0254-current-cache-export.md"
+spec = "docs/specs/RIPR-SPEC-0255-current-cache-export.md"
 tests = [
   "crates/ripr/src/cli/commands/cache.rs::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history",
   "crates/ripr/src/cli/commands/cache.rs::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate",
