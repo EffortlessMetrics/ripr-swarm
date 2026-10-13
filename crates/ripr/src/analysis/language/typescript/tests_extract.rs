@@ -2669,15 +2669,14 @@ impl UnextractedTestFinder<'_> {
             .any(|root| each_declaration_callee(call, root).is_some_and(each_table_is_empty))
         {
             for argument in &call.arguments {
-                if argument.as_expression().is_some_and(|expression| {
-                    matches!(
-                        runtime_expression(expression),
-                        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
-                    )
-                }) {
-                    continue;
+                if let Some(expression) = argument.as_expression() {
+                    self.visit_empty_table_evaluated_expression(expression);
+                } else {
+                    self.visit_argument(argument);
                 }
-                self.visit_argument(argument);
+                if self.gap.is_some() {
+                    return;
+                }
             }
             return;
         }
@@ -2722,6 +2721,24 @@ impl UnextractedTestFinder<'_> {
             }
         }
         self.visit_arguments(&call.arguments);
+    }
+
+    /// Empty-table arguments still evaluate direct calls and comma operands;
+    /// creating a function value does not execute its body.
+    fn visit_empty_table_evaluated_expression(&mut self, expression: &Expression<'_>) {
+        match runtime_expression(expression) {
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {}
+            Expression::SequenceExpression(sequence) => {
+                for item in &sequence.expressions {
+                    self.visit_empty_table_evaluated_expression(item);
+                    if self.gap.is_some() {
+                        return;
+                    }
+                }
+            }
+            Expression::CallExpression(call) => self.visit_call(call, true),
+            expression => self.visit_expression(expression, false),
+        }
     }
 
     fn visit_arguments(&mut self, arguments: &[Argument<'_>]) {

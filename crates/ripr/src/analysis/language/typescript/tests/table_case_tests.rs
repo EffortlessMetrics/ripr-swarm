@@ -255,3 +255,91 @@ describe.each([])(class EvaluatedTitle {
     assert_eq!(finding.related_tests.len(), 0);
     Ok(())
 }
+
+#[test]
+fn empty_tables_preserve_partial_disclosure_for_evaluated_sequence_titles() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { test, describe, expect } from "vitest";
+import { loyaltyTier } from "../src/tier";
+describe.each([])((test("evaluated live test", () => { expect(loyaltyTier(1000)).toBe("gold"); }), "dead suite"), () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_some(),
+        "evaluated sequence titles register a live test"
+    );
+    if let Some(gap) = gap {
+        assert_eq!(gap.sample_line, 3);
+        assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+        assert!(gap.snippet.contains("evaluated live test"));
+        assert!(!gap.snippet.contains("dead child"));
+    }
+    let root = ts_unique_tempdir("empty-table-evaluated-sequence-title")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().any(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing evaluated-sequence-title finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn empty_tables_ignore_discarded_function_values_in_sequence_titles() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { test, describe, expect } from "vitest";
+import { loyaltyTier } from "../src/tier";
+describe.each([])((() => { test("dead title callback", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }, "dead suite"), () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_none(),
+        "discarded function values cannot register tests"
+    );
+    let root = ts_unique_tempdir("empty-table-discarded-sequence-function")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().all(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_none_or(|detail| !detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing discarded-sequence-function finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}

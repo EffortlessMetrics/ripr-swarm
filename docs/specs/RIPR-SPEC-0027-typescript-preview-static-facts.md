@@ -156,8 +156,10 @@ Test discovery:
   syntactically identifiable
   - An inline empty literal table (including erased TypeScript wrappers)
     registers no callback and contributes no test or descendant-suite evidence.
-    It does not create a partial-extraction warning. A single empty row `[[]]`
-    remains active even when the callback has no parameters. This decision
+    Its dormant callback does not create a partial-extraction warning. Direct
+    registrations in evaluated arguments, including comma-expression operands,
+    remain disclosed; creating a function value does not execute its body.
+    A single empty row `[[]]` remains active even when the callback has no parameters. This decision
     applies to the ordinary single-argument `.each(table)` form; extra arguments
     and nonliteral tables keep their existing unresolved behavior (#7596).
 - `test(...)`, `it(...)`, and `describe(...)` registered inside a `for`,
