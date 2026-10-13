@@ -480,6 +480,12 @@ id = "RIPR-SPEC-0251"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 
+# TypeScript node:test context assert
+[[spec]]
+id = "RIPR-SPEC-0252"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
+
 # Local collect-all policy scans
 [[spec]]
 id = "RIPR-SPEC-0253"

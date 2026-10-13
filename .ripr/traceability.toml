@@ -14165,6 +14165,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0252"
+name = "TypeScript node:test context assert"
+spec = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_test_context_assert_reads_as_legacy_node_assert",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_test_context_assert_needs_the_runner_receiver_and_a_known_method",
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md",
+]
+metrics = [
+  "typescript_node_test_context_assert_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0250"
 name = "TypeScript match-object field pin"
 spec = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
