@@ -6811,7 +6811,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
                     serde_json::json!(["cross_language_target_unresolved"]),
                 );
             }
-            _ => unreachable!("the cases above define each supported producer"),
+            _ => return Err(format!("unsupported gap producer fixture: {producer}")),
         }
 
         let mut snapshot = sample_analysis_snapshot(
