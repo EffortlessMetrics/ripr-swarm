@@ -719,7 +719,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|case| case.denominator == 0)
                 .count(),
-            expected_ids.len() - 36
+            expected_ids.len() - 37
         );
         assert_eq!(
             population
@@ -727,7 +727,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
                 .iter()
                 .filter(|c| c.denominator == 1)
                 .count(),
-            36
+            37
         );
         assert!(
             population
