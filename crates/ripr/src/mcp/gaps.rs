@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v2";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -185,8 +185,8 @@ pub(crate) struct GapItem {
     /// producer populated no language; stored for the same filter route.
     language: Option<String>,
     /// Small deterministic document used by `ripr_list_gaps`; its serialized
-    /// byte length is the item's budget payload bytes. Class, language, and
-    /// line live here (and in the evidence core), not as duplicated fields.
+    /// byte length is the item's budget payload bytes. It projects stored
+    /// class/language facts and the source line alongside the evidence core.
     /// The summary also carries the commit-time repair-readiness projection
     /// (`repair_packet_ready` plus the typed first-failing-gate
     /// `repair_ineligibility`, null when ready), so agents can sort

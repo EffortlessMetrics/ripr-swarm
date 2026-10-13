@@ -95,7 +95,7 @@ runs no tests or verification and grants no execution or edit authority.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (no arguments) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -163,6 +163,13 @@ languages), a config-less root runs built-in defaults including the
 zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
+
+Gap-list responses use `ripr-mcp-gap-list-v2`, including typed refusals.
+The prior v1 success schema forbids unknown top-level properties, so the new
+`filtered` and `filters` fields require this version change. Strict v1 readers
+must rediscover `tools/list`, accept v2 explicitly and validate against the
+advertised `outputSchema`; callers may still omit all filter arguments.
+Other MCP document versions are unchanged.
 
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
 `total` / `eligible` / `selected` / `filtered` counts, selected and complete

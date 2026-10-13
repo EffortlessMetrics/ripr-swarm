@@ -1314,7 +1314,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v1",
+                "schema_version": "ripr-mcp-gap-list-v2",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1354,7 +1354,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v1")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v2")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
