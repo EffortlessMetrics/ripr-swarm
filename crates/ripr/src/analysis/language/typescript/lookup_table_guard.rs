@@ -89,8 +89,11 @@ fn table_key(raw_key: &str) -> Option<&str> {
                 && raw_key
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$'));
+            // Past 15 digits a number key may round (`12345678901234567890`
+            // is stored as `"12345678901234567000"`).
             let integer = raw_key == "0"
                 || (raw_key.starts_with(|c: char| matches!(c, '1'..='9'))
+                    && raw_key.len() <= 15
                     && raw_key.chars().all(|c| c.is_ascii_digit()));
             (identifier || integer).then_some(raw_key)?
         }
@@ -115,10 +118,29 @@ fn is_scalar_literal(value: &str) -> bool {
         || string_literal_content(value).is_some()
 }
 
+/// The type of a scalar literal: number, string, boolean or `null`.
+fn literal_type(value: &str) -> u8 {
+    if numeric_literal_value(value).is_some() {
+        0
+    } else if string_literal_content(value).is_some() {
+        1
+    } else if value == "null" {
+        3
+    } else {
+        2
+    }
+}
+
 /// Whether two literal values differ: numerically for two numbers, by
 /// contents for two strings (`'x'` and `"x"` are the same), by text
-/// otherwise.
+/// otherwise. A move between a number, a string and a boolean does not
+/// count: loose equality (`assert.equal`) can read `95` and `"95"`, or `1`
+/// and `true`, as the same value.
 fn values_differ(old: &str, new: &str) -> bool {
+    let (old_type, new_type) = (literal_type(old), literal_type(new));
+    if old_type != new_type && old_type != 3 && new_type != 3 {
+        return false;
+    }
     if let (Some(old), Some(new)) = (
         numeric_literal_value(old).and_then(|v| v.parse::<f64>().ok()),
         numeric_literal_value(new).and_then(|v| v.parse::<f64>().ok()),
@@ -171,6 +193,17 @@ pub(crate) fn ts_lookup_table_change(
         return None;
     }
     let body = masked_owner_body(source)?;
+    // An arrow owner's body starts after `=>`; step into its block. A
+    // function body starts inside its block already, so a leading `{` there
+    // opens an inner block and stays.
+    let masked_source = ts_mask_literals_and_comments(source);
+    let arrow = masked_source
+        .get(..masked_source.len().saturating_sub(body.len()))
+        .is_some_and(|head| head.trim_end().ends_with("=>"));
+    let body = match body.trim_start().strip_prefix('{') {
+        Some(block) if arrow => block.to_string(),
+        _ => body,
+    };
     // One `return`, no nested function, and the table named only by its
     // declaration and that one read.
     if body.contains("=>")
@@ -178,6 +211,13 @@ pub(crate) fn ts_lookup_table_change(
         || identifier_offsets(&body, "return").len() != 1
         || identifier_offsets(&body, &name).len() != 2
     {
+        return None;
+    }
+    // The declaration must be a top-level statement of the body: a table
+    // declared in an inner block leaves the `return` reading another one.
+    let declaration = *identifier_offsets(&body, &name).first()?;
+    let before = &body[..declaration];
+    if before.matches('{').count() != before.matches('}').count() {
         return None;
     }
     let returned = body
@@ -193,11 +233,12 @@ pub(crate) fn ts_lookup_table_change(
     let read = match read.split_once("??") {
         Some((read, fallback)) => {
             let fallback = fallback.trim();
-            // The masked fallback blanks a string's contents; only its
-            // quotes or a plain literal remain.
+            // The masked fallback blanks a string's contents but keeps its
+            // quotes, so a whole string literal is one quote pair with no
+            // quote inside; `"x" ? a : b` or `"x", 0` is an expression.
             if !(numeric_literal_value(fallback).is_some()
                 || matches!(fallback, "true" | "false" | "null" | "undefined")
-                || fallback.starts_with(['"', '\'']))
+                || masked_string_literal(fallback))
             {
                 return None;
             }
@@ -225,6 +266,16 @@ pub(crate) fn ts_lookup_table_change(
     ts_parameter_is_stable(source, key_param).then_some(LookupTableChange {
         param_index,
         changed_keys,
+    })
+}
+
+/// Whether a masked expression is exactly one quoted string literal.
+fn masked_string_literal(masked: &str) -> bool {
+    ['"', '\''].iter().any(|quote| {
+        masked
+            .strip_prefix(*quote)
+            .and_then(|rest| rest.strip_suffix(*quote))
+            .is_some_and(|inner| !inner.contains(['"', '\'', '`']))
     })
 }
 
@@ -266,6 +317,9 @@ pub(crate) fn ts_lookup_table_witnessed(
                         assertion.oracle_kind,
                         OracleKind::ExactValue | OracleKind::WholeObjectEquality
                     )
+                    // An unpinned expected side (`expect.any(Number)`, or the
+                    // owner call itself) cannot tell the two versions apart.
+                    || !assertion_expected_side_is_pinned(assertion)
                 {
                     return false;
                 }

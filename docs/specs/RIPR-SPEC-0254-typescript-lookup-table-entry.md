@@ -77,20 +77,23 @@ reads as a `return_value` / value probe when all of these hold:
   `const|let name[: type] = { key: value, ... };`, with the same name and
   the same keys in the same order;
 - every key stores the name it spells: an identifier, a plain decimal
-  integer, or a quoted word of ASCII letters, digits, `_`, `$` and `-`
+  integer of at most 15 digits, or a quoted word of ASCII letters, digits, `_`, `$` and `-`
   (`1e3`, `0x10` and `__proto__` are refused); no key repeats;
 - every value is a plain decimal number (`_` separators and a bigint `n`
-  allowed), a quoted string with no quote or escape inside, `true`,
+  allowed), a quoted string with no quote, backtick or escape inside, `true`,
   `false` or `null`;
 - at least one value moved. Two numbers compare by value (`95` to `95.0`
   does not move), two strings by contents (`'x'` to `"x"` does not move).
-  Under a `??` fallback, a move to or from `null` does not count, since
+  A move between a number, a string and a boolean does not count, since
+  loose equality (`assert.equal`) can read `95` and `"95"`, or `1` and
+  `true`, as the same value. Under a `??` fallback, a move to or from `null` does not count, since
   `null` reads as the fallback;
 - the changed line appears once in the owner, whose body has one `return`,
   no nested function, and names the table exactly twice: at the
-  declaration and in that `return`;
+  declaration, a top-level statement of the body (not inside an inner
+  block), and in that `return`;
 - the `return` is `return name[param];` or `return name[param] ??
-  <literal>;`, where `param` is an owner parameter the body never rebinds
+  <literal>;`, with the whole fallback one literal, where `param` is an owner parameter the body never rebinds
   (RIPR-SPEC-0248 stability).
 
 The moved keys are the changed keys.
@@ -98,10 +101,15 @@ The moved keys are the changed keys.
 **Rule 2. Credit needs a changed-key lookup.** The change is `exposed`
 only when, besides the usual observation guard, a strong `exact_value` or
 `whole_object_equality` assertion of an oracle relation observes a whole
-owner call (by name, a RIPR-SPEC-0243 rule 7 or RIPR-SPEC-0251 rename, or
-a local bound once to that call), and that call's `param` argument is a
-quoted string literal naming a changed key. Otherwise the finding is
-`weakly_exposed` and names the changed keys.
+owner call (by name, a RIPR-SPEC-0243 rule 7 or RIPR-SPEC-0251 rename, a
+member call on a namespace import of the owner's module, or a local bound
+once to that call), and that call's `param` argument is a quoted string
+literal naming a changed key. The assertion's expected side must be
+pinned, as for the RIPR-SPEC-0027 boundary witness: a dynamic matcher
+argument such as `expect.any(Number)` or a call
+(`toBe(await fetchUnitPrice("pear"))`) does not count. When a strong oracle is present but none
+looks up a changed key, the finding is `weakly_exposed` and names the
+changed keys; without a strong oracle the usual weaker reading applies.
 
 ### Decisions
 
@@ -143,19 +151,27 @@ documented decisions and proceed"). Recorded on #6654.
 1. The corpus case, `await expect(fetchUnitPrice("pear")).resolves.toBe(95)`:
    `exposed`.
 2. As example 1 through `const price = await fetchUnitPrice('pear');
-   expect(price).toBe(95)`, or through `import { fetchUnitPrice as unit }`:
-   `exposed`.
+   expect(price).toBe(95)`, through `import { fetchUnitPrice as unit }`, or
+   through `import * as cart` and `cart.fetchUnitPrice("pear")`: `exposed`.
 3. As example 1 with `"apple"`, a variable key, a template-literal key, a
    member of the result (`.toFixed(0)`), or `.resolves.toBeGreaterThan(0)`:
-   `weakly_exposed`. The strong-assertion cases name `pear` in the missing
-   evidence and the discriminate summary.
+   `weakly_exposed`. So is `toBe(120)` on `"apple"` beside
+   `toBeGreaterThan(0)` or a literal `toMatchInlineSnapshot` on `"pear"`,
+   and so is `toBe(await fetchUnitPrice("pear"))` or
+   `toEqual(expect.any(Number))` on `"pear"`.
+   Every case with a strong assertion names `pear` in the missing evidence
+   and the discriminate summary.
 4. Rule 1 refuses: no old line, an added key, reordered keys, no moved
    value (`95` to `95.0`, `'y'` to `"y"`), a nested, computed or
    concatenated value, a duplicate key, an exponent, hexadecimal or
    `__proto__` key, a key with a space, a move to `null` under `?? 0`, a
-   renamed table, a nested arrow, a second `return`, a second read of the
-   table, a member read, a computed key argument, a rebound key parameter
-   and a computed fallback.
+   renamed table, a nested arrow or `function`, a second `return`, a
+   second read of the table, a member read, a computed key argument, a
+   rebound key parameter, a computed fallback, and a fallback that only
+   starts with a string (`?? "x" ? 1 : 2`, `?? "x", 0`), a move from `95`
+   to `"95"` or from `true` to `1`, an integer key of more than 15 digits,
+   and a table declared inside an inner block. An arrow owner with a block
+   body reads as a function body does.
 5. With an owner `(region, sku)`, `expect(fetchUnitPrice("eu", "pear"))`
    is `exposed` and `expect(fetchUnitPrice("pear", "apple"))` is not;
    `.resolves.toEqual(95)` is `exposed` as example 1.

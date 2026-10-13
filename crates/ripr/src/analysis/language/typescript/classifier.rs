@@ -2439,7 +2439,7 @@ fn later_reassigns_ident(body: &str, ident: &str, from: usize) -> bool {
 /// marker simply carries no matcher-argument facts; the deeper expected-side
 /// guards (self-comparing tautology, dead expected) decide on what is
 /// checkable rather than guessing.
-fn assertion_expected_side_is_pinned(assertion: &TypeScriptAssertion) -> bool {
+pub(super) fn assertion_expected_side_is_pinned(assertion: &TypeScriptAssertion) -> bool {
     !assertion.has_dynamic_matcher_arg
 }
 

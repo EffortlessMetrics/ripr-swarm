@@ -70,7 +70,7 @@ fn lookup_table_change_reads_the_moved_keys_and_the_key_parameter() -> Result<()
 
 #[test]
 fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str); 24] = [
+    let cases: [(&str, &str, &str, &str); 30] = [
         ("no old line", NEW, "", "  return table[sku] ?? 0;"),
         (
             "a key added",
@@ -109,10 +109,46 @@ fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
             "  return table[sku] ?? 0;",
         ),
         (
-            "the table is read twice",
+            "a fallback reading the table",
             NEW,
             OLD,
             "  return table[sku] ?? table.apple;",
+        ),
+        (
+            "a number moved to its own numeric string",
+            "  const table = { apple: 120, pear: \"95\" };",
+            "  const table = { apple: 120, pear: 95 };",
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "a boolean moved to a number",
+            "  const table = { apple: 120, pear: 1 };",
+            "  const table = { apple: 120, pear: true };",
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "an integer key that may round",
+            "  const table = { 12345678901234567890: 5, b: 2 };",
+            "  const table = { 12345678901234567890: 6, b: 2 };",
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "a fallback that starts with a string",
+            NEW,
+            OLD,
+            "  return table[sku] ?? \"x\" ? 1 : 2;",
+        ),
+        (
+            "a fallback followed by a comma",
+            NEW,
+            OLD,
+            "  return table[sku] ?? \"x\", 0;",
+        ),
+        (
+            "a nested function",
+            NEW,
+            OLD,
+            "  function helper() {}\n  return table[sku] ?? 0;",
         ),
         (
             "the table is read by another statement",
@@ -211,6 +247,25 @@ fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
         let old = (!old.is_empty()).then_some(old);
         assert_eq!(ts_lookup_table_change(&owner, new, old), None, "{label}");
     }
+    // A table declared in an inner block leaves the `return` reading
+    // another `table` (here a module-level one).
+    let inner_block = format!(
+        "const table = {{ apple: 120, pear: 95 }};\nexport function fetchUnitPrice(sku: string): number {{\n  {{\n{NEW}\n  }}\n  return table[sku] ?? 0;\n}}\n"
+    );
+    let owner = unit_price_owner(&inner_block)?;
+    assert_eq!(ts_lookup_table_change(&owner, NEW, Some(OLD)), None);
+    // An arrow owner with a block body reads as a function body does.
+    let arrow = format!(
+        "export const fetchUnitPrice = (sku: string): number => {{\n{NEW}\n  return table[sku] ?? 0;\n}};\n"
+    );
+    let owner = unit_price_owner(&arrow)?;
+    assert_eq!(
+        ts_lookup_table_change(&owner, NEW, Some(OLD)),
+        Some(LookupTableChange {
+            param_index: 0,
+            changed_keys: vec!["pear".to_string()],
+        })
+    );
     Ok(())
 }
 
@@ -277,6 +332,12 @@ fn lookup_table_entry_is_exposed_when_a_test_looks_up_a_changed_key() -> Result<
             "import { fetchUnitPrice as unit } from \"../src/cart\";",
             "  await expect(unit(\"pear\")).resolves.toBe(95);",
             "unit(\"pear\")",
+        ),
+        (
+            "lookup-namespace",
+            "import * as cart from \"../src/cart\";",
+            "  await expect(cart.fetchUnitPrice(\"pear\")).resolves.toBe(95);",
+            "cart.fetchUnitPrice(\"pear\")",
         ),
     ] {
         let test = vitest(import, lines);
@@ -368,6 +429,14 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
             "lookup-member-of-result",
             "  expect((await fetchUnitPrice(\"pear\")).toFixed(0)).toBe(\"95\");",
         ),
+        (
+            "lookup-self-compare",
+            "  expect(await fetchUnitPrice(\"pear\")).toBe(await fetchUnitPrice(\"pear\"));",
+        ),
+        (
+            "lookup-dynamic-expected",
+            "  expect(await fetchUnitPrice(\"pear\")).toEqual(expect.any(Number));",
+        ),
     ] {
         let finding =
             unit_price_finding(label, &vitest(plain, lines), "  return table[sku] ?? 0;")?;
@@ -378,6 +447,23 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
             finding.missing
         );
     }
+    // The inline snapshot on the changed key is strong but not exact, so
+    // only the kind filter keeps it from crediting the change.
+    let snapshot = vitest(
+        plain,
+        "  await expect(fetchUnitPrice(\"pear\")).resolves.toMatchInlineSnapshot(`95`);",
+    );
+    assert_eq!(
+        extract_tests(Path::new("test/cart.test.ts"), &snapshot)
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| (
+                assertion.oracle_kind.clone(),
+                assertion.oracle_strength.clone()
+            ))
+            .collect::<Vec<_>>(),
+        vec![(OracleKind::Snapshot, OracleStrength::Strong)]
+    );
     // Every strong assertion that misses the changed key names it, and the
     // discriminate summary agrees.
     for (label, lines) in [
@@ -393,9 +479,29 @@ fn lookup_table_entry_stays_weak_without_a_changed_key_lookup() -> Result<(), St
             "lookup-template-key-message",
             "  await expect(fetchUnitPrice(`pear`)).resolves.toBe(95);",
         ),
+        (
+            "lookup-member-of-result-message",
+            "  expect((await fetchUnitPrice(\"pear\")).toFixed(0)).toBe(\"95\");",
+        ),
+        // A strong exact pin on an unchanged key beside a weak or a
+        // non-exact strong assertion on the changed key.
+        (
+            "lookup-weak-on-changed-key",
+            "  await expect(fetchUnitPrice(\"apple\")).resolves.toBe(120);\n  await expect(fetchUnitPrice(\"pear\")).resolves.toBeGreaterThan(0);",
+        ),
+        (
+            "lookup-snapshot-on-changed-key",
+            "  await expect(fetchUnitPrice(\"apple\")).resolves.toBe(120);\n  await expect(fetchUnitPrice(\"pear\")).resolves.toMatchInlineSnapshot(`95`);",
+        ),
     ] {
         let finding =
             unit_price_finding(label, &vitest(plain, lines), "  return table[sku] ?? 0;")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: {:?}",
+            finding.missing
+        );
         assert!(
             finding
                 .missing
