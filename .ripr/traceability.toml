@@ -10466,6 +10466,8 @@ tests = [
   "crates/ripr/src/lsp/lens.rs::currentness_lens_tests::base_deleted_findings_get_no_code_lens",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_line_beside_a_moved_comment_is_base_side_evidence",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::pure_deletion_is_base_side_evidence_on_its_owner",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
 ]
 fixtures = [
   "fixtures/currentness_matrix_tail",
@@ -10473,10 +10475,12 @@ fixtures = [
   "fixtures/currentness_matrix_move",
   "fixtures/currentness_matrix_whole_delete",
   "fixtures/currentness_matrix_python_deleted_statement",
+  "fixtures/currentness_matrix_typescript_deleted_statement",
 ]
 code = [
   "crates/ripr/src/lsp/lens.rs",
   "crates/ripr/src/analysis/language/python/deleted_lines.rs",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines.rs",
 ]
 outputs = []
 metrics = [
