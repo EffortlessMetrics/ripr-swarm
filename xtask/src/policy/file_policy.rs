@@ -665,9 +665,10 @@ mod tests {
             assert!(call.contains(&subject.to_string()));
         }
         assert_eq!(observations.len(), 3);
-        for (observation, (line, subject)) in
+        for ((observation, command), (line, subject)) in
             observations
                 .iter()
+                .zip(&commands)
                 .zip([(11, "alpha"), (12, "beta"), (13, "alpha")])
         {
             assert_eq!(
@@ -678,7 +679,7 @@ mod tests {
                 observation.render(),
                 format!(
                     "line {line}; host=unix; declared=all; applicable; selected=1; tests=[{subject}]; `{}`",
-                    commands[(line - 11) as usize].command
+                    command.command
                 )
             );
         }
