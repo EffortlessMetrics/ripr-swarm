@@ -483,7 +483,8 @@ cases.
   `h2_non_aligned_sink_stays_weakly_exposed`,
   `h2_advisory_relation_with_matching_sink_does_not_promote` and
   `h2_token_substring_coincidence_does_not_align` (rule 9, assert only
-  `!= Exposed` today), `h1_ownerless_file_boundary_still_blocks`,
+  `!= Exposed` today), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
+  (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
   `h1_boundary_on_explicit_other_owner_does_not_block` and
   `h1_dynamic_dispatch_limitation_*` (rule 1),
   `h1_concrete_discriminator_attaches_canonical_gap` and
