@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0233-ex05-and-chain",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex05-and-chain.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 21
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_assert_eq_inside_and_chain",
+  "hard_case": "the spec reads an `and` chain as smoke, yet its exact conjunct discriminates",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return int(text) + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_and_chain",
+        "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 5: `assert parse_and_chain(\"1\") == 2 and other == 3` is read as smoke_only, yet the left conjunct compares exactly, so `+ 2` fails the test. ripr's weakly_exposed is the spec's verdict and scores false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#5"
+  ]
+}

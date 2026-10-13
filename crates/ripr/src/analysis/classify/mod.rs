@@ -48,18 +48,21 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
+pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, helper_pins_owner_call, pin_scope_needs,
     targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
     trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
+pub(in crate::analysis) use propagation_witness::fallible_literal_witness;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use reach::{
-    is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
+    UnseenReachNames, is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen,
+    reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, TargetedCallShape, body_contains_owner_call,

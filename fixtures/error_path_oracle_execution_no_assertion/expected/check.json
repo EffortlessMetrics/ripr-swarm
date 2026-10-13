@@ -119,7 +119,7 @@
         {"kind":"unknown","text":"unknown sink","line":5}
       ],
       "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion found on related tests", "No propagation model is available for this changed syntax", "Related tests appear to reach read_all: reports_read_failure", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; use deep mode or real mutation"],
+      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
       },
       "activation": {
@@ -150,8 +150,8 @@
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

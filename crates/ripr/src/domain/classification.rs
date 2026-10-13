@@ -36,8 +36,8 @@ outside tests calls it); it is the observation, not the code under observation. 
 calls this helper over inputs that exercise the changed check.";
 
 pub(crate) const ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
-outside tests calls it); there is no fixture/builder for ripr.toml to describe. Add a boundary or \
-negative-path case for the code this helper checks.";
+outside tests calls it); inspect the inputs and behavior this helper checks, including any existing \
+boundary or negative-path assertions.";
 
 /// RIPR-SPEC-0115: stable leading phrase of the transitive-reach *witness*
 /// pointer. The producer (`analysis::classify::transitive_reach`) begins the

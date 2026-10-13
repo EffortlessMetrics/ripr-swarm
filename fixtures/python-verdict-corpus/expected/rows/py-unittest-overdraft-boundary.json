@@ -1,0 +1,22 @@
+{
+  "case_id": "py-unittest-overdraft-boundary",
+  "subject_id": "authored-py-unittest-accounts",
+  "origin": "authored",
+  "anchor": "accounts/ledger.py:25",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "unittest_assert_raises_far_from_boundary",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

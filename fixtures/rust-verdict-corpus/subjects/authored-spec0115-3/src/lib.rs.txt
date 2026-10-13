@@ -1,0 +1,17 @@
+//! RIPR-SPEC-0115 example 3: no test reaches the owner.
+
+pub fn apply_fee(total: u32) -> u32 {
+    total + 15
+}
+
+pub fn currency() -> &'static str {
+    "EUR"
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn prices_are_in_euros() {
+        assert_eq!(super::currency(), "EUR");
+    }
+}

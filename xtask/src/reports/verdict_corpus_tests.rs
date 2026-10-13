@@ -227,6 +227,14 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
     no_path["classification"] = json!("no_static_path");
     no_path["ripr"]["reach"]["state"] = json!("no");
     no_path["related_tests_total"] = json!(81);
+    // Since #5424, examined proximity-linked tests are listed with why they
+    // miss; that agrees with "no path". A calling test does not.
+    no_path["related_tests"] = json!([
+        {"name": "same_file", "relation_reason": "same_test_file", "miss": "no_call_path"},
+        {"name": "seam", "relation_reason": "seam_callee_call", "miss": "no_call_path"},
+    ]);
+    assert!(finding_contradictions(&no_path).is_empty());
+    no_path["related_tests"][1]["relation_reason"] = json!("owner_named_test");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]
@@ -1560,6 +1568,104 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
             truth.as_str()
         );
     }
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
+fn python_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/python-verdict-corpus")
+}
+
+#[test]
+fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // Python corpus in `check-all`.
+    let dir = python_corpus_dir();
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/python-verdict-corpus/spec-coverage.toml"
+    );
+    assert!(
+        corpus.cases.len() >= 63,
+        "python corpus shrank to {}",
+        corpus.cases.len()
+    );
+    // Every RIPR-SPEC-0238 acceptance example but 9 and 10 keeps a case
+    // citing it; the ledger leaves those two visible as uncovered rather
+    // than waived. Examples 1 to 34 have `py-spec0233-exNN-` cases (the
+    // prefix of the spec's draft number, RIPR-SPEC-0233); 35 to 39 were
+    // written from the library cases that cite them.
+    let spec = coverage
+        .by_spec
+        .iter()
+        .find(|row| row.spec == "RIPR-SPEC-0238")
+        .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
+    assert_eq!(spec.in_scope_examples, 39);
+    assert_eq!(spec.uncovered, vec![9, 10]);
+    assert_eq!(spec.waived, 0);
+    assert!(
+        coverage.floor >= 37 && coverage.floor <= coverage.covered_examples,
+        "python ledger floor {} against {} covered",
+        coverage.floor,
+        coverage.covered_examples
+    );
+    for example in (1..=34).filter(|n| ![9, 10].contains(n)) {
+        let prefix = format!("py-spec0233-ex{example:02}-");
+        let cited = format!("RIPR-SPEC-0238#{example}");
+        assert!(
+            corpus
+                .cases
+                .iter()
+                .any(|c| c.case_id.starts_with(&prefix) && c.spec_examples.contains(&cited)),
+            "no case citing RIPR-SPEC-0238 example {example}"
+        );
+    }
+    // Every test library the corpus exists to cover keeps cases in both
+    // error directions: discriminated cases measure false actionable, the
+    // rest measure false exposed and false silent. A library whose subject
+    // stays listed after its cases are dropped fails here.
+    for library in ["pytest", "unittest", "hypothesis"] {
+        let prefix = format!("authored-py-{library}-");
+        let states: Vec<TruthState> = corpus
+            .cases
+            .iter()
+            .filter(|c| c.subject_id.starts_with(&prefix))
+            .map(|c| c.truth.state)
+            .collect();
+        assert!(
+            states.contains(&TruthState::Discriminated),
+            "no discriminated {library} case"
+        );
+        assert!(
+            states.iter().any(|s| *s != TruthState::Discriminated),
+            "no {library} case that is not fully discriminated"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn python_expected_rows_agree_with_corpus_labels() -> Result<(), String> {
+    let dir = python_corpus_dir();
+    let corpus = load_corpus(&dir)?;
     let rows_dir = dir.join("expected").join(ROWS_DIR);
     assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
     for case in &corpus.cases {

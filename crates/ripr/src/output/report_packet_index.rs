@@ -3,6 +3,7 @@ use super::markdown::code_span;
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -166,17 +167,55 @@ pub(crate) fn build_report_packet_index_report(
 ) -> ReportPacketIndexReport {
     let specs = artifact_specs(&input);
     let mut entries = Vec::new();
+    let mut warnings = Vec::new();
     for spec in &specs {
-        if artifact_available(spec) {
-            entries.push(GroupedEntry {
-                group: spec.group,
-                entry: entry_from_spec(spec, true, status_for_spec(spec)),
-            });
+        match artifact_state(spec) {
+            ArtifactState::Available => {
+                entries.push(GroupedEntry {
+                    group: spec.group,
+                    entry: entry_from_spec(spec, true, status_for_spec(spec)),
+                });
+            }
+            ArtifactState::Malformed(reason) => {
+                // Fail closed: existence alone never credits a JSON-kind
+                // artifact. A malformed receipt/SARIF/badge must not flip the
+                // packet to pass; it renders as an explicit `malformed` entry
+                // carrying its regeneration command (#7380).
+                let path = display_path(&spec.path);
+                warnings.push(IndexWarning {
+                    kind: "malformed_artifact".to_string(),
+                    message: format!(
+                        "{} at {} is malformed and was not counted as available: {}",
+                        spec.label, path, reason
+                    ),
+                    source_artifact: Some(path),
+                });
+                entries.push(GroupedEntry {
+                    group: spec.group,
+                    entry: entry_from_spec(spec, false, "malformed".to_string()),
+                });
+            }
+            ArtifactState::Missing => {}
         }
     }
 
+    // Receipts living in the advertised receipts home were invisible: the
+    // only receipt spec points at reports/agent-receipt.json. Scan the
+    // receipts directory itself so a receipt written where the surface
+    // advertises it is listed under validation_receipts (#7381).
+    let (receipt_entries, receipt_warnings) = scan_receipt_entries(&input.receipts_dir, &specs);
+    entries.extend(receipt_entries);
+    warnings.extend(receipt_warnings);
+
     let missing_expected = missing_expected_surfaces(&specs);
     for missing in &missing_expected {
+        if entries.iter().any(|grouped| grouped.entry.id == missing.id) {
+            // The id already has a state-carrying entry (for example a
+            // malformed agent receipt): keep that entry and let the missing
+            // expected surface below carry the recovery guidance, instead of
+            // also pushing a contradictory `missing` entry for the same id.
+            continue;
+        }
         if let Some(spec) = specs.iter().find(|spec| spec.id == missing.id) {
             entries.push(GroupedEntry {
                 group: spec.group,
@@ -185,14 +224,11 @@ pub(crate) fn build_report_packet_index_report(
         }
     }
 
-    let warnings = missing_expected
-        .iter()
-        .map(|missing| IndexWarning {
-            kind: "missing_expected".to_string(),
-            message: format!("{} is missing.", missing.label),
-            source_artifact: None,
-        })
-        .collect::<Vec<_>>();
+    warnings.extend(missing_expected.iter().map(|missing| IndexWarning {
+        kind: "missing_expected".to_string(),
+        message: format!("{} is missing.", missing.label),
+        source_artifact: None,
+    }));
 
     let failures = entries
         .iter()
@@ -203,10 +239,13 @@ pub(crate) fn build_report_packet_index_report(
     } else if failures > 0 {
         "fail"
     } else if !missing_expected.is_empty()
+        || warnings
+            .iter()
+            .any(|warning| warning.kind == "receipts_dir_error")
         || entries.iter().any(|grouped| {
             matches!(
                 grouped.entry.status.as_str(),
-                "warn" | "incomplete" | "unreadable" | "acknowledged"
+                "warn" | "incomplete" | "unreadable" | "acknowledged" | "malformed"
             )
         })
     {
@@ -315,7 +354,12 @@ fn push_entry(out: &mut String, entry: &IndexEntry) {
     if entry.available {
         out.push_str(&format!("- {}: {}\n", entry.label, entry.path));
     } else {
-        out.push_str(&format!("- {}: missing\n", entry.label));
+        match entry.status.as_str() {
+            "malformed" => {
+                out.push_str(&format!("- {}: malformed ({})\n", entry.label, entry.path))
+            }
+            _ => out.push_str(&format!("- {}: missing\n", entry.label)),
+        }
         if let Some(next_command) = &entry.next_command {
             push_next_command(out, &entry.id, next_command);
         }
@@ -747,8 +791,215 @@ fn indexed_artifact_path(token: &str, input: &ReportPacketIndexInput) -> Option<
     })
 }
 
+/// Whether an artifact's bytes qualify it as available. Existence alone is
+/// not enough for JSON-kind artifacts: a garbage `agent-receipt.json` used to
+/// count as available and flipped the packet to pass (#7380), so JSON-kind
+/// specs must parse as a JSON object before they are credited. Markdown-kind
+/// specs keep existence-only availability; their richer state comes from
+/// `status_for_spec`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ArtifactState {
+    Available,
+    Malformed(String),
+    Missing,
+}
+
+fn artifact_state(spec: &ArtifactSpec) -> ArtifactState {
+    if !spec.path.exists() {
+        return ArtifactState::Missing;
+    }
+    if spec.kind != "json" {
+        return ArtifactState::Available;
+    }
+    classify_json_file(&spec.path)
+}
+
+/// Classify a JSON file's bytes without crediting existence alone. Used both
+/// for declared artifact specs and for receipts discovered in the receipts
+/// directory, so every malformed path reports the same actionable reason:
+/// unreadable, invalid JSON, or valid JSON that is not an object.
+fn classify_json_file(path: &Path) -> ArtifactState {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(_)) => ArtifactState::Available,
+            Ok(_) => ArtifactState::Malformed("valid JSON but not a JSON object".to_string()),
+            Err(err) => ArtifactState::Malformed(format!("invalid JSON: {err}")),
+        },
+        Err(err) => ArtifactState::Malformed(format!("unreadable: {err}")),
+    }
+}
+
+/// Only a well-formed artifact counts as present. A malformed receipt must
+/// not satisfy the "receipt or check_pr exists" dependency: the malformed
+/// entry itself stays visible as `malformed` (off pass), and the missing
+/// expected surface still renders its recovery guidance (#7380).
 fn artifact_available(spec: &ArtifactSpec) -> bool {
-    spec.path.exists()
+    matches!(artifact_state(spec), ArtifactState::Available)
+}
+
+/// Receipt JSONs discovered in the receipts directory itself. `reports
+/// index` advertises `--receipts-dir` as the receipts home and echoes it in
+/// `inputs.receipts_dir`, but the only receipt spec points at
+/// `reports/agent-receipt.json`, so receipts written where the surface
+/// advertises stayed invisible (#7381). Every `*.json` file directly in the
+/// receipts directory becomes a `validation_receipts` entry; one that does
+/// not parse as a JSON object renders as `malformed` with a warning instead
+/// of silently passing. Files already claimed by a spec are not double
+/// listed; an absent directory yields nothing, while an unreadable one warns
+/// so it cannot masquerade as "no receipts were written".
+fn scan_receipt_entries(
+    receipts_dir: &Path,
+    specs: &[ArtifactSpec],
+) -> (Vec<GroupedEntry>, Vec<IndexWarning>) {
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+    // An absent receipts directory means nothing was written there yet and
+    // stays silent; any other read failure (permissions, a regular file at
+    // the path) must warn instead of masquerading as an empty directory.
+    let readdir = match std::fs::read_dir(receipts_dir) {
+        Ok(readdir) => readdir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return (entries, warnings);
+        }
+        Err(err) => {
+            warnings.push(IndexWarning {
+                kind: "receipts_dir_error".to_string(),
+                message: format!(
+                    "Could not read the receipts directory {}: {err}",
+                    display_path(receipts_dir)
+                ),
+                source_artifact: Some(display_path(receipts_dir)),
+            });
+            return (entries, warnings);
+        }
+    };
+    // Surface directory-entry failures instead of dropping them, and accept
+    // only regular files: `file_type` does not follow symlinks, so a symlink
+    // inside the receipts directory cannot point the index at a file outside
+    // it (fail closed — the link simply earns no entry).
+    let mut paths = Vec::new();
+    for entry in readdir {
+        match entry {
+            Ok(entry) => match entry.file_type() {
+                Ok(file_type) if file_type.is_file() => {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "json") {
+                        paths.push(path);
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => warnings.push(IndexWarning {
+                    kind: "receipts_dir_entry_error".to_string(),
+                    message: format!(
+                        "Could not inspect a directory entry in the receipts directory: {err}"
+                    ),
+                    source_artifact: None,
+                }),
+            },
+            Err(err) => warnings.push(IndexWarning {
+                kind: "receipts_dir_entry_error".to_string(),
+                message: format!(
+                    "Could not read a directory entry in the receipts directory: {err}"
+                ),
+                source_artifact: None,
+            }),
+        }
+    }
+    paths.sort();
+    // Entry ids must stay unique selectors: punctuation folding alone maps
+    // `gap:a.json` and `gap-a.json` onto the same id, so the first sorted
+    // claim keeps the plain slug and later collisions carry a digest of the
+    // original file name.
+    let mut used_ids = HashSet::new();
+    for path in paths {
+        if specs.iter().any(|spec| spec.path == path) {
+            continue;
+        }
+        let display = display_path(&path);
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "receipt.json".to_string());
+        let (available, status) = match classify_json_file(&path) {
+            ArtifactState::Available => (true, "available".to_string()),
+            ArtifactState::Malformed(reason) => {
+                warnings.push(IndexWarning {
+                    kind: "malformed_artifact".to_string(),
+                    message: format!(
+                        "Receipt {file_name} in the receipts directory is malformed and was not counted as available: {reason}"
+                    ),
+                    source_artifact: Some(display.clone()),
+                });
+                (false, "malformed".to_string())
+            }
+            ArtifactState::Missing => continue,
+        };
+        let id = unique_receipt_entry_id(&file_name, &mut used_ids);
+        entries.push(GroupedEntry {
+            group: "validation_receipts",
+            entry: IndexEntry {
+                id,
+                label: format!("Receipt {file_name}"),
+                kind: "json".to_string(),
+                path: display.clone(),
+                json_path: Some(display),
+                status,
+                available,
+                required: false,
+                authority: false,
+                description: "Receipt JSON discovered in the receipts directory.".to_string(),
+                next_command: None,
+            },
+        });
+    }
+    (entries, warnings)
+}
+
+/// FNV-1a over the file name bytes: a small stable digest that disambiguates
+/// punctuation-folded receipt ids without pulling in a hashing dependency.
+fn receipt_name_digest(file_name: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in file_name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn unique_receipt_entry_id(file_name: &str, used_ids: &mut HashSet<String>) -> String {
+    let base = receipt_entry_id(file_name);
+    if used_ids.insert(base.clone()) {
+        return base;
+    }
+    let id = format!("{base}_{:08x}", receipt_name_digest(file_name));
+    used_ids.insert(id.clone());
+    id
+}
+
+/// A stable entry id for a discovered receipt file: the file name with
+/// non-alphanumeric characters folded to underscores.
+fn receipt_file_id(file_name: &str) -> String {
+    let mut id = String::new();
+    let mut previous_underscore = false;
+    for ch in file_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch);
+            previous_underscore = false;
+        } else if !previous_underscore {
+            id.push('_');
+            previous_underscore = true;
+        }
+    }
+    id.trim_matches('_').to_string()
+}
+
+fn receipt_entry_id(file_name: &str) -> String {
+    let id = receipt_file_id(file_name);
+    if id.is_empty() {
+        "unnamed".to_string()
+    } else {
+        id
+    }
 }
 
 fn status_for_spec(spec: &ArtifactSpec) -> String {
@@ -2550,6 +2801,260 @@ mod tests {
         };
         assert_eq!(e.status, "fail");
         assert_eq!(report.status, "fail");
+        Ok(())
+    }
+
+    // ── #7380: malformed JSON-kind artifacts fail closed ─────────────────────
+
+    #[test]
+    fn malformed_agent_receipt_is_not_counted_as_available() -> Result<(), String> {
+        let root = temp_root("malformed-agent-receipt")?;
+        write(
+            &root.join("target/ripr/reports/agent-receipt.json"),
+            "not json at all {{{",
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        assert_eq!(report.status, "warn");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "malformed_artifact"),
+            "expected a malformed_artifact warning: {:?}",
+            report.warnings
+        );
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .find(|entry| entry.id == "agent_receipt");
+        let Some(entry) = entry else {
+            return Err("expected agent_receipt entry".to_string());
+        };
+        assert_eq!(entry.status, "malformed");
+        assert!(!entry.available);
+        assert!(
+            entry.next_command.is_some(),
+            "malformed entry must carry its regeneration command"
+        );
+        let rendered = render_report_packet_index_markdown(&report);
+        assert!(
+            rendered.contains("Agent receipt: malformed ("),
+            "markdown must name the malformed receipt: {rendered}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn non_object_json_artifact_is_malformed() -> Result<(), String> {
+        let root = temp_root("non-object-json")?;
+        write(&root.join("target/ripr/reports/ripr.sarif.json"), "[1, 2]")?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .find(|entry| entry.id == "sarif");
+        let Some(entry) = entry else {
+            return Err("expected sarif entry".to_string());
+        };
+        assert_eq!(entry.status, "malformed");
+        assert!(!entry.available);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    // ── #7381: receipts-dir is scanned for receipt JSONs ─────────────────────
+
+    #[test]
+    fn receipts_dir_receipts_are_listed_under_validation_receipts() -> Result<(), String> {
+        let root = temp_root("receipts-dir-scan")?;
+        write(
+            &root.join("target/ripr/receipts/my-receipt.json"),
+            r#"{"kind":"agent_receipt","schema_version":"0.1"}"#,
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        let group = report
+            .groups
+            .iter()
+            .find(|group| group.group == "validation_receipts");
+        let Some(group) = group else {
+            return Err("expected validation_receipts group".to_string());
+        };
+        let entry = group
+            .entries
+            .iter()
+            .find(|entry| entry.path == "target/ripr/receipts/my-receipt.json");
+        let Some(entry) = entry else {
+            return Err(format!(
+                "expected scanned receipt entry, got {:?}",
+                group
+                    .entries
+                    .iter()
+                    .map(|entry| &entry.id)
+                    .collect::<Vec<_>>()
+            ));
+        };
+        assert!(entry.available);
+        assert_eq!(entry.status, "available");
+        let rendered = render_report_packet_index_markdown(&report);
+        assert!(
+            rendered.contains("Receipt my-receipt.json: target/ripr/receipts/my-receipt.json"),
+            "markdown must list the scanned receipt: {rendered}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_receipt_in_receipts_dir_warns_instead_of_passing() -> Result<(), String> {
+        let root = temp_root("receipts-dir-malformed")?;
+        write(
+            &root.join("target/ripr/receipts/broken-receipt.json"),
+            "not json at all {{{",
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        assert_ne!(report.status, "pass");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "malformed_artifact"),
+            "expected a malformed_artifact warning: {:?}",
+            report.warnings
+        );
+        let entry = report
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .find(|entry| entry.path == "target/ripr/receipts/broken-receipt.json");
+        let Some(entry) = entry else {
+            return Err("expected malformed scanned receipt entry".to_string());
+        };
+        assert_eq!(entry.status, "malformed");
+        assert!(!entry.available);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "malformed_artifact");
+        let Some(warning) = warning else {
+            return Err("expected malformed_artifact warning".to_string());
+        };
+        assert!(
+            warning.message.contains("invalid JSON"),
+            "scanned-receipt warning must carry the parse reason: {}",
+            warning.message
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn receipts_dir_that_is_a_file_warns_instead_of_passing_silently() -> Result<(), String> {
+        // Review follow-up: a receipts path that exists but cannot be listed
+        // (here a regular file sitting where the directory belongs) used to
+        // look exactly like "no receipts were written", letting an index with
+        // every known artifact available report pass. The packet must warn.
+        let root = temp_root("receipts-dir-is-file")?;
+        write(&root.join("target/ripr/receipts"), "not a directory")?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "receipts_dir_error"),
+            "expected a receipts_dir_error warning: {:?}",
+            report.warnings
+        );
+        assert_ne!(
+            report.status, "pass",
+            "an unreadable receipts directory must not pass silently"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_agent_receipt_still_surfaces_check_pr_missing_guidance() -> Result<(), String> {
+        // #7380 follow-up from review: a malformed agent receipt must not
+        // satisfy the "receipt or check_pr exists" dependency. The receipt
+        // keeps its malformed entry while the missing check_pr surface still
+        // renders its recovery guidance.
+        let root = temp_root("malformed-receipt-check-pr")?;
+        write(
+            &root.join("target/ripr/reports/test-oracle-assistant-proof.md"),
+            "proof\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/assistant-loop-health.md"),
+            "health\n",
+        )?;
+        write(
+            &root.join("target/ripr/reports/agent-receipt.json"),
+            "not json at all {{{",
+        )?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        let receipt = report
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .filter(|entry| entry.id == "agent_receipt")
+            .count();
+        assert_eq!(
+            receipt, 1,
+            "agent_receipt must appear exactly once (malformed, not also missing)"
+        );
+        assert!(
+            report
+                .missing_expected
+                .iter()
+                .any(|missing| missing.id == "check_pr"),
+            "check_pr must stay a missing expected surface: {:?}",
+            report.missing_expected
+        );
+        let check_pr_entry = report
+            .groups
+            .iter()
+            .flat_map(|group| group.entries.iter())
+            .find(|entry| entry.id == "check_pr");
+        let Some(check_pr_entry) = check_pr_entry else {
+            return Err("expected check_pr missing entry".to_string());
+        };
+        assert_eq!(check_pr_entry.status, "missing");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "missing_expected"),
+            "expected a missing_expected warning"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_entry_ids_stay_distinct_for_punctuation_collisions() -> Result<(), String> {
+        // Punctuation folding alone maps `gap:a.json` and `gap-a.json` onto
+        // the same slug; the second claim must carry a digest so entry ids
+        // remain unique selectors.
+        let mut used = std::collections::HashSet::new();
+        let first = unique_receipt_entry_id("gap:a.json", &mut used);
+        let second = unique_receipt_entry_id("gap-a.json", &mut used);
+        assert_eq!(first, "gap_a_json");
+        assert_ne!(
+            first, second,
+            "punctuation variants must not share an entry id"
+        );
+        assert!(
+            second.starts_with("gap_a_json_"),
+            "collision id must build on the slug: {second}"
+        );
         Ok(())
     }
 }

@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -161,7 +161,7 @@ def fmt(n):
+ 
+ def perr_exc_not_none(text):
+     if not text:
+-        raise KeyError("empty")
++        raise KeyError("blank")
+     return int(text)
+ 
+ 

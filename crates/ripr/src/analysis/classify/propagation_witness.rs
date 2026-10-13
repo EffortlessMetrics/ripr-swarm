@@ -25,6 +25,9 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(in crate::analysis) selected_helper_calls:
         Vec<super::helper_transfer::SelectedInherentCall>,
+    /// Exact rule-7a observer provenance; absent preserves existing digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::analysis) fallible_check: Option<super::FallibleCheckReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -203,6 +206,7 @@ pub(in crate::analysis) fn current_path_witness(
             line: probe.location.line,
         },
         selected_helper_calls: Vec::new(),
+        fallible_check: None,
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -216,6 +220,60 @@ pub(in crate::analysis) fn current_path_witness(
         },
         completeness,
         limitations,
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// A literal has no semantic tokens. Only the complete rule-7a source/value
+/// receipt can adapt its exact local owner return into a complete witness.
+pub(in crate::analysis) fn fallible_literal_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+    receipt: &super::FallibleCheckReceipt,
+) -> Option<PropagationWitnessV1> {
+    if !receipt.valid_for(probe) {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner == probe.owner
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == normalize_semantic_text(&probe.expression)
+    })?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: probe.owner.clone()?,
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: Some(receipt.clone()),
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "bounded_fallible_literal_check".into(),
+            "static_local_flow_only".into(),
+        ],
         semantic_digest: String::new(),
     };
     witness.semantic_digest = witness.compute_semantic_digest();
@@ -253,6 +311,7 @@ pub(in crate::analysis) fn returned_ledger_witness(
             line: probe.location.line,
         },
         selected_helper_calls: Vec::new(),
+        fallible_check: None,
         edges: vec![PropagationEdge {
             kind: PropagationEdgeKind::StructField,
             status: EdgeStatus::Candidate,
@@ -378,6 +437,10 @@ pub(in crate::analysis) fn complete_direct_witness(
         return false;
     };
     witness.digest_matches()
+        && witness
+            .fallible_check
+            .as_ref()
+            .is_none_or(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -423,6 +486,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
         return false;
     };
     witness.digest_matches()
+        && witness.fallible_check.is_none()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -1053,6 +1117,10 @@ impl PropagationWitnessV1 {
             }
         }
         append_canonical_section_header(&mut canonical, "sink", 2);
+        if let Some(receipt) = &self.fallible_check {
+            append_canonical_section_header(&mut canonical, "fallible-check", 1);
+            append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
         append_canonical_section_header(&mut canonical, "path", 1);

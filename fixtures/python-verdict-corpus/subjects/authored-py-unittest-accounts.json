@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-unittest-accounts",
+  "origin": "authored",
+  "version_label": "authored@127309619",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "accounts/__init__.py",
+      "sha256": "101399871f03e9f6435b944f45d44ac5c74e0be8f992dde802897f857a8b2141"
+    },
+    {
+      "path": "accounts/ledger.py",
+      "sha256": "a85be750efd0b17d659c81a65a57ffeaa0a3e2c4fd252f5a64d844388f3af8e8"
+    },
+    {
+      "path": "setup.cfg",
+      "sha256": "e7ace89265dcf3b12875976855b3876cd15692ee7621a61277cc575fc9fbddf6"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_ledger.py",
+      "sha256": "8b0dade6613662ca191f593ad756337bae86c0139cad794cee97a0efb5582d7f"
+    }
+  ]
+}

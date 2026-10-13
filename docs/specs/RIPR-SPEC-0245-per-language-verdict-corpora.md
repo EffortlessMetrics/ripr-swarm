@@ -111,6 +111,29 @@ thread, `authored-ts-nodetest-pricing` and `authored-ts-vitest-cart`,
 mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+### Python corpus
+
+Subjects are authored projects (`authored-py-<library>-<name>`) with a
+`pyproject.toml` or `setup.cfg` marker and no `ripr.toml`, so Python is
+enabled the way a new user's repository enables it. Cases cover pytest
+(asserts, `parametrize`, `raises`, fixtures, `capsys`, `tmp_path`,
+`monkeypatch`), unittest (assert methods, mocks, mixins) and Hypothesis
+(`@given`, `@example`, `assume`), plus at least one case per runnable
+RIPR-SPEC-0238 acceptance example (`fixtures/python-verdict-corpus/SPEC.md`
+lists the examples and alternate forms left out). Truth is a hand-applied
+mutant run of the anchored line under the test command each case records.
+
+The Python corpus carries a spec-example ledger,
+`fixtures/python-verdict-corpus/spec-coverage.toml`, with the RIPR-SPEC-0219
+ledger contract: every spec with numbered acceptance examples is in or out
+of scope, RIPR-SPEC-0238 is in scope, and cases cite the examples they label
+in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
+Examples 9 and 10 of RIPR-SPEC-0238 have no case yet (the corpus
+`SPEC.md` says why), but a case could label either, so they count as
+uncovered rather than waived. A deleted ledger fails
+`committed_python_corpus_is_valid_and_covers_each_test_library`, since a
+ledgerless non-Rust corpus otherwise scores rows without the coverage gate.
+
 ## Required Evidence
 
 - `--language` maps a language to its own corpus directory and refuses a
@@ -155,6 +178,9 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `a_report_and_its_rebless_hint_name_the_corpus_language`
 - `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
 - `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`
+- `committed_python_corpus_is_valid_and_covers_each_test_library`
+- `python_expected_rows_agree_with_corpus_labels`
+- `fixtures/python-verdict-corpus/spec-coverage.toml` and its floor
 
 ## Implementation Mapping
 
