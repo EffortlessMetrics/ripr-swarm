@@ -12,6 +12,7 @@ use std::path::Path;
 pub(super) const TOOL_NAME: &str = "ripr_list_repair_attempts";
 pub(super) const SCHEMA_VERSION: &str = "ripr-mcp-repair-attempt-list-v1";
 pub(super) const CODE_STALE_INVENTORY: &str = "stale_inventory";
+pub(super) const RECOVERY_TOO_LARGE: &str = "inspect durable attempts with `ripr agent status`; repeating or narrowing this same row cannot make it fit";
 const MAX_PAGE_ITEMS: usize = 256;
 
 pub(super) fn tool_descriptor() -> Value {
@@ -234,7 +235,7 @@ pub(super) fn list_document(
         return Err(AttemptFailure::new(
             "result_too_large",
             "the inventory cannot fit even one row and its disclosures in a structured MCP response",
-            "inspect durable attempts with `ripr agent status`; repeating or narrowing this same row cannot make it fit",
+            RECOVERY_TOO_LARGE,
         ));
     }
     Ok(document(fitting))

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed predicate boundary whose compared parameter is fed only by a call ripr does not evaluate (`surcharge(big_order())`, `build::<Order>()`, `order.amount()`) now reads `infection_unknown` (activation unknown, RIPR-SPEC-0032) instead of a `weakly_exposed` missing-equality gap. Call inputs are classified from the syntax tree; a literal-carrying call (`order(5000)`) and any visible one-sided literal input keep the missing-equality gap (#6615).

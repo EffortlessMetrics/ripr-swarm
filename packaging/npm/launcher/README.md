@@ -18,6 +18,12 @@ native executable. It does not run lifecycle installation scripts, download a
 binary from GitHub, compile Rust, invoke a shell, or fall back to an unrelated
 `ripr` on `PATH`.
 
+When native package resolution fails, the launcher names the exact version,
+retains the underlying reason, and advises reinstalling with optional dependencies
+enabled. This also covers corrupt metadata, missing manifests, and broken exports
+targets: a missing module alone does not establish that the package directory is
+absent. Resolution errors go to stderr and exit with status 1.
+
 Supported platform packages are currently planned for Linux glibc x64/ARM64,
 macOS x64/ARM64, and Windows x64 MSVC. Public support begins only after the
 corresponding native payload and installed-product qualification is accepted.

@@ -234,11 +234,29 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
         {"name": "seam", "relation_reason": "seam_callee_call", "miss": "no_call_path"},
     ]);
     assert!(finding_contradictions(&no_path).is_empty());
-    no_path["related_tests"][1]["relation_reason"] = json!("owner_named_test");
+    no_path["related_tests"][1]["relation_reason"] = json!("direct_owner_call");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]
     );
+    // #7531: a relation string ripr does not know fails closed.
+    no_path["related_tests"][1]["relation_reason"] = json!("renamed_relation");
+    assert_eq!(
+        finding_contradictions(&no_path),
+        vec!["no_static_path_with_related_tests"]
+    );
+    // #5335 / #7531: name, import and fixture affinity never reach, so a
+    // `no_static_path` finding listing them is consistent.
+    for relation in [
+        "same_module",
+        "weak_token_substring",
+        "owner_named_test",
+        "import_path_affinity",
+        "fixture_owner_affinity",
+    ] {
+        no_path["related_tests"][1]["relation_reason"] = json!(relation);
+        assert!(finding_contradictions(&no_path).is_empty(), "{relation}");
+    }
 
     let mut exposed = clean.clone();
     exposed["classification"] = json!("exposed");
@@ -1604,30 +1622,30 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
         "fixtures/python-verdict-corpus/spec-coverage.toml"
     );
     assert!(
-        corpus.cases.len() >= 63,
+        corpus.cases.len() >= 65,
         "python corpus shrank to {}",
         corpus.cases.len()
     );
-    // Every RIPR-SPEC-0238 acceptance example but 9 and 10 keeps a case
-    // citing it; the ledger leaves those two visible as uncovered rather
-    // than waived. Examples 1 to 34 have `py-spec0233-exNN-` cases (the
-    // prefix of the spec's draft number, RIPR-SPEC-0233); 35 to 39 were
-    // written from the library cases that cite them.
+    // Every RIPR-SPEC-0238 acceptance example but 10 keeps a case citing
+    // it; the ledger leaves 10 visible as uncovered rather than waived.
+    // Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
+    // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
+    // library cases that cite them.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 39);
-    assert_eq!(spec.uncovered, vec![9, 10]);
+    assert_eq!(spec.in_scope_examples, 40);
+    assert_eq!(spec.uncovered, vec![10]);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 37 && coverage.floor <= coverage.covered_examples,
+        coverage.floor >= 39 && coverage.floor <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
         coverage.floor,
         coverage.covered_examples
     );
-    for example in (1..=34).filter(|n| ![9, 10].contains(n)) {
+    for example in (1..=34).filter(|&n| n != 10) {
         let prefix = format!("py-spec0233-ex{example:02}-");
         let cited = format!("RIPR-SPEC-0238#{example}");
         assert!(
@@ -1806,6 +1824,25 @@ fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String>
     crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
     fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
     assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    // Without the ledger nothing gates an `expected_oracle` label, so the
+    // copied Rust labels are refused until they are removed.
+    let refused = validated_corpus_without_coverage(&dir)
+        .err()
+        .ok_or("a ledgerless corpus accepted oracle labels")?;
+    assert!(refused.contains("carries expected_oracle"), "{refused}");
+    for entry in fs::read_dir(dir.join("cases")).map_err(|err| err.to_string())? {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let mut case = parse_json(&path)?;
+        if let Some(fields) = case.as_object_mut()
+            && fields.remove("expected_oracle").is_some()
+        {
+            let text = serde_json::to_string_pretty(&case).map_err(|err| err.to_string())?;
+            fs::write(&path, format!("{text}\n")).map_err(|err| err.to_string())?;
+        }
+    }
     let corpus = validated_corpus_without_coverage(&dir)?;
     assert!(!corpus.cases.is_empty());
     Ok(())
@@ -2343,4 +2380,36 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
         );
     }
     Ok(())
+}
+
+// #7531: the corpus reads ripr's serialized `relation_reason` back through
+// serde. Every label ripr writes must parse to its variant, or the
+// fail-closed default would invent contradictions.
+#[test]
+fn every_relation_label_reads_back_through_ripr_rule() {
+    use ripr::domain::RelationReason;
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::AssertionTargetAffinity,
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::OwnerNamedTest,
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::WeakTokenSubstring,
+        RelationReason::ReExportChainFollowed,
+        RelationReason::SeamCalleeCall,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<RelationReason>(json!(reason.as_str())).ok(),
+            Some(reason),
+            "{reason:?}"
+        );
+        assert_eq!(
+            relation_reaches_owner(reason.as_str()),
+            reason.establishes_reach(false),
+            "{reason:?}"
+        );
+    }
 }

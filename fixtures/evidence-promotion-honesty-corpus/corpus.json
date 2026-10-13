@@ -4997,6 +4997,134 @@
           "reach": "yes"
         }
       ]
+    },
+    {
+      "id": "py_empty_sink_tokens_discarded_short_function_output",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_unrelated_short_function",
+      "vector": "empty_sink_tokens_discarded_short_function_output",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_empty_sink_tokens_module_comparison_text",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_module_comparison",
+      "vector": "empty_sink_tokens_module_comparison_text",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_empty_sink_tokens_genuine_short_function_output",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_observed_short_function",
+      "vector": "empty_sink_tokens_genuine_short_function_output",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
     }
   ]
 }

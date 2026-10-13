@@ -378,3 +378,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unwrap_err_variant_positive (30)
+
+Reason:
+RIPR-SPEC-0122 #7394: attributable shared CLI evidence and compact empty section spacing preserve every complete finding record; library legacy bytes remain unchanged. This refresh changes presentation only, with no analyzer, JSON, oracle or recommendation change.
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
