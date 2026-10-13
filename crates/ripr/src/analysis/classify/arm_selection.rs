@@ -482,9 +482,6 @@ impl ArmSelector {
         }
     }
 
-    /// Each uncased pattern name becomes a `Variant` when the scrutinee's
-    /// declared enum lists it under its own name or `Self`, and `Opaque`
-    /// otherwise.
     /// Reads each uncased name (`Kind::A`) as a variant or as unreadable,
     /// from the enum the owner's file declares (#7543).
     fn resolve_uncased_variants(&mut self, owner_source: Option<&str>) {
@@ -512,6 +509,10 @@ impl ArmSelector {
         self.changed_from = changed_from;
     }
 
+    /// An uncased pattern name becomes a `Variant` when its qualifier names
+    /// the scrutinee's type (by name, or `Self` in that type's own impl) and
+    /// the owner's file declares that enum with the name, and `Opaque`
+    /// otherwise. Every other head passes through unchanged.
     fn resolve_head(&self, head: PatternHead) -> PatternHead {
         let PatternHead::UncasedVariant {
             qualifier,
