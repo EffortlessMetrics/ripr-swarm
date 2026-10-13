@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/python_same_stem_sibling_owner_not_related/input",
+  "config_path": "<cwd>/fixtures/python_same_stem_sibling_owner_not_related/input/ripr.toml",
   "summary": {"changed_rust_files":0,"probes":4,"findings":4,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":3,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,

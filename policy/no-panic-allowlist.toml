@@ -1282,3 +1282,17 @@ receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"edit\"])"
 [allow.last_seen]
 line = 12042
 column = 5
+
+[[allow]]
+id = "panic-0095"
+path = "xtask/src/reports/fixtures.rs"
+family = "expect"
+classification = "test_only"
+explanation = "Test function: normalize_json_projects_checkout_cwd_prefix_in_config_path reads the checkout cwd to build the projection prefix (#7536)"
+owner = "repo-infra"
+expires = "2027-06-30"
+
+[allow.selector]
+kind = "method_call"
+container = "normalize_json_projects_checkout_cwd_prefix_in_config_path"
+callee = "expect"
