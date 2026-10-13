@@ -4468,6 +4468,134 @@ fn gap_code_actions_omit_unsafe_related_paths_and_commands() -> Result<(), Strin
 }
 
 #[test]
+// #7460: the fixture's gap artifact carries `LanguageId::Python`, so it is a
+// safe projection input only when `lang-python` is compiled in; the same gate
+// as the other python-fixture gap code action tests.
+#[cfg(feature = "lang-python")]
+fn gap_code_actions_open_related_test_falls_back_to_anchor_line_when_target_line_is_omitted()
+-> Result<(), String> {
+    // #7460: a ledger repair route that names a related test but omits
+    // `target_line` must navigate to the gap diagnostic's anchor line, not
+    // invent line 1.
+    let root = unique_lsp_test_root("gap-related-test-anchor-line")?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "def test_discount_boundary():\n    assert price(10) == 9\n",
+    )
+    .map_err(|err| format!("write related test failed: {err}"))?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected diagnostic data object".to_string())?;
+    let route = data
+        .get_mut("repair_route")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected repair_route object".to_string())?;
+    route.remove("target_line");
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    let open_target = commands
+        .iter()
+        .find(|(title, command, _)| {
+            title == "Write targeted test: open best related test"
+                && command == OPEN_RELATED_TEST_COMMAND
+        })
+        .and_then(|(_, _, args)| args.first())
+        .ok_or_else(|| format!("missing open related test action: {commands:?}"))?;
+    assert_eq!(
+        open_target["uri"],
+        file_uri_for_path(&root.path().join("tests/test_pricing.py"))?.as_str()
+    );
+    assert_eq!(
+        open_target["line"], 12,
+        "omitted target_line must fall back to the gap anchor line, not invent line 1: {open_target}"
+    );
+    assert_ne!(
+        open_target["line"], 1,
+        "invented line 1 is the #7460 defect: {open_target}"
+    );
+    assert_eq!(open_target["test_name"], "test_discount_boundary");
+    Ok(())
+}
+
+#[test]
+// #7460: python-fixture gate, same reason as the fallback test above.
+#[cfg(feature = "lang-python")]
+fn gap_code_actions_omit_open_related_test_when_no_line_is_available() -> Result<(), String> {
+    // #7460: when the repair route omits `target_line` and the gap record
+    // also has no anchor line, drop the navigation action instead of
+    // inventing line 1.
+    let root = unique_lsp_test_root("gap-related-test-no-line")?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "def test_discount_boundary():\n    assert price(10) == 9\n",
+    )
+    .map_err(|err| format!("write related test failed: {err}"))?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected diagnostic data object".to_string())?;
+    let route = data
+        .get_mut("repair_route")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected repair_route object".to_string())?;
+    route.remove("target_line");
+    let anchor = data
+        .get_mut("anchor")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected anchor object".to_string())?;
+    anchor.remove("line");
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    assert!(
+        commands.iter().all(|(title, command, _)| {
+            title != "Write targeted test: open best related test"
+                && command.as_str() != OPEN_RELATED_TEST_COMMAND
+        }),
+        "open related test must be omitted when no navigation line is available: {commands:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn gap_code_actions_suppress_python_repair_card_without_target_file() -> Result<(), String> {
     let root = unique_lsp_test_root("gap-python-card-no-target")?;
     let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
