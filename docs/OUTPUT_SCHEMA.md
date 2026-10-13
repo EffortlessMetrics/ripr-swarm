@@ -2312,7 +2312,6 @@ Example:
 ```json
 "untracked_working_tree_source_paths": ["src/new.rs"]
 ```
-
 ### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
 
 A run that diffs the live repository names the base and head it analyzed.
@@ -9562,9 +9561,11 @@ artifact paths before appending the full Markdown decision report.
 
 The CLI also prints a stderr warning when a completed `ripr gate evaluate`
 omits `--mode` and stderr is non-interactive: the default is `visible-only`,
-which records advisory evidence and never blocks. Missing-input usage errors
+which records advisory evidence and never blocks on findings after a completed
+evaluation, but exception-policy violations still can. Missing-input usage errors
 and `config_error` reports stay quiet. This warning is not part of the JSON or
-Markdown report contract; an explicit `--mode visible-only` suppresses it.
+Markdown report contract; an explicit `--mode visible-only` suppresses it while
+blocking modes remain opt-in.
 
 See [Calibrated gate policy](CALIBRATED_GATE_POLICY.md) for the operating
 model, rollout path, waiver behavior, and static/runtime vocabulary boundary.
