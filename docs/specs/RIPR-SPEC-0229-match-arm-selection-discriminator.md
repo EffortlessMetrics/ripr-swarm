@@ -234,7 +234,8 @@ Implemented:
   the later arm is read as it stands now. The credit needs the diff's old
   text to be this arm with the same body (a head cut anchored on the
   unchanged body, or a whole old line with an equal body; an uncut old
-  head whose body sat on the next removed line arrives joined to it), and
+  head arrives joined to the next line of the old file, so it never
+  passes for a cut), and
   the `match` to be the owner body's tail expression, so an arm's result
   is the return value. Results compare as literals of one kind, or as
   variants under the same qualifier by name and literal payload, so
@@ -387,7 +388,7 @@ the diff changes `None => 1` to `None => 0`.
   `an_input_that_moved_to_an_unequal_result_credits_a_changed_pattern`,
   `moved_input_credit_needs_provably_unequal_results`; and
   `crates/ripr/src/analysis/probes/diff.rs`
-  `an_uncut_old_arm_head_carries_its_removed_body`.
+  `an_uncut_old_arm_head_carries_its_old_body`.
 - Verdict corpus cases `spec0229-unselected-range-arm` (example 7),
   `spec0229-range-widened-inside-input` and
   `spec0229-range-widened-moved-input` (example 8).
