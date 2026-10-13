@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..b4c0f01 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -45,7 +45,7 @@ sub quote {
+         subtotal => discount($amount),
+         shipping => shipping_fee($weight),
+     );
+-    $quote{total} = $quote{subtotal} + $quote{shipping};
++    $quote{total} = $quote{shipping} + $quote{subtotal};
+     return \%quote;
+ }
+ 
