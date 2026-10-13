@@ -30017,7 +30017,9 @@ fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
     let common = report
         .lines()
-        .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
+        .find(|line| {
+            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
+        })
         .ok_or("common packet coverage is absent from the policy report")?;
     let common_tests = packet_coverage_selected_tests(common)?;
     for subject in [
@@ -30118,7 +30120,7 @@ fn packet_coverage_report_fixture() -> String {
             "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
             "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
             "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
-            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "`cargo test -p xtask --bin xtask --locked --offline portable_consumer`\n",
             "- line 1; host={host}; declared=unix; {native}; ",
             "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
         ),
@@ -30141,6 +30143,23 @@ fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
         );
         write(&path, &extra);
         assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_unpinned_or_wrong_common_binary() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-common-binary", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for target in ["", "--bin neighboring_binary "] {
+            write(&path, &report.replacen("--bin xtask ", target, 1));
+            if assert_packet_coverage_report().is_ok() {
+                return Err(format!("wrong common packet target accepted: {target:?}"));
+            }
+        }
+        Ok(())
     })
 }
 
