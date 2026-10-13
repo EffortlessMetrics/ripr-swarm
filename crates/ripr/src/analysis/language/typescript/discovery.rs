@@ -618,7 +618,8 @@ mod tests {
             _ => return,
         };
 
-        let scan = visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "the one link must be counted");
         assert!(
             !scan
@@ -657,7 +658,8 @@ mod tests {
             Err(_) => return, // platform refused; nothing to assert here
         };
 
-        let scan = visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
             scan.skipped_links, 0,
             "a socket is not a link and must not disclose a link limitation"
