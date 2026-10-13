@@ -571,7 +571,7 @@ impl TsAliasGapDisclosure {
 /// Collect `typescript_spy_fabricated_observer` limitations from tests that
 /// spy on the owner and fabricate its return value (#4103 shape 4).
 ///
-/// Real producer: `related_tests::test_spies_owner_with_fabrication` detects
+/// Real producer: `related_tests::test_spies_owner_with_fabrication_for_owner` detects
 /// `vi.spyOn(module, 'ownerName')` / `jest.spyOn(...)` combined with a
 /// `.mockReturnValue(...)`/`.mockImplementation(...)` family call in the same
 /// test body. Assertions on the spied name observe the fabricated value, not
@@ -584,7 +584,8 @@ pub(crate) fn named_limitations_for_spy_fabrication(
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     for test in all_tests {
-        if test_spies_owner_with_fabrication(test, &owner.name) {
+        if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default)
+        {
             limitations.push(TypeScriptNamedLimitation {
                 name: "typescript_spy_fabricated_observer",
                 sample_source: format!("{}:{}", normalized_path(&test.file), test.line),

@@ -70,7 +70,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         if !ret.errors.is_empty() {
             return Vec::new();
         }
-        let imports = extract_imports_from_statements(&ret.program.body);
+        let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
         let mut scope = TestScope {

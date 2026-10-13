@@ -303,11 +303,40 @@ pub(crate) fn ts_changed_value_is_observed(
                 // Rule 6: whole-identifier occurrences only. Owner names are
                 // identifiers, so a string literal or comment that spells one
                 // (`expect('p').toBe('p')`) is not a reference.
+                // #7507: for bare-call owners (functions, not methods) a
+                // member segment (`helper.cost(150)`) is not a reference to
+                // the owner value — it reads another receiver's member, so it
+                // cannot witness the changed sink. Only a BARE occurrence
+                // (not preceded by `.`/`?.`/`!.`) confirms, plus a call
+                // through a namespace receiver bound to the owner's own
+                // module (`ns.price(150)` via `import * as ns`). Method
+                // owners keep the legacy member-segment reading: their honest
+                // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
-                if owner_names
-                    .iter()
-                    .any(|name| ts_references_identifier(&observed_code, name))
-                {
+                // #7507: `expect(typeof cost)` observes the type string, not
+                // the changed value — never a value witness.
+                if ts_observed_is_typeof_name(&observed_code, &owner_names) {
+                    continue;
+                }
+                let owner_is_method =
+                    matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
+                // Method owners keep the legacy member-segment reading: their
+                // honest needle IS `receiver.method(...)`.
+                let observes_owner = if owner_is_method {
+                    owner_names
+                        .iter()
+                        .any(|name| ts_references_identifier(&observed_code, name))
+                } else {
+                    let receivers =
+                        owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+                    owner_names
+                        .iter()
+                        .any(|name| ts_observed_bare_reference(&observed_code, name))
+                        || owner_names.iter().any(|name| {
+                            ts_observed_namespaced_owner_call(&observed_code, name, &receivers)
+                        })
+                };
+                if observes_owner {
                     return true;
                 }
                 if changed_tokens
@@ -491,6 +520,107 @@ pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
     })
 }
 
+/// `true` when `text` contains `ident` as a BARE identifier reference:
+/// whole-identifier boundaries (as in [`ts_references_identifier`]) AND not
+/// a member segment (`helper.cost` does not reference the owner `cost`;
+/// #7507). The member check skips optional-chain (`?.`) and non-null
+/// (`!.`) punctuation as well as plain `.`, with optional whitespace
+/// between the punctuation and the name.
+pub(crate) fn ts_observed_bare_reference(text: &str, ident: &str) -> bool {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    if ident.is_empty() {
+        return false;
+    }
+    text.match_indices(ident).any(|(at, _)| {
+        let before_ok = text
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = text
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
+        if !(before_ok && after_ok) {
+            return false;
+        }
+        // Member segment: the name is preceded (after trimming spaces) by
+        // `.`, `?.`, or `!.`.
+        let before = text.get(..at).unwrap_or_default().trim_end();
+        let member = before.ends_with('.') && !before.ends_with("...")
+            || before.ends_with("?.")
+            || before.ends_with("!.");
+        !member
+    })
+}
+
+/// `true` when the masked observed expression calls the owner through a
+/// namespace receiver bound to the owner's own module (`ns.price(`,
+/// `ns?.price(`, `ns!.price(`; #7507). Any other receiver's same-named member
+/// is a different function and never confirms.
+fn ts_observed_namespaced_owner_call(
+    masked_observed: &str,
+    owner_name: &str,
+    receivers: &[String],
+) -> bool {
+    if owner_name.is_empty() || receivers.is_empty() {
+        return false;
+    }
+    receivers.iter().any(|receiver| {
+        [".", "?.", "!."].iter().any(|punct| {
+            let needle = format!("{receiver}{punct}{owner_name}(");
+            masked_observed
+                .match_indices(needle.as_str())
+                .any(|(at, _)| {
+                    masked_observed[..at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$') && c != '.')
+                })
+        })
+    })
+}
+/// `true` when the masked observed expression observes an owner name only
+/// through `typeof` (`typeof cost`, `typeof(cost)`; #7507). A type string is
+/// not the changed value, so such an assertion never witnesses a
+/// ReturnValue / FieldConstruction sink.
+fn ts_observed_is_typeof_name(masked_observed: &str, owner_names: &[&str]) -> bool {
+    owner_names.iter().any(|name| {
+        let mut from = 0usize;
+        while let Some(rel) = masked_observed[from..].find("typeof") {
+            let at = from + rel;
+            let before_ok = masked_observed[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
+            // The keyword must also end on a word boundary: without this, an
+            // identifier that merely starts with `typeof` (such as
+            // `typeofprice`) reads as a `typeof` operator observation.
+            let after_ok = masked_observed[at + "typeof".len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
+            if !before_ok || !after_ok {
+                from = at + "typeof".len();
+                continue;
+            }
+            let rest = masked_observed[at + "typeof".len()..].trim_start();
+            let rest = rest
+                .strip_prefix('(')
+                .map_or(rest, |inner| inner.trim_start());
+            if rest.strip_prefix(name).is_some_and(|tail| {
+                tail.chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            }) {
+                return true;
+            }
+            from = at + "typeof".len();
+        }
+        false
+    })
+}
 /// `text` with string-literal contents, template-literal text, regular
 /// expression literals and comments replaced by spaces, so an identifier
 /// search sees only code. Template `${...}` interpolations stay code. Quotes,
