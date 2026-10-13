@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
+
+`ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
+If it leaves `repo-exposure.{json,md}` and `agent-seam-packets.json` from the last
+complete run, a human or `ripr agent status --root` can read last run's seams as
+this run. Remove those unwritten siblings on timeout; do not mark them stale
+in-place. `outputs` stays the packet path map so schema `0.3` is unchanged;
+`outputs_written` remains the authority for what this run produced.
+
 ## 2026-10-13: Nested Cargo.toml keeps doctor Rust checks in scope (#7506)
 
 `detect_languages` is a shallow root scan. A `package.json` at a polyglot
