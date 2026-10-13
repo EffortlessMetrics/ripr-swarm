@@ -1,8 +1,12 @@
 <!-- section: Fixed -->
 - A test that reaches a changed function only through a production caller
-  that transforms its result, and whose every assertion on that caller is
-  weak on its own terms (`assert!(banner().len() > 0)`,
-  `assert!(!banner().is_empty())`), now reports the weak oracle's gap
-  (`weakly_exposed`) instead of abstaining as `helper_result_not_forwarded`.
-  Exact pins on the caller, plain `assert!(caller(..))`, and test-local
-  helpers still abstain (#7549).
+  that carries its result on as data (`format!("[{}]", title())`,
+  `title().to_string() + "!"`), and whose every assertion on that caller is
+  a plain `assert!` with an ordering or `!=` comparison or an
+  `is_empty`/`is_some`/`is_none`/`is_ok`/`is_err` check, now reports the
+  weak oracle's gap (`weakly_exposed`) instead of abstaining as
+  `helper_result_not_forwarded`. A caller that branches on the result, an
+  exact or `==` pin, a bare `assert!(caller(..))`, `?`/`unwrap`/`expect` in
+  the test and test-local helpers still abstain. Across a local-macro
+  argument hop the weak-oracle exception is now this same narrower rule,
+  so a `.contains(..)` or bare-call check there abstains too (#7549).

@@ -125,18 +125,29 @@ can only hint that a caller "may lead here" without changing anything.
   crediting the entry's oracle or reporting a gap. Arithmetic or
   let-bound use of the result is not followed in V1.
 - Weak oracle behind a non-forwarding hop (#7549): the abstention above
-  does not apply when every observed hop's caller is production code and
-  the `HelperOwnerCall` tests hold at least one assertion, each a
-  relational, broad-error or smoke oracle written as a plain `assert!`
+  does not apply when every observed hop's caller is production code;
+  every observed call hop carries its callee's value as data (the caller
+  parses cleanly, does not return `bool`, and holds no branch, loop,
+  early exit, `?`, cast, closure, comparison or logical operator, no
+  branching combinator such as `then_some`, `filter`, `and_then`,
+  `map_or`, `unwrap_or*`, `is_*` or `contains`, and no macro other than
+  `format!`, `concat!` or `vec!`); no `HelperOwnerCall` test uses `?`,
+  `unwrap` or `expect`; and those tests hold at least one assertion, each
+  a relational, broad-error or smoke oracle written as a plain `assert!`
   whose condition, under any `!` or parentheses, is an ordering or `!=`
-  comparison with no `bool` literal (`assert!(banner().len() > 0)`) or an
-  `is_empty`/`is_some`/`is_none`/`is_ok`/`is_err` projection. Such an
-  oracle cannot discriminate the caller's result exactly, so the existing
-  evidence (the weak oracle's gap) stands without pairing. Any exact,
-  snapshot, mock or unknown oracle, a bare `assert!(caller(..))`, an `==`
-  comparison, any other projection, or a test-local hop caller keeps the
-  abstention (fail closed). Effect families take this only across a
-  local-macro argument hop (RIPR-SPEC-0117 example 7).
+  comparison with no `bool` literal and no cast
+  (`assert!(banner().len() > 0)`) or an
+  `is_empty`/`is_some`/`is_none`/`is_ok`/`is_err` projection. The caller
+  then hands the owner's value on as data and the oracle cannot
+  discriminate that data exactly, so the existing evidence (the weak
+  oracle's gap) stands without pairing. A caller that decides on the
+  owner's value (`if title() == "ripr" { Ok(()) } else { Err(()) }` under
+  `assert!(parse().is_ok())`) can turn a loose check into an exact pin, so
+  it keeps the abstention, as do any exact, snapshot, mock or unknown
+  oracle, a bare `assert!(caller(..))`, an `==` comparison, any other
+  projection and a test-local hop caller (fail closed). Effect families
+  take this only across a local-macro argument hop (RIPR-SPEC-0117
+  example 7), whose unexpanded body is not checked for data carrying.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same

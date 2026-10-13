@@ -921,32 +921,109 @@ fn exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains() -> Result<(), St
     Ok(())
 }
 
+fn title_item_finding(items: &str, test: &str) -> Result<Value, String> {
+    let source = format!(
+        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+    );
+    family_finding(&source, TITLE_DIFF, "return_value")
+}
+
+fn assert_abstains_through_hop(finding: &Value, label: &str) {
+    assert_eq!(
+        relation_of(finding, "banner_check"),
+        Some("helper_owner_call"),
+        "{label}: {finding}"
+    );
+    assert_eq!(
+        finding["classification"], "propagation_unknown",
+        "{label}: {finding}"
+    );
+    assert_not_forwarded(finding);
+}
+
 #[test]
 fn bool_caller_pinned_by_a_plain_assert_abstains() -> Result<(), String> {
-    // `assert!(caller(..))` is `assert_eq!(caller(..), true)`, and a
-    // test-local helper is part of the oracle (#7549 corpus regression:
-    // `mined-bool-property-read-u32`).
+    // `assert!(caller(..))` is `assert_eq!(caller(..), true)`, a cast keeps
+    // that pin, and a `bool` caller decides rather than carries data.
+    let titled = "pub fn titled() -> bool {\n    title() == \"ripr\"\n}";
+    for test in [
+        "assert!(titled());",
+        "assert!(!titled());",
+        "assert!(titled() as u8 > 0);",
+    ] {
+        assert_abstains_through_hop(&title_item_finding(titled, test)?, test);
+    }
+    Ok(())
+}
+
+#[test]
+fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<(), String> {
+    // #7549 review B1: the caller turns the owner's exact value into the
+    // very shape the loose check reads, so the check pins the owner.
     for (item, test) in [
         (
-            "pub fn titled() -> bool {\n    title() == \"ripr\"\n}",
-            "assert!(titled());",
+            "pub fn parse() -> Result<(), ()> {\n    if title() == \"ripr\" { Ok(()) } else { Err(()) }\n}",
+            "assert!(parse().is_ok());",
         ),
         (
-            "pub fn titled() -> bool {\n    title() == \"ripr\"\n}",
-            "assert!(!titled());",
+            "pub fn gated(len: usize) -> usize {\n    if title() == \"ripr\" { len } else { 0 }\n}",
+            "assert!(gated(4) > 0);",
+        ),
+        (
+            "pub fn role() -> Option<u8> {\n    (title() == \"ripr\").then_some(1)\n}",
+            "assert!(role().is_some());",
+        ),
+        (
+            "pub fn role() -> Option<u8> {\n    (title() == \"ripr\").then_some(1)\n}",
+            "assert!(role() != None);",
+        ),
+        (
+            "pub fn kind() -> u8 {\n    match title() { \"ripr\" => 1, _ => 0 }\n}",
+            "assert!(kind() > 0);",
+        ),
+        (
+            "pub fn banner() -> String {\n    format!(\"[{}]\", title())\n}",
+            "assert!(banner().parse::<u8>().is_err());\n        let _ = banner().chars().next().unwrap();",
         ),
     ] {
-        let source = format!(
-            "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{item}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
-        );
-        let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
-        assert_ne!(
-            finding["classification"], "weakly_exposed",
-            "{test}: {finding}"
-        );
+        assert_abstains_through_hop(&title_item_finding(item, test)?, test);
     }
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(len: usize) -> usize {\n        if title() == \"ripr\" { len } else { 0 }\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(4) > 0);\n    }\n}\n";
+    Ok(())
+}
+
+#[test]
+fn test_local_helper_hop_is_part_of_the_oracle() -> Result<(), String> {
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(len: usize) -> usize {\n        title().len() + len\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(4) > 0);\n    }\n}\n";
     let finding = family_finding(source, TITLE_DIFF, "return_value")?;
-    assert_ne!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_abstains_through_hop(&finding, "test-local helper");
+    // The same data-carrying caller in production keeps the weak gap.
+    let production = title_item_finding(
+        "pub fn titled(len: usize) -> usize {\n    title().len() + len\n}",
+        "assert!(titled(4) > 0);",
+    )?;
+    assert_eq!(
+        production["classification"], "weakly_exposed",
+        "{production}"
+    );
+    Ok(())
+}
+
+#[test]
+fn weak_oracle_does_not_lift_the_effect_target_rule() -> Result<(), String> {
+    // Effect families keep their target-passing rule: a fresh temporary is
+    // invisible to the test whatever its oracle.
+    let source = "fn record(out: &mut Vec<u32>) {\n    out.push(10);\n}\n\npub fn wrapper() -> u32 {\n    record(&mut Vec::new());\n    7\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn wrapper_returns_seven() {\n        assert!(wrapper() > 0);\n    }\n}\n";
+    let report = all_findings(source, RECORD_DIFF)?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert!(!findings.is_empty(), "{report}");
+    for finding in findings {
+        assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+        assert_eq!(
+            relation_of(finding, "wrapper_returns_seven"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert_not_forwarded(finding);
+    }
     Ok(())
 }

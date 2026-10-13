@@ -13,8 +13,9 @@
 //! macros, so such a hop never forwards the owner's result, binds no
 //! activation rows and never pairs a boundary: it only lets the relation
 //! stage see the wrapper and the propagation stage abstain
-//! (`helper_result_not_forwarded`), the same decision that already governs a
-//! call reaching the owner inside `format!`.
+//! (`helper_result_not_forwarded`) unless every caller oracle is weak on its
+//! own terms (`hop_reach_keeps_weak_oracle_gap`, #7549), the same decision
+//! that governs a call reaching the owner inside `format!`.
 //!
 //! The edge is syntax-backed and fails closed (no edge, the prior evidence
 //! stands) whenever it cannot be established:
