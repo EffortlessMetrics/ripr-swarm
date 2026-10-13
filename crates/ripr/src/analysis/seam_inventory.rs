@@ -1504,8 +1504,12 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         None,
     )
     .and_then(|inventory| {
+        // The supplement keeps its classified seams: an absent-file name the
+        // portable limitation path refuses (a drive-like name on Unix, say)
+        // degrades to the bounded path-less disclosure instead of failing
+        // the whole report (#6976).
         let absent_file_limitations =
-            workspace::limitations_for_absent_changed_files(&inventory.absent_changed_files)?;
+            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
         Ok(ClassifiedChangeReport {
             classified: inventory.classified,
             absent_file_limitations,

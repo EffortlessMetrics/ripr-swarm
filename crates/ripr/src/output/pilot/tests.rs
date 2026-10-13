@@ -1,13 +1,14 @@
 use super::*;
 use crate::agent::loop_commands::check_repo_exposure_command;
-use crate::analysis::{ClassifiedChangeReport, ClassifiedSeam};
-use crate::analysis_outcome::{
-    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
-};
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::test_grip_evidence::{
     RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence,
+};
+use crate::analysis::{ClassifiedChangeReport, ClassifiedSeam};
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
 };
 use crate::app::Mode;
 use crate::domain::{
@@ -2377,7 +2378,9 @@ fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_s
         assert_eq!(folded.error, None);
         let change = change.with_absent_file_limitations(folded.absent_file_limitations);
         assert_eq!(inventory_limit.as_ref().map(|limit| limit.total), Some(5));
-        let limitations = change.absent_file_limitations().ok_or("coverage discarded")?;
+        let limitations = change
+            .absent_file_limitations()
+            .ok_or("coverage discarded")?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(
             limitations[0].kind,
@@ -2451,6 +2454,9 @@ fn pilot_renderers_disclose_absent_changed_files_independently_of_top_recommenda
         for coverage in [None, Some(Vec::new())] {
             let recorded = coverage.is_some();
             let recovered = change.clone().with_absent_file_limitations(coverage);
+            // A fresh per-iteration context: the change borrow must not
+            // outlive the iteration it was set in.
+            let mut context = pilot_context(&artifacts);
             context.current_change = Some(&recovered);
             let report: serde_json::Value =
                 serde_json::from_str(&render_pilot_summary_json(&entries, context))
@@ -2462,7 +2468,9 @@ fn pilot_renderers_disclose_absent_changed_files_independently_of_top_recommenda
                 );
             } else {
                 assert!(
-                    report["current_change"].get("absent_changed_files").is_none(),
+                    report["current_change"]
+                        .get("absent_changed_files")
+                        .is_none(),
                     "{report:#}"
                 );
             }
@@ -2470,7 +2478,10 @@ fn pilot_renderers_disclose_absent_changed_files_independently_of_top_recommenda
                 render_pilot_terminal(&entries, context),
                 render_pilot_summary_md(&entries, context),
             ] {
-                assert!(!text.contains("changed_file_absent_from_worktree"), "{text}");
+                assert!(
+                    !text.contains("changed_file_absent_from_worktree"),
+                    "{text}"
+                );
             }
         }
     }
