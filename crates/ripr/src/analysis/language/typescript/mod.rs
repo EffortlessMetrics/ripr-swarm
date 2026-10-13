@@ -597,6 +597,9 @@ impl TypeScriptAdapter {
             let deleted = deleted_lines::deleted_line_findings(
                 changed,
                 &counterparts,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
                 &all_owners,
                 &findings,
                 |line, text, owner| {

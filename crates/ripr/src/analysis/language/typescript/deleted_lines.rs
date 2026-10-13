@@ -19,28 +19,56 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// One base-side finding per removed behavior line that no added line pairs
 /// with. `counterparts` is the file's one pairing
-/// (`ChangedFile::aligned_counterparts`); `findings` holds the findings so
-/// far so a repeated probe id gets an ordinal suffix. `classify` classifies
-/// a line at a resolved owner.
+/// (`ChangedFile::aligned_counterparts`); `new_source` is the candidate file
+/// when it was read; `findings` holds the findings so far so a repeated
+/// probe id gets an ordinal suffix. `classify` classifies a line at a
+/// resolved owner. The work is linear in the diff: each removed run is read
+/// once, in old-file order.
 pub(super) fn deleted_line_findings(
     changed: &ChangedFile,
     counterparts: &BTreeMap<usize, &ChangedLine>,
+    new_source: Option<&str>,
     owners: &[TypeScriptOwner],
     findings: &[Finding],
     classify: impl Fn(usize, &str, &TypeScriptOwner) -> Option<Finding>,
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
-    let headers = removed_owner_headers(changed);
-    // Removed headers an added header replaced: the owner they open lives on.
+    let runs = removed_runs(changed, new_source);
+    let headers = removed_owner_headers(&runs);
+    let added_text: BTreeMap<usize, &str> = changed
+        .added_lines
+        .iter()
+        .map(|added| (added.line, added.text.as_str()))
+        .collect();
+    // Removed headers an added header of the same name replaced: the owner
+    // they open lives on. A header replaced by a differently named one is a
+    // different owner, and its deleted body is not the new owner's.
     let re_headed: BTreeSet<usize> = counterparts
         .iter()
-        .filter(|(added_line, _)| {
-            changed
-                .added_lines
-                .iter()
-                .any(|added| added.line == **added_line && opens_an_owner(&added.text))
+        .filter_map(|(added_line, removed)| {
+            let group = headers.group_of.get(&removed.line)?;
+            let added = code_only(added_text.get(added_line)?);
+            let same_owner = opens_an_owner(&added)
+                && owner_name(&added).is_some()
+                && owner_name(&added) == headers.text.get(group).and_then(|text| owner_name(text));
+            same_owner.then_some(*group)
         })
-        .filter_map(|(_, removed)| headers.get(&removed.line).copied())
+        .collect();
+    let enclosures = enclosures(&runs, &headers, &re_headed);
+    let added_texts: BTreeSet<&str> = changed
+        .added_lines
+        .iter()
+        .map(|added| added.text.trim())
+        .collect();
+    let code_by_line: BTreeMap<usize, &str> = runs
+        .iter()
+        .flatten()
+        .map(|removed| (removed.line.line, removed.code.as_str()))
+        .collect();
+    let file = normalized_path(&changed.path);
+    let file_owners: Vec<&TypeScriptOwner> = owners
+        .iter()
+        .filter(|owner| normalized_path(&owner.file) == file)
         .collect();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
@@ -48,26 +76,26 @@ pub(super) fn deleted_line_findings(
     }
     let mut out = Vec::new();
     for removed in &changed.removed_lines {
+        let code = code_by_line.get(&removed.line).copied().unwrap_or_default();
         if paired.contains(&removed.line)
-            || headers.contains_key(&removed.line)
-            || !is_removed_behavior_line(&removed.text)
+            || headers.group_of.contains_key(&removed.line)
+            || !is_removed_behavior_line(code)
         {
             continue;
         }
-        let Some(owner) = deleted_line_owner(changed, removed, &headers, &re_headed, owners) else {
+        let enclosing = enclosures
+            .get(&removed.line)
+            .copied()
+            .unwrap_or(Enclosing::Live);
+        let Some(owner) = deleted_line_owner(removed, enclosing, &file_owners) else {
             continue;
         };
         let Some(mut finding) = classify(removed.new_side_line, &removed.text, owner) else {
             continue;
         };
-        let expression = removed.text.trim();
         // Same-text evidence is the only movement evidence; without it the
         // record stays `base_deleted` (RIPR-SPEC-0156).
-        finding.source_currentness = if changed
-            .added_lines
-            .iter()
-            .any(|added| added.text.trim() == expression)
-        {
+        finding.source_currentness = if added_texts.contains(removed.text.trim()) {
             SourceCurrentness::MovedOrRenamed
         } else {
             SourceCurrentness::BaseDeleted
@@ -85,75 +113,225 @@ pub(super) fn deleted_line_findings(
     out
 }
 
-/// A removed line that ran behavior: not a comment, blank line or lone
-/// bracket, not an import or re-export, and not a line that only closes a
-/// block (`} else {`). Owner headers are excluded by the caller: a removed
-/// `function` or method header deletes or re-shapes an owner, which this
-/// record does not describe.
-fn is_removed_behavior_line(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    !should_ignore_typescript_changed_line(text)
+/// A removed line's code: the line with comments and string contents
+/// removed, read with the block-comment state the lines before it left.
+struct RemovedCode<'a> {
+    line: &'a ChangedLine,
+    code: String,
+}
+
+/// The removed lines as contiguous old-side runs, in old-file order. A run
+/// starts inside a block comment when the candidate file has one open where
+/// the run was removed: a line deleted from a comment's body is not code.
+fn removed_runs<'a>(
+    changed: &'a ChangedFile,
+    new_source: Option<&str>,
+) -> Vec<Vec<RemovedCode<'a>>> {
+    let comment_open = new_source
+        .map(comment_open_at_line_start)
+        .unwrap_or_default();
+    let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
+    by_old_line.sort_by_key(|line| line.line);
+    let mut runs: Vec<Vec<RemovedCode<'a>>> = Vec::new();
+    let mut in_comment = false;
+    for line in by_old_line {
+        let continues = runs
+            .last()
+            .and_then(|run| run.last())
+            .is_some_and(|last| last.line.line + 1 == line.line);
+        if !continues {
+            in_comment = line
+                .new_side_line
+                .checked_sub(1)
+                .and_then(|index| comment_open.get(index))
+                .copied()
+                .unwrap_or(false);
+            runs.push(Vec::new());
+        }
+        let code = code_only_from(&line.text, &mut in_comment);
+        if let Some(run) = runs.last_mut() {
+            run.push(RemovedCode { line, code });
+        }
+    }
+    runs
+}
+
+/// For each candidate line, whether a block comment is open where it starts.
+fn comment_open_at_line_start(source: &str) -> Vec<bool> {
+    let mut in_comment = false;
+    source
+        .lines()
+        .map(|line| {
+            let open = in_comment;
+            code_only_from(line, &mut in_comment);
+            open
+        })
+        .collect()
+}
+
+/// A removed line that ran behavior, judged on its code: not a comment,
+/// blank line or lone bracket, not an import, re-export or type-only
+/// declaration, and not a line that only closes a block (`} else {`). Owner
+/// headers are excluded by the caller: a removed `function` or method header
+/// deletes or re-shapes an owner, which this record does not describe.
+fn is_removed_behavior_line(code: &str) -> bool {
+    let trimmed = code.trim_start();
+    !should_ignore_typescript_changed_line(code)
         && !trimmed.starts_with('}')
         && !trimmed.starts_with("import ")
         && !trimmed.starts_with("export {")
         && !trimmed.starts_with("export *")
+        && !is_type_only_declaration(trimmed)
 }
 
-/// Every removed line that is part of an owner header, keyed to the header's
-/// first old line. A header can span lines: a parameter list Prettier wraps
-/// (`save(` / `id: string,` / `) {`) or an Allman brace on its own line.
-/// The lines of an open parenthesis join until it closes, unless a line
-/// opens a block first, as a callback passed to a call does.
-fn removed_owner_headers(changed: &ChangedFile) -> BTreeMap<usize, usize> {
-    let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
-    by_old_line.sort_by_key(|line| line.line);
-    let mut headers = BTreeMap::new();
-    let mut group: Vec<&ChangedLine> = Vec::new();
-    let mut depth: isize = 0;
-    for line in by_old_line {
-        let code = code_only(&line.text);
-        let continues = group.last().is_some_and(|last| {
-            last.line + 1 == line.line
-                && ((depth > 0 && !code_only(&last.text).trim_end().ends_with('{'))
-                    || code.trim() == "{")
-        });
-        if !continues {
-            close_header_group(&group, &mut headers);
-            group.clear();
-            depth = 0;
+/// `type Id = string;`, `interface Shape {`, `declare const x: number;`:
+/// erased at compile time, so deleting one changes no behavior.
+fn is_type_only_declaration(trimmed: &str) -> bool {
+    let rest = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+    // `declare` and `interface` lead a declaration only when a name follows,
+    // not in `declare = true;`.
+    let names_follow = |keyword: &str| {
+        rest.strip_prefix(keyword)
+            .is_some_and(|after| identifier_len(after.trim_start()) > 0)
+    };
+    names_follow("declare ")
+        || names_follow("interface ")
+        || rest.starts_with("type {")
+        || rest.starts_with("type *")
+        || rest.strip_prefix("type ").is_some_and(|after| {
+            let name_end = identifier_len(after);
+            let after_name = after[name_end..].trim_start();
+            name_end > 0 && (after_name.starts_with('=') || after_name.starts_with('<'))
+        })
+}
+
+/// Removed owner headers, grouped across the lines a header spans.
+#[derive(Default)]
+struct RemovedHeaders {
+    /// Each header line's group, named by the group's first old line.
+    group_of: BTreeMap<usize, usize>,
+    /// Each group's joined code.
+    text: BTreeMap<usize, String>,
+}
+
+/// Every removed line that is part of an owner header. A header can span
+/// lines: a parameter list Prettier wraps (`save(` / `id: string,` /
+/// `) {`) or an Allman brace on its own line. The lines of an open
+/// parenthesis join until it closes, unless a line opens a block first, as
+/// a callback passed to a call does.
+fn removed_owner_headers(runs: &[Vec<RemovedCode<'_>>]) -> RemovedHeaders {
+    let mut headers = RemovedHeaders::default();
+    for run in runs {
+        let mut group: Vec<&RemovedCode<'_>> = Vec::new();
+        let mut depth: isize = 0;
+        for line in run {
+            let continues = group.last().is_some_and(|last| {
+                (depth > 0 && !last.code.trim_end().ends_with('{')) || line.code.trim() == "{"
+            });
+            if !continues {
+                close_header_group(&group, &mut headers);
+                group.clear();
+                depth = 0;
+            }
+            depth += paren_delta(&line.code);
+            group.push(line);
         }
-        depth += paren_delta(&code);
-        group.push(line);
+        close_header_group(&group, &mut headers);
     }
-    close_header_group(&group, &mut headers);
     headers
 }
 
-fn close_header_group(group: &[&ChangedLine], headers: &mut BTreeMap<usize, usize>) {
+fn close_header_group(group: &[&RemovedCode<'_>], headers: &mut RemovedHeaders) {
     let Some(first) = group.first() else {
         return;
     };
     let joined = group
         .iter()
-        .map(|line| code_only(&line.text).trim().to_string())
+        .map(|line| line.code.trim())
         .collect::<Vec<_>>()
         .join(" ");
     if opens_an_owner(&joined) {
         for line in group {
-            headers.insert(line.line, first.line);
+            headers.group_of.insert(line.line.line, first.line.line);
         }
+        headers.text.insert(first.line.line, joined);
     }
 }
 
-/// Where the walk back from a deleted line ended.
+/// What enclosed a deleted line in the old file.
+#[derive(Clone, Copy)]
 enum Enclosing {
     /// A kept line: the enclosing owner is live and spans the line.
     Live,
     /// A removed header no added header replaced: the owner went with it.
     Lost,
-    /// A removed header an added header replaced: the owner lives on and
-    /// starts where the replacement does.
+    /// A removed header an added header of the same name replaced: the
+    /// owner lives on and starts where the replacement does.
     ReHeaded,
+    /// The body of a removed type-only declaration (`interface Shape {`):
+    /// erased at compile time, so no behavior.
+    TypeBody,
+}
+
+/// A block a removed line opened.
+#[derive(Clone, Copy)]
+enum Block {
+    /// An owner header's body, named by the header's group.
+    Owner(usize),
+    /// A type-only declaration's body.
+    TypeOnly,
+    /// Any other block: `if`, loop, callback, object literal.
+    Plain,
+}
+
+/// What enclosed each removed line. Each run is read once in old-file order
+/// with a stack of the blocks it opened: the innermost open owner header
+/// encloses a line, and an `if`, loop or callback block leads on outward. A
+/// line no removed owner header encloses sits in a kept block, whose owner
+/// is live.
+fn enclosures(
+    runs: &[Vec<RemovedCode<'_>>],
+    headers: &RemovedHeaders,
+    re_headed: &BTreeSet<usize>,
+) -> BTreeMap<usize, Enclosing> {
+    let mut enclosures = BTreeMap::new();
+    for run in runs {
+        let mut open_blocks: Vec<Block> = Vec::new();
+        for line in run {
+            let innermost_owner = open_blocks.iter().rev().find_map(|block| match block {
+                Block::Owner(group) => Some(*group),
+                Block::TypeOnly | Block::Plain => None,
+            });
+            let enclosing = if open_blocks
+                .iter()
+                .any(|block| matches!(block, Block::TypeOnly))
+            {
+                Enclosing::TypeBody
+            } else {
+                match innermost_owner {
+                    Some(group) if re_headed.contains(&group) => Enclosing::ReHeaded,
+                    Some(_) => Enclosing::Lost,
+                    None => Enclosing::Live,
+                }
+            };
+            enclosures.insert(line.line.line, enclosing);
+            let block = match headers.group_of.get(&line.line.line) {
+                Some(group) => Block::Owner(*group),
+                None if is_type_only_declaration(line.code.trim_start()) => Block::TypeOnly,
+                None => Block::Plain,
+            };
+            for ch in line.code.chars() {
+                match ch {
+                    '{' => open_blocks.push(block),
+                    '}' => {
+                        open_blocks.pop();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    enclosures
 }
 
 /// The live owner that held the deleted line. The diff parser records a
@@ -164,22 +342,19 @@ enum Enclosing {
 /// whose own function or method was deleted with it belonged to an owner
 /// that no longer exists, and resolves to none.
 fn deleted_line_owner<'a>(
-    changed: &ChangedFile,
     removed: &ChangedLine,
-    headers: &BTreeMap<usize, usize>,
-    re_headed: &BTreeSet<usize>,
-    owners: &'a [TypeScriptOwner],
+    enclosing: Enclosing,
+    file_owners: &[&'a TypeScriptOwner],
 ) -> Option<&'a TypeScriptOwner> {
-    let header_may_sit_at_line = match enclosing(changed, removed, headers, re_headed) {
-        Enclosing::Lost => return None,
+    let header_may_sit_at_line = match enclosing {
+        Enclosing::Lost | Enclosing::TypeBody => return None,
         Enclosing::Live => false,
         Enclosing::ReHeaded => true,
     };
     let at = removed.new_side_line;
-    let file = normalized_path(&changed.path);
-    owners
+    file_owners
         .iter()
-        .filter(|owner| normalized_path(&owner.file) == file)
+        .copied()
         .filter(|owner| {
             (owner.start_line < at || (header_may_sit_at_line && owner.start_line == at))
                 && at <= owner.end_line
@@ -187,61 +362,28 @@ fn deleted_line_owner<'a>(
         .min_by_key(|owner| owner.end_line - owner.start_line)
 }
 
-/// Whether the function, method or class that enclosed `removed` was
-/// deleted with it. The walk goes back through the removed lines in
-/// old-file order while they stay contiguous there, counting braces: the
-/// first line that opens a block around the deleted line is its enclosing
-/// header. An `if`, loop or callback header leads on outward; an owner
-/// header ends the walk. A kept line breaks contiguity, and its owner is
-/// live; so is a removed header an added header pairs with, as when only
-/// its types changed.
-fn enclosing(
-    changed: &ChangedFile,
-    removed: &ChangedLine,
-    headers: &BTreeMap<usize, usize>,
-    re_headed: &BTreeSet<usize>,
-) -> Enclosing {
-    let by_old_line: BTreeMap<usize, &ChangedLine> = changed
-        .removed_lines
-        .iter()
-        .map(|line| (line.line, line))
-        .collect();
-    let mut depth: usize = 0;
-    let mut old_line = removed.line;
-    loop {
-        let Some(previous) = old_line
-            .checked_sub(1)
-            .and_then(|line| by_old_line.get(&line))
-        else {
-            return Enclosing::Live;
-        };
-        old_line = previous.line;
-        let (opens, closes) = brace_counts(&previous.text);
-        // Walking backward, a close reopens a sibling block and an open
-        // leaves the current one.
-        depth += closes;
-        if opens <= depth {
-            depth -= opens;
-            continue;
-        }
-        if let Some(header) = headers.get(&previous.line) {
-            return if re_headed.contains(header) {
-                Enclosing::ReHeaded
-            } else {
-                Enclosing::Lost
-            };
-        }
-        depth = 0;
-    }
-}
-
-/// The line with string literal contents and any line comment removed, so
+/// The line with comments and string literal contents removed, so
 /// brackets and arrows inside them are not read as code. Quotes stay.
 fn code_only(text: &str) -> String {
+    code_only_from(text, &mut false)
+}
+
+/// `code_only` for a line read inside a run of lines: `in_comment` says
+/// whether a block comment is open where the line starts, and is left saying
+/// whether one is open where it ends.
+fn code_only_from(text: &str, in_comment: &mut bool) -> String {
     let mut code = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
+        if *in_comment {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                *in_comment = false;
+                code.push(' ');
+            }
+            continue;
+        }
         match quote {
             Some(open) => {
                 if ch == '\\' {
@@ -257,17 +399,15 @@ fn code_only(text: &str) -> String {
                     code.push(ch);
                 }
                 '/' if chars.peek() == Some(&'/') => break,
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    *in_comment = true;
+                }
                 _ => code.push(ch),
             },
         }
     }
     code
-}
-
-/// `{` and `}` outside string literals and line comments.
-fn brace_counts(text: &str) -> (usize, usize) {
-    let code = code_only(text);
-    (code.matches('{').count(), code.matches('}').count())
 }
 
 /// Opened minus closed parentheses in code.
@@ -470,4 +610,29 @@ fn closing_angle(text: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The name an owner header declares: `function name`, `class Name`, a
+/// method's name or a binding's name.
+fn owner_name(code: &str) -> Option<String> {
+    let mut rest = code.trim();
+    'strip: loop {
+        for modifier in MODIFIERS {
+            if let Some(after) = rest.strip_prefix(modifier)
+                && after.starts_with(char::is_whitespace)
+            {
+                rest = after.trim_start();
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    let rest = ["function", "class ", "const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| rest.strip_prefix(keyword))
+        .unwrap_or(rest)
+        .trim_start();
+    let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+    let name_end = identifier_len(rest);
+    (name_end > 0).then(|| rest[..name_end].to_string())
 }

@@ -622,3 +622,89 @@ fn deleted_wrapped_signature_with_a_comment_records_nothing() -> Result<(), Stri
     assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
     Ok(())
 }
+
+/// A header replaced by a differently named one is a different owner: the
+/// old function's deleted body is not the new function's evidence.
+#[test]
+fn deleted_body_under_a_renamed_header_is_not_the_new_owners() -> Result<(), String> {
+    let findings = analyze(
+        "renamed-header",
+        &[
+            "-export function oldTotal(items: number[]): number {",
+            "-  audit(items);",
+            "+export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A line deleted from the body of a kept block comment is not code.
+#[test]
+fn deleted_comment_body_line_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "comment-body",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   /*",
+            "-  total = 100;",
+            "   */",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// Type-only declarations are erased: deleting one changes no behavior.
+#[test]
+fn deleted_type_only_declaration_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "type-only",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  type Total = number;",
+            "-  interface Shape {",
+            "-    size: number;",
+            "-  }",
+            "-  type Point = {",
+            "-    x: number;",
+            "-  };",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A whole deleted function of thousands of lines is read once: every line
+/// resolves to the deleted owner, so none is recorded. The work is one pass
+/// over the run, not a walk back from each line.
+#[test]
+fn long_deleted_function_records_nothing() -> Result<(), String> {
+    let body: Vec<String> = (0..20_000)
+        .map(|index| format!("-  total = total + {index};"))
+        .collect();
+    let mut lines: Vec<&str> = vec!["-export function clamp(total: number): number {"];
+    lines.extend(body.iter().map(String::as_str));
+    lines.extend([
+        "-  return total;",
+        "-}",
+        " export function cappedTotal(items: number[]): number {",
+        "   return items.length;",
+        " }",
+    ]);
+    let started = std::time::Instant::now();
+    let findings = analyze("long-deleted-function", &lines)?;
+    assert_eq!(base_side(&findings), Vec::new());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "a 20,000-line deletion took {:?}",
+        started.elapsed()
+    );
+    Ok(())
+}
