@@ -234,11 +234,29 @@ fn contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding() {
         {"name": "seam", "relation_reason": "seam_callee_call", "miss": "no_call_path"},
     ]);
     assert!(finding_contradictions(&no_path).is_empty());
-    no_path["related_tests"][1]["relation_reason"] = json!("owner_named_test");
+    no_path["related_tests"][1]["relation_reason"] = json!("direct_owner_call");
     assert_eq!(
         finding_contradictions(&no_path),
         vec!["no_static_path_with_related_tests"]
     );
+    // #7531: a relation string ripr does not know fails closed.
+    no_path["related_tests"][1]["relation_reason"] = json!("renamed_relation");
+    assert_eq!(
+        finding_contradictions(&no_path),
+        vec!["no_static_path_with_related_tests"]
+    );
+    // #5335 / #7531: name, import and fixture affinity never reach, so a
+    // `no_static_path` finding listing them is consistent.
+    for relation in [
+        "same_module",
+        "weak_token_substring",
+        "owner_named_test",
+        "import_path_affinity",
+        "fixture_owner_affinity",
+    ] {
+        no_path["related_tests"][1]["relation_reason"] = json!(relation);
+        assert!(finding_contradictions(&no_path).is_empty(), "{relation}");
+    }
 
     let mut exposed = clean.clone();
     exposed["classification"] = json!("exposed");
@@ -2343,4 +2361,36 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
         );
     }
     Ok(())
+}
+
+// #7531: the corpus reads ripr's serialized `relation_reason` back through
+// serde. Every label ripr writes must parse to its variant, or the
+// fail-closed default would invent contradictions.
+#[test]
+fn every_relation_label_reads_back_through_ripr_rule() {
+    use ripr::domain::RelationReason;
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::AssertionTargetAffinity,
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::OwnerNamedTest,
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::WeakTokenSubstring,
+        RelationReason::ReExportChainFollowed,
+        RelationReason::SeamCalleeCall,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<RelationReason>(json!(reason.as_str())).ok(),
+            Some(reason),
+            "{reason:?}"
+        );
+        assert_eq!(
+            relation_reaches_owner(reason.as_str()),
+            reason.establishes_reach(false),
+            "{reason:?}"
+        );
+    }
 }
