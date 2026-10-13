@@ -593,11 +593,35 @@ pub(in crate::analysis) fn setter_plainly_writes(
     stores
 }
 
+/// The body of the one non-test inherent method `name` on `impl_type`,
+/// shared by getter credit and the pushed-literal callee-write check. Two
+/// exclusions keep the body the one the call site runs: functions in an
+/// evidence role (tests, fixtures) are skipped, and so are trait impls
+/// (`impl Trait for Type`), since a trait method may dispatch to another
+/// impl's body. `None` when no candidate remains, or several do.
+pub(in crate::analysis) fn inherent_method_body<'a>(
+    index: &'a RustIndex,
+    impl_type: &str,
+    name: &str,
+) -> Option<&'a str> {
+    let mut candidates = index.functions().iter().filter(|function| {
+        function.name == name
+            && !function.source_role.is_evidence_role()
+            && !function.id.0.contains(" for ")
+            && OwnerCall::from_symbol(&function.id.0)
+                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+    });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+        return None;
+    };
+    Some(function.body.as_str())
+}
+
 /// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
 /// takes only `&self` and its body is one tail expression returning the field
 /// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
-/// or `self.f.as_slice()`, in an inherent impl of `impl_type` (not a trait
-/// impl). A body that reads another field, computes a value
+/// or `self.f.as_slice()`, in an inherent impl of `impl_type` resolved by
+/// [`inherent_method_body`]. A body that reads another field, computes a value
 /// from the field (`self.f.get(k).copied()`), or does anything else first,
 /// and an ambiguous or missing method, give `false`: a method named after the
 /// field is not evidence that it returns that field.
@@ -607,19 +631,10 @@ pub(in crate::analysis) fn getter_plainly_reads(
     getter: &str,
     field: &str,
 ) -> bool {
-    let mut candidates = index.functions().iter().filter(|function| {
-        function.name == getter
-            && !function.source_role.is_evidence_role()
-            // An inherent method only: a trait method may be another
-            // impl's body at the call site.
-            && !function.id.0.contains(" for ")
-            && OwnerCall::from_symbol(&function.id.0)
-                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
-    });
-    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+    let Some(body) = inherent_method_body(index, impl_type, getter) else {
         return false;
     };
-    let Some(parse) = parse_clean_source_file(&function.body) else {
+    let Some(parse) = parse_clean_source_file(body) else {
         return false;
     };
     let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
