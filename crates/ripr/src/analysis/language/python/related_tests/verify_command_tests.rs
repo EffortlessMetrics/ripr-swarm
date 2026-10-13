@@ -1,4 +1,4 @@
-use super::super::extract_tests;
+use super::super::owners_tests::extract_tests;
 use super::{
     PythonRelatedCandidate, PythonRelationKind, python_repair_placement, verify_command_for_test,
 };
