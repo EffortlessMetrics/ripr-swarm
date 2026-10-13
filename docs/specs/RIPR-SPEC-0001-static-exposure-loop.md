@@ -319,9 +319,13 @@ macros. Equality keeps the matching call's source and line; otherwise all
 observed lengths support the missing equality. Computed rows, extra calls,
 helper or alias reach, opaque macros, mutable or shadowed bindings, skipped
 loops, asynchronous owners and custom `.len()` receivers remain outside this
-family. Every source use of the owner's identifier must be accounted for by
-its declaration and the admitted direct calls; recursion, function pointers,
-explicit imports and opaque uses withhold this bounded producer. Documentation
+family. A try expression anywhere in the test function withholds this producer:
+a discarded fallible closure can exit before the call or skip later rows, and
+this family does not resolve that control flow. The refusal also applies when
+no assertion invokes the independent assertion-context authority. Every source
+use of the owner's identifier must be accounted for by its declaration and the
+admitted direct calls; recursion, function pointers, explicit imports and opaque
+uses withhold this bounded producer. Documentation
 references, explicit `doc` attributes, documentation code blocks, workspace
 macro expansion, possible standard-macro rebinding and attributes other than
 ordinary test and `cfg(test)` withhold this producer too. Plain documentation
@@ -444,8 +448,11 @@ Fixture coverage:
 - `hidden_documentation_inputs_withhold_missing_empty_claims`
 - `unrelated_documentation_does_not_hide_known_table_inputs`
 - `workspace_expansion_limits_withhold_partial_slice_evidence`
+- `ignored_fallible_closure_cannot_credit_skipped_slice_rows`
+- `fully_executed_slice_table_needs_no_assertion_for_activation`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_slice_table_try_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`

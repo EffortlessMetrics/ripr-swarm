@@ -12,6 +12,78 @@ const DIFF: &str =
 const ROWS: &str = "let samples: [&[u64]; 3] = [&[5], &[3, 9], &[10, 20, 30]];";
 
 #[test]
+fn fully_executed_slice_table_needs_no_assertion_for_activation() -> Result<(), String> {
+    let source = include_str!("../../../fixtures/rust_slice_table_try_exit/input/src/lib.rs")
+        .replace("                Err(())?;\n", "");
+    assert!(!source.contains("Err(())?"));
+    for (source, has_empty) in [
+        (source.clone(), true),
+        (source.replace("[&[5], &[]]", "[&[5], &[6]]"), false),
+    ] {
+        let finding = Subject::new(&source)?.finding()?;
+        assert_eq!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "samples.len() == 0"),
+            has_empty
+        );
+        assert_eq!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.value == "samples.len() == 0"),
+            !has_empty
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ignored_fallible_closure_cannot_credit_skipped_slice_rows() -> Result<(), String> {
+    let original = "    fn mean_lies_between_min_and_max() {\n        let samples: [&[u64]; 3] = [&[5], &[3, 9], &[10, 20, 30]];\n        for s in samples {\n            let mean = mean_latency(s);\n            assert!(mean >= *s.iter().min().unwrap(), \"{s:?}\");\n            assert!(mean <= *s.iter().max().unwrap(), \"{s:?}\");\n        }\n    }";
+    assert_eq!(candidate().matches(original).count(), 1);
+    let mut credited = Vec::new();
+    for (rows, kind) in [
+        ("&[5], &[3, 9]", "missing_empty"),
+        ("&[5], &[]", "observed_empty"),
+    ] {
+        for (before_loop, before_call, after_call, position) in [
+            ("Err(())?;", "", "", "before_loop"),
+            ("", "Err(())?;", "", "before_call"),
+            ("", "", "Err(())?;", "after_first_call"),
+        ] {
+            let replacement = format!(
+                "    fn mean_lies_between_min_and_max() {{\n        let _ = (|| -> Result<(), ()> {{\n            let samples: [&[u64]; 2] = [{rows}];\n            {before_loop}\n            for s in samples {{\n                {before_call}\n                let _ = mean_latency(s);\n                {after_call}\n            }}\n            Ok(())\n        }})();\n    }}"
+            );
+            let subject = Subject::new(&candidate().replace(original, &replacement))?;
+            let finding = subject.finding()?;
+            if finding.class != ExposureClass::InfectionUnknown
+                || finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.value == "samples.len() == 0")
+                || finding
+                    .activation
+                    .observed_values
+                    .iter()
+                    .any(|fact| fact.value == "samples.len() == 0")
+            {
+                credited.push(format!("{kind}/{position}: {:?}", finding.activation));
+            }
+        }
+    }
+    assert!(
+        credited.is_empty(),
+        "skipped rows were credited: {credited:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn hidden_documentation_inputs_withhold_missing_empty_claims() -> Result<(), String> {
     let base = candidate();
     let variants = [

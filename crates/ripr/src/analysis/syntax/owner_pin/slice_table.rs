@@ -90,6 +90,16 @@ pub(crate) fn constant_table_call_column(
     if function.async_token().is_some() {
         return None;
     }
+    // A discarded fallible closure may exit before this call or after its
+    // first row. Assertion admission also refuses these exits, but tables
+    // without assertions must establish every row independently of it.
+    if function
+        .syntax()
+        .descendants()
+        .any(|node| ast::TryExpr::can_cast(node.kind()))
+    {
+        return None;
+    }
     let macros: Vec<_> = function
         .syntax()
         .descendants()
