@@ -117,3 +117,18 @@ retained actual `414b63c61` bad-card JSON/human output with exit 1 specifically
 for `must_not_have_verify_command`; restored repaired artifacts pass with exit 0
 and their original SHA-256 values are verified. This mutation challenges dishonest
 reblessing of an advisory card, separately from non-promotion checks.
+
+Review of `61550c57f9a092dfb5e24967fd55f4f7bdb4f168` exposed a spelling
+mismatch: native `labels ()`, `(labels)()` and `labels . labels ()` calls each
+run one unittest, pass `[1, 2]` and reject `[1, 1]`, but the real CLI reports
+weak exposure with unknown oracle strength instead of the plain call's exposed,
+strong, yes result. The independently literal CLI verifier rejects that exact
+retained binary with exit 1. The positive fixture now uses `labels ()` to retain
+this end-to-end regression without adding another fixture.
+
+The bounded list path now obtains its direct operand's callee from the admitted
+AST and shares that identity across test relation, operand filtering and module-
+call alignment. Generic textual call matching is unchanged. Seven spelling and
+import cases require exposed/strong/yes; seven rival, rebound, derived-call and
+subscript controls forbid exposure. Static-callee validation precedes name
+extraction, so grouping cannot turn a derived result into an owner call.

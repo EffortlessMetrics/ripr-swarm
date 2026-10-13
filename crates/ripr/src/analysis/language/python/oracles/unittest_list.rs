@@ -1,7 +1,7 @@
 //! Bounded #7312 support. Broader unittest inheritance, helpers, messages and
 //! multi-statement methods stay unknown; this is static shape evidence only.
 use super::super::admission::PythonAssertionAdmission;
-use super::super::related_tests::{oracle_operand_calls, owner_module_callees};
+use super::super::related_tests::owner_module_callees;
 use super::super::{PythonImport, PythonOwner, PythonTest};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
@@ -81,16 +81,34 @@ fn static_callee(expr: &Expr) -> bool {
 }
 
 pub(in crate::analysis::language::python) fn literal_text(text: &str) -> bool {
+    literal_callee(text).is_some()
+}
+
+// Reuse the admitted AST operand, so whitespace and grouping parentheses do
+// not change owner identity. literal_call rejects derived calls before the
+// generic name extractor (which also accepts Call nodes) is consulted.
+fn literal_callee(text: &str) -> Option<String> {
     if !text.contains("assertListEqual") {
-        return false;
+        return None;
     }
     let Ok(Mod::Module(module)) =
         super::super::source_facts::parse_module_result(Path::new("<unittest-list-oracle>"), text)
     else {
-        return false;
+        return None;
     };
-    matches!(module.body.as_slice(), [Stmt::Expr(expr)]
-        if matches!(expr.value.as_ref(), Expr::Call(call) if literal_call(call)))
+    let [Stmt::Expr(expr)] = module.body.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = expr.value.as_ref() else {
+        return None;
+    };
+    if !literal_call(call) {
+        return None;
+    }
+    let Some(Expr::Call(owner_call)) = call.args.first() else {
+        return None;
+    };
+    super::super::expr_full_name(&owner_call.func)
 }
 
 /// Whole-list equality only discriminates a value change, not a different
@@ -177,21 +195,29 @@ pub(in crate::analysis::language::python) fn observes_owner(
     test: Option<&PythonTest>,
     owner: &PythonOwner,
 ) -> bool {
-    if !literal_text(text) {
-        return true;
-    }
+    calls_owner(text, test, owner).unwrap_or(true)
+}
+
+/// None is a different oracle shape; false is a list operand without proven
+/// owner identity. Relation and per-assertion alignment consume the same fact.
+pub(in crate::analysis::language::python) fn calls_owner(
+    text: &str,
+    test: Option<&PythonTest>,
+    owner: &PythonOwner,
+) -> Option<bool> {
+    let asserted_callee = literal_callee(text)?;
     if matches!(
         owner.owner_kind,
         Some(crate::domain::OwnerKind::Method | crate::domain::OwnerKind::ClassMethod)
     ) {
-        return false;
+        return Some(false);
     }
-    test.is_some_and(|test| {
+    Some(test.is_some_and(|test| {
         let bindings = &test.constant_rebinding;
         !bindings.assigns_attribute(&owner.name)
             && owner_module_callees(test, owner).iter().any(|callee| {
                 !bindings.rebinds(callee.split('.').next().unwrap_or(callee))
-                    && oracle_operand_calls(text, callee)
+                    && *callee == asserted_callee
             })
-    })
+    }))
 }

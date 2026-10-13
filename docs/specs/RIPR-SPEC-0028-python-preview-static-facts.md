@@ -200,6 +200,8 @@ mock expectations, and custom `assert_*` helpers.
 - `self.assertRaises(...)` â†’ error-path oracle
 - `self.assertListEqual(owner(), [literal elements])` supplies strong exact-value
   evidence for a whole returned list, including short numeric element changes.
+  Valid whitespace and grouping parentheses in the direct callee preserve its
+  parsed identity, including imported aliases and module-qualified free calls.
   This bounded shape requires a module-level direct canonical `unittest.TestCase` or imported
   `TestCase` base, no additional bases, class hooks/assignments/decorators, and an
   ordinary `self` method with that call as its only statement. Both positional

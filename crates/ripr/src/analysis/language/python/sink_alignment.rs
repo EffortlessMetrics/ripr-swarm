@@ -723,6 +723,11 @@ pub(super) fn classify_sink_alignment_with_old(
     let module_call_observed = |unit: &AlignmentUnit<'_>| {
         !is_method_owner
             && unit.test.is_some_and(|test| {
+                if let Some(observes) =
+                    super::oracles::unittest_list::calls_owner(&unit.text, Some(test), owner)
+                {
+                    return observes;
+                }
                 let callees = owner_module_callees(test, owner);
                 callees
                     .iter()

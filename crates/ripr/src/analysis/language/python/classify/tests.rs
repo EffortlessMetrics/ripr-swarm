@@ -35,6 +35,73 @@ fn unittest_list_equal_observes_whole_return_including_short_elements() -> Resul
 }
 
 #[test]
+fn unittest_list_equal_preserves_ast_call_identity() -> Result<(), String> {
+    for (imports, call) in [
+        ("from src.subject import labels", "labels ()"),
+        ("from src.subject import labels", "labels\t()"),
+        ("from src.subject import labels", "(labels) ()"),
+        ("from src.subject import labels as values", "(values) ()"),
+        ("import src.subject as subject", "subject . labels ()"),
+        ("import src.subject as subject", "(subject . labels) ()"),
+        ("from src import subject", "(subject . labels) ()"),
+    ] {
+        let tests = format!(
+            "import unittest\n{imports}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.related_tests.len(), 1, "{tests}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong,
+            "{tests}"
+        );
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    for (imports, call) in [
+        ("from other import labels", "labels ()"),
+        (
+            "from src.subject import labels\nlabels = other",
+            "labels ()",
+        ),
+        (
+            "import src.subject as subject\nsubject = other",
+            "subject . labels ()",
+        ),
+        (
+            "import src.subject as subject\nsubject.labels = other",
+            "subject . labels ()",
+        ),
+        ("from src.subject import labels", "labels () ()"),
+        (
+            "from src.subject import labels",
+            "labels () . fixed_list ()",
+        ),
+        ("from src.subject import labels", "[labels][0] ()"),
+    ] {
+        let tests = format!(
+            "import unittest\n{imports}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
 fn unittest_list_equal_withholds_unresolved_or_nonobserving_calls() -> Result<(), String> {
     let before = "    return [10, 21]";
     let after = "    return [10, 22]";
