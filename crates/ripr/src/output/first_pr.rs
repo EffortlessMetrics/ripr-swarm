@@ -1307,13 +1307,17 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
             // Name the scope mismatch and the one flag that repairs it.
             if !records.is_empty() && review_comments_report_empty_diff(root, options) {
                 reason.push_str(&format!(
-                    " The review cards at `{}` were rendered from an empty `{}..{}` diff, so no PR-local repair start exists, while the gap ledger carries repo-scoped rows (repo-exposure is repo-scoped by design); regenerate the cards with the real PR base, for example `ripr review-comments --root {} --base HEAD~1 --head {} --out {}` when the work is one local commit, then rerun first-pr.",
+                    " The review cards at `{}` were rendered from an empty `{}..{}` diff, so no PR-local repair start exists, while the gap ledger carries repo-scoped rows (repo-exposure is repo-scoped by design); regenerate the cards with the real PR base, for example `ripr review-comments --root {} --base {}~1 --head {} --out {}` when the work is one local commit, then rerun first-pr with the same base, for example `ripr first-pr --root {} --base {}~1 --head {}`.",
                     options.review_comments,
                     options.base,
                     options.head,
                     shell_arg(&options.command_root()),
-                    shell_arg(&options.head),
-                    options.anchored_arg(&options.review_comments)
+                    options.head,
+                    options.head,
+                    options.anchored_arg(&options.review_comments),
+                    shell_arg(&options.command_root()),
+                    options.head,
+                    options.head
                 ));
             }
             Selection::no_action("no_action", reason, records.len())

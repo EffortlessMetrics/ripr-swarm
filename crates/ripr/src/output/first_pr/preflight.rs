@@ -437,12 +437,14 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 "Git diff",
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
-                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base HEAD~1 --head {}` (replace `HEAD~1` with the commit before the work).",
+                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base {}~1 --head {}` (replace `{}~1` with the commit before the work).",
                     shell_arg(&options.command_root()),
-                    shell_arg(&options.head)
+                    options.head,
+                    options.head,
+                    options.head
                 )),
             ).with_recovery_commands(vec![rerun_command(options)])
-             .with_recovery_guidance("HEAD has no changes against the base; if the work is committed on the base branch itself, pass the commit before the work (for example `--base HEAD~1` for one local commit) before rerunning."));
+             .with_recovery_guidance(format!("HEAD has no changes against the base; if the work is committed on the base branch itself, pass the commit before the work (for example `--base {}~1` for one local commit) before rerunning.", options.head)));
         }
         Ok(output) if matches!(output.code, Some(1)) => {
             checks.push(PreflightCheck::ok(

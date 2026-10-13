@@ -1025,10 +1025,13 @@ fn run_pipeline_for_diff_text_with_language_config(
     // a typed skipped-scope limitation, as the Rust adapter does for generated
     // Rust files, so an excluded-only diff is never a silently complete result
     // (RIPR-SPEC-0082). The recovery names the `[languages.<lang>]
-    // handwritten_files` escape hatch, mirroring the Rust generated-corpus
-    // wording, instead of a bare "retry" that cannot change the outcome
-    // (#7386).
-    for (language, skipped) in
+    // handwritten_files` escape hatch for directory-excluded hand-written
+    // files, mirroring the Rust generated-corpus wording, instead of a bare
+    // "retry" that cannot change the outcome (#7386). Skips whose file NAME
+    // marks them generated get their own recovery: that skip has no
+    // configuration override, so sending those users to `handwritten_files`
+    // would be a wrong actionable signal (#7386 review).
+    for (language, skip_class, skipped) in
         detect_preview_skipped_paths(languages, analysis_changed_files.iter(), language_config)
     {
         let listed = bounded_path_listing(&skipped);
@@ -1037,20 +1040,33 @@ fn run_pipeline_for_diff_text_with_language_config(
             LanguageId::Python => "languages.python",
             _ => "languages.typescript",
         };
+        let (recovery_kind, recovery) = match skip_class {
+            PreviewSkipClass::ExcludedDirectory => (
+                AnalysisRecoveryKind::DeclareHandwrittenFiles,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. It skips \
+                     generated files and vendored, dependency, build-output and cache \
+                     directories; if one of these is hand-written, declare its exact \
+                     repository-relative path in `[{config_section}] handwritten_files` \
+                     and re-run the analysis."
+                ),
+            ),
+            PreviewSkipClass::GeneratedName => (
+                AnalysisRecoveryKind::RenameGeneratedMarkedSource,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. Its file name \
+                     marks it as generated, and generated-name skips have no configuration \
+                     override — declaring the path in `[{config_section}] handwritten_files` \
+                     cannot admit it; if it is actually hand-written, rename it so the name \
+                     no longer marks it generated and re-run the analysis."
+                ),
+            ),
+        };
         limitations.push(
             AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                    format!(
-                        "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                         generated files and vendored, dependency, build-output and cache \
-                         directories; if one of these is hand-written, declare its exact \
-                         repository-relative path in `[{config_section}] handwritten_files` \
-                         and re-run the analysis."
-                    ),
-                )?,
+                AnalysisRecovery::new(recovery_kind, recovery)?,
             )
             .with_affected_items(skipped.len() as u64)?
             .with_detail(format!(
@@ -1677,15 +1693,25 @@ where
 
 /// Changed files of each enabled, available preview language that the
 /// adapter refuses before counting, in stable language order.
+/// Why the preview adapter skipped a changed path. The two classes take
+/// different recoveries: a directory-excluded hand-written file can be
+/// admitted through `handwritten_files`, while a generated NAME stays
+/// excluded even when its exact path is declared (#7386 review).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreviewSkipClass {
+    GeneratedName,
+    ExcludedDirectory,
+}
+
 fn detect_preview_skipped_paths<'a, I>(
     enabled: &[LanguageId],
     paths: I,
     language_config: &crate::config::LanguagesConfig,
-) -> Vec<(LanguageId, Vec<String>)>
+) -> Vec<(LanguageId, PreviewSkipClass, Vec<String>)>
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
 {
-    let mut skipped: Vec<(LanguageId, Vec<String>)> = Vec::new();
+    let mut skipped: Vec<(LanguageId, PreviewSkipClass, Vec<String>)> = Vec::new();
     for changed in paths {
         let Some(language) = super::language::route(&changed.path) else {
             continue;
@@ -1697,13 +1723,28 @@ where
         {
             continue;
         }
+        let generated_name = match language {
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                crate::config::is_detectable_generated_typescript_path(&changed.path)
+            }
+            LanguageId::Python => crate::config::is_detectable_generated_python_path(&changed.path),
+            LanguageId::Rust | LanguageId::Perl => false,
+        };
+        let skip_class = if generated_name {
+            PreviewSkipClass::GeneratedName
+        } else {
+            PreviewSkipClass::ExcludedDirectory
+        };
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
-        match skipped.iter_mut().find(|(lang, _)| *lang == language) {
-            Some((_, paths)) => paths.push(normalized),
-            None => skipped.push((language, vec![normalized])),
+        match skipped
+            .iter_mut()
+            .find(|(lang, class, _)| *lang == language && *class == skip_class)
+        {
+            Some((_, _, paths)) => paths.push(normalized),
+            None => skipped.push((language, skip_class, vec![normalized])),
         }
     }
-    skipped.sort_by_key(|(language, _)| {
+    skipped.sort_by_key(|(language, _, _)| {
         PREVIEW_LANGUAGE_ORDER
             .iter()
             .position(|ordered| ordered == language)

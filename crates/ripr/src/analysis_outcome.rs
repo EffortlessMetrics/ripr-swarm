@@ -148,6 +148,8 @@ impl AnalysisRecoveryKind {
             Self::IncreaseConfiguredLimit => "raise the configured limit",
             Self::Retry => "retry",
             Self::InspectFailure => "inspect the failure",
+            Self::DeclareHandwrittenFiles => "declare hand-written files",
+            Self::RenameGeneratedMarkedSource => "rename the generated-marked source",
         }
     }
 }
@@ -193,6 +195,12 @@ pub(crate) enum AnalysisRecoveryKind {
     IncreaseConfiguredLimit,
     Retry,
     InspectFailure,
+    /// Admit an exact hand-written path past the built-in excluded-directory
+    /// conventions through the language's `handwritten_files` list.
+    DeclareHandwrittenFiles,
+    /// A file name that marks generated code stays excluded even when its
+    /// exact path is declared; the only route is renaming the file.
+    RenameGeneratedMarkedSource,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

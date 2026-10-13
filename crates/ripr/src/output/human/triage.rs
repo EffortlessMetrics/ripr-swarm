@@ -225,9 +225,27 @@ pub(crate) fn render_human_triage(
                         ) && typescript_named_limitation_why(finding).is_some() =>
                     {
                         if let Some(why) = typescript_named_limitation_why(finding) {
-                            out.push_str(&format!(
-                                "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting.\n"
-                            ));
+                            // #7384 review: only claim "not by missing fields"
+                            // when the shared packet authority confirms the
+                            // field list is empty; a finding can carry a named
+                            // limitation AND still miss packet fields, and
+                            // naming only one blocker misdirects the repair.
+                            let missing_fields = not_ready
+                                .as_ref()
+                                .map(|actionability| {
+                                    actionability.missing_actionability_fields.as_slice()
+                                })
+                                .unwrap_or(&[]);
+                            if missing_fields.is_empty() {
+                                out.push_str(&format!(
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting.\n"
+                                ));
+                            } else {
+                                out.push_str(&format!(
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting.\n",
+                                    missing_fields.join(", ")
+                                ));
+                            }
                         }
                     }
                     Some(finding) if let Some(actionability) = not_ready.as_ref() => {
