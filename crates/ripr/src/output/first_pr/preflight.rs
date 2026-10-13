@@ -427,18 +427,26 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
         ],
     ) {
         Ok(output) if matches!(output.code, Some(0)) => {
+            // #7372: an empty `base..head` is the default outcome on a local
+            // checkout where the work is committed on the base branch
+            // itself. "Commit PR work" misdiagnoses that cause and the
+            // reprinted command loops with the same empty diff; name the
+            // real fix (pass the commit before the work) instead.
             checks.push(PreflightCheck::no_action(
                 "git_diff",
                 "Git diff",
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
-                    "Choose a head with changes or rerun after committing PR work: `ripr first-pr --root {} --base {} --head {}`.",
+                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base HEAD~1 --head {}` (replace `HEAD~1` with the commit before the work).",
                     shell_arg(&options.command_root()),
-                    shell_arg(&options.base),
                     shell_arg(&options.head)
                 )),
-            ).with_recovery_commands(vec![rerun_command(options)])
-             .with_recovery_guidance("Choose a head with changes or commit PR work before rerunning."));
+            ).with_recovery_commands(vec![format!(
+                "ripr first-pr --root {} --base HEAD~1 --head {}",
+                shell_arg(&options.command_root()),
+                shell_arg(&options.head)
+            )])
+             .with_recovery_guidance("HEAD has no changes against the base; if the work is committed on the base branch itself, pass the commit before the work (for example `--base HEAD~1` for one local commit) before rerunning."));
         }
         Ok(output) if matches!(output.code, Some(1)) => {
             checks.push(PreflightCheck::ok(

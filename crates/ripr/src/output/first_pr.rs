@@ -4765,9 +4765,64 @@ mod tests {
         assert!(summary.contains("Verify command: `not_applicable`"));
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
+        // Default options run with preflight off, so no preflight gate
+        // applies and the plain stop line renders unchanged.
         assert!(markdown.contains("- Safe next action: stop on no-action"));
         assert!(!markdown.contains("## Blocked"));
         cleanup(&repo)
+    }
+
+    /// #7372: the no-action/empty-diff headline must not declare "stop on
+    /// no-action" while the packet's own preflight reports needs_attention
+    /// (the empty-`base..head` local-checkout case); with a ready preflight
+    /// the stop language is unchanged.
+    #[test]
+    fn no_action_headline_defers_to_needs_attention_preflight() -> Result<(), String> {
+        let packet_for = |preflight_status: &str| {
+            json!({
+                "status": "no_action",
+                "selected": {
+                    "state": "no_action",
+                    "output_state": "no_actionable_gap",
+                    "reason": "No repairable PR-local Rust gap was selected."
+                },
+                "preflight": {"status": preflight_status, "mode": "write", "checks": []}
+            })
+        };
+        let watched = render_start_here_markdown(&packet_for("needs_attention"));
+        assert!(
+            watched.contains("preflight below reports `needs_attention`"),
+            "{watched}"
+        );
+        assert!(
+            !watched.contains("- Safe next action: stop on no-action"),
+            "{watched}"
+        );
+        let summary = start_here_cli_summary(
+            &packet_for("needs_attention"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains("resolve the preflight needs-attention items"),
+            "{summary}"
+        );
+
+        let ready = render_start_here_markdown(&packet_for("ready"));
+        assert!(
+            ready.contains("- Safe next action: stop on no-action"),
+            "{ready}"
+        );
+        let ready_summary = start_here_cli_summary(
+            &packet_for("ready"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            ready_summary.contains("no repair action selected; inspect supporting evidence"),
+            "{ready_summary}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -6425,10 +6480,12 @@ mod tests {
             let markdown = render_start_here_markdown(&packet);
             if check_id == "git_diff" {
                 assert!(
-                    markdown
-                        .contains("Choose a head with changes or commit PR work before rerunning."),
+                    markdown.contains(
+                        "pass the commit before the work (for example `--base HEAD~1`"
+                    ),
                     "{markdown}"
                 );
+                assert!(markdown.contains("--base HEAD~1"), "{markdown}");
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;
