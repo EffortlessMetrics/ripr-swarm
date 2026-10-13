@@ -1159,18 +1159,21 @@ fn remote_name_is_plain(name: &str) -> bool {
 /// The repair for a revision that does not resolve. `git fetch` never
 /// deepens a shallow clone, so an ancestor such as `HEAD~5` needs the
 /// unshallow repair there. A local ancestor expression whose base does
-/// resolve (`HEAD~99`, `main^2`) is short history, not a missing remote:
-/// adding or fetching a remote cannot create it. Otherwise the advice
-/// follows the repo's own remote configuration instead of prescribing
-/// `origin`: a remote-qualified ref (`origin/main`) names its own remote
-/// when that remote is configured (fetching it restores the ref even when
-/// the branch tracks elsewhere) and names the add-remote step when it is
-/// not; an unqualified ref with no remote names the add-remote step, with
-/// exactly one remote names that remote, and with several remotes (or a
-/// probe that cannot answer) falls back to plain `git fetch`, which follows
-/// the default remote. Per-remote ref discovery for an unqualified ref
-/// (which of several remotes tracks it) would need network probes and stays
-/// out.
+/// resolve is not a missing remote. `rev~` and `rev~N` walk first parents
+/// (`rev~` is `rev~1`); the count is `rev-list --first-parent`, because a
+/// side branch is not a step `~` can take. `rev^N` for N greater than 1
+/// selects a parent, so a linear tip fails because that parent does not
+/// exist, not because history is short. Adding or fetching a remote cannot
+/// create either. Otherwise the advice follows the repo's own remote
+/// configuration instead of prescribing `origin`: a remote-qualified ref
+/// (`origin/main`) names its own remote when that remote is configured
+/// (fetching it restores the ref even when the branch tracks elsewhere) and
+/// names the add-remote step when it is not; an unqualified ref with no
+/// remote names the add-remote step, with exactly one remote names that
+/// remote, and with several remotes (or a probe that cannot answer) falls
+/// back to plain `git fetch`, which follows the default remote. Per-remote
+/// ref discovery for an unqualified ref (which of several remotes tracks
+/// it) would need network probes and stays out.
 fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Duration>) -> String {
     if is_shallow_repository(root, git_timeout) {
         return "This is a shallow clone: fetch the missing history with `git fetch \
@@ -1201,56 +1204,125 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
     }
 }
 
-/// The revision before the first `~` or `^` ancestry operator, when the
-/// rest is only further ancestry (`99`, `2`, `99^2`). `rev^{type}` is a
-/// peel, not a walk past the end of history, so it stays on the remote
-/// arms. A bare `rev~` is not a revision Git accepts.
-fn ancestry_base(missing_ref: &str) -> Option<&str> {
+/// One ancestry operator after a resolvable base. `~` with no number is
+/// `~1`. `^` with no number is the first parent. `^{...}` is a peel, not
+/// ancestry, and stays on the remote arms.
+#[derive(Clone, Copy)]
+enum AncestryOp {
+    /// First-parent steps. `0` is the commit itself (`rev~0`).
+    FirstParentSteps(u32),
+    /// Nth parent. `1` is the first parent; `2` and above are merge parents.
+    Parent(u32),
+}
+
+/// Split `HEAD~1^2` into `HEAD` and its operators. `None` when the suffix is
+/// not only ancestry, including a `^{type}` peel.
+fn parse_ancestry_ops(missing_ref: &str) -> Option<(&str, Vec<AncestryOp>)> {
     let at = missing_ref.find(['~', '^'])?;
     if at == 0 || missing_ref[at..].starts_with("^{") {
         return None;
     }
-    let rest = &missing_ref[at + 1..];
-    if !rest
-        .bytes()
-        .all(|byte| byte.is_ascii_digit() || byte == b'~' || byte == b'^')
-    {
+    let mut ops = Vec::new();
+    let mut rest = &missing_ref[at..];
+    while !rest.is_empty() {
+        let caret = match rest.as_bytes()[0] {
+            b'~' => false,
+            b'^' if !rest.starts_with("^{") => true,
+            _ => return None,
+        };
+        rest = &rest[1..];
+        let digits = rest
+            .chars()
+            .take_while(|cell| cell.is_ascii_digit())
+            .count();
+        let number = if digits == 0 {
+            1
+        } else {
+            rest[..digits].parse::<u32>().ok()?
+        };
+        rest = &rest[digits..];
+        ops.push(if caret {
+            AncestryOp::Parent(number)
+        } else {
+            AncestryOp::FirstParentSteps(number)
+        });
+    }
+    if ops.is_empty() {
         return None;
     }
-    if missing_ref.as_bytes()[at] == b'~' && rest.is_empty() {
-        return None;
-    }
-    Some(&missing_ref[..at])
+    Some((&missing_ref[..at], ops))
 }
 
-/// #7653: `HEAD~99` in a short repository is not hosted on a remote. Advise
-/// with the reachable commit count when Git can count it. The caller still
-/// appends the generic "pass `--base <ref>`" clause.
+fn commit_word(count: u64) -> &'static str {
+    if count == 1 { "commit" } else { "commits" }
+}
+
+/// #7653: explain a failed local ancestor without sending the user to a
+/// remote. The caller still appends the generic "pass `--base <ref>`" clause.
 fn local_ancestor_history_advice(
     root: &Path,
     missing_ref: &str,
     git_timeout: Option<Duration>,
 ) -> Option<String> {
-    let base = ancestry_base(missing_ref)?;
+    let (base, ops) = parse_ancestry_ops(missing_ref)?;
     if !git_ref_exists(root, base, git_timeout) {
         return None;
     }
-    let count = reachable_commit_count(root, base, git_timeout);
-    Some(match count {
-        Some(count) => {
-            let word = if count == 1 { "commit" } else { "commits" };
-            format!(
-                "Local history from `{base}` reaches only {count} {word} and cannot produce `{missing_ref}`"
-            )
+    let mut at = base.to_string();
+    for op in ops {
+        match op {
+            AncestryOp::FirstParentSteps(steps) => {
+                if steps == 0 {
+                    continue;
+                }
+                let count = first_parent_commit_count(root, &at, git_timeout)?;
+                if u64::from(steps) >= count {
+                    return Some(format!(
+                        "First-parent history from `{at}` reaches only {count} {} and cannot produce `{missing_ref}`",
+                        commit_word(count)
+                    ));
+                }
+                at = format!("{at}~{steps}");
+            }
+            AncestryOp::Parent(0) => {
+                return Some(format!(
+                    "`{at}` has no parent 0, so `{missing_ref}` is not a commit"
+                ));
+            }
+            AncestryOp::Parent(1) => {
+                let count = first_parent_commit_count(root, &at, git_timeout)?;
+                if count <= 1 {
+                    return Some(format!(
+                        "First-parent history from `{at}` reaches only {count} {} and cannot produce `{missing_ref}`",
+                        commit_word(count)
+                    ));
+                }
+                at = format!("{at}^1");
+            }
+            AncestryOp::Parent(parent) => {
+                let selected = format!("{at}^{parent}");
+                if !git_ref_exists(root, &selected, git_timeout) {
+                    return Some(format!(
+                        "`{at}` has no parent {parent}, so `{missing_ref}` is not a commit"
+                    ));
+                }
+                at = selected;
+            }
         }
-        None => format!("Local history from `{base}` cannot produce `{missing_ref}`"),
-    })
+    }
+    None
 }
 
-fn reachable_commit_count(root: &Path, rev: &str, git_timeout: Option<Duration>) -> Option<u64> {
-    let output =
-        crate::git::run_git_output_with_deadline(root, &["rev-list", "--count", rev], git_timeout)
-            .ok()?;
+/// Commits `rev~N` can walk, including `rev` itself. Side-branch commits are
+/// excluded: `~` never follows them, so `rev-list --count` would overstate
+/// the history that can satisfy the expression.
+fn first_parent_commit_count(root: &Path, rev: &str, git_timeout: Option<Duration>) -> Option<u64> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-list", "--first-parent", "--count", rev],
+        git_timeout,
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -3172,30 +3244,56 @@ mod tests {
         Ok(())
     }
 
-    /// #7653: `HEAD~99` and `main^2` are local ancestry, not refs a remote
-    /// hosts. The advice must not send the user to `git remote add` or
-    /// `git fetch`, with or without a remote configured.
+    /// #7653: `HEAD~99` is first-parent history, `HEAD^2` is a missing parent,
+    /// and `HEAD~` is `HEAD~1`. None of them is repaired by adding a remote.
+    /// The refusal the user sees comes from `load_diff`, not only the helper.
     #[test]
     fn missing_ref_repair_names_local_history_for_an_ancestor_expression() -> std::io::Result<()> {
         let dir = unique_fixture_root("missing-ref-ancestor")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
+
+        let root_only = missing_ref_repair(&dir, "HEAD~", None);
+        assert!(
+            root_only.contains("First-parent history from `HEAD` reaches only 1 commit")
+                && root_only.contains("`HEAD~`")
+                && !root_only.contains("git fetch")
+                && !root_only.contains("git remote"),
+            "HEAD~ at the root commit must name local history, got: {root_only}"
+        );
+        match load_diff(&dir, Some("HEAD~"), None, None) {
+            Err(err) => assert!(
+                err.contains("reaches only 1 commit") && !err.contains("git remote"),
+                "the check refusal must carry the history repair, got: {err}"
+            ),
+            Ok(diff) => {
+                return Err(std::io::Error::other(format!(
+                    "HEAD~ at a root commit was accepted: {diff}"
+                )));
+            }
+        }
+
         fs::write(dir.join("README"), "second")?;
         run_git_checked(&dir, &["commit", "-am", "second"])?;
 
-        for missing in ["HEAD~99", "main~99", "HEAD^2"] {
+        for missing in ["HEAD~99", "main~99"] {
             let repair = missing_ref_repair(&dir, missing, None);
             assert!(
-                repair.contains("Local history from `")
+                repair.contains("First-parent history from `")
                     && repair.contains("reaches only 2 commits")
-                    && repair.contains(&format!("`{missing}`")),
-                "an ancestor past local history must name that history, got: {repair}"
-            );
-            assert!(
-                !repair.contains("git fetch") && !repair.contains("git remote"),
-                "an ancestor expression must not prescribe a remote, got: {repair}"
+                    && repair.contains(&format!("`{missing}`"))
+                    && !repair.contains("git fetch")
+                    && !repair.contains("git remote"),
+                "a ~ walk past first-parent history must name that history, got: {repair}"
             );
         }
+        let missing_parent = missing_ref_repair(&dir, "HEAD^2", None);
+        assert!(
+            missing_parent.contains("`HEAD` has no parent 2")
+                && !missing_parent.contains("reaches only")
+                && !missing_parent.contains("git fetch"),
+            "a linear HEAD^2 is a missing parent, not short history, got: {missing_parent}"
+        );
 
         run_git_checked(
             &dir,
@@ -3211,6 +3309,27 @@ mod tests {
         assert!(
             unknown_base.contains("git fetch origin"),
             "an ancestry suffix on a missing base still uses the remote arm, got: {unknown_base}"
+        );
+
+        // Side-branch commits are reachable but `~` cannot walk them.
+        // History: A — B — M, with C merged into M. First-parent depth is 3;
+        // all-parents count is 4. `HEAD~3` is past the first-parent chain.
+        run_git_checked(&dir, &["checkout", "-b", "side"])?;
+        fs::write(dir.join("side.txt"), "side")?;
+        run_git_checked(&dir, &["add", "side.txt"])?;
+        run_git_checked(&dir, &["commit", "-m", "side"])?;
+        run_git_checked(&dir, &["checkout", "main"])?;
+        run_git_checked(&dir, &["merge", "--no-ff", "--no-edit", "side"])?;
+        let merged = missing_ref_repair(&dir, "HEAD~3", None);
+        assert!(
+            merged.contains("First-parent history from `HEAD` reaches only 3 commits")
+                && !merged.contains("4 commits"),
+            "the ~ count must ignore the merged side branch, got: {merged}"
+        );
+        let third_parent = missing_ref_repair(&dir, "HEAD^3", None);
+        assert!(
+            third_parent.contains("`HEAD` has no parent 3") && !third_parent.contains("git fetch"),
+            "a merge with two parents has no parent 3, got: {third_parent}"
         );
 
         ignore_remove_dir_all(&dir);
