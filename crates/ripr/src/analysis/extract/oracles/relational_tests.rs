@@ -244,6 +244,7 @@ fn scalar_parentheses_do_not_admit_blocks_or_arrays() -> Result<(), String> {
 fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), String> {
     let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
     let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
     for (text, expected) in [
         ("ensure!(a != b || c == d);", &weak),
         ("ensure!(a == b || c == d);", &weak),
@@ -255,10 +256,35 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         ),
         ("assert!(a != b || c == d);", &weak),
         ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
+        // A deciding `||`, top-level or in a parenthesized conjunct, gates
+        // the `matches!` and error-variant readings too.
+        (
+            "ensure!(matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked)));",
+            &weak,
+        ),
+        (
+            "ensure!(ready && (matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked))));",
+            &weak,
+        ),
+        ("ensure!((matches!(r, Ok(3)) || fallback));", &weak),
+        ("ensure!(ready && (a == b || c));", &weak),
+        (
+            "assert!(matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked)));",
+            &weak,
+        ),
+        ("assert!(matches!(r, Ok(3)) || fallback);", &weak),
+        ("assert!(ready && (matches!(r, Ok(3)) || fallback));", &weak),
         ("ensure!(a == b);", &exact),
         ("ensure!(a == b, \"total must match\");", &exact),
         ("ensure!(a != b && c == d);", &exact),
         ("ensure!((total(&cart) == 42) && ready);", &exact),
+        // Controls: an `||` inside a call or closure operand decides nothing.
+        ("assert!(matches!(r, Ok(3)));", &exact),
+        (
+            "assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)));",
+            &exact,
+        ),
+        ("ensure!(matches!(r, Err(Error::Denied)) && ready);", &err),
     ] {
         let classification = classify_assertion(text);
         if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {

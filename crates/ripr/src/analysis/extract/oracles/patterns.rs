@@ -960,8 +960,10 @@ fn has_mock_named_receiver(line: &str) -> bool {
     })
 }
 
-/// An `ensure!` condition whose only comparison is `!=`. One `==` anywhere
-/// still pins a value, so a mixed condition keeps its exact reading.
+/// An `ensure!` condition whose only comparison is `!=`: rule 1 at step 0.
+/// A mixed condition falls through, and earns exact credit only from a
+/// top-level `==` conjunct with no deciding `||`
+/// ([`has_top_level_exact_equality`], #7558).
 pub(super) fn is_inequality_only_comparison(condition: &str) -> bool {
     let (equal, not_equal) = comparison_operators(condition);
     not_equal && !equal
@@ -994,6 +996,21 @@ pub(super) fn is_duplicative_comparison(condition: &str) -> bool {
 pub(super) fn is_exact_value_assertion(line: &str) -> bool {
     // `assert_ne!` is owned by RIPR-SPEC-0231 rule 1 and never exact.
     line.contains("assert_eq!") || line.contains("assert_matches!") || line.contains("matches!")
+}
+
+/// RIPR-SPEC-0231 rule 1 (#7558): whether an `||` decides the condition:
+/// at the top level, or inside a parenthesized `&&` conjunct (read again by
+/// the same rule), so the condition passes whenever one arm does and pins
+/// nothing. An `||` inside a call argument, closure, index or block belongs
+/// to that operand.
+pub(super) fn has_deciding_disjunction(condition: &str) -> bool {
+    has_top_level_disjunction(condition)
+        || split_top_level_conjuncts(condition)
+            .into_iter()
+            .any(|conjunct| {
+                super::arguments::parenthesized_contents(conjunct.trim())
+                    .is_some_and(has_deciding_disjunction)
+            })
 }
 
 /// RIPR-SPEC-0231 rule 1 (#7558): whether a boolean condition pins a value.

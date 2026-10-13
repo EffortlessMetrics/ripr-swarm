@@ -221,7 +221,16 @@ Two pattern terms are used below.
    inequality only when `!=` is the condition's only comparison
    (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
    strings and comments keeps the reading that `==` earns
-   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). At
+   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). A
+   disjunction that decides the condition passes when any one arm holds,
+   so no arm lends the condition an exact kind: a top-level `||`, or a
+   `||` inside a parenthesized group that is the whole condition or one of
+   its top-level `&&` conjuncts, caps an `assert!`, `debug_assert!` or
+   `ensure!` condition at `relational_check` / weak, including a literal
+   `|| false` arm, which is not read through. A `||` inside a call
+   argument, closure or pattern does not decide the condition
+   (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
+   `exact_value`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns
@@ -468,7 +477,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 11. `assert_not_equal(score(2), 0)`: `relational_check` / weak.
 12. `assert_json_eq(actual, expected)`: `exact_value` / strong (unchanged).
 13. `ensure!(score(2) != 0)`: `relational_check` / weak (today
-    `exact_value` / strong).
+    `exact_value` / strong). `ensure!(score(2) != 0 || score(3) == 6)` and
+    `ensure!(ready && (score(2) == 4 || done))`: `relational_check` / weak
+    (both read `exact_value` / strong before #7558).
 14. `assert_ne!(build(3), Config { retries: 9 })`: `whole_object_equality` /
     weak.
 15. `assert!(opt.is_some_and(|v| v > 1))`: `smoke_only` / smoke (unchanged).
@@ -573,6 +584,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
+- Existing: `relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact`
+  and the corpus case `spec0231-ensure-disjunction-not-exact` (the
+  disjunction forms of example 13, #7558).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).

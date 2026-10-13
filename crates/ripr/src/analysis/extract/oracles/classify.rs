@@ -6,7 +6,7 @@ use super::arguments::{
 };
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
-    PatternPolarity, contains_negated_pattern, has_top_level_disjunction,
+    PatternPolarity, contains_negated_pattern, has_deciding_disjunction,
     has_top_level_exact_equality, inequality_has_struct_literal_operand, is_broad_error_assertion,
     is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
@@ -151,10 +151,15 @@ fn classify_non_negated_assertion(
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
+    // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`
+    // passes whenever one arm does, so no `matches!`, error variant or
+    // equality in one arm earns an exact kind.
+    let disjunction = boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| has_deciding_disjunction(&condition));
     let inequality_macro = is_inequality_macro_assertion(line);
     if inequality_macro && is_exact_error_variant_assertion(line) {
         INEQUALITY
-    } else if is_exact_error_variant_assertion(line) {
+    } else if is_exact_error_variant_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
@@ -187,14 +192,14 @@ fn classify_non_negated_assertion(
         } else {
             INEQUALITY
         }
-    } else if is_whole_object_equality_assertion(line) {
+    } else if is_whole_object_equality_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::WholeObjectEquality,
             strength: OracleStrength::Strong,
         }
     } else if inequality_macro {
         INEQUALITY
-    } else if is_exact_value_assertion(line) {
+    } else if is_exact_value_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
@@ -312,9 +317,9 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
     {
         return Some(INEQUALITY);
     }
-    // A top-level `||` passes whenever one arm does, so neither an error
+    // A deciding `||` passes whenever one arm does, so neither an error
     // variant nor an `==` in one arm pins the value (#7558).
-    let disjunction = has_top_level_disjunction(&condition);
+    let disjunction = has_deciding_disjunction(&condition);
     if is_exact_error_variant_assertion(&condition) && !disjunction {
         Some(OracleClassification {
             kind: OracleKind::ExactErrorVariant,
@@ -850,9 +855,17 @@ mod tests {
                 RelationalCheck,
                 Weak,
             ),
-            // Control: `||` nested inside a group leaves the top-level chain.
+            // A `||` inside a parenthesized conjunct still decides the
+            // condition, so the group caps the reading (rule 1, #7558);
+            // a literal `|| false` arm is not read through.
             (
                 "assert!(!matches!(r, Err(E::Bad)) && (matches!(r, Err(E::Other)) || false));",
+                RelationalCheck,
+                Weak,
+            ),
+            // Control: with no deciding `||`, the positive conjunct decides.
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && matches!(r, Err(E::Other)));",
                 ExactErrorVariant,
                 Strong,
             ),
