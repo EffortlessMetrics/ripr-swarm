@@ -126,12 +126,16 @@ can only hint that a caller "may lead here" without changing anything.
   let-bound use of the result is not followed in V1.
 - Weak oracle behind a non-forwarding hop (#7549): the abstention above
   does not apply when every observed hop's caller is production code;
-  every observed call hop carries its callee's value as data (the caller
-  parses cleanly, does not return `bool`, and holds no branch, loop,
-  early exit, `?`, cast, closure, comparison or logical operator, no
-  branching combinator such as `then_some`, `filter`, `and_then`,
-  `map_or`, `unwrap_or*`, `is_*` or `contains`, and no macro other than
-  `format!`, `concat!` or `vec!`); no `HelperOwnerCall` test uses `?`,
+  every observed call hop carries its callee's value as data (allowlist:
+  the caller parses cleanly and does not return `bool`; it calls only its
+  callee, `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
+  argument-free methods `to_string`/`to_owned`/`clone`/`into`; its only
+  operator is `+` with a string literal operand; its only macros are
+  `format!` and `concat!`, whose tokens name only the callee, the caller's
+  parameters and those methods; anything else, including a branch, loop,
+  early exit, `?`, cast, closure, index, any other call such as
+  `check(title())`, `port_str().parse()` or `TABLE.get(key())`, and any
+  other operator, fails the check); no `HelperOwnerCall` test uses `?`,
   `unwrap` or `expect`; and those tests hold at least one assertion, each
   a relational, broad-error or smoke oracle written as a plain `assert!`
   whose condition, under any `!` or parentheses, is an ordering or `!=`
@@ -141,8 +145,9 @@ can only hint that a caller "may lead here" without changing anything.
   then hands the owner's value on as data and the oracle cannot
   discriminate that data exactly, so the existing evidence (the weak
   oracle's gap) stands without pairing. A caller that decides on the
-  owner's value (`if title() == "ripr" { Ok(()) } else { Err(()) }` under
-  `assert!(parse().is_ok())`) can turn a loose check into an exact pin, so
+  owner's value, itself or through anything it calls (`if title() ==
+  "ripr" { Ok(()) } else { Err(()) }` or `check(title())` under
+  `assert!(parse().is_ok())`), can turn a loose check into an exact pin, so
   it keeps the abstention, as do any exact, snapshot, mock or unknown
   oracle, a bare `assert!(caller(..))`, an `==` comparison, any other
   projection and a test-local hop caller (fail closed). Effect families

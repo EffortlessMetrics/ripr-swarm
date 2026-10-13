@@ -985,6 +985,27 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
             "pub fn banner() -> String {\n    format!(\"[{}]\", title())\n}",
             "assert!(banner().parse::<u8>().is_err());\n        let _ = banner().chars().next().unwrap();",
         ),
+        // Review B2: the decision moves into something the caller calls.
+        (
+            "fn check(t: &str) -> Result<(), ()> {\n    if t == \"ripr\" { Ok(()) } else { Err(()) }\n}\n\npub fn parse() -> Result<(), ()> {\n    check(title())\n}",
+            "assert!(parse().is_ok());",
+        ),
+        (
+            "pub fn port() -> Result<u16, std::num::ParseIntError> {\n    title().parse()\n}",
+            "assert!(port().is_err());",
+        ),
+        (
+            "const TABLE: [u8; 2] = [1, 2];\n\npub fn entry() -> Option<&'static u8> {\n    TABLE.get(title().len())\n}",
+            "assert!(entry().is_none());",
+        ),
+        (
+            "pub fn share() -> usize {\n    100 / title().len()\n}",
+            "assert!(share() > 0);",
+        ),
+        (
+            "pub fn banner() -> String {\n    format!(\"{}\", title().len() > 3)\n}",
+            "assert!(!banner().is_empty());",
+        ),
     ] {
         assert_abstains_through_hop(&title_item_finding(item, test)?, test);
     }
@@ -993,13 +1014,13 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
 
 #[test]
 fn test_local_helper_hop_is_part_of_the_oracle() -> Result<(), String> {
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(len: usize) -> usize {\n        title().len() + len\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(4) > 0);\n    }\n}\n";
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
     let finding = family_finding(source, TITLE_DIFF, "return_value")?;
     assert_abstains_through_hop(&finding, "test-local helper");
     // The same data-carrying caller in production keeps the weak gap.
     let production = title_item_finding(
-        "pub fn titled(len: usize) -> usize {\n    title().len() + len\n}",
-        "assert!(titled(4) > 0);",
+        "pub fn titled(suffix: &str) -> String {\n    format!(\"{}{}\", title(), suffix)\n}",
+        "assert!(titled(\"!\").len() > 0);",
     )?;
     assert_eq!(
         production["classification"], "weakly_exposed",

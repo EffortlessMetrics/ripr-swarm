@@ -1047,6 +1047,7 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
 /// call-deletion families keep their target-passing rule except across a
 /// local-macro argument hop, which never passes a target either way.
 pub(crate) fn hop_reach_keeps_weak_oracle_gap(
+    owner_name: &str,
     chain: &HelperChain,
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
@@ -1055,7 +1056,7 @@ pub(crate) fn hop_reach_keeps_weak_oracle_gap(
     effect_family: bool,
 ) -> bool {
     let hops = observed_hops(chain, related_tests);
-    if !caller_oracles_are_all_weak(hops, related_tests) {
+    if !caller_oracles_are_all_weak(owner_name, hops, related_tests) {
         return false;
     }
     !effect_family || hops.iter().any(|hop| hop.through_macro)
@@ -1086,6 +1087,7 @@ pub(crate) fn hop_reach_keeps_weak_oracle_gap(
 /// - No such test unwraps or propagates with `?`, `unwrap` or `expect`,
 ///   which are implicit oracles on the caller's shape.
 fn caller_oracles_are_all_weak(
+    owner_name: &str,
     hops: &[HelperHop],
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
@@ -1095,9 +1097,15 @@ fn caller_oracles_are_all_weak(
     use crate::analysis::facts::FunctionSourceRole;
     use crate::domain::{OracleKind, RelationReason};
     if hops.is_empty()
-        || hops.iter().any(|hop| {
+        || hops.iter().enumerate().any(|(step, hop)| {
+            let callee = match step.checked_sub(1) {
+                None => owner_name,
+                Some(below) => hops
+                    .get(below)
+                    .map_or("", |lower| lower.caller.name.as_str()),
+            };
             hop.caller.source_role != FunctionSourceRole::Production
-                || (!hop.through_macro && !caller_carries_callee_as_data(&hop.caller.body))
+                || (!hop.through_macro && !caller_carries_callee_as_data(&hop.caller.body, callee))
         })
     {
         return false;
@@ -1185,89 +1193,126 @@ fn condition_is_weak(condition: &str) -> bool {
 }
 
 /// Whether a hop caller hands its callee's value on as data, never as a
-/// decision (#7549 review): the caller parses cleanly, does not return
-/// `bool`, and its body holds no branch, loop, early exit, `?`, cast,
-/// closure, comparison or logical operator, no branching combinator
-/// (`then`, `then_some`, `filter`, `and_then`, `map_or`, ...) and no macro
-/// other than `format!`, `concat!` or `vec!`. `format!("[{}]", title())`
-/// and `title().to_string() + "!"` carry data; `if title() == "ripr" {..}`,
-/// `(title() == "ripr").then_some(1)` and `matches!(title(), "ripr")` do
-/// not. Fail closed on anything else.
-fn caller_carries_callee_as_data(body: &str) -> bool {
-    use ra_ap_syntax::ast::{self, BinaryOp};
+/// decision (#7549 review). Allowlist, fail closed: the caller parses
+/// cleanly and does not return `bool`; its body calls only the callee, the
+/// wrappers `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
+/// argument-free methods `to_string`/`to_owned`/`clone`/`into`; its only
+/// operator is `+` with a string literal operand; its only macros are
+/// `format!` and `concat!`, whose tokens name only the callee, the caller's
+/// parameters and those methods; and it holds no branch, loop, early exit,
+/// `?`, cast, closure, index or other operator. `format!("[{}]", title())`
+/// and `title().to_string() + "!"` carry data. A decision on the value,
+/// in the caller (`if title() == "ripr" {..}`) or in anything it calls
+/// (`check(title())`, `port_str().parse()`, `TABLE.get(key())`,
+/// `100 / d()`), can make a loose check pin the owner, so it does not.
+fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
+    use ra_ap_syntax::ast::{self, ArithOp, BinaryOp, HasArgList, HasName};
     use ra_ap_syntax::{AstNode, SyntaxKind};
+    const METHODS: [&str; 4] = ["to_string", "to_owned", "clone", "into"];
+    const WRAPPERS: [&str; 5] = ["Some", "Ok", "Err", "String::from", "Box::new"];
+    if callee.is_empty() {
+        return false;
+    }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
         return false;
     };
     let Some(function) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
         return false;
     };
-    let returns_bool = function
+    if function
         .ret_type()
         .and_then(|ret| ret.ty())
-        .is_some_and(|ty| ty.syntax().text() == "bool");
+        .is_some_and(|ty| ty.syntax().text() == "bool")
+    {
+        return false;
+    }
+    let parameters: Vec<String> = function
+        .param_list()
+        .into_iter()
+        .flat_map(|list| list.params())
+        .filter_map(|param| match param.pat()? {
+            ast::Pat::IdentPat(ident) => ident.name().map(|name| name.text().to_string()),
+            _ => None,
+        })
+        .collect();
     let Some(block) = function.body() else {
         return false;
     };
-    !returns_bool
-        && block.syntax().descendants().all(|node| match node.kind() {
-            SyntaxKind::IF_EXPR
-            | SyntaxKind::MATCH_EXPR
-            | SyntaxKind::WHILE_EXPR
-            | SyntaxKind::LOOP_EXPR
-            | SyntaxKind::FOR_EXPR
-            | SyntaxKind::RETURN_EXPR
-            | SyntaxKind::BREAK_EXPR
-            | SyntaxKind::TRY_EXPR
-            | SyntaxKind::CAST_EXPR
-            | SyntaxKind::CLOSURE_EXPR
-            | SyntaxKind::LET_EXPR => false,
-            SyntaxKind::BIN_EXPR => ast::BinExpr::cast(node).is_some_and(|bin| {
-                !matches!(
-                    bin.op_kind(),
-                    Some(BinaryOp::CmpOp(_) | BinaryOp::LogicOp(_)) | None
-                )
-            }),
-            SyntaxKind::METHOD_CALL_EXPR => ast::MethodCallExpr::cast(node)
-                .and_then(|call| call.name_ref())
-                .is_some_and(|name| {
-                    let name = name.text();
-                    !(name.starts_with("then")
-                        || name.starts_with("filter")
-                        || name.starts_with("and_")
-                        || name.starts_with("or_")
-                        || name.starts_with("map_or")
-                        || name.starts_with("unwrap_or")
-                        || name.starts_with("ok_or")
-                        || name.starts_with("is_")
-                        || matches!(
-                            &*name,
-                            "find"
-                                | "position"
-                                | "any"
-                                | "all"
-                                | "max"
-                                | "min"
-                                | "cmp"
-                                | "partial_cmp"
-                                | "eq"
-                                | "ne"
-                                | "lt"
-                                | "le"
-                                | "gt"
-                                | "ge"
-                                | "contains"
-                                | "starts_with"
-                                | "ends_with"
-                        ))
-                }),
-            SyntaxKind::MACRO_CALL => ast::MacroCall::cast(node)
-                .and_then(|call| call.path())
+    let string_literal = |expr: Option<ast::Expr>| {
+        matches!(
+            expr,
+            Some(ast::Expr::Literal(literal))
+                if matches!(literal.kind(), ast::LiteralKind::String(_))
+        )
+    };
+    block.syntax().descendants().all(|node| match node.kind() {
+        SyntaxKind::STMT_LIST
+        | SyntaxKind::BLOCK_EXPR
+        | SyntaxKind::EXPR_STMT
+        | SyntaxKind::LET_STMT
+        | SyntaxKind::IDENT_PAT
+        | SyntaxKind::NAME
+        | SyntaxKind::NAME_REF
+        | SyntaxKind::PATH
+        | SyntaxKind::PATH_SEGMENT
+        | SyntaxKind::PATH_EXPR
+        | SyntaxKind::LITERAL
+        | SyntaxKind::ARG_LIST
+        | SyntaxKind::PAREN_EXPR
+        | SyntaxKind::REF_EXPR
+        | SyntaxKind::TUPLE_EXPR
+        | SyntaxKind::MACRO_EXPR
+        | SyntaxKind::TOKEN_TREE => true,
+        SyntaxKind::CALL_EXPR => ast::CallExpr::cast(node).is_some_and(|call| {
+            matches!(call.expr(), Some(ast::Expr::PathExpr(path))
+            if path.path().is_some_and(|path| {
+                let text = path.syntax().text().to_string();
+                text == callee || WRAPPERS.contains(&text.as_str())
+            }))
+        }),
+        SyntaxKind::METHOD_CALL_EXPR => ast::MethodCallExpr::cast(node).is_some_and(|call| {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .name_ref()
+                    .is_some_and(|name| METHODS.contains(&&*name.text()))
+        }),
+        SyntaxKind::BIN_EXPR => ast::BinExpr::cast(node).is_some_and(|bin| {
+            bin.op_kind() == Some(BinaryOp::ArithOp(ArithOp::Add))
+                && (string_literal(bin.lhs()) || string_literal(bin.rhs()))
+        }),
+        SyntaxKind::MACRO_CALL => ast::MacroCall::cast(node).is_some_and(|call| {
+            let named = call
+                .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .is_some_and(|name| matches!(&*name.text(), "format" | "concat" | "vec")),
-            _ => true,
-        })
+                .is_some_and(|name| matches!(&*name.text(), "format" | "concat"));
+            named
+                && call.token_tree().is_some_and(|tree| {
+                    tree.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .all(|token| match token.kind() {
+                            SyntaxKind::IDENT => {
+                                let text = token.text();
+                                text == callee
+                                    || parameters.iter().any(|parameter| parameter == text)
+                                    || METHODS.contains(&text)
+                            }
+                            SyntaxKind::STRING
+                            | SyntaxKind::INT_NUMBER
+                            | SyntaxKind::COMMA
+                            | SyntaxKind::DOT
+                            | SyntaxKind::AMP
+                            | SyntaxKind::L_PAREN
+                            | SyntaxKind::R_PAREN
+                            | SyntaxKind::WHITESPACE => true,
+                            _ => false,
+                        })
+                })
+        }),
+        _ => false,
+    })
 }
 
 /// [`chain_forwards_owner_result`] over only the hops the related tests
