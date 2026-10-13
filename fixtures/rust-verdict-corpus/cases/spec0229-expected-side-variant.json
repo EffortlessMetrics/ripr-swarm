@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "match_arm",
   "test_shape": "integration_test_expected_side_names_sibling_variant",
-  "hard_case": "Measured gap against RIPR-SPEC-0229 example 6: the class matches (weakly_exposed, not exposed) but ripr names no missing discriminator Kind::B, because arm_selection's is_variant_name refuses single-letter variant names such as Kind::A and Kind::B as ambiguous. fixtures/match_arm_expected_side_trap, with Alpha and Beta, does name it.",
+  "hard_case": "RIPR-SPEC-0229 example 6 with single-letter variants: Kind::A and Kind::B could be associated constants, so arm_selection reads them as variants only because src/lib.rs declares enum Kind with variants A and B (#7543). The expected-side B does not confirm the arm, and ripr names the missing discriminator Kind::B.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "tests/it.rs pins f(Kind::A) to Kind::B; the input selects the Kind::A arm and only the expected side names B, so the change to the Kind::B arm passes. Spec cells: RIPR-SPEC-0229 example 6. ripr reads weakly_exposed, so the expected-side B does not confirm the arm, but names no missing discriminator Kind::B.",
+  "reasoning": "tests/it.rs pins f(Kind::A) to Kind::B; the input selects the Kind::A arm and only the expected side names B, so the change to the Kind::B arm passes. Spec cells: RIPR-SPEC-0229 example 6. ripr reads weakly_exposed, so the expected-side B does not confirm the arm, and names the missing discriminator Kind::B.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "gap",
