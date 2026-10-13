@@ -20,7 +20,7 @@ const ROOTS: [&str; 4] = ["debug", "debug/deps", "release", "release/deps"];
 // compiler-rt's Linux writer emits GNU NT_GNU_BUILD_ID descriptors from PT_NOTE.
 pub(super) fn profile_ids(prefix: &[u8]) -> Value {
     let mut ids = Vec::new();
-    let parse = || -> std::result::Result<(), &'static str> {
+    let mut parse = || -> std::result::Result<(), &'static str> {
         if prefix.len() < HEADER_BYTES {
             return Err("truncated_header");
         }

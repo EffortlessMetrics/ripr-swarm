@@ -551,8 +551,9 @@ fn final_mapping_json_budget_includes_profile_scope_metadata() -> Result<()> {
     put64(&mut bytes, 96, notes.len() as u64);
     put64(&mut bytes, 104, notes.len() as u64);
     put64(&mut bytes, 7424 + 2 * 64 + 32, notes.len() as u64);
-    let captured =
-        vec![json!({"binary_ids": {"ids": (1..=32).map(|n|hex(&[n;20])).collect::<Vec<_>>()}})];
+    let captured = vec![
+        json!({"binary_ids": {"status": "available", "ids": (1..=32).map(|n|hex(&[n;20])).collect::<Vec<_>>()}}),
+    ];
     let mut paths = Vec::new();
     for n in 0..4 {
         let path = f.0.join(format!("debug/deps/f{n}"));
