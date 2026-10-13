@@ -70,7 +70,28 @@ fn card_envelope(output: &Output) -> Result<serde_json::Value, Box<dyn std::erro
     Ok(envelope)
 }
 
-fn assert_policy_guidance(message: &str) {
+fn policy_omitted_route(
+    root_arg: &str,
+    seam_id: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        root_arg,
+        "--seam-id",
+        seam_id,
+        "--json",
+    ]);
+    let envelope = card_envelope(&card)?;
+    assert_eq!(envelope["error"]["kind"], "policy_omitted", "{envelope}");
+    Ok(envelope["error"]["remedy_route"]
+        .as_str()
+        .ok_or("missing policy remedy route")?
+        .to_string())
+}
+
+fn assert_policy_guidance(message: &str, route: &str) {
     assert!(
         message.contains("configured off for weakly_gripped seams"),
         "{message}"
@@ -79,6 +100,7 @@ fn assert_policy_guidance(message: &str) {
         message.contains("Inspect the agent policy with `ripr agent brief --root "),
         "{message}"
     );
+    assert!(message.contains(&format!("`{route}`")), "{message}");
     assert!(
         message.contains("re-listing cannot change this policy decision"),
         "{message}"
@@ -129,8 +151,7 @@ fn policy_omitted_card_prose_agrees_with_typed_remedy() -> Result<(), Box<dyn st
             "--json"
         ]
     );
-    assert_policy_guidance(message);
-    assert!(message.contains(&format!("`{route}`")), "{message}");
+    assert_policy_guidance(message, route);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -177,7 +198,8 @@ fn policy_omitted_packet_preserves_refusal_channels() -> Result<(), Box<dyn std:
         String::from_utf8_lossy(&typed.stderr).trim(),
         format!("ripr: {message}")
     );
-    assert_policy_guidance(message);
+    let route = policy_omitted_route(&root_arg, &seam_id)?;
+    assert_policy_guidance(message, &route);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -187,6 +209,7 @@ fn policy_omitted_repair_before_preserves_refusal_channels()
 -> Result<(), Box<dyn std::error::Error>> {
     let (root, seam_id) = omitted_seam("policy omitted repair")?;
     let root_arg = root.display().to_string();
+    let route = policy_omitted_route(&root_arg, &seam_id)?;
     for json in [false, true] {
         let mut args = vec![
             "agent",
@@ -218,7 +241,7 @@ fn policy_omitted_repair_before_preserves_refusal_channels()
             !root.join("target/ripr/workflow").exists(),
             "policy omission must not prepare a workflow"
         );
-        assert_policy_guidance(&String::from_utf8_lossy(&repair.stderr));
+        assert_policy_guidance(&String::from_utf8_lossy(&repair.stderr), &route);
     }
     std::fs::remove_dir_all(root)?;
     Ok(())
