@@ -165,7 +165,10 @@ fn object_literal_binds(argument: &str, method: &str, local: &str) -> bool {
     let Some(literal) = literal_body(rest) else {
         return false;
     };
-    if rest[literal.len() + 1..].trim() != "" {
+    if rest
+        .get(literal.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
         return false;
     }
     let mut bound = Vec::new();
@@ -326,11 +329,26 @@ fn owner_call_argument_at(test_body: &str, owner_name: &str, index: usize) -> Op
             return None;
         }
         let rest = masked[at + owner_name.len()..].trim_start();
-        top_level_arguments(rest.strip_prefix('(')?)
+        Some((at, top_level_arguments(rest.strip_prefix('(')?)?))
     });
-    let (Some(arguments), None) = (calls.next(), calls.next()) else {
+    let (Some((at, arguments)), None) = (calls.next(), calls.next()) else {
         return None;
     };
+    // One call site can still run several times: inside a loop, or inside a
+    // callback (`ids.forEach((id) => notify({ send }, id))`), and
+    // `toHaveBeenCalledWith` passes when any recorded call matches. The
+    // test's own block holds no loop, and the call sits in no nested
+    // function of it.
+    let range = callback_scope_range(&masked)?;
+    let scope = &masked[range.clone()];
+    if ["for", "while", "do"]
+        .iter()
+        .any(|word| !identifier_offsets(scope, word).is_empty())
+        || !range.contains(&at)
+        || inside_nested_function(scope, at - range.start)
+    {
+        return None;
+    }
     if arguments
         .iter()
         .take(index + 1)
@@ -479,18 +497,23 @@ fn top_level_entries(literal: &str) -> Vec<&str> {
 /// matching `}`. A body with no such brace is read whole. `None` when the
 /// block never closes, so an unreadable shape earns nothing.
 fn callback_scope(masked: &str) -> Option<&str> {
+    callback_scope_range(masked).map(|range| &masked[range])
+}
+
+/// The byte range of [`callback_scope`] within `masked`.
+fn callback_scope_range(masked: &str) -> Option<std::ops::Range<usize>> {
     let mut parens = 0usize;
     for (index, c) in masked.char_indices() {
         match c {
             '(' => parens += 1,
             ')' => parens = parens.saturating_sub(1),
             '{' if parens == 1 => {
-                let inner = &masked[index + 1..];
+                let start = index + 1;
                 let mut depth = 0usize;
-                for (offset, c) in inner.char_indices() {
+                for (offset, c) in masked[start..].char_indices() {
                     match c {
                         '{' => depth += 1,
-                        '}' if depth == 0 => return Some(&inner[..offset]),
+                        '}' if depth == 0 => return Some(start..start + offset),
                         '}' => depth -= 1,
                         _ => {}
                     }
@@ -500,7 +523,50 @@ fn callback_scope(masked: &str) -> Option<&str> {
             _ => {}
         }
     }
-    Some(masked)
+    Some(0..masked.len())
+}
+
+/// `true` when `at` lies in the body of an arrow or `function` that starts
+/// inside `scope` (a callback such as `ids.forEach((id) => owner(id))`). An
+/// arrow's expression body ends at the first `,`, `;` or unmatched closer;
+/// a function type (`vi.fn<(m: string) => void>()`) ends before any call.
+fn inside_nested_function(scope: &str, at: usize) -> bool {
+    let arrows = scope.match_indices("=>").map(|(arrow, _)| arrow + 2);
+    let functions = identifier_offsets(scope, "function")
+        .into_iter()
+        .filter_map(|word| scope[word..].find('{').map(|brace| word + brace));
+    arrows.chain(functions).any(|start| {
+        if start >= at {
+            return false;
+        }
+        let body = &scope[start..];
+        let lead = body.len() - body.trim_start().len();
+        let braced = body.trim_start().starts_with('{');
+        let mut depth = 0usize;
+        let mut end = scope.len();
+        for (offset, c) in body.char_indices().skip_while(|(offset, _)| *offset < lead) {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    end = start + offset;
+                    break;
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if braced && depth == 0 {
+                        end = start + offset + 1;
+                        break;
+                    }
+                }
+                ',' | ';' if depth == 0 && !braced => {
+                    end = start + offset;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        at < end
+    })
 }
 
 /// The owner's masked body: the text after its header (the parameter list up
@@ -550,11 +616,12 @@ fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str)
 /// (`run(x) {`, `get total() {`), a typed method (`run(): string {`,
 /// `run(): { n: number } {`) or a class body. Only an allowlist of shapes
 /// reads as a plain block or object literal: a `{` at the start of the body,
-/// after `= ( , [ : ? & | ! ; {`, after a control keyword's `(...)`, after
-/// `else`, `try`, `finally`, `do` or `return`, or opening a template
-/// literal's `${`. Any other `{` counts, so an unfamiliar shape refuses.
+/// after `= ( , [ : ? & | ! ; {`, after a control keyword's `(...)` where
+/// the keyword stands in statement position (see [`control_keyword_at`]),
+/// after `else`, `try`, `finally`, `do` or `return`, or opening a template
+/// literal's `${`. Any other `{` counts, so an unfamiliar shape refuses, and
+/// so does an object method named like a keyword (`{ catch(e) {...} }`).
 fn has_method_like_block(body: &str) -> bool {
-    const CONTROL: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
     body.char_indices()
         .filter(|(_, c)| *c == '{')
@@ -571,8 +638,7 @@ fn has_method_like_block(body: &str) -> bool {
                 let Some(open) = matching_open_paren(before) else {
                     return true;
                 };
-                let word = trailing_identifier(before[..open].trim_end());
-                return !CONTROL.contains(&word);
+                return !control_keyword_at(body, before[..open].trim_end());
             }
             if is_identifier_part(last) {
                 return !BLOCK_WORDS.contains(&trailing_identifier(before));
@@ -582,6 +648,56 @@ fn has_method_like_block(body: &str) -> bool {
                 '=' | '(' | ',' | '[' | ':' | '?' | '&' | '|' | '!' | ';' | '{'
             )
         })
+}
+
+/// `true` when `head`, a prefix of `body`, ends with a control keyword that
+/// stands in statement position, so the `(...)` after it is a condition and
+/// not a method's parameters. `catch` must follow a `}`; the other keywords
+/// must follow the start of the body, `;`, `}`, `)`, `else`, or a `{` that
+/// itself opens a block (see [`opens_block`]). After `,`, `:` or an object
+/// literal's `{` the word names a method, so it is not control.
+fn control_keyword_at(body: &str, head: &str) -> bool {
+    const CONTROL: [&str; 5] = ["if", "for", "while", "switch", "with"];
+    let word = trailing_identifier(head);
+    let before = head[..head.len() - word.len()].trim_end();
+    if word == "catch" {
+        return before.ends_with('}');
+    }
+    CONTROL.contains(&word) && statement_position(body, before)
+}
+
+/// `true` when the text after `before` (a trimmed prefix of `body`) starts
+/// a statement: `before` is empty or ends with `;`, `}`, `)`, `else`, or a
+/// `{` that opens a block.
+fn statement_position(body: &str, before: &str) -> bool {
+    match before.chars().next_back() {
+        None | Some(';' | '}' | ')') => true,
+        Some('{') => opens_block(body, before.len() - 1),
+        Some(_) => trailing_identifier(before) == "else",
+    }
+}
+
+/// `true` when the `{` at byte `at` of `body` opens a statement block, not
+/// an object literal: it starts the body, follows `;`, `}`, a control
+/// keyword's `(...)`, `else`, `try`, `finally` or `do`, or a `{` that itself
+/// opens a block. `return {`, `= {` and `({` open object literals.
+fn opens_block(body: &str, at: usize) -> bool {
+    let mut at = at;
+    loop {
+        let before = body[..at].trim_end();
+        match before.chars().next_back() {
+            None | Some(';' | '}') => return true,
+            Some('{') => at = before.len() - 1,
+            Some(')') => {
+                return matching_open_paren(before)
+                    .is_some_and(|open| control_keyword_at(body, before[..open].trim_end()));
+            }
+            Some(c) if is_identifier_part(c) => {
+                return ["else", "try", "finally", "do"].contains(&trailing_identifier(before));
+            }
+            Some(_) => return false,
+        }
+    }
 }
 
 /// The byte offset of the `(` matching the `)` that ends `text`.
@@ -626,6 +742,7 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
         || statement.contains("=>")
         || !identifier_offsets(statement, "function").is_empty()
         || has_method_like_block(statement)
+        || !starts_new_statement(statement)
     {
         return false;
     }
@@ -652,6 +769,30 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
             .chars()
             .next_back()
             .is_none_or(|c| matches!(c, ';' | '}'))
+}
+
+/// `true` when `statement` cannot continue the expression on the line before
+/// it: it opens with an identifier that is not an operator or clause keyword.
+/// A line opening with `:`, `?`, `&&`, `.`, `(` and the like continues an
+/// expression (`const each = (id) => id < 0 ? {}` then `: p.m(id);`), so the
+/// `}` before it closes an object literal inside a nested function, not a
+/// block.
+fn starts_new_statement(statement: &str) -> bool {
+    const CONTINUATIONS: [&str; 9] = [
+        "in",
+        "instanceof",
+        "as",
+        "satisfies",
+        "of",
+        "else",
+        "catch",
+        "finally",
+        "while",
+    ];
+    let word = statement
+        .find(|c: char| !is_identifier_part(c))
+        .map_or(statement, |end| &statement[..end]);
+    statement.starts_with(is_identifier_start) && !CONTINUATIONS.contains(&word)
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.

@@ -180,6 +180,12 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "const send = jest.fn(); announce(...[7], send);",
         // Passed at another parameter's position.
         "const send = jest.fn(); announce(send, 7);",
+        // One call site run more than once (RIPR-SPEC-0255): in a loop or a
+        // callback, any recorded call may match the payload.
+        "const send = jest.fn(); for (const id of [7, 8]) announce(id, send);",
+        "const send = jest.fn(); let id = 6; while (id++ < 8) announce(id, send);",
+        "const send = jest.fn(); [7, 8].forEach((id) => announce(id, send));",
+        "const send = jest.fn(); [7, 8].forEach(function (id) { announce(id, send); });",
         // A local definition with the owner's name reads as a second call
         // and fails safe.
         "function announce(a, b) {} const send = jest.fn(); announce(7, send);",

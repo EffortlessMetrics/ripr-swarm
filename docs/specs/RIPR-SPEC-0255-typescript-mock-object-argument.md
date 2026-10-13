@@ -90,12 +90,15 @@ nested function is an `=>`, a `function`, or any `{` that could open a
 method body. Only an allowlist of `{` shapes reads as a plain block or
 object literal: one at the start of the body; one after `=`, `(`, `,`,
 `[`, `:`, `?`, `&`, `|`, `!`, `;` or `{`; one after `if (...)`,
-`for (...)`, `while (...)`, `switch (...)`, `catch (...)` or `with (...)`;
-one after `else`, `try`, `finally`, `do` or `return`; and a template
+`for (...)`, `while (...)`, `switch (...)` or `with (...)` when the
+keyword starts a statement (after the start of the body, `;`, `}`, `)`,
+`else`, or a `{` that itself opens a block), and after `catch (...)` when
+`catch` follows a `}`; one after `else`, `try`, `finally`, `do` or `return`; and a template
 literal's `${`. Every other `{` counts, among them one after `name(...)`,
 after any other word, after `>`, `]`, `}` or a string literal (a typed
 method such as `run(): { n: number } {` or `run(): "a" {`, or a class
-body), and one after a `)` with no matching `(`. This
+body), one after a `)` with no matching `(`, and an object method named
+like a keyword (`{ catch(e) { ... } }`, `{ a: 1, if(x) { ... } }`). This
 also closes a RIPR-SPEC-0247 gap, where method shorthand
 (`const h = { run(x) { p.m(x) } }`) counted as no nested function. When the
 body holds a nested function, the changed line is accepted only when it is
@@ -106,10 +109,24 @@ a whole top-level statement of the body:
   body, so a one-line method shorthand on the changed line refuses;
 - it sits outside every brace, parenthesis and bracket of the body, and
   no closer before it lacks its opener;
-- the text before it ends at the start of the body, a `;` or a `}`.
+- the text before it ends at the start of the body, a `;` or a `}`;
+- it opens with an identifier other than `in`, `instanceof`, `as`,
+  `satisfies`, `of`, `else`, `catch`, `finally` or `while`, so it cannot
+  continue the expression before it (`const each = (id) => id < 0 ? {}`
+  then `: p.m(id);`, where the `}` closes an object literal inside an
+  arrow, not a block).
 
 So the line cannot be a callback body, the body of an expression-bodied
 arrow on the line before, or the branch of a braceless `if` / `else`.
+
+**Both paths: the test's one owner call runs once.** For RIPR-SPEC-0247
+rule 1's direct mock and for rule 2 below, the test's single owner call
+site must not sit inside a loop or a nested function of the test's own
+block: the block holds no `for`, `while` or `do`, and the call lies in the
+body of no arrow or `function` that starts in the block
+(`[7, 8].forEach((id) => announce(id, send))` refuses). A call site that
+runs twice records two calls, and `toHaveBeenCalledWith` passes when any
+of them matches. This tightens RIPR-SPEC-0247.
 
 **Rule 2. A mock passed as the `m` entry of an inline object.** For an
 asserted target that is a single name `local` (`expect(send)`), the
@@ -177,14 +194,16 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
    twice, when it holds an arrow, a `function` or a one-line method
    itself, or inside a method shorthand, typed method (including a return
    type ending in `}` or a string literal) or class member that runs it
-   twice. A line inside an `if`
+   twice, or a line that opens with `:` or `||` and continues an arrow
+   expression ending in `{}` on the line before. A line inside an `if`
    block of an owner with only control blocks and object literals is
    still credited.
 5. Rule 2 refuses a spread, a second `send` key, a quoted key, a method
    entry, the mock under `post`, a duplicate `send` key on either side of
    a renamed mock, an object built earlier, the object at another
    position, a member of the literal, a spread argument or a spread before
-   the position, a mock
+   the position, an owner call in a `for` loop or a `forEach` callback, a
+   mock
    from a factory, a direct call to the mock, a second owner call, and a
    mock declared inside a nested block.
 6. An object payload or `toHaveBeenCalledTimes` is not credited.
@@ -195,15 +214,21 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
   `mock_in_an_inline_object_is_credited` pins examples 1 to 3;
   `changed_call_a_nested_function_may_run_is_not_credited` pins example 4;
   `mock_the_object_may_not_carry_is_not_credited` pins examples 5 and 6.
+- `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`:
+  `mock_payload_another_call_could_satisfy_is_not_credited` pins the
+  one-call rule on RIPR-SPEC-0247's direct-mock path.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `ts-vitest-checkout-notify` reads `credited`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
-  `runs_changed_line_once`, `has_method_like_block` and
-  `changed_line_is_top_level_statement` (rule 1); `MockCallFacts::credits_object_argument`,
-  `object_literal_binds` and `owner_call_argument_at` (rule 2).
+  `runs_changed_line_once`, `has_method_like_block`, `control_keyword_at`,
+  `opens_block`,
+  `changed_line_is_top_level_statement` and `starts_new_statement` (rule 1);
+  `owner_call_argument_at` and `inside_nested_function` (the one-call
+  rule); `MockCallFacts::credits_object_argument` and
+  `object_literal_binds` (rule 2).
 
 ## Metrics
 

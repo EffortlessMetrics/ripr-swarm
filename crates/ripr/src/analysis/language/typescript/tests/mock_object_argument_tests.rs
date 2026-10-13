@@ -61,6 +61,20 @@ fn mock_in_an_inline_object_is_credited() {
         "export function checkout(owner: string, lines: Line[], notifier: Notifier): number {{\n  const meta = {{ a: 1, b: [2] }};\n  let total = 0;\n  try {{\n    log(total);\n  }} catch (e) {{\n    log(e);\n  }} finally {{\n    log(meta);\n  }}\n  if (meta.a) {{\n{CHECKOUT_LINE}\n  }} else {{\n    total = 1;\n  }}\n  return total;\n}}"
     ));
     assert!(blocks.credits(&charged_payload(), CHECKOUT_TEST));
+    // Nested control blocks: an `if` inside an `if` block or a bare block.
+    for owner in [
+        format!(
+            "function checkout(owner, lines, notifier) {{\n  let total = 0;\n  if (lines) {{ if (owner) {{\n{CHECKOUT_LINE}\n  }} }}\n  return total;\n}}"
+        ),
+        format!(
+            "function checkout(owner, lines, notifier) {{\n  let total = 0;\n  {{ if (total < 0) {{ total += 1; }} }}\n  try {{ log(1); }} catch (e) {{ if (e) {{\n{CHECKOUT_LINE}\n  }} }}\n  return total;\n}}"
+        ),
+    ] {
+        assert!(
+            checkout_facts(&owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{owner}"
+        );
+    }
     // After a block statement or as the body's first statement.
     for (before, after) in [
         (
@@ -102,6 +116,12 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
         "function checkout(owner, lines, notifier) {\n  const h = { run(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
         "function checkout(owner, lines, notifier) {\n  const h = { run(total): void {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
         "function checkout(owner, lines, notifier) {\n  class H { get t() { return 1; } run(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } }\n  new H().run(1); new H().run(2);\n}",
+        // A method named like a control keyword: `catch` not after a `}`,
+        // or `if`/`switch` after an object literal's `{` or `,`.
+        "function checkout(owner, lines, notifier) {\n  const h = { catch(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.catch(1); h.catch(2);\n}",
+        "function checkout(owner, lines, notifier) {\n  const h = { if(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.if(1); h.if(2);\n}",
+        "function checkout(owner, lines, notifier) {\n  const h = { a: 1, switch(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.switch(1); h.switch(2);\n}",
+        "function checkout(owner, lines, notifier) {\n  const h = { a: { b: 1 }, if(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.if(1); h.if(2);\n}",
     ] {
         assert!(
             !checkout_facts(owner).credits(&charged_payload(), CHECKOUT_TEST),
@@ -116,6 +136,26 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
         "  const h = { run(total) { notifier.send(owner, `charged ${total} cents`); } }; h.run(1); h.run(2);",
     ] {
         let owner = format!("function checkout(owner, lines, notifier) {{\n{line}\n}}");
+        assert!(
+            !line_facts(line, &owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{line}"
+        );
+    }
+    // A line that continues the expression before it: the `}` there closes
+    // an object literal inside an arrow, which runs the line once per item.
+    for (before, line) in [
+        (
+            "  const each = (id) => id < 0 ? {}",
+            "    : notifier.send(owner, `charged ${total} cents`);",
+        ),
+        (
+            "  const each = (id) => id < 0 && {}",
+            "    || notifier.send(owner, `charged ${total} cents`);",
+        ),
+    ] {
+        let owner = format!(
+            "function checkout(owner, lines, notifier) {{\n{before}\n{line}\n  lines.forEach(each);\n}}"
+        );
         assert!(
             !line_facts(line, &owner).credits(&charged_payload(), CHECKOUT_TEST),
             "{line}"
@@ -173,6 +213,9 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         "if (ready) { const send = vi.fn(); } checkout(\"ann\", [apple], { send });",
         // A spread before the position shifts which parameter gets it.
         "const send = vi.fn(); checkout(...pre, [apple], { send });",
+        // One call site run more than once: any recorded call may match.
+        "const send = vi.fn(); for (const who of [\"ann\", \"bo\"]) checkout(who, [apple], { send });",
+        "const send = vi.fn(); [\"ann\", \"bo\"].forEach((who) => checkout(who, [apple], { send }));",
     ] {
         let test = format!(
             "it(\"t\", () => {{\n    {body}\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"

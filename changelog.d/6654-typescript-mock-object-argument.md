@@ -9,6 +9,11 @@
   verdicts drop by one (#6654).
 - TypeScript (RIPR-SPEC-0255 tightens RIPR-SPEC-0247): a changed
   `p.m(...)` call inside a method shorthand or class member
-  (`const h = { run(x) { p.m(x) } }`) no longer counts as an owner with no
+  (`const h = { run(x) { p.m(x) } }`), including one named like a keyword
+  (`{ catch(e) { p.m(e) } }`), no longer counts as an owner with no
   nested function, so a literal mock payload stops crediting a call such a
   method may run twice (#6654).
+- TypeScript (RIPR-SPEC-0255 tightens RIPR-SPEC-0247): a literal mock
+  payload no longer pins the changed call when the test calls the owner in a
+  loop or a callback (`[7, 8].forEach((id) => announce(id, send))`), where
+  another recorded call may match the payload (#6654).
