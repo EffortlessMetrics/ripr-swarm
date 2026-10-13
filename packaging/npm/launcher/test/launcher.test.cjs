@@ -746,8 +746,17 @@ test("public bin library recovery never guesses a version from invalid or unavai
       });
       assert.equal(result.status, 1);
       assert.equal(result.stdout, "");
-      if (metadata === null && result.stderr.startsWith("ripr npm launcher: Invalid package config ")) {
-        // Some Node versions reject this shape during resolution, before display lookup.
+      if (metadata === null) {
+        // Node 20 and 24 refuse this shape differently before display lookup.
+        let resolutionFailure;
+        assert.throws(
+          () => createRequire(path.join(fixture.launcherRoot, "bin", "ripr.cjs")).resolve("../lib/launcher.cjs"),
+          (error) => {
+            resolutionFailure = error;
+            return error.code !== "MODULE_NOT_FOUND";
+          },
+        );
+        assert.equal(result.stderr, `ripr npm launcher: ${resolutionFailure.message}\n`);
         assert.doesNotMatch(result.stderr, /packaged launcher library|restore lib\/launcher\.cjs|reinstall|node:internal/);
         continue;
       }
