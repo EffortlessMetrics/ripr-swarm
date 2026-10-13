@@ -133,9 +133,9 @@ fn test_calling(calls: &str) -> String {
 fn a_literal_that_misses_the_guard_names_it_and_is_not_exposed() -> Result<(), String> {
     for guard in ["x > 10", "10 < x", "(x >= 11)"] {
         for finding in push_findings(guard, &test_calling("    add(&mut v, 4);"))? {
-            assert_ne!(
+            assert_eq!(
                 finding.class,
-                ExposureClass::Exposed,
+                ExposureClass::WeaklyExposed,
                 "{guard}: {finding:?}"
             );
             assert!(
@@ -246,4 +246,108 @@ fn push_findings_with_prelude(
         return Err(format!("{guard}: no side-effect finding on the push"));
     }
     Ok(findings)
+}
+
+/// The side-effect findings on `changed_line` of a crate whose `src/lib.rs`
+/// moves from `before` to `after` (one changed line), tested by
+/// `test_source`.
+fn custom_findings(
+    before: &str,
+    after: &str,
+    changed_line: usize,
+    test_source: &str,
+) -> Result<Vec<ripr::Finding>, String> {
+    let repo = TempRepo::create("x > 10", test_source)?;
+    std::fs::write(repo.root.join("src/lib.rs"), after)
+        .map_err(|error| format!("write source failed: {error}"))?;
+    let old = before.lines().collect::<Vec<_>>();
+    let new = after.lines().collect::<Vec<_>>();
+    if old.len() != new.len() {
+        return Err("the fixture must change exactly one line".to_string());
+    }
+    let mut body = String::new();
+    for (old_line, new_line) in old.iter().zip(&new) {
+        if old_line == new_line {
+            body.push_str(&format!(" {old_line}\n"));
+        } else {
+            body.push_str(&format!("-{old_line}\n+{new_line}\n"));
+        }
+    }
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{0} +1,{0} @@\n{body}",
+        old.len()
+    );
+    std::fs::write(repo.root.join("diff.patch"), diff)
+        .map_err(|error| format!("write diff failed: {error}"))?;
+    let output = repo.check()?;
+    let findings = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.probe.family,
+                ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+            ) && finding.probe.location.line == changed_line
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if findings.is_empty() {
+        return Err(format!("no side-effect finding on line {changed_line}"));
+    }
+    Ok(findings)
+}
+
+#[test]
+fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String> {
+    // The owner calls itself after the guard: `walk(&mut v, 0)` reaches
+    // depth 4, which enters `depth > 3`, although the test passes 0.
+    let recursive = |push: &str| {
+        format!(
+            "pub fn walk(v: &mut Vec<u32>, depth: u32) {{\n    if depth > 3 {{\n        {push}\n    }}\n    if depth < 5 {{\n        walk(v, depth + 1);\n    }}\n}}\n"
+        )
+    };
+    let walk_test = "use guarded_side_effect::walk;\n\n#[test]\nfn walks() {\n    let mut v = Vec::new();\n    walk(&mut v, 0);\n    assert_eq!(v, vec![4, 5]);\n}\n";
+    // The changed push sits in an `else` closed on the guard's own line,
+    // so input 4 does run it.
+    let same_line_else = |push: &str| {
+        format!(
+            "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        v.clear();\n    }} else {{ {push} }}\n}}\n"
+        )
+    };
+    // A helper passes 20, which enters the guard; only the direct call
+    // passes 4.
+    let helper_test = "use guarded_side_effect::add;\n\nfn add_large(v: &mut Vec<u32>) {\n    add(v, 20);\n}\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    add_large(&mut v);\n    assert_eq!(v, vec![20]);\n}\n";
+    let cases = [
+        (
+            "recursion",
+            recursive("v.push(depth);"),
+            recursive("v.push(depth * 1);"),
+            3,
+            walk_test.to_string(),
+        ),
+        (
+            "same-line else",
+            same_line_else("v.push(x);"),
+            same_line_else("v.push(x * 1);"),
+            4,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "helper",
+            source("x > 10", "v.push(x);"),
+            source("x > 10", "v.push(x * 1);"),
+            3,
+            helper_test.to_string(),
+        ),
+    ];
+    for (label, before, after, line, test) in cases {
+        for finding in custom_findings(&before, &after, line, &test)? {
+            assert!(
+                !names_unentered_guard(&finding),
+                "{label}: no guard may be named: {:?}",
+                finding.ripr.infect
+            );
+        }
+    }
+    Ok(())
 }

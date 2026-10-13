@@ -44,17 +44,20 @@ pub(crate) fn related_test_miss_reason(
         // reading the facts as a predicate's picks the fact each miss was
         // assigned from.
         RelatedTestMiss::MissingInput => {
-            if let Some(fact) = input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
+            // The guard fact is read first: its value (`if x == 10`) may
+            // hold the ` == ` the predicate reading looks for.
+            if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::SideEffect)
+            {
+                format!("no test input enters `{}`", one_line(&fact.value))
+            } else if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
             {
                 format!("no test input reaches `{}`", one_line(&fact.value))
             } else if let Some(fact) =
                 input_boundary_fact(missing_discriminators, &ProbeFamily::MatchArm)
             {
                 format!("no test input selects arm `{} =>`", one_line(&fact.value))
-            } else if let Some(fact) =
-                input_boundary_fact(missing_discriminators, &ProbeFamily::SideEffect)
-            {
-                format!("no test input enters `{}`", one_line(&fact.value))
             } else {
                 "no test input reaches the changed boundary".to_string()
             }
@@ -184,6 +187,26 @@ mod tests {
                 "{miss:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_unentered_guard_reads_as_an_input_that_enters_it() {
+        let facts = vec![MissingDiscriminatorFact {
+            value: "if x == 10".to_string(),
+            reason: format!(
+                "{} `if x == 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        assert_eq!(
+            related_test_miss_reason(
+                &test_with(Some(RelatedTestMiss::MissingInput), None),
+                &facts
+            )
+            .as_deref(),
+            Some("no test input enters `if x == 10`")
+        );
     }
 
     #[test]

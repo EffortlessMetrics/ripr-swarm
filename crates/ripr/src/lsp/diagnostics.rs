@@ -3031,7 +3031,8 @@ fn lsp_message(finding: &Finding) -> String {
         .then(|| DiagnosticWitness::from_finding(finding))
         .flatten()
         .and_then(|witness| {
-            let missing = witness.missing_discriminators.first()?.value.as_str();
+            let first = witness.missing_discriminators.first()?;
+            let missing = first.value.as_str();
             let subject = match witness.expected_sink.as_deref() {
                 Some("error_variant") => "Exact error variant",
                 Some("return_value") => "Exact return value",
@@ -3048,6 +3049,16 @@ fn lsp_message(finding: &Finding) -> String {
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
             };
+            // A guard no test enters is a missing input, not a missing
+            // assertion (RIPR-SPEC-0260): the fix is an input that enters it.
+            if first
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+            {
+                return Some(format!(
+                    "No related test input enters `{missing}`; {detail}."
+                ));
+            }
             Some(format!("{subject} `{missing}` is not observed; {detail}."))
         });
     if finding.recommended_next_step.is_none()

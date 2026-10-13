@@ -52,7 +52,9 @@ counterpart for side effects.
 1. **Scope.** The rule applies to `side_effect` and `call_deletion` probes
    whose changed line sits directly in the block of an `if` (or `else if`).
    The `if` must open the innermost `{` around the line, so a line in a
-   nested closure, loop or `else` block is out of scope.
+   nested closure, loop or `else` block is out of scope. A changed line
+   that holds a brace of its own (`} else { small(v); }`,
+   `if y { v.push(x) }`) is unreadable.
 2. **Readable guard.** The condition must be exactly one comparison
    (`<`, `<=`, `>`, `>=`, `==`, `!=`) between a named owner parameter and an
    integer literal, in either order. Redundant outer parentheses are
@@ -68,7 +70,9 @@ counterpart for side effects.
      call-argument position.
 
    Telling a call argument from a pattern position needs a parser, so both
-   refuse.
+   refuse. The owner must not name itself past its signature, and no
+   function it reaches through its calls may name it: a recursive call can
+   enter the guard with a value no test passes.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -93,12 +97,14 @@ counterpart for side effects.
 
 ## Required Evidence
 
-- An end-to-end check names the guard and withholds `exposed` for `x > 10`,
-  `10 < x` and `(x >= 11)` with input 4.
+- An end-to-end check names the guard and reads `weakly_exposed` for
+  `x > 10`, `10 < x` and `(x >= 11)` with input 4.
 - The same check keeps `exposed` for input 11, and names no guard when one
   call enters, when the input is a variable, when the input is computed
   (`2 + 2`), or when the guard is unreadable (`&&`, arithmetic, a named
-  constant).
+  constant), when the owner recurses, when the changed line closes the
+  `if` block on the same line, or when a test reaches the owner through a
+  helper.
 - A labeled corpus case with runtime truth (both push mutants pass) reads
   the ideal `gap` instead of `false_exposed`.
 
@@ -120,15 +126,18 @@ counterpart for side effects.
 3. Calls `add(&mut v, 4)` and `add(&mut v, 11)` in one test: no guard named.
 4. `let n = 4; add(&mut v, n);`: no guard named (fail closed).
 5. `if x > LIMIT`: no guard named (named bound).
+6. An owner that calls itself (`walk(v, depth + 1)`) after the guard: no
+   guard named (recursion).
 
 ## Test Mapping
 
 - `crates/ripr/tests/guarded_side_effect_unentered.rs` covers acceptance
-  examples 1 to 5 end to end:
+  examples 1 to 6 end to end:
   - `a_literal_that_misses_the_guard_names_it_and_is_not_exposed`
   - `an_input_that_enters_the_guard_keeps_the_exposed_reading`
   - `one_entering_call_or_one_unread_input_names_no_guard`
   - `an_unreadable_guard_names_nothing`
+  - `recursion_a_same_line_else_or_a_helper_names_no_guard`
 - `analysis::classify::arm_selection::guard_entry::tests` covers the guard
   parser, the comparison semantics and the rebinding refusals.
 - The corpus case `rust-guarded-push-unentered-branch` is the labeled

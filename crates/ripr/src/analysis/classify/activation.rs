@@ -1435,19 +1435,26 @@ fn missing_guard_entry_discriminator(
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
-    if related_tests.is_empty()
-        || !workspace_complete
-        || !super::helper_transfer::callee_is_unique(&owner.name, index)
-    {
+    if related_tests.is_empty() || !workspace_complete {
         return None;
     }
+    // The cheap text read first: most side effects sit under no readable
+    // guard, and those need no workspace lookups.
     let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    if !super::helper_transfer::callee_is_unique(&owner.name, index) {
+        return None;
+    }
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
     for function in index.functions() {
         functions_by_name
             .entry(function.name.as_str())
             .or_default()
             .push(function);
+    }
+    // A helper the owner calls may call the owner back with a value that
+    // enters the guard (mutual recursion), which no test input shows.
+    if owner_may_reenter(owner, &functions_by_name) {
+        return None;
     }
     let mut inputs = Vec::new();
     for test in related_tests {
@@ -1472,6 +1479,40 @@ fn missing_guard_entry_discriminator(
         value: condition,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
     })
+}
+
+/// Whether a function the owner reaches through its calls names the owner,
+/// so the owner may run again with an argument computed inside the call
+/// chain rather than passed by a test.
+fn owner_may_reenter(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+) -> bool {
+    let mut pending = owner
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .filter(|name| *name != owner.name)
+        .collect::<Vec<_>>();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            if super::reveal::contains_as_whole_word(&function.body, &owner.name) {
+                return true;
+            }
+            pending.extend(
+                function
+                    .calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .filter(|callee| *callee != owner.name),
+            );
+        }
+    }
+    false
 }
 
 /// Whether the test may run the owner through something its own body does

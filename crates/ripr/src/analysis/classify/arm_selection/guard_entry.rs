@@ -12,8 +12,10 @@
 //! literal (`x > 10`, `10 <= x`), the `if` must be the innermost block
 //! around the changed line, and nothing before it in the owner may rebind
 //! or reassign the parameter or loop back to it. Each call must pass an
-//! integer literal at the parameter's position. Any other shape is
-//! unknown, and unknown never names the guard.
+//! integer literal at the parameter's position. The owner must not name
+//! itself past its signature (recursion can enter the guard with a value no
+//! test passes), and the changed line must hold no brace of its own. Any
+//! other shape is unknown, and unknown never names the guard.
 
 use super::{
     function_parameters, integer_value, is_identifier, line_starts_of, owner_calls_in,
@@ -87,6 +89,23 @@ impl GuardEntry {
             .map(str::len)
             .sum::<usize>();
         if line_offset == 0 || line_offset > masked.len() {
+            return None;
+        }
+        // A brace on the changed line itself (`} else { small(v); }`,
+        // `if y { v.push(x) }`) means the line opens or closes a block the
+        // scan below does not see, so the enclosing `if` is not read.
+        let probe_line = masked
+            .get(line_offset..)?
+            .lines()
+            .next()
+            .unwrap_or_default();
+        if probe_line.contains(['{', '}']) {
+            return None;
+        }
+        // An owner that names itself past its signature may call itself
+        // (`walk(v, depth + 1)`), and a recursive call can enter the guard
+        // with a value no test passes.
+        if whole_word_offsets(&masked, &owner.name).len() > 1 {
             return None;
         }
         let before = masked.get(..line_offset)?;
