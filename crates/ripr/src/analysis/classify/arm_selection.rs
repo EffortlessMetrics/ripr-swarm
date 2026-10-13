@@ -1083,7 +1083,7 @@ fn pattern_head(alternative: &str) -> PatternHead {
 }
 
 /// A CamelCase name is a variant by its case alone; an uncased one waits
-/// for `ArmSelector::resolve_head`.
+/// for `ArmSelector::resolve_head`. "CamelCase" is `is_variant_name`.
 fn variant_head(qualifier: Option<&str>, name: &str, irrefutable: bool) -> PatternHead {
     match qualifier {
         Some(qualifier) if !is_variant_name(name) => PatternHead::UncasedVariant {
@@ -1507,7 +1507,9 @@ fn is_identifier(text: &str) -> bool {
 /// letter. `SCREAMING` names and single letters may be constants (which a
 /// pattern compares by value, not by name), so a qualified one is a
 /// variant only when the owner's file declares it (`UncasedVariant`), and
-/// lowercase names are bindings or functions.
+/// lowercase names are bindings or functions. `variant_parts`,
+/// `variant_head` and `result_value` all branch on this rule, so a change
+/// to it moves them together.
 fn is_variant_name(name: &str) -> bool {
     name.starts_with(|ch: char| ch.is_ascii_uppercase())
         && name.chars().any(|ch| ch.is_ascii_lowercase())
@@ -2627,7 +2629,10 @@ mod tests {
             let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &function)
                 .ok_or_else(|| "premise: the arm reads its scrutinee".to_string())?;
             let source = format!("pub enum Kind {{ A, B }}\nimpl {impl_type} {{\n{body}}}\n");
-            Ok(uncased_selection_of(&resolve_with(&selector, Some(&source)), input))
+            Ok(uncased_selection_of(
+                &resolve_with(&selector, Some(&source)),
+                input,
+            ))
         };
         let on_parameter = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
         // In `impl Router`, `Self::A` is a `Router` constant: it may equal
