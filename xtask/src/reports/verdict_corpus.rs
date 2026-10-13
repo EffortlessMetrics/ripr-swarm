@@ -2645,13 +2645,13 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
 /// Validate one corpus honoring its coverage declaration: a ledgered corpus
 /// gates coverage, a ledgerless one validates structurally with disclosure.
 /// Every subcommand funnels through here so `--language` behaves the same
-/// for `validate`, `report`, `check` and `bless`. The Rust corpus is the
-/// exception: its spec-example ledger is mandatory (#6686 review), so a
-/// deleted or renamed ledger fails instead of silently dropping the
-/// coverage floor. Ledgerless operation is reserved for the non-Rust
-/// corpora that have not opted in yet.
+/// for `validate`, `report`, `check` and `bless`. Every corpus but Perl
+/// must carry its spec-example ledger (#6686 review for Rust, #7650 for
+/// Python and TypeScript), so a deleted or renamed ledger fails instead of
+/// silently dropping the coverage floor. Ledgerless operation is reserved
+/// for the Perl corpus, which has not opted in yet.
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
-    if is_rust_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+    if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
         return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
     }
     println!(

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 76d7894..6212c41 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@
+ }
+ 
+ pub fn capacity_for(n: usize) -> usize {
+-    n.next_power_of_two()
++    usize::next_power_of_two(n)
+ }
+ 
+ pub fn checked_div(a: u32, b: u32) -> Result<u32, DivByZero> {

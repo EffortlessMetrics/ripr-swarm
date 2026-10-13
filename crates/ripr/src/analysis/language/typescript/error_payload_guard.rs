@@ -230,12 +230,12 @@ pub(crate) struct ErrorChangeFacts {
 
 impl ErrorChangeFacts {
     /// Read the facts for a changed line. With no old line (a pure
-    /// addition) nothing is message-only and no old message exists.
+    /// addition, or a preview that reads only the current bytes) the old
+    /// side stays unread, so `message_only` and `separates` remain
+    /// unestablished while the new side's thrown message is still known.
     pub(crate) fn read(old_line: Option<&str>, new_line: &str) -> Self {
-        let Some(old_tokens) = old_line.and_then(tokenize) else {
-            return Self::default();
-        };
-        let old_split = split_at_throw(&old_tokens);
+        let old_tokens = old_line.and_then(tokenize);
+        let old_split = old_tokens.as_deref().and_then(split_at_throw);
         let old_message = old_split.and_then(|(_, throw)| thrown_message(throw));
         let old_string_form = old_split.and_then(|(_, throw)| thrown_string_form(throw));
         let new_tokens = tokenize(new_line);
@@ -291,6 +291,28 @@ impl ErrorChangeFacts {
             _ => false,
         }
     }
+}
+
+/// Whether a literal rejection equality's pinned reason still pins this
+/// changed line's thrown message (#7315). The promoted
+/// `expect(...).rejects.<equality>(<literal>)` assertion carries its pinned
+/// reason in `expected_value_or_variant` while `error_payload` stays
+/// `None`, so the rule-4 payload guard cannot read it. On a message-only
+/// change the pinned reason must separate the two versions exactly as a
+/// thrown-literal payload does; without a readable old side it must match
+/// the changed line's own thrown message, because a reason this line never
+/// produces observes a different throw site, not this change.
+pub(crate) fn literal_rejection_credits(pinned: Option<&str>, facts: &ErrorChangeFacts) -> bool {
+    let Some(value) = pinned.and_then(string_literal_value) else {
+        return false;
+    };
+    if facts.message_only {
+        return facts.separates(|message| message.contains(&value));
+    }
+    facts
+        .new_message
+        .as_deref()
+        .is_some_and(|message| message.contains(&value))
 }
 
 /// Whether the two thrown expressions differ only in literal values, and in

@@ -12568,7 +12568,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 10] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -12579,6 +12579,9 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // the public-API path limit. Moved here from `language/rust/mod.rs`
         // so `ripr check` and seam reach (#5411) share one mapping.
         "crates/ripr/src/analysis/classify/transitive_reach.rs",
+        // #5577: a gated trait's syntax in a test-file helper counts for any
+        // type, like a test's; in production code only for types it names.
+        "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module
@@ -12589,6 +12592,11 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // admission uses the same authority for proposed tests/*.rs leaves (#4576).
         "crates/ripr/src/analysis/new_test_target.rs",
         "crates/ripr/src/analysis/new_test_target/integration.rs",
+        // #6544: same-name call identity tells an integration-test crate
+        // apart from the owner's library crate, so its `crate::` and local
+        // modules never name the owner's; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/call_identity.rs",
     ];
 
     let files = tracked_files()?;
@@ -20576,7 +20584,6 @@ fn guarded_allow_attributes_in_text(
             continue;
         }
 
-        let line = byte_line_number(text, index);
         let mut cursor = index + 1;
         if cursor < bytes.len() && bytes[cursor] == b'!' {
             cursor += 1;
@@ -20610,8 +20617,11 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
+                // Rejected hash markers need no prefix scan for a line number.
+                let line = *line.get_or_insert_with(|| byte_line_number(text, index));
                 findings.push((line, format!("{kind}({lint})")));
             }
         }

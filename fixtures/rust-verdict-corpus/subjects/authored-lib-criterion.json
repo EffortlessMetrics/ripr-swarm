@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-lib-criterion",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against criterion 0.5.1 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "c9af308e62ac8c5c9ce76db041fcaaf24e02e5c81ed8403f71ad0c71bda3b56c"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "80038c0130e676a7ebf1bbfac8e1a3a7729db770f1d55c04efe430a0b32b6892"
+    },
+    {
+      "path": "benches/throughput.rs",
+      "sha256": "bc532542eb8215661f0e9bfbcf91430eae62d7da34b264f0e37dc7f42e98c7d6"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "978839d3b31efd010755bd05de9ee949e31be092344addd6a3048fefebd10475"
+    }
+  ]
+}

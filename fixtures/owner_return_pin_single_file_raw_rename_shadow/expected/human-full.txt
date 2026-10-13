@@ -37,7 +37,7 @@ Weakness
   - missing discriminator start: self.start: No field-value assertion observes the constructed field: start: self.start
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior.
+  The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.
 Drill in:
   ripr explain --root <cwd>/fixtures/owner_return_pin_single_file_raw_rename_shadow/input --diff <cwd>/fixtures/owner_return_pin_single_file_raw_rename_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
   ripr context --root <cwd>/fixtures/owner_return_pin_single_file_raw_rename_shadow/input --diff <cwd>/fixtures/owner_return_pin_single_file_raw_rename_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba

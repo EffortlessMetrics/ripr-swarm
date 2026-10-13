@@ -1,0 +1,58 @@
+{
+  "case_id": "namesakes-round-use-imported-rival",
+  "subject_id": "authored-namesakes",
+  "diff": "cases/namesakes-round-use-imported-rival.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 30
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "use_import_selects_the_other_same_named_function",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(v + 49) / 100 * 100",
+        "mutated_line": "(v + 49) / 100 * 100",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: metric::round(50) becomes 0 instead of 100"
+      },
+      {
+        "replacement": "(v - 50) / 100 * 100",
+        "mutated_line": "(v - 50) / 100 * 100",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: metric::round(150) becomes 100 instead of 200"
+      },
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: metric::round returns 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The trap pair of #6544: the round test imports imperial::round, so metric::round is never called and no mutant fails.",
+  "labeling_observation": {
+    "ripr_commit": "8cdde3b",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

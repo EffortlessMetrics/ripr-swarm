@@ -1797,36 +1797,99 @@ fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String
 }
 
 #[test]
-fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
+fn tokio_test_regains_the_exact_oracle_but_not_the_boundary() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
-    let report = check_workspace(CheckInput {
-        root: fixture.join("input"),
-        diff_file: Some(fixture.join("diff.patch")),
-        mode: Mode::Fast,
-        format: OutputFormat::Json,
-        include_unchanged_tests: true,
-        ..CheckInput::default()
-    })?;
+    let check = |root: PathBuf, diff: PathBuf| {
+        check_workspace(CheckInput {
+            root,
+            diff_file: Some(diff),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+    };
+    let report = check(fixture.join("input"), fixture.join("diff.patch"))?;
     assert_eq!(report.findings.len(), 1, "retain the actual async owner");
-    assert_eq!(report.findings[0].class, ExposureClass::PropagationUnknown);
+    // #5040: the `#[tokio::test]` body runs on tokio's runtime and the
+    // assertion reads the awaited owner value, so the exact-value oracle is
+    // strong. 100/50 is not an equality input, so `>` vs `>=` stays weak.
+    assert_eq!(report.findings[0].class, ExposureClass::WeaklyExposed);
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
             .map_err(|error| error.to_string())?;
     assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
     let finding = &json["findings"][0];
     assert_eq!(finding["probe"]["family"], "predicate");
-    assert_eq!(finding["ripr"]["observe"]["state"], "no");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "no");
-    assert_eq!(finding["oracle_strength"], "none");
+    assert_eq!(finding["ripr"]["observe"]["state"], "yes");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes");
+    assert_eq!(finding["oracle_kind"], "exact_value");
+    assert_eq!(finding["oracle_strength"], "strong");
+    assert_eq!(
+        finding["missing_discriminators"][0]["value"],
+        "capacity == threshold"
+    );
     let tests = finding["related_tests"]
         .as_array()
         .ok_or("missing indexed async test")?;
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0]["name"], "above_threshold_gets_reduced");
-    assert_eq!(tests[0]["oracle_strength"], "none");
-    // #5040 owns establishing the missing macro-binding/polling edge. The
-    // independently executed Tokio removal controls show the real test works;
-    // source discovery alone must not manufacture that execution provenance.
+    assert_eq!(tests[0]["oracle_strength"], "strong");
+
+    // The companion equality input discriminates the boundary on its own.
+    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let variant = |label: &str, from: &str, to: &str| -> Result<ExposureClass, String> {
+        assert!(
+            source.contains(from),
+            "{label}: the fixture must hold {from}"
+        );
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), source.replace(from, to))
+            .map_err(|error| error.to_string())?;
+        let report = check(scratch.0.clone(), fixture.join("diff.patch"))?;
+        assert_eq!(report.findings.len(), 1, "{label}: retain the async owner");
+        Ok(report.findings[0].class.clone())
+    };
+    assert_eq!(
+        variant(
+            "boundary input",
+            "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);",
+            "let result = fetch_limit(50, 50).await;\n        assert_eq!(result, 50);",
+        )?,
+        ExposureClass::Exposed
+    );
+    // A rebound `tokio` path, a custom runtime path and an unpolled async block
+    // keep the assertion's execution unestablished.
+    for (label, from, to) in [
+        (
+            "rebound tokio",
+            "    use super::*;\n",
+            "    use super::*;\n    use core as tokio;\n",
+        ),
+        (
+            "custom runtime path",
+            "#[tokio::test]",
+            "#[tokio::test(crate = \"other\")]",
+        ),
+        (
+            "unpolled async block",
+            "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);",
+            "let check = async { assert_eq!(fetch_limit(100, 50).await, 90) };\n        drop(check);",
+        ),
+    ] {
+        let class = variant(label, from, to)?;
+        assert!(
+            !matches!(class, ExposureClass::Exposed | ExposureClass::WeaklyExposed),
+            "{label}: no oracle credit, got {class:?}"
+        );
+    }
     Ok(())
 }
 

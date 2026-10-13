@@ -10,7 +10,27 @@ use std::path::{Component, Path, PathBuf};
 
 const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
-const CACHE_USAGE: &str = "Inspect or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--json]\n  ripr cache clear [--dry-run] [--force]";
+const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--dry-run] [--force]";
+
+pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
+
+Copy a qualified current-input cache snapshot, excluding historical keys,
+unreferenced shards, fingerprint mappings and staging files. The live cache
+is never changed. Run repo exposure or repo badge analysis first.
+
+  --root PATH   Analyzed root, preserving the spelling supplied to check.
+                Default: the same implicit workspace resolution as check.
+  --out PATH    New cache directory; its parent must already exist.
+
+Success prints JSON with entry counts and logical_file_bytes (encoded file
+lengths, not allocated filesystem bytes). Restore the completed directory as
+RIPR_CACHE_DIR for the same workspace path, analyzer build and input identity.
+Missing optional file facts are counted; corrupt present entries refuse export.
+Require exit zero before using or publishing the output. On failure, incomplete
+owned output is retained and named. Existing destinations, cache overlap and
+linked paths are refused. Concurrent hostile directory replacement is outside
+this cooperative-filesystem contract. No live-cache history is deleted.
+"#;
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
@@ -592,16 +612,64 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        return Err("cache requires subcommand `status` or `clear`".to_string());
+        return Err("cache requires subcommand `status`, `export` or `clear`".to_string());
     };
 
     match subcommand.as_str() {
         "status" => run_status(rest),
+        "export" => run_export(rest),
         "clear" => run_clear(rest),
         other => Err(format!(
-            "unknown cache subcommand {other:?}; expected `status` or `clear`"
+            "unknown cache subcommand {other:?}; expected `status`, `export` or `clear`"
         )),
     }
+}
+
+fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), String> {
+    let mut root = None;
+    let mut output = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let slot = match arg.as_str() {
+            "--root" => &mut root,
+            "--out" => &mut output,
+            other => return Err(unknown_argument("cache export", other)),
+        };
+        if slot.is_some() {
+            return Err(format!("cache export repeats {arg}"));
+        }
+        let value = args
+            .next()
+            .filter(|value| !value.is_empty() && !value.starts_with("--"))
+            .ok_or_else(|| format!("cache export {arg} requires a path"))?;
+        *slot = Some(PathBuf::from(value));
+    }
+    Ok((
+        root,
+        output.ok_or("cache export requires --out NEW_DIRECTORY")?,
+    ))
+}
+
+fn run_export(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{CACHE_EXPORT_HELP}");
+        return Ok(());
+    }
+    let (root, output) = parse_export_args(args)?;
+    let root = match root {
+        Some(root) => root,
+        None => {
+            let mut input = crate::app::CheckInput::default();
+            super::check::resolve_implicit_workspace_root(&mut input)?;
+            input.root
+        }
+    };
+    let report = crate::analysis::seam_cache::export_current(&root, &output)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -612,6 +680,188 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn cache_contents(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>, String> {
+        fn walk(
+            root: &Path,
+            dir: &Path,
+            files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        ) -> Result<(), String> {
+            for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let path = entry.path();
+                if entry
+                    .file_type()
+                    .map_err(|error| error.to_string())?
+                    .is_dir()
+                {
+                    walk(root, &path, files)?;
+                } else {
+                    files.insert(
+                        path.strip_prefix(root)
+                            .map_err(|error| error.to_string())?
+                            .to_path_buf(),
+                        fs::read(&path).map_err(|error| error.to_string())?,
+                    );
+                }
+            }
+            Ok(())
+        }
+        let mut files = std::collections::BTreeMap::new();
+        walk(root, root, &mut files)?;
+        Ok(files)
+    }
+
+    #[test]
+    fn export_current_snapshot_through_command_preserves_source_and_bounds_history()
+    -> Result<(), String> {
+        let root = temp_dir("export-history");
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let source_cache = crate::analysis::seam_cache::cache_base_dir(&root);
+        for value in [3, 5, 7] {
+            fs::write(
+                root.join("src/lib.rs"),
+                format!("pub fn threshold(x: u32) -> bool {{ x > {value} }}\n"),
+            )
+            .map_err(|error| error.to_string())?;
+            crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
+            let source_before = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
+            let source_bytes = cache_contents(&source_cache)?;
+            let output = root.join(format!("export-{value}"));
+            run(&[
+                "export".to_owned(),
+                "--root".to_owned(),
+                root.to_string_lossy().into_owned(),
+                "--out".to_owned(),
+                output.to_string_lossy().into_owned(),
+            ])?;
+            let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
+            assert_eq!(
+                exported.entry_count, 2,
+                "one current classified entry and one current file fact, independent of history"
+            );
+            let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
+            assert_eq!(source_before.entry_count, source_after.entry_count);
+            assert_eq!(
+                source_before.total_size_bytes,
+                source_after.total_size_bytes
+            );
+            assert_eq!(source_bytes, cache_contents(&source_cache)?);
+            assert!(
+                run(&[
+                    "export".to_owned(),
+                    "--root".to_owned(),
+                    root.to_string_lossy().into_owned(),
+                    "--out".to_owned(),
+                    output.to_string_lossy().into_owned()
+                ])
+                .is_err(),
+                "existing output is never overwritten"
+            );
+            assert_eq!(source_bytes, cache_contents(&source_cache)?);
+        }
+        let source_bytes = cache_contents(&source_cache)?;
+        let unavailable_config = root.join(".cargo/config.toml");
+        assert!(!unavailable_config.exists());
+        fs::create_dir_all(&unavailable_config).map_err(|error| error.to_string())?;
+        let refused_output = root.join("export-unavailable");
+        assert!(!refused_output.exists());
+        let refusal = run(&[
+            "export".to_owned(),
+            "--root".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--out".to_owned(),
+            refused_output.to_string_lossy().into_owned(),
+        ])
+        .err()
+        .ok_or("unavailable Cargo identity unexpectedly exported")?;
+        assert!(refusal.contains("cargo_configuration_identity_unavailable"));
+        assert!(!refused_output.exists(), "refuse before creating output");
+        assert_eq!(source_bytes, cache_contents(&source_cache)?);
+        fs::remove_dir(&unavailable_config).map_err(|error| error.to_string())?;
+        run(&[
+            "export".to_owned(),
+            "--root".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--out".to_owned(),
+            refused_output.to_string_lossy().into_owned(),
+        ])?;
+        assert_eq!(source_bytes, cache_contents(&source_cache)?);
+        assert_eq!(
+            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
+            2
+        );
+        let overlap = source_cache.join("nested-export");
+        assert!(
+            run(&[
+                "export".to_owned(),
+                "--root".to_owned(),
+                root.to_string_lossy().into_owned(),
+                "--out".to_owned(),
+                overlap.to_string_lossy().into_owned()
+            ])
+            .is_err()
+        );
+        assert!(!overlap.exists());
+        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn export_preserves_relative_analysis_root_identity() -> Result<(), String> {
+        // Cargo's package cwd and the workspace TMPDIR need not coincide.
+        // Put this owned fixture under the actual cwd to retain a relative root.
+        let current = std::env::current_dir().map_err(|error| error.to_string())?;
+        let unique = temp_dir("export-relative-root");
+        let name = unique
+            .file_name()
+            .ok_or("relative fixture needs a leaf name")?;
+        let relative = PathBuf::from("target").join(name);
+        let root = current.join(&relative);
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            b"pub fn threshold(x: u32) -> bool { x > 3 }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        crate::analysis::inventory_classified_seams_report_at_with_config(
+            &relative,
+            &crate::config::RiprConfig::default(),
+        )?;
+        let output = root.join("export");
+        run(&[
+            "export".to_owned(),
+            "--root".to_owned(),
+            relative.to_string_lossy().into_owned(),
+            "--out".to_owned(),
+            output.to_string_lossy().into_owned(),
+        ])?;
+        assert_eq!(
+            crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
+            2
+        );
+        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn export_parser_requires_one_destination_and_keeps_its_flags_separate() -> Result<(), String> {
+        let parsed = parse_export_args(&["--out".to_owned(), "snapshot".to_owned()])?;
+        assert_eq!(parsed, (None, PathBuf::from("snapshot")));
+        for args in [
+            vec![],
+            vec!["--out", "--root", "x"],
+            vec!["--out", "a", "--out", "b"],
+            vec!["--force"],
+        ] {
+            if parse_export_args(&args.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_ok() {
+                return Err("invalid export arguments unexpectedly accepted".to_owned());
+            }
+        }
+        assert!(unknown_argument("cache export", "--oot").contains("--out"));
+        Ok(())
+    }
 
     fn temp_dir(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -1653,7 +1903,7 @@ mod tests {
         run(&["clear".to_string(), "--help".to_string()])?;
         if run(&[])
             .err()
-            .is_none_or(|error| !error.contains("status` or `clear"))
+            .is_none_or(|error| !error.contains("`status`, `export` or `clear`"))
         {
             return Err("missing cache subcommand did not fail closed".to_string());
         }
