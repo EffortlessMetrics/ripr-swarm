@@ -5,6 +5,6 @@
   associated constant, so ripr reads it as a variant only when the path is
   `Kind::A` (or `Self::A` in `Kind`'s own impl), the scrutinee's type is
   written as plain `Kind`, and the owner's file declares the one `enum Kind`
-  listing `A` with no import, glob import, item macro or other item that
-  could bind `Kind`. Otherwise the arm stays unknown, as before
+  listing `A` with no import, module glob (an inline test module's
+  `use super::*` is fine), item macro or other item that could bind `Kind`. Otherwise the arm stays unknown, as before
   ([#7543](https://github.com/EffortlessMetrics/ripr-swarm/issues/7543)).

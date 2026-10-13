@@ -982,7 +982,10 @@ fn declared_enum_variants(
         }
         match &import.alias {
             Some(alias) => alias == type_name,
-            None if last == "*" => !segments.next().is_some_and(is_variant_name),
+            // `super::*` is judged on the parse below.
+            None if last == "*" => {
+                import.path != "super::*" && !segments.next().is_some_and(is_variant_name)
+            }
             None => last == type_name,
         }
     });
@@ -1011,6 +1014,7 @@ fn declared_enum_variants(
             || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+            || parent_glob_outside_this_file(&node)
             || (ast::MacroCall::can_cast(node.kind())
                 && node.parent().is_some_and(|parent| {
                     ast::SourceFile::can_cast(parent.kind())
@@ -1021,6 +1025,22 @@ fn declared_enum_variants(
         }
     }
     found
+}
+
+/// Whether `node` is a file-root `use super::*`, which brings in another
+/// file's items. In an inline module (`mod tests { use super::*; }`) it
+/// brings in only this file's items and imports, which are read already.
+fn parent_glob_outside_this_file(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    ast::Use::cast(node.clone()).is_some_and(|item| {
+        !item
+            .syntax()
+            .ancestors()
+            .any(|ancestor| ast::Module::can_cast(ancestor.kind()))
+            && flattened_use_paths(&item.syntax().text().to_string())
+                .iter()
+                .any(|import| import.path == "super::*")
+    })
 }
 
 /// The same reading applied to a call's input expression. A variant input
@@ -2116,6 +2136,17 @@ mod tests {
                 "{source:?}"
             );
         }
+        // A file-root `use super::*` brings in another file's items.
+        assert_eq!(
+            judged(Some(&format!("use super::*;\n{declared}")), "Kind::A"),
+            Some(ArmSelection::Unknown)
+        );
+        // In an inline test module it brings in only this file's items.
+        let inline_tests = format!("{declared}#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n");
+        assert_eq!(
+            judged(Some(&inline_tests), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
         // A variant glob of the enum itself binds no type name.
         assert_eq!(
             judged(Some(&format!("use Kind::*;\n{declared}")), "Kind::A"),

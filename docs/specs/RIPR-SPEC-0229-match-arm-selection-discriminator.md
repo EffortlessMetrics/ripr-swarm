@@ -311,12 +311,14 @@ implies but does not spell out:
 - a qualified name with no lowercase letter (`Kind::A`, `Method::GET`) may
   be an associated constant, which a pattern compares by value. It reads as
   a variant only when its path is `Type::NAME`, with `Type` the
-  scrutinee's type as written unqualified in the signature (or `Self` in
-  that type's own impl), and the owner's file declares exactly one enum of
-  that name listing `NAME`, declares no other item of that name, imports
-  nothing by that name, glob-imports no module and calls no item macro.
-  Otherwise, and for a bare uncased name (`A`), the pattern or input is not
-  provable;
+  scrutinee's type written unqualified (in the parameter's signature, or
+  the impl header for `self`), or `Self` in that type's own impl. The
+  owner's file must declare exactly one enum of that name listing `NAME`
+  and no struct, union, trait or type alias of that name, import nothing by
+  that name, glob-import no module (a `use super::*` inside an inline
+  module, such as `mod tests`, brings in only that file's items) and call
+  no macro at file or module item level. Otherwise, and for a bare uncased
+  name (`A`), the pattern or input is not provable;
 - a bare lowercase pattern (`target =>`) is a binding only when the owner's
   file declares no `const` or `static` of that name, imports no item by
   that name, and has no glob import of a module, since Rust compares a
