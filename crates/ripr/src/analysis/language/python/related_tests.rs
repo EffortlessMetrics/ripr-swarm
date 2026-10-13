@@ -8,6 +8,9 @@ use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, Relate
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod verify_command_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
     SyntacticCall,
