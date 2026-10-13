@@ -215,17 +215,28 @@ mod tests {
             cargo_input_identity_with_env(&root, &undiscoverable).is_none(),
             "undiscoverable home cannot become a reusable no-home marker"
         );
+        std::fs::create_dir_all(root.join("explicit-home")).map_err(|error| error.to_string())?;
+        let mut explicit_identities = Vec::new();
         for cargo_home in [PathBuf::from("explicit-home"), root.join("explicit-home")] {
             let explicit = HomeEnvironment {
                 cargo_home: Some(cargo_home.into_os_string()),
                 ..undiscoverable.clone()
             };
-            assert_eq!(
-                snapshot(&explicit)?.len(),
-                16,
-                "explicit Cargo home needs no OS home"
+            let before = snapshot(&explicit)?;
+            let path = root.join("explicit-home/config.toml");
+            std::fs::write(&path, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let configured = snapshot(&explicit)?;
+            assert_ne!(
+                configured, before,
+                "explicit home configuration participates without OS home"
             );
+            explicit_identities.push(configured);
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
         }
+        assert_eq!(
+            explicit_identities[0], explicit_identities[1],
+            "relative and absolute explicit Cargo homes have the same authority"
+        );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 

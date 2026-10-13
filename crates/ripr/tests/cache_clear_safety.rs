@@ -160,9 +160,9 @@ fn classified_cache_cargo_home_fallback_and_relative_home_match_cold() -> Result
     ] {
         fs::write(root.join(path), "[build]\njobs=1\n").map_err(|error| error.to_string())?;
     }
-    common::fixture_git::fixture_git(&root, &["init", "--quiet"])?;
-    common::fixture_git::fixture_git(&root, &["add", "."])?;
-    common::fixture_git::fixture_git(
+    common::fixture_git::fixture_git_ok(&root, &["init", "--quiet"])?;
+    common::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+    common::fixture_git::fixture_git_ok(
         &root,
         &[
             "-c",
@@ -242,19 +242,26 @@ fn classified_cache_cargo_home_fallback_and_relative_home_match_cold() -> Result
             seam["related_tests"][0]["name"],
             "shipping_is_four_per_kilo"
         );
+        let corpus = initial
+            .pointer("/source_subject/corpus")
+            .ok_or("usable Cargo home must publish the actual corpus provenance field")?;
+        let digest = corpus["files_content_hash"]
+            .as_str()
+            .ok_or("nonempty Rust corpus digest")?;
         assert!(
-            !initial["corpus_key"].is_null(),
-            "usable Cargo home must publish provenance for {case:?}"
+            !digest.is_empty(),
+            "nonempty comparable corpus for {case:?}"
         );
         let (warm, trace) = run(&cache)?;
         assert!(
-            trace.contains("cache_hit"),
+            trace.contains("phase=total status=cache_hit"),
             "usable fallback must reuse classified facts for {case:?}: {trace}"
         );
         let (cold, _) = run(&root.join(format!("target/cold-{case:?}")))?;
         assert_eq!(warm["seams"], initial["seams"]);
         assert_eq!(warm["seams"], cold["seams"]);
-        assert_eq!(warm["corpus_key"], cold["corpus_key"]);
+        assert_eq!(warm.pointer("/source_subject/corpus"), Some(corpus));
+        assert_eq!(cold.pointer("/source_subject/corpus"), Some(corpus));
         let config = match case {
             HomeEnvironment::RelativeHome => Some(root.join("relative-home/.cargo/config.toml")),
             HomeEnvironment::RelativeCargoHome => Some(root.join("relative-cargo/config.toml")),
@@ -262,18 +269,20 @@ fn classified_cache_cargo_home_fallback_and_relative_home_match_cold() -> Result
         };
         if let Some(config) = config {
             fs::write(&config, "[build\n").map_err(|error| error.to_string())?;
-            let (edited, _) = run(&cache)?;
+            let (edited, edited_trace) = run(&cache)?;
             let (edited_cold, _) = run(&root.join(format!("target/edited-cold-{case:?}")))?;
-            assert_ne!(
-                edited["corpus_key"], initial["corpus_key"],
-                "relative home bytes must bind identity despite different caller cwd"
+            assert!(
+                !edited_trace.contains("phase=total status=cache_hit"),
+                "relative home edit must miss the old classified key despite different caller cwd"
             );
-            assert_eq!(edited["corpus_key"], edited_cold["corpus_key"]);
+            assert_eq!(edited["seams"], edited_cold["seams"]);
+            assert_eq!(edited.pointer("/source_subject/corpus"), Some(corpus));
+            assert_eq!(edited_cold.pointer("/source_subject/corpus"), Some(corpus));
             fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
             let (restored, trace) = run(&cache)?;
-            assert_eq!(restored["corpus_key"], initial["corpus_key"]);
+            assert_eq!(restored.pointer("/source_subject/corpus"), Some(corpus));
             assert!(
-                trace.contains("cache_hit"),
+                trace.contains("phase=total status=cache_hit"),
                 "relative home revert must reuse preserved facts: {trace}"
             );
         }
