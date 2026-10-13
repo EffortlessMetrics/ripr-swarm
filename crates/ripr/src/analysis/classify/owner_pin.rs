@@ -96,6 +96,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
     /// return value to `true` and `assert!(!owner(..))` to `false`.
     returns_bool: bool,
+    /// The owner is an `async fn`, so a test reads its return value as
+    /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
+    awaited: bool,
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
@@ -1514,6 +1517,7 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1596,6 +1600,7 @@ impl OwnerReturnPin {
             },
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1687,6 +1692,7 @@ impl OwnerReturnPin {
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
             returns_bool: false,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1696,6 +1702,20 @@ impl OwnerReturnPin {
 
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
+    /// [`owner_call_shape`], reading an `async` owner's result through one
+    /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
+    /// awaits a future it returns, whose output its return expression does
+    /// not hold, so that stays refused.
+    fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
+        let operand = operand.trim();
+        // An async owner's bare call is its future, not its return value.
+        match (self.awaited, operand.strip_suffix(".await")) {
+            (true, Some(call)) => owner_call_shape(call.trim_end(), name),
+            (true, None) => None,
+            (false, _) => owner_call_shape(operand, name),
+        }
+    }
+
     pub(in crate::analysis) fn admits(
         &self,
         test: &TestSummary,
@@ -1732,8 +1752,8 @@ impl OwnerReturnPin {
                 return false;
             };
             match (
-                owner_call_shape(operands[0], &self.name),
-                owner_call_shape(operands[1], &self.name),
+                self.awaited_call_shape(operands[0], &self.name),
+                self.awaited_call_shape(operands[1], &self.name),
             ) {
                 (Some(call), None) => (call, operands[1]),
                 (None, Some(call)) => (call, operands[0]),
@@ -1748,7 +1768,7 @@ impl OwnerReturnPin {
                 {
                     let bound = |at: usize| {
                         let_bound_owner_call(test, assertion, operands[at], &self.name)
-                            .and_then(|call| owner_call_shape(call, &self.name))
+                            .and_then(|call| self.awaited_call_shape(call, &self.name))
                     };
                     match (bound(0), bound(1)) {
                         (Some(call), None) => (call, operands[1]),
@@ -1772,8 +1792,8 @@ impl OwnerReturnPin {
             }
         } else if let Some([left, right]) = &equality {
             match (
-                owner_call_shape(left, &self.name),
-                owner_call_shape(right, &self.name),
+                self.awaited_call_shape(left, &self.name),
+                self.awaited_call_shape(right, &self.name),
             ) {
                 (Some(call), None) => (call, right.as_str()),
                 (None, Some(call)) => (call, left.as_str()),
@@ -1818,7 +1838,7 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            let Some(call) = owner_call_shape(operand, &self.name) else {
+            let Some(call) = self.awaited_call_shape(operand, &self.name) else {
                 return false;
             };
             (call, expected)
@@ -2654,6 +2674,50 @@ enum CallShape<'a> {
     /// `a::b::name(..)`: a free-function call through a module path of
     /// plain identifiers; holds the path before `::name` (#6974).
     Path(&'a str),
+}
+
+/// Whether `owner` is declared `async fn`, read from the parsed `async`
+/// token of the one `fn <name>` item whose span holds the owner's start
+/// line. No parse, or no single match, reads as sync: an async owner then
+/// gets no `.await` credit, and its bare call (a future) does not compile.
+fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let source: &str = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        let at = (u32::from(offset) as usize).min(source.len());
+        source.as_bytes()[..at]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1
+    };
+    let mut matches = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name.as_str())
+        })
+        .filter(|function| {
+            let Some(fn_token) = function.fn_token() else {
+                return false;
+            };
+            (line_of(function.syntax().text_range().start())
+                ..=line_of(fn_token.text_range().start()))
+                .contains(&owner.start_line)
+        });
+    match (matches.next(), matches.next()) {
+        (Some(function), None) => function.async_token().is_some(),
+        _ => false,
+    }
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`

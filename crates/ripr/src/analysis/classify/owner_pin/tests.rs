@@ -1495,6 +1495,8 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         // A rooted path names the same crate.
         "#[test]\n#[::serial_test::serial]",
         "#[::serial_test::serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        // A local `tokio` matters only to a module that uses tokio's attribute.
+        "mod tokio {}\n#[test]\n#[serial_test::serial]",
     ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
@@ -1561,6 +1563,84 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+}
+
+#[test]
+fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
+    for attributes in [
+        "#[tokio::test]",
+        "#[tokio::test(flavor = \"multi_thread\", worker_threads = 2)]",
+        "#[tokio::test(flavor = \"current_thread\", start_paused = true)]",
+        "#[tokio::test]\n#[serial_test::serial]",
+        "extern crate tokio;\n#[tokio::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // Another crate's runtime path, and arguments that change what runs.
+        "#[test]",
+        "#[async_std::test]",
+        "#[tokio::test(crate = \"other\")]",
+        "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
+        "#[tokio::test(flavor = some_flavor())]",
+        "#[tokio::test(flavor = \"current_thread\", start_paused = true, unhandled_panic = \"shutdown_runtime\")]",
+        // A local `tokio` shadows the crate.
+        "mod tokio { pub use other::test; }\n#[tokio::test]",
+        "use other as tokio;\n#[tokio::test]",
+        // A shadowed serial_test lock elsewhere in the module may emit `tokio`.
+        "mod serial_test { pub use other::serial; }\n#[serial_test::serial]\nfn helper() {}\n#[tokio::test]",
+        "mod tokio { pub use other::test; }\n#[tokio::test]\n#[serial_test::serial]",
+        "#[tokio::test]\n#[ignore]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A sync `fn` under `#[tokio::test]` does not compile.
+    let tests =
+        "use demo::weight;\n#[tokio::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(
+        index.tests().len(),
+        1,
+        "the sync tokio test must be indexed"
+    );
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+}
+
+#[test]
+fn an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not() {
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n    assert_eq!(weight(4), 12);\n    assert_eq!(weight(4).await.await, 12);\n    assert_eq!(async { weight(4).await }.await, 12);\n    let heavy = weight(4).await;\n    assert_eq!(heavy, 12);\n    let pending = weight(5);\n    assert_eq!(pending, 15);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the async owner must establish a pin");
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(weight(4).await, 12);".to_string(),
+            "assert_eq!(heavy, 12);".to_string()
+        ]
+    );
+    // `async` in a comment does not make the owner async.
+    let lib = "/* async */ pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = self::index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the sync owner must establish a pin");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&index, &pin).is_empty());
+    }
+    // A sync owner's `.await` is a different value (an `IntoFuture` impl).
+    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
 }
 
 #[test]

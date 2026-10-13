@@ -12270,6 +12270,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
@@ -12325,7 +12327,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
   "crates/ripr/src/analysis/seam_cache.rs::tests::empty_macro_call_predecessor_from_another_build_misses_and_current_reuses",
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
-  "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
+  "crates/ripr/tests/owner_pin_execution.rs::tokio_test_regains_the_exact_oracle_but_not_the_boundary",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
   "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::unit_struct_receiver_matched_static_and_runtime_controls",
