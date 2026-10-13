@@ -58,6 +58,7 @@ foreign test/owner shapes are refused, while a bound alternate shape is kept.
 Downstream witnesses, gap projections and preview evidence resolve the complete
 declared file/test-name to one retained oracle-related row. They do not rerank
 equal-strength rows; missing, unknown or ambiguous identities yield no target.
+Only file separators normalize; names preserve backslashes, `::` and whitespace.
 Synthetic composition controls cover these consumers under permutations and
 advisory/direct combinations, without establishing shared-validator
 qualification (their inherited raw references and edit boundaries are separate).

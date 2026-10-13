@@ -169,16 +169,20 @@ pub(crate) fn perl_suggested_related_test(finding: &Finding) -> Option<&RelatedT
     }
     let mut declarations = finding.evidence.iter().filter_map(|line| {
         line.strip_prefix("perl_suggested_test_location: ")
-            .map(str::trim)
             .filter(|value| !value.is_empty())
     });
-    let declaration = declarations.next()?.replace('\\', "/");
+    let declaration = declarations.next()?;
     if declarations.next().is_some() {
         return None;
     }
-    let mut matches = finding
-        .oracle_related_tests()
-        .filter(|test| format!("{}::{}", display_path(&test.file), test.name) == declaration);
+    let mut matches = finding.oracle_related_tests().filter(|test| {
+        // Normalize only the file. Test descriptions may themselves contain
+        // backslashes, whitespace or `::`; their identity stays exact.
+        let name_suffix = format!("::{}", test.name);
+        declaration
+            .strip_suffix(name_suffix.as_str())
+            .is_some_and(|file| file.replace('\\', "/") == display_path(&test.file))
+    });
     let first = matches.next()?;
     matches.next().is_none().then_some(first)
 }

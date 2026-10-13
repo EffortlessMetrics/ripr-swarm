@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "The boundary test lives on the same-file mixin FeeChecks, which TestFees inherits alongside unittest.TestCase (RIPR-SPEC-0028, #4562); it pins 9999 and 10000 with self.assertEqual, so both shifts fail. ripr reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "The boundary test lives on the same-file mixin FeeChecks, which TestFees inherits alongside unittest.TestCase (RIPR-SPEC-0028, #4562); it pins 9999 and 10000 with self.assertEqual, so both shifts fail. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

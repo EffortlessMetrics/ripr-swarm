@@ -185,10 +185,9 @@ For each change, the first match wins:
 5. **Oracle binding.** An oracle counts for a relation only when it is
    named by `relation.oracle_id`, its `test_id` is the relation's
    `test_id`, and its `target_owner_id` is the change owner. Sink
-   alignment (rule 9) uses the same binding. Today sink alignment skips
-   the test-id check, so a relation can be `exposed` on another test's
-   oracle. An oracle that fails the binding is treated as absent for that
-   relation. Ingestion does not reject the cross-link.
+   alignment (rule 9) uses the same binding, so a relation is never
+   `exposed` on another test's oracle. An oracle that fails the binding is
+   treated as absent for that relation. Ingestion does not reject the cross-link.
 6. **Strong-eligible kinds.** An oracle is strong only when its strength
    is `strong_exact` and its kind is one of `exact_return_assertion`,
    `predicate_boundary_assertion`, `exception_observer`,
@@ -282,6 +281,8 @@ For each change, the first match wins:
       leave the witness target unavailable and refuse the projections; this
       neither supplies a symbol-resolved assertion template nor promotes
       sparse packets to complete repair authority.
+      Normalize only file separators; test-name backslashes, whitespace and
+      `::` remain exact identity rather than path syntax.
 14. **Fingerprint scope.** The packet fingerprint is a consistency check
     on identity facts, not an authenticity control: it is an unkeyed
     SHA-256 that any writer can recompute. No output, doc or comment may
@@ -481,8 +482,7 @@ cases.
     (unchanged).
 28. A relation to test `other` whose `oracle_id` names the oracle of
     `test_discount_threshold`, with example 17's sinks:
-    `reachable_unrevealed`, no `perl_already_discriminated:` (today
-    `exposed`).
+    `reachable_unrevealed`, no `perl_already_discriminated:`.
 29. Relation `confidence: low`, or test `framework: unknown`:
     `weakly_exposed` (unchanged).
 30. `packet_status: partial`, or the owner id written as
@@ -503,7 +503,8 @@ cases.
   `h2_non_aligned_sink_stays_weakly_exposed`,
   `h2_advisory_relation_with_matching_sink_does_not_promote` and
   `h2_token_substring_coincidence_does_not_align` (rule 9, assert only
-  `!= Exposed` today), `h1_ownerless_file_boundary_still_blocks`,
+  `!= Exposed` today), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
+  (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
   `h1_boundary_on_explicit_other_owner_does_not_block` and
   `h1_dynamic_dispatch_limitation_*` (rule 1),
   `h1_concrete_discriminator_attaches_canonical_gap` and

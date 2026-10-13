@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "The only assertion on tier_label checks 2000 and 10 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr still reports exposed, a false exposed.",
+  "reasoning": "The only assertion on tier_label checks 2000 and 10 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr reported exposed when this case was labeled, a false exposed, until #7571 bound sink alignment to the relation's test.",
   "labeling_observation": {
     "ripr_commit": "28e86e6",
     "full_checkout_verdict": "credited",

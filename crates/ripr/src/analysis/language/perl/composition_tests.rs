@@ -208,3 +208,93 @@ fn perl_composition_producer_excludes_other_owner_with_same_name() -> Result<(),
     }
     Ok(())
 }
+
+fn exact_name_tuple(file: &str, declaration_file: &str, name: &str) -> Finding {
+    let mut finding = declared_tuple(false);
+    finding.related_tests[0].file = file.into();
+    finding.related_tests[0].name = name.to_string();
+    finding.related_tests[1].file = file.into();
+    finding.related_tests[1].name = name.replace('\\', "/");
+    for line in &mut finding.evidence {
+        if line.starts_with("perl_suggested_test_location: ") {
+            *line = format!("perl_suggested_test_location: {declaration_file}::{name}");
+        } else if line.starts_with("perl_verify_command: ") {
+            *line = format!("perl_verify_command: prove {file}");
+        }
+    }
+    finding
+}
+
+fn assert_exact_name_tuple(mut finding: Finding, file: &str, name: &str) -> Result<(), String> {
+    for reversed in [false, true] {
+        if reversed {
+            finding.related_tests.reverse();
+        }
+        let witness = DiagnosticWitness::from_finding(&finding).ok_or("missing witness")?;
+        let site = witness.fix_site.ok_or("missing exact-name fix site")?;
+        assert_eq!(site.file, file);
+        assert_eq!(site.test_name, name);
+        assert_eq!(site.line, 11);
+        assert_eq!(
+            site.current_oracle.as_deref(),
+            Some("is($got, 11, 'A exact')")
+        );
+        let record = perl_gap_record_for(&finding).ok_or("missing exact-name projection")?;
+        assert_eq!(record.canonical_gap_id, GAP);
+        assert_eq!(record.verification_commands, [format!("prove {file}")]);
+        let route = record.repair_route.ok_or("missing route")?;
+        assert_eq!(route.target_file.as_deref(), Some(file));
+        assert_eq!(route.related_test, Some(format!("{file}::{name}")));
+        assert_eq!(route.target_line, Some(11));
+        assert_eq!(
+            route.assertion_shape.as_deref(),
+            Some("is($got, 11, 'A exact')")
+        );
+        let card = perl_preview_card(&finding).ok_or("missing exact-name card")?;
+        assert_eq!(card.verify_command, format!("prove {file}"));
+        assert!(
+            card.current_test_evidence
+                .contains(&format!("{file}:11 {name}"))
+        );
+        assert!(
+            card.current_test_evidence
+                .contains("is($got, 11, 'A exact')")
+        );
+        assert!(!card.current_test_evidence.contains("B exact"));
+        assert!(!card.repair_packet_ready && !card.agent_packet_ready && !card.gate_candidate);
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_composition_names_are_exact_in_same_file() -> Result<(), String> {
+    // Test descriptions are identities: these two realistic path labels differ.
+    assert_exact_name_tuple(
+        exact_name_tuple("t/same.t", "t/same.t", r"price\discount"),
+        "t/same.t",
+        r"price\discount",
+    )
+}
+
+#[test]
+fn perl_composition_normalizes_only_file_with_qualified_test_name() -> Result<(), String> {
+    assert_exact_name_tuple(
+        exact_name_tuple(
+            "t/nested/case.t",
+            r"t\nested\case.t",
+            r"outer::price\discount",
+        ),
+        "t/nested/case.t",
+        r"outer::price\discount",
+    )
+}
+
+#[test]
+fn perl_composition_test_name_whitespace_is_identity() -> Result<(), String> {
+    let mut finding = exact_name_tuple("t/same.t", "t/same.t", "price ");
+    finding.related_tests[1].name = "price".to_string();
+    assert_exact_name_tuple(finding.clone(), "t/same.t", "price ")?;
+    let card = perl_preview_card(&finding).ok_or("missing whitespace-name card")?;
+    assert_eq!(card.suggested_test_location, "t/same.t::price ");
+    Ok(())
+}

@@ -1648,10 +1648,13 @@ impl PerlFactPacket {
             .iter()
             .find(|test| test.test_id == relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
+        // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
+        // relation, so it is neither classified nor displayed as its oracle.
         let oracle = relation
             .oracle_id
             .as_deref()
-            .and_then(|oracle_id| self.oracle(oracle_id));
+            .and_then(|oracle_id| self.oracle(oracle_id))
+            .filter(|oracle| oracle.test_id == relation.test_id);
         let verify_fact = self.verify_command_for_test(&test.test_id);
         let verify_command = verify_fact.map(|command| command.argv.clone());
         let owner = self.owner(&relation.owner_id);
@@ -3077,7 +3080,8 @@ fn perl_row_observation_unconfirmed(
 /// evidence:
 /// - the relation is a `DirectOwnerCall` with `Reachable` reachability (advisory
 ///   relations can never prove observation);
-/// - the linked oracle is strong-exact and targets the changed owner;
+/// - the linked oracle belongs to the relation's test, is strong-exact and
+///   targets the changed owner;
 /// - the oracle carries a non-empty `observed_sink`;
 /// - the change carries a non-empty `changed_observable`;
 /// - `observed_sink` and `changed_observable` refer to the same sink.
@@ -3117,6 +3121,11 @@ fn sink_aligned_observation(
             continue;
         };
         let oracle = packet.oracle(oracle_id)?;
+        // RIPR-SPEC-0235 rule 5: the oracle must belong to the relation's
+        // test, the same binding `classify_related_relation` uses.
+        if oracle.test_id != ev.test_id {
+            continue;
+        }
         // Strong-exact oracle targeting the changed owner.
         if !oracle.is_strong_exact() {
             continue;
