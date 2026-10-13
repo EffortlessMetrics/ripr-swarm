@@ -12,6 +12,20 @@ const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.m
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
+const FIRST_RUN_REPORT_TEMPLATE: &str =
+    include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
+const WRONG_VERDICT_TEMPLATE: &str = include_str!("../../.github/ISSUE_TEMPLATE/wrong_verdict.yml");
+
+/// The templates live in this repo. GitHub ignores an unknown `template=`
+/// query, so sending readers to EffortlessMetrics/ripr opens a blank form.
+const SWARM_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml";
+const SWARM_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml";
+const RIPR_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml";
+const RIPR_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml";
 
 /// User-facing guides whose `ripr ...` commands a reader or agent copies.
 /// Internal specs, plans, and handoffs are historical records and stay out.
@@ -252,6 +266,75 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(&wrong)? == "ripr check" {
         return Err(
             "the CLI section credited a later check instead of its first command".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #7661: troubleshooting report links must open the swarm templates that
+/// exist in this repo. The README already routes problem reports to
+/// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
+/// reader to EffortlessMetrics/ripr, which has neither template.
+fn assert_quickstart_report_links(doc: &str) -> Result<(), String> {
+    let troubleshooting = doc_section(doc, "## Troubleshooting")?;
+    for required in [SWARM_FIRST_RUN_REPORT, SWARM_WRONG_VERDICT] {
+        assert_contains(
+            "docs/QUICKSTART.md troubleshooting",
+            &troubleshooting,
+            required,
+        )?;
+    }
+    for forbidden in [RIPR_FIRST_RUN_REPORT, RIPR_WRONG_VERDICT] {
+        if troubleshooting.contains(forbidden) {
+            return Err(format!(
+                "docs/QUICKSTART.md troubleshooting still opens `{forbidden}`; those templates exist only on EffortlessMetrics/ripr-swarm"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_open_the_swarm_templates() -> Result<(), String> {
+    assert_quickstart_report_links(QUICKSTART_DOC)?;
+    assert_contains(
+        "README.md problem reports",
+        ROOT_README,
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/first_run_report.yml",
+        FIRST_RUN_REPORT_TEMPLATE,
+        "name: First run report",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/wrong_verdict.yml",
+        WRONG_VERDICT_TEMPLATE,
+        "name: Wrong or misleading finding",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_reject_the_release_repo_and_a_dropped_close() -> Result<(), String> {
+    let release_repo = QUICKSTART_DOC
+        .replace(SWARM_FIRST_RUN_REPORT, RIPR_FIRST_RUN_REPORT)
+        .replace(SWARM_WRONG_VERDICT, RIPR_WRONG_VERDICT);
+    if assert_quickstart_report_links(&release_repo).is_ok() {
+        return Err("report-link guard accepted EffortlessMetrics/ripr template URLs".to_string());
+    }
+    let dropped = QUICKSTART_DOC.replace(
+        "Still stuck, or ripr gave a wrong or confusing answer?",
+        "Still stuck?",
+    );
+    let without_close = dropped
+        .lines()
+        .filter(|line| !line.contains("issues/new?template="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if assert_quickstart_report_links(&without_close).is_ok() {
+        return Err(
+            "report-link guard accepted a troubleshooting section with no report URLs".to_string(),
         );
     }
     Ok(())
