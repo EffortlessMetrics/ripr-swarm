@@ -176,6 +176,21 @@ impl TypeScriptAdmissionContext {
         }
     }
 
+    /// Root admission for newly supported awaited registrations. Reuse the
+    /// scanner's runner binding decision before a recognized assertion can
+    /// take the shortcut in `admission_of`. Enclosing callback/loop bindings
+    /// are supplied by the extractor's existing lexical scope owner.
+    pub(crate) fn registration_is_known(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        shadowed: impl Iterator<Item = String>,
+    ) -> bool {
+        let mut scan = Scan::new(self, false);
+        scan.scopes
+            .push(shadowed.map(|name| (name, Bound::Local)).collect());
+        scan.registration(call).is_some()
+    }
+
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }

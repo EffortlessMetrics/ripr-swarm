@@ -145,6 +145,7 @@ fn awaited_roots_preserve_skips_expected_failure_and_assertion_shadows() -> Test
             report["findings"][0]["classification"], "exposed",
             "{registration}: {report}"
         );
+        assert_eq!(report["findings"][0]["oracle_kind"], "unknown");
     }
     Ok(())
 }
@@ -183,6 +184,24 @@ fn awaited_local_root_that_discards_its_callback_cannot_supply_credit() -> TestR
         report["findings"][0]["classification"], "exposed",
         "a local async helper never invokes the exact-assertion callback: {report}"
     );
+    assert_eq!(report["findings"][0]["related_tests_total"], 0);
+    Ok(())
+}
+
+#[test]
+fn awaited_enclosing_roots_cannot_shadow_the_real_runner_binding() -> TestResult {
+    for registration in [
+        "await describe('ids', async (test) => { await test('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+        "await describe('ids', async () => { const test = async (_name, _callback) => {}; await test('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+        "for (const test of [async (_name, _callback) => {}]) { await test('id', () => { assert.strictEqual(nanoid().length, 21); }); }",
+    ] {
+        let report = Consumer::new(registration)?.check()?;
+        assert_ne!(
+            report["findings"][0]["classification"], "exposed",
+            "{registration}: {report}"
+        );
+        assert_eq!(report["findings"][0]["related_tests_total"], 0);
+    }
     Ok(())
 }
 

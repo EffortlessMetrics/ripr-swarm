@@ -150,6 +150,11 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
+Before an awaited registration contributes assertions, the existing admission
+scanner must recognize its runner root at the call site. File-local helpers,
+unrelated imports and enclosing callback/loop bindings cannot turn an unused
+callback into test evidence. This fence applies to the newly supported awaited
+form; it does not change bare-root registration semantics.
 
 ### Assertion collection
 

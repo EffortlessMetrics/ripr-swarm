@@ -1,6 +1,8 @@
 # Fixture: javascript_awaited_registration
 
-Spec: RIPR-SPEC-0243, rule 1 (awaited root registration)
+Spec: RIPR-SPEC-0243
+
+Rule 1: awaited root registration.
 
 ## Given
 

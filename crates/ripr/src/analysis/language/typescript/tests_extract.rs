@@ -696,6 +696,25 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
+        // Await must not turn a local helper's unused callback into test
+        // evidence. Admit its registration root before assertion extraction
+        // can take the recognized-assertion shortcut. Bare roots retain their
+        // existing behavior; registration API expansion is a separate claim.
+        if let Statement::ExpressionStatement(statement) = stmt
+            && matches!(statement.expression, Expression::AwaitExpression(_))
+            && let Some(call) = statement_call(stmt)
+            && !scope.admission.registration_is_known(
+                call,
+                scope
+                    .levels
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .map(|(name, _, _)| name.clone()),
+            )
+        {
+            continue;
+        }
         // The structural helpers recognize global `undefined`; apply this
         // declaration-scope fence before either a test or suite can donate
         // assertions. Callback-local bindings do not affect registration options.
