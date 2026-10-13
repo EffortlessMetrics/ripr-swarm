@@ -405,7 +405,13 @@ rule only for an assertion whose context was admitted.
    `match`, `&&`/`||` or skipping combinator, as for the tail), and
    the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
    `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
-   the motivating shape. An owner
+   the motivating shape. The same holds the other way round for a changed
+   early `return Some(..);` (or `return Ok(..);`): every other `return` and
+   the tail are exactly `None` (or one `Err(..)` call), and the pinned value
+   must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
+   it is not a second source here. Its propagation witness completes only
+   when the owner's return sink is that same constructor on the changed
+   line, so an identical value returned elsewhere is a different exit. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
@@ -994,6 +1000,35 @@ inside a closure, nested `fn` or async block, whose `return` leaves only
 that body; a second guard or assertion after a guard's `return`; and a
 guard in a file that binds the value name `Err`.
 
+### Literal `matches!` pins
+
+`assert!(matches!(owner(..), Ok(5)))` fails exactly when
+`assert_eq!(owner(..), Ok(5))` does, for the literal patterns below
+(RIPR-SPEC-0231 examples 6 and 23 keep these `exact_value` / strong). The
+pin reads the scrutinee as the actual side and the pattern as the expected
+value when:
+
+1. The assertion is one plain, unqualified `assert!` whose condition is
+   exactly one plain, unqualified `matches!` with nothing outside it: no
+   negation, no `&&`/`||`, no call wrapping it, and no other macro.
+   `std::matches!` and `core::matches!` stay refused, since their roots can
+   be rebound. The syntax-side macro admission lets a bare nested `matches!`
+   through and binds its name like any other invoked macro, so a workspace
+   `macro_rules! matches` still refuses.
+2. `matches!` has the scrutinee and one pattern (a trailing comma is
+   allowed). A guard (`if ..`) refuses.
+3. The pattern is a literal value: `Some(..)`, `Ok(..)` and `Err(..)`
+   around further literal patterns, `None`, `true`, `false`, numeric
+   literals (optionally negated), and plain string literals. A lowercase
+   `name @ literal` binding is dropped, since it matches exactly the
+   literal. A wildcard, a bare binding, `ref`/`mut`, a range, an
+   alternative `|`, a path (`Result::Ok`), a constant, a tuple, a slice or
+   a reference refuses: each matches more than one value or names one ripr
+   does not evaluate.
+4. Every other rule above holds unchanged: the scrutinee is the owner call
+   shape, execution and macro admission, `#[should_panic]`, and the
+   return-path gate on the normalized pattern.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -1365,6 +1400,14 @@ assertions. This repair shares the existing callback without that larger migrati
 - Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
   `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
   a change to `Codec::decode`.
+- Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
+  from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
+  the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
+  guarded pattern stay below `exposed`.
+- Given `fn lookup(k: u32) -> Option<u32>` whose changed early
+  `return Some(1 + 2);` sits beside a `None` tail and a test asserting
+  `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
+  `assert_eq!(lookup(2), None)` alone stays below `exposed`.
 - Given a trait default `next_word` and `impl Reader for Fixed` overriding
   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
   receiver does not confirm a change to the default.
@@ -1380,7 +1423,10 @@ assertions. This repair shares the existing callback without that larger migrati
   macros and the sole early `return None;`/`Err` source
   (`an_early_return_is_pinned_when_it_is_the_only_source_of_its_value`,
   `an_early_err_return_needs_to_be_the_only_err_source`,
-  `an_early_return_pin_admits_only_the_value_that_return_produces`);
+  `an_early_return_pin_admits_only_the_value_that_return_produces`,
+  `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`);
+  literal `matches!` pins
+  (`a_literal_matches_pattern_pins_the_owner_value`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
   calls and let-bound results (#6974:

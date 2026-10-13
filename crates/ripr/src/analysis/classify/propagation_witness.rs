@@ -169,7 +169,7 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) {
+    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -413,6 +413,20 @@ fn direct_return_identity(text: &str) -> Option<String> {
     let normalized = normalize_semantic_text(text);
     let payload = normalized.strip_prefix("return ")?.trim();
     (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
+}
+
+/// RIPR-SPEC-0231 example 23: `return Some(1 + 2);` whose return sink is
+/// `Some(1 + 2)` on the changed line itself is one expression, not a wrapper
+/// around a payload, so the edge is established as it is for the same tail.
+/// The sink must sit on the probe's line: an identical constructor returned
+/// elsewhere in the owner is a different exit.
+fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    let source = normalize_semantic_text(&probe.expression);
+    sink.kind == FlowSinkKind::ReturnValue
+        && sink.line == probe.location.line
+        && source.strip_prefix("return ").is_some_and(|payload| {
+            !payload.trim().is_empty() && payload.trim() == normalize_semantic_text(&sink.text)
+        })
 }
 
 fn canonical_error_identity(text: &str) -> String {
@@ -1372,6 +1386,39 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             Some(&wrapped),
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrapped_return_completes_only_on_its_own_line() -> Result<(), String> {
+        // RIPR-SPEC-0231 example 23: `return Some(1 + 2);` returns the
+        // `Some(1 + 2)` sink on its own line, so the edge is established.
+        let wrapped = probe(ProbeFamily::ReturnValue, "return Some(1 + 2);");
+        let witness = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 10)],
+        )
+        .ok_or_else(|| "same-line wrapped return witness was absent".to_string())?;
+        assert_eq!(witness.edges[0].status, EdgeStatus::Established);
+        assert_eq!(witness.completeness, PathCompleteness::Complete);
+        assert!(complete_direct_witness(&wrapped, Some(&witness)));
+
+        // The same constructor returned on another line is another exit.
+        let elsewhere = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 14)],
+        )
+        .ok_or_else(|| "other-line wrapped return witness was absent".to_string())?;
+        assert_eq!(elsewhere.edges[0].status, EdgeStatus::Candidate);
+        assert!(!complete_direct_witness(&wrapped, Some(&elsewhere)));
+
+        // A different payload on the same line stays a candidate.
+        let other = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 3)", 10)],
+        )
+        .ok_or_else(|| "different-payload witness was absent".to_string())?;
+        assert_eq!(other.edges[0].status, EdgeStatus::Candidate);
         Ok(())
     }
 
