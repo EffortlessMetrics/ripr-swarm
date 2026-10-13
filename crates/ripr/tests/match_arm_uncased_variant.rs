@@ -174,18 +174,13 @@ fn a_declared_single_letter_enum_names_the_unselected_variant_arm() -> Result<()
     Ok(())
 }
 
-#[test]
-fn an_imported_single_letter_type_names_no_arm() -> Result<(), String> {
-    // The same crate with `Kind` declared in another file: the owner's file
-    // does not show `A` is a variant, so `Kind::A` may be a constant and the
-    // wildcard is not shown unselected.
-    let lib = format!(
-        "mod kinds;\npub use kinds::Kind;\n\n{}",
-        body(WILDCARD_ARMS, "i32")
-    );
+/// The wildcard example with `Kind` reached through `import` from
+/// `src/kinds.rs` (which holds `kinds`) and the changed arm at line 7.
+fn imported_wildcard(import: &str, kinds: &str) -> Result<Vec<String>, String> {
+    let lib = format!("mod kinds;\n{import}\n\n{}", body(WILDCARD_ARMS, "i32"));
     let repo = TempRepo::create(
         &lib,
-        Some(ENUM),
+        Some(kinds),
         WILDCARD_TEST,
         &diff(
             "src/lib.rs",
@@ -199,8 +194,41 @@ fn an_imported_single_letter_type_names_no_arm() -> Result<(), String> {
             "        _ => 2,",
         ),
     )?;
+    named_discriminators(&repo.check()?, 7)
+}
+
+#[test]
+fn an_enum_imported_from_its_module_file_names_the_unselected_wildcard() -> Result<(), String> {
+    // #7675: the owner's one import of `Kind` names `src/kinds.rs`, which
+    // declares the enum, so `A` is a variant there too.
+    assert_eq!(imported_wildcard("pub use kinds::Kind;", ENUM)?, vec!["_"]);
     assert_eq!(
-        named_discriminators(&repo.check()?, 7)?,
+        imported_wildcard("use crate::kinds::Kind;", ENUM)?,
+        vec!["_"]
+    );
+    Ok(())
+}
+
+#[test]
+fn an_imported_type_that_may_hold_constants_names_no_arm() -> Result<(), String> {
+    // `Kind` declared in another file as a struct with constants: `Kind::A`
+    // is compared by value, so the wildcard is not shown unselected.
+    let constants = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct Kind(u8);\n\nimpl Kind {\n    pub const A: Kind = Kind(0);\n    pub const B: Kind = Kind(1);\n}\n";
+    assert_eq!(
+        imported_wildcard("pub use kinds::Kind;", constants)?,
+        Vec::<String>::new()
+    );
+    // A renamed import is not followed: `Kind` there is another name's type.
+    let other = ENUM.replace("enum Kind", "enum Other");
+    assert_eq!(
+        imported_wildcard("pub use kinds::Other as Kind;", &other)?,
+        Vec::<String>::new()
+    );
+    // A module file that only re-exports `Kind` from elsewhere is not read
+    // further.
+    let reexport = format!("mod inner {{\n{ENUM}}}\npub use inner::Kind;\n");
+    assert_eq!(
+        imported_wildcard("pub use kinds::Kind;", &reexport)?,
         Vec::<String>::new()
     );
     Ok(())

@@ -340,7 +340,14 @@ implies but does not spell out:
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
   module, such as `mod tests`, brings in only that file's items) and call
-  no macro at file or module item level. A test's uncased input is read
+  no macro at file or module item level. Alternatively, the owner's file
+  may bind that name through exactly one import, a top-level `use` without
+  a rename, whose module path (`kinds::Kind` after `mod kinds;`,
+  `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
+  declarations to exactly one workspace file, and that file must meet the
+  same declaration rule. An inline module on the path, a re-export, a
+  rename, an `include!` or an unresolved module edge reads nothing. A
+  test's uncased input is read
   only when no related test file outside the owner's file declares an item
   of that name, renames an import to it, or glob-imports a module other
   than `super`, a workspace root or the type's own variants, since a
@@ -444,7 +451,8 @@ the diff changes `None => 1` to `None => 0`.
   inputs, matches the call may skip, mutable typed receivers and foreign
   call paths.
 - `crates/ripr/tests/match_arm_uncased_variant.rs`: examples 4 and 6 with
-  single-letter variants, and the same crate with the enum imported.
+  single-letter variants; the enum imported from its module file; and a
+  struct with constants, a renamed import or a re-export in its place.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).

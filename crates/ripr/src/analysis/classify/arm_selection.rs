@@ -118,8 +118,10 @@ pub(in crate::analysis) struct ArmSelector {
     /// file binds that name from another enum.
     test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
     /// The variants of the scrutinee's enum, once `in_workspace` finds its
-    /// declaration in the owner's file (`declared_enum_variants`). `None`
-    /// leaves every uncased name unreadable.
+    /// declaration in the owner's file (`declared_enum_variants`) or in the
+    /// one workspace file the owner's import of it names
+    /// (`imported_enum_variants`, #7675). `None` leaves every uncased name
+    /// unreadable.
     declared_variants: Option<std::collections::BTreeSet<String>>,
     /// Whether a test's uncased input (`Kind::A`) names the owner's
     /// `Kind`. `in_workspace` clears it when a related test file declares
@@ -428,7 +430,13 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
-        self.resolve_uncased_variants(owner_source.as_deref());
+        let declared = self.bare_scrutinee_type.as_deref().and_then(|type_name| {
+            owner_source
+                .as_deref()
+                .and_then(|source| declared_enum_variants(source, type_name))
+                .or_else(|| imported_enum_variants(index, &self.owner_file, type_name))
+        });
+        self.resolve_uncased_variants(declared);
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
@@ -484,10 +492,8 @@ impl ArmSelector {
 
     /// Reads each uncased name (`Kind::A`) as a variant or as unreadable,
     /// from the enum the owner's file declares (#7543).
-    fn resolve_uncased_variants(&mut self, owner_source: Option<&str>) {
-        self.declared_variants = owner_source.and_then(|source| {
-            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
-        });
+    fn resolve_uncased_variants(&mut self, declared: Option<std::collections::BTreeSet<String>>) {
+        self.declared_variants = declared;
         let resolve = |heads: &mut Vec<PatternHead>, selector: &Self| {
             for head in heads.iter_mut() {
                 *head = selector.resolve_head(std::mem::replace(head, PatternHead::Opaque));
@@ -1334,6 +1340,108 @@ fn declared_enum_variants(
         }
     }
     found
+}
+
+/// #7675: the variants of the enum `type_name` when the owner's file binds
+/// that name through exactly one import, a top-level non-renamed `use` whose
+/// module path the recorded `mod` edges place in exactly one workspace file
+/// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
+/// `use self::..`/`use super::..`), and that file declares the enum
+/// (`declared_enum_variants`). An inline module step, a re-export, an
+/// external or package-named root, an `include!` edge, or any unresolved
+/// edge reads nothing, so `Kind::A` stays unreadable.
+fn imported_enum_variants(
+    index: &crate::analysis::rust_index::RustIndex,
+    owner_file: &std::path::Path,
+    type_name: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
+    use ra_ap_syntax::{AstNode, ast};
+    let files = index.files();
+    let owner = files.get(owner_file)?;
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.source)?;
+    let mut bindings = Vec::new();
+    for item in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+    {
+        let top_level = item
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        for import in flattened_use_paths(&item.syntax().text().to_string()) {
+            let last = import.path.rsplit("::").next().unwrap_or_default();
+            if import.alias.as_deref() == Some(type_name)
+                || (import.alias.is_none() && last == type_name)
+            {
+                bindings.push((top_level && import.alias.is_none(), import.path));
+            }
+        }
+    }
+    let [(true, path)] = bindings.as_slice() else {
+        return None;
+    };
+    let segments = path.split("::").collect::<Vec<_>>();
+    let (_, modules) = segments.split_last()?;
+    // Each file's chain of `mod` edges, outermost first; a file with an
+    // unresolved or `include!` edge is not placed.
+    let chain = |file: &std::path::Path| {
+        let facts = files.get(file)?;
+        let provenance = &facts.role_provenance;
+        (provenance.earliest_unresolved_reason.is_none()
+            && provenance
+                .edges
+                .iter()
+                .all(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module))
+        .then(|| provenance.edges.clone())
+    };
+    let owner_chain = chain(owner_file)?;
+    let (mut file, steps) = match modules.split_first()? {
+        (&"crate", rest) => {
+            let root = match owner_chain.first() {
+                Some(edge) => edge.parent.clone(),
+                None if owner_file
+                    .file_name()
+                    .is_some_and(|name| name == "lib.rs" || name == "main.rs") =>
+                {
+                    owner_file.to_path_buf()
+                }
+                None => return None,
+            };
+            (root, rest)
+        }
+        (&"self", rest) => (owner_file.to_path_buf(), rest),
+        (&"super", rest) => (owner_chain.last()?.parent.clone(), rest),
+        _ => (owner_file.to_path_buf(), modules),
+    };
+    for step in steps {
+        if matches!(*step, "crate" | "self" | "super") {
+            return None;
+        }
+        let mut children = files.iter().filter_map(|(child, _)| {
+            let edge = chain(child)?.pop()?;
+            (edge.parent == file
+                && edge
+                    .declaration
+                    .split_whitespace()
+                    .skip_while(|word| *word != "mod")
+                    .nth(1)
+                    .map(|name| name.trim_end_matches(';'))
+                    == Some(*step))
+            .then(|| child.clone())
+        });
+        let child = children.next()?;
+        if children.next().is_some() {
+            return None;
+        }
+        file = child;
+    }
+    if file == owner_file {
+        return None;
+    }
+    declared_enum_variants(&files.get(&file)?.source, type_name)
 }
 
 /// Whether a related test file outside the owner's file may bind
@@ -2492,7 +2600,10 @@ mod tests {
 
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
         let mut selector = selector.clone();
-        selector.resolve_uncased_variants(source);
+        let declared = source
+            .zip(selector.bare_scrutinee_type.clone())
+            .and_then(|(source, type_name)| declared_enum_variants(source, &type_name));
+        selector.resolve_uncased_variants(declared);
         selector
     }
 
