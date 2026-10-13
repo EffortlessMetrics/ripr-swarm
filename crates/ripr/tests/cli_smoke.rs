@@ -26707,13 +26707,16 @@ fn plus_unknown_arg_fails_clearly() {
 
 /// A minimal unified diff piped through stdin, the documented
 /// `git diff origin/main | ripr check --diff -` shape (#4319).
-const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = "diff --git a/src/lib.rs b/src/lib.rs\n\
-index 1111111..2222222 100644\n\
---- a/src/lib.rs\n\
-+++ b/src/lib.rs\n\
-@@ -1,1 +1,2 @@\n\
-+fn changed() {}\n\
- fn existing() {}\n";
+const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = concat!(
+    "diff --git a/src/lib.rs b/src/lib.rs\n",
+    "index 1111111..2222222 100644\n",
+    "--- a/src/lib.rs\n",
+    "+++ b/src/lib.rs\n",
+    "@@ -1,1 +1,2 @@\n",
+    "+fn changed() {}\n",
+    // A continued string strips this context marker's leading space.
+    " fn existing() {}\n",
+);
 
 struct DeclaredHunkScratch(PathBuf);
 
@@ -26933,7 +26936,12 @@ fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
         output.status.success(),
         "piped diff analysis failed: {stderr}"
     );
-    let _: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
+    assert_eq!(
+        report["analysis_outcome"]["outcome"]["counts"]["changed_file_count"],
+        1
+    );
     assert_eq!(
         stderr.matches(note).count(),
         0,
