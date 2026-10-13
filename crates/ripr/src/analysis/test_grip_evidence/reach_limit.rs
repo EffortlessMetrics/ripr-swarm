@@ -132,11 +132,13 @@ impl TypeMentionIndex {
             }
         }
         let reach = &context.transitive_reach;
-        let mut reached: BTreeSet<&str> = BTreeSet::new();
+        let mut production: Vec<&FunctionSummary> = reach.production_functions().collect();
+        sort_functions(&mut production);
+        let mut reached = ReachedIds::new(&production);
         let mut functions = reach.test_reached_functions();
         sort_functions(&mut functions);
         for function in functions {
-            reached.insert(function.id.0.as_str());
+            reached.insert(function);
             index.add_function_mentions(function, false);
             index.add_function_trait_uses(function);
         }
@@ -144,19 +146,6 @@ impl TypeMentionIndex {
         // A dispatch root's callees may name further types whose trait
         // methods are roots in turn. Each round is one more hop, bounded
         // like the transitive walk.
-        let mut production: Vec<&FunctionSummary> = reach.production_functions().collect();
-        sort_functions(&mut production);
-        // Each function's position in that order, so a root's callees sort
-        // by an integer instead of by path. Keys are the addresses of the
-        // index's own `FunctionSummary` values: `production_functions` and
-        // `functions_reached_from` both borrow them from the reach graph's
-        // `by_name`, which the index owns for this whole build, so every
-        // callee has a key. The `usize::MAX` fallback below is unreachable.
-        let order: HashMap<*const FunctionSummary, usize> = production
-            .iter()
-            .enumerate()
-            .map(|(position, &function)| (std::ptr::from_ref(function), position))
-            .collect();
         let trait_methods: Vec<&FunctionSummary> = production
             .iter()
             .copied()
@@ -170,13 +159,13 @@ impl TypeMentionIndex {
             for (callee, root) in std::mem::take(&mut deferred) {
                 if !index.may_dispatch(&callee.id.0) && !same_gated_trait(callee, &root) {
                     deferred.push((callee, root));
-                } else if reached.insert(callee.id.0.as_str()) {
+                } else if reached.insert(callee) {
                     index.add_dispatch_reached(callee, root);
                     grew = true;
                 }
             }
             for &method in &trait_methods {
-                if reached.contains(method.id.0.as_str()) {
+                if reached.contains(method) {
                     continue;
                 }
                 let Some(self_type) = impl_self_type_name(&method.id.0) else {
@@ -192,7 +181,7 @@ impl TypeMentionIndex {
                     file: method.file.clone(),
                     line: method.start_line,
                 };
-                reached.insert(method.id.0.as_str());
+                reached.insert(method);
                 index.add_function_mentions(method, true);
                 index.add_function_trait_uses(method);
                 let calls = calls_after_definition(&method.name, &method.calls);
@@ -201,14 +190,9 @@ impl TypeMentionIndex {
                 let mut callees: Vec<&FunctionSummary> = reach
                     .functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
                     .into_iter()
-                    .filter(|callee| !reached.contains(callee.id.0.as_str()))
+                    .filter(|&callee| !reached.contains(callee))
                     .collect();
-                callees.sort_by_key(|&callee| {
-                    order
-                        .get(&std::ptr::from_ref(callee))
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                });
+                callees.sort_by_key(|&callee| reached.position(callee));
                 for callee in callees {
                     // Name matching reaches every same-named method; a gated
                     // trait's method still needs its syntax (`Display::fmt`
@@ -219,12 +203,12 @@ impl TypeMentionIndex {
                         && !index.may_dispatch(&callee.id.0)
                         && !same_gated_trait(callee, &root)
                     {
-                        if !reached.contains(callee.id.0.as_str()) {
+                        if !reached.contains(callee) {
                             deferred.push((callee, root.clone()));
                         }
                         continue;
                     }
-                    if reached.insert(callee.id.0.as_str()) {
+                    if reached.insert(callee) {
                         index.add_dispatch_reached(callee, root.clone());
                     }
                 }
@@ -420,6 +404,78 @@ impl TypeMentionIndex {
 
     fn dispatch_root(&self, owner_id: &str) -> Option<&DispatchRoot> {
         self.dispatch_reached.get(owner_id)
+    }
+}
+
+/// The function ids the dispatch walk has reached. Every walk returns most
+/// of a large workspace's functions, so each membership check is a lookup
+/// by address rather than a comparison of id strings.
+struct ReachedIds<'f> {
+    /// Per function, by address: its position in `sort_functions` order,
+    /// so callees sort by an integer instead of by path, and its id's slot.
+    /// The keys are the reach graph's own `FunctionSummary` values, which
+    /// `production_functions` and `functions_reached_from` both borrow, so
+    /// every function the build meets today has a key; the lookups by id
+    /// below only keep membership by id should that ever change.
+    by_address: HashMap<*const FunctionSummary, (usize, usize)>,
+    /// Id to slot. Functions sharing an id share a slot, as they shared a
+    /// set entry when membership was by id string.
+    slots: HashMap<&'f str, usize>,
+    reached: Vec<bool>,
+}
+
+impl<'f> ReachedIds<'f> {
+    fn new(production: &[&'f FunctionSummary]) -> Self {
+        let mut slots: HashMap<&'f str, usize> = HashMap::new();
+        let by_address = production
+            .iter()
+            .enumerate()
+            .map(|(position, &function)| {
+                let next = slots.len();
+                let slot = *slots.entry(function.id.0.as_str()).or_insert(next);
+                (std::ptr::from_ref(function), (position, slot))
+            })
+            .collect();
+        let reached = vec![false; slots.len()];
+        Self {
+            by_address,
+            slots,
+            reached,
+        }
+    }
+
+    /// Position in `sort_functions` order; a function the index did not
+    /// list sorts last.
+    fn position(&self, function: &FunctionSummary) -> usize {
+        self.by_address
+            .get(&std::ptr::from_ref(function))
+            .map_or(usize::MAX, |&(position, _)| position)
+    }
+
+    fn slot(&mut self, function: &'f FunctionSummary) -> usize {
+        if let Some(&(_, slot)) = self.by_address.get(&std::ptr::from_ref(function)) {
+            return slot;
+        }
+        let next = self.slots.len();
+        let slot = *self.slots.entry(function.id.0.as_str()).or_insert(next);
+        if slot == self.reached.len() {
+            self.reached.push(false);
+        }
+        slot
+    }
+
+    fn contains(&mut self, function: &'f FunctionSummary) -> bool {
+        let slot = self.slot(function);
+        self.reached.get(slot).copied().unwrap_or(false)
+    }
+
+    /// Marks the function's id reached; true when it was not already.
+    fn insert(&mut self, function: &'f FunctionSummary) -> bool {
+        let slot = self.slot(function);
+        match self.reached.get_mut(slot) {
+            Some(reached) => !std::mem::replace(reached, true),
+            None => false,
+        }
     }
 }
 
@@ -1610,5 +1666,58 @@ mod tests {
 
         witness.via_derive = None;
         assert!(transitive_summary("fmt_impl", &witness).contains("calls `derive_error`"));
+    }
+
+    fn function(id: &str, line: usize) -> FunctionSummary {
+        FunctionSummary {
+            id: crate::domain::SymbolId(id.to_string()),
+            name: "run".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: line,
+            end_line: line,
+            body: String::new().into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: crate::analysis::facts::FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    // Membership stays by id, as it was when the set held id strings: two
+    // functions sharing an id are one entry, listed or not, and a function
+    // outside the production list with a new id gets an entry of its own.
+    #[test]
+    fn reached_ids_track_membership_by_id() {
+        let first = function("src/lib.rs::A::run", 1);
+        let twin = function("src/lib.rs::A::run", 2);
+        let other = function("src/lib.rs::B::run", 3);
+        let unlisted = function("src/lib.rs::C::run", 4);
+        let unlisted_twin = function("src/lib.rs::B::run", 5);
+        let production = [&other, &first, &twin];
+        let mut reached = ReachedIds::new(&production);
+
+        assert_eq!(reached.position(&first), 1);
+        assert_eq!(reached.position(&twin), 2);
+        assert_eq!(reached.position(&unlisted), usize::MAX);
+        assert!(!reached.contains(&twin));
+        assert!(reached.insert(&first));
+        assert!(reached.contains(&twin));
+        assert!(!reached.insert(&twin));
+        assert!(!reached.contains(&other));
+        assert!(!reached.contains(&unlisted));
+        assert!(reached.insert(&unlisted));
+        assert!(reached.contains(&unlisted));
+        assert!(!reached.insert(&unlisted));
+        assert!(!reached.contains(&other));
+        // An unlisted function sharing a listed id shares its entry.
+        assert!(reached.insert(&unlisted_twin));
+        assert!(reached.contains(&other));
+        assert!(!reached.insert(&other));
     }
 }

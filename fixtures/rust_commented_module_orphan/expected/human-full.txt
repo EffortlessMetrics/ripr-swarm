@@ -21,19 +21,15 @@ Probe
   canonical gap: gap:rust:src/used.rs:discount:predicate_boundary:predicate:total==100
 
 Static exposure
-  no_static_path (warning, confidence 0.35)
+  no_static_path (warning, confidence 0.48)
 
 Evidence
   - reach no: No static test path found for the changed owner
   - infection unknown: No tests were found, so activation/infection cannot be estimated
-  - propagation unknown: Propagation is not statically obvious from syntax-first analysis
+  - propagation yes: Changed behavior appears to influence returned value: total - 10
   - observation no: No reachable test oracle found
   - discriminator no: No assertion can discriminate the changed behavior without a reachable test
-  - No assertion can discriminate the changed behavior without a reachable test
-  - No reachable test oracle found
-  - No static test path found for the changed owner
-  - No tests were found, so activation/infection cannot be estimated
-  - Propagation is not statically obvious from syntax-first analysis
+  - local flow reaches returned value: total - 10 (line 2)
 
 Weakness
   - No detected boundary input for the changed predicate

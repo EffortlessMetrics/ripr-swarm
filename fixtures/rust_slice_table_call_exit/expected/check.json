@@ -1,0 +1,282 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_slice_table_call_exit/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:b303de7ee83ca2e5ce89926f4053bb40e3ab9c5f234f33fd8289c30d76a07e42","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:2639b14d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "mean_latency",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "samples.len==0"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:2639b14d",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 18,
+        "expression": "samples.len() == 0"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established; activation/infection is unknown"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 0"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table", "infection unknown: Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 0 (line 19)", "related test src/lib.rs:57 mean_lies_between_min_and_max uses weak relational check oracle: assert!({ std::process::exit(0); true });", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0);", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3);", "related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, \"{name:?}\");", "related test src/lib.rs:76 ratio_smoke uses none unknown oracle", "source assertion argument value 0 at line 44", "source assertion argument value 2 at line 45", "source assertion argument value 3 at line 45", "source assertion argument value 4 at line 45", "source table row value \"\" at line 50", "source table row value \"Bob\" at line 50", "source table row value \"ada\" at line 50", "source table row value '?' at line 50"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"0","line":19}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 0", "Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established; activation/infection is unknown", "Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established; activation/infection is unknown", "No detected boundary input for the changed predicate"],
+      "assertion_texts": {
+        "44": "assert_eq!(average(&[]), 0);",
+        "45": "assert_eq!(average(&[2, 4]), 3);",
+        "50": "let cases = [(\"\", '?'), (\"ada\", 'A'), (\"Bob\", 'B')];",
+        "52": "assert_eq!(initial(name), want, \"{name:?}\");",
+        "61": "assert!({ std::process::exit(0); true });",
+        "66": "assert_eq!(discount(total), want, \"total {total}\");"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 44,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 45,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 45,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 45,
+            "value": "4",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 50,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"Bob\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"ada\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "'?'",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "'A'",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "'B'",
+            "context": "table_row"
+          },
+          {
+            "line": 52,
+            "value": "\"{name:?}\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 61,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 61,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 66,
+            "value": "\"total {total}\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 44,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 45,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 45,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 45,
+          "value": "4",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 50,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"Bob\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"ada\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "'?'",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "'A'",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "'B'",
+          "context": "table_row"
+        },
+        {
+          "line": 52,
+          "value": "\"{name:?}\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 61,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 61,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 66,
+          "value": "\"total {total}\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 6,
+      "related_tests": [
+        {
+          "name": "mean_lies_between_min_and_max",
+          "file": "src/lib.rs",
+          "line": 57,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!({ std::process::exit(0); true });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "average_of_nothing_is_zero",
+          "file": "src/lib.rs",
+          "line": 43,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(average(&[]), 0);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "average_of_nothing_is_zero",
+          "file": "src/lib.rs",
+          "line": 43,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(average(&[2, 4]), 3);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "initial_table",
+          "file": "src/lib.rs",
+          "line": 49,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(initial(name), want, \"{name:?}\");",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "ratio_smoke",
+          "file": "src/lib.rs",
+          "line": 76,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
+        {
+          "name": "small_orders_get_no_discount",
+          "file": "src/lib.rs",
+          "line": 70,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discount(total), want, \"total {total}\");",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

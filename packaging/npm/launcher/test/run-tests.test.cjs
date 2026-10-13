@@ -4,6 +4,9 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const REQUIRED_PORTABLE_TESTS = Object.freeze([
+  "public bin missing-library failure gives exact recovery after a directory move",
+  "public bin preserves internal import and parser failures without library recovery advice",
+  "public bin library recovery never guesses a version from invalid or unavailable metadata",
   "distinguishes native resolution failures from missing optional packages",
   "rejects non-object native manifests with a contextual typed error",
   "public bin identifies corrupt package metadata and recovers after restoration",

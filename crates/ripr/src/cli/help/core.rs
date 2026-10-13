@@ -253,6 +253,14 @@ Options:
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
 
+Exit status:
+  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  `unsupported_input` reports exit 2 after the original report is written;
+  limitations and recovery routes remain available in that report. Usage and
+  operational errors also exit 2. Empty input is complete no_scope (exit 0).
+  Read the typed outcome to distinguish partial analysis from complete analysis;
+  a successful exit alone does not establish complete scope or a clean gate.
+
 Progress:
   Long-running check analysis writes producer stages to stderr as
   `ripr progress: <stage> [<scope>]` and, while a stage stays active,

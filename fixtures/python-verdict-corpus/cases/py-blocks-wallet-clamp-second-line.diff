@@ -1,0 +1,11 @@
+diff --git a/ledger/account.py b/ledger/account.py
+--- a/ledger/account.py
++++ b/ledger/account.py
+@@ -15,5 +15,5 @@ class Wallet:
+         self._held = held
+ 
+     def amount(self):
+-        # what the wallet holds right now
+-        return self._held
++        # what the wallet holds, never below zero
++        return max(0, self._held)
