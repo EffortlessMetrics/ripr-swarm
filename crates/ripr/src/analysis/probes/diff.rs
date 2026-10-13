@@ -167,12 +167,14 @@ pub(crate) fn probes_for_file_with_relations(
                     }
                     match removed_span_of_shape(text, &canonical_text, &line) {
                         // A cut that is the whole old head line (`1..=9 =>`
-                        // for `1..=8 =>`) cut nothing: its body is on the
-                        // next old line, so it is an uncut head too.
+                        // for `1..=8 =>`, maybe with a trailing comment) cut
+                        // nothing: its body is on the next old line, so it
+                        // is an uncut head too.
                         Some(cut)
-                            if shape.family == ProbeFamily::MatchArm && cut == line.trim() =>
+                            if shape.family == ProbeFamily::MatchArm
+                                && head_ends_line(&cut, &line) =>
                         {
-                            with_old_arm_body(&line, changed, index)
+                            old_arm_with_body(&cut, &line, changed, index)
                         }
                         Some(cut) => cut,
                         // An uncut old arm head (`0 =>`, its body on the next
@@ -1090,6 +1092,25 @@ fn with_old_arm_body(line: &str, changed: &ChangedFile, index: &RustIndex) -> St
     if !line.trim_end().ends_with("=>") {
         return line.to_string();
     }
+    old_arm_with_body(line.trim(), line, changed, index)
+}
+
+/// Whether the old line holds nothing after the head `cut` but an optional
+/// comment, so its body sits on the next old line.
+fn head_ends_line(cut: &str, line: &str) -> bool {
+    if !cut.ends_with("=>") {
+        return false;
+    }
+    let Some(start) = line.find(cut) else {
+        return false;
+    };
+    let rest = line[start + cut.len()..].trim();
+    rest.is_empty() || rest.starts_with("//") || rest.starts_with("/*")
+}
+
+/// The old arm `head`, read from the removed `line`, joined with the old
+/// body on the next old line, or marked unread when that body is unknown.
+fn old_arm_with_body(head: &str, line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
     let heads = changed
         .removed_lines
         .iter()
@@ -1118,10 +1139,10 @@ fn with_old_arm_body(line: &str, changed: &ChangedFile, index: &RustIndex) -> St
         }
     });
     match body {
-        Some(body) => format!("{} {body}", line.trim_end()),
+        Some(body) => format!("{head} {body}"),
         // Without the old file the head stays unread as an arm: an old text
         // with a trailing marker never passes for a head cut.
-        None => format!("{} /* old body unread */", line.trim_end()),
+        None => format!("{head} /* old body unread */"),
     }
 }
 
@@ -1414,6 +1435,13 @@ mod tests {
             with_old_arm_body("1..=4 =>", &duplicated, &index),
             "1..=4 => /* old body unread */"
         );
+        // One of the duplicated heads has no non-blank next old line.
+        let mut blank_after = changed.clone();
+        blank_after.removed_lines.push(line(8, "    1..=4 =>"));
+        assert_eq!(
+            with_old_arm_body("1..=4 =>", &blank_after, &index),
+            "1..=4 => /* old body unread */"
+        );
         // Without the old file the head is marked unread.
         let unindexed = RustIndex::default();
         assert_eq!(
@@ -1435,6 +1463,22 @@ mod tests {
             "match n {\n    0 => 0,\n    1..=8 =>\n        \"many\",\n    _ => \"x\",\n}\n",
         );
 
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("1..=9 => \"many\",")
+        );
+        // A trailing comment after the old head still leaves its body on
+        // the next line, and the joined text drops the comment.
+        let probes = single_shape_probes(
+            "    1..=8 => // many",
+            "    1..=9 => // many",
+            ProbeShapeKind::MatchArm,
+            "1..=8 =>",
+            "match n {\n    0 => 0,\n    1..=8 => // many\n        \"many\",\n    _ => \"x\",\n}\n",
+        );
         let arm = probes
             .iter()
             .find(|probe| probe.family == ProbeFamily::MatchArm);
