@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b4a7e1c..228344e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,7 @@
+ pub fn parse_port(input: &str) -> Result<u16, &'static str> {
+     match input.parse::<u16>() {
+-        Ok(p) => Ok(p),
++        Ok(p) if p > 0 => Ok(p),
++        Ok(_) => Err("zero port"),
+         Err(_) => Err("invalid port"),
+     }
+ }

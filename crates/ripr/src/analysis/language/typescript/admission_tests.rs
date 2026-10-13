@@ -50,6 +50,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             recognized,
         ),
         (
+            "node:test t.assert.ok (RIPR-SPEC-0252)",
+            "import { test } from 'node:test';\ntest('x', (t) => { t.assert.ok(checkout(1)); });",
+            recognized,
+        ),
+        (
             "node assert.strictEqual",
             "import assert from 'node:assert';\ntest('x', () => { assert.strictEqual(checkout(1), 2); });",
             recognized,
@@ -429,8 +434,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
-            "node:test t.assert",
-            "import { test } from 'node:test';\ntest('x', (t) => { t.assert.ok(checkout(1)); });",
+            "node:test t.assert.unknownMethod",
+            "import { test } from 'node:test';\ntest('x', (t) => { t.assert.verifies(checkout(1)); });",
             unresolved,
         ),
         (

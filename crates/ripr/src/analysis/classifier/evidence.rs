@@ -9,7 +9,7 @@ use crate::analysis::classify::{
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
     operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, signature_parameters,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -302,6 +302,13 @@ impl ClassifiedProbeEvidence {
             (Some(owner), Some(chain))
                 if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
+                    // #6614: reach resting on a local-macro argument hop
+                    // abstains only under an exact pin of a caller; a weak
+                    // oracle there keeps its own gap.
+                    && !crate::analysis::classify::macro_hop_reach_without_exact_pin(
+                        chain,
+                        &context.related_tests,
+                    )
                     && if effect_family {
                         !chain_passes_effect_target_to_observed_hops(
                             owner,
@@ -372,13 +379,22 @@ impl ClassifiedProbeEvidence {
             })
             .and_then(|owner| ArmSelector::establish(context.probe, owner))
             .map(|selector| {
-                selector.in_workspace(
-                    context.index,
-                    context
-                        .related_tests
-                        .iter()
-                        .map(|(test, _)| test.file.as_path()),
-                )
+                selector
+                    .in_workspace(
+                        context.index,
+                        context
+                            .related_tests
+                            .iter()
+                            .map(|(test, _)| test.file.as_path()),
+                    )
+                    // RIPR-SPEC-0229 (#6616): exact pattern pins through a verified
+                    // local `assert_matches!`, read once per file per run.
+                    .with_pattern_pins(
+                        context.related_tests.iter().map(|(test, _)| *test),
+                        |test, assertion| {
+                            pin_syntax.exact_pattern_pin_value(test, assertion, context.index)
+                        },
+                    )
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
@@ -500,6 +516,9 @@ impl ClassifiedProbeEvidence {
                     effect_carrier
                         .as_ref()
                         .is_none_or(|carrier| carrier.admits(test, assertion))
+                },
+                setter_writes_field: &|impl_type, setter, field| {
+                    setter_plainly_writes(context.index, impl_type, setter, field)
                 },
             },
             arm_selector.as_ref(),

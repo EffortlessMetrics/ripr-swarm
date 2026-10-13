@@ -302,56 +302,20 @@ pub(in crate::analysis) fn invokes_opaque_macro(body: &str) -> bool {
 }
 
 /// Whether a relation by itself is evidence that the test runs a seam's
-/// owner, shared by diff-mode reach and repo-mode seam reach (#5335).
-///
-/// Only relations that capture a path to running the owner count: a direct
-/// call, a call through a helper chain, or (diff mode, TypeScript) an import
-/// through a verified re-export chain, which reveal-reach already credits.
-/// Everything else is a candidate-location suggestion that never has to run
-/// the owner:
-///
-/// - proximity relations ([`is_proximity_only`]) share a file, module, or a
-///   token substring;
-/// - `OwnerNamedTest` matches the owner's name in the test's name, an
-///   `ImportPathAffinity` matches a path reference, and
-///   `FixtureOwnerAffinity` matches a call to a fixture-shaped helper — none
-///   of them invokes the owner (#5335 review: an uncalled `as_kb` inherited
-///   a sibling's exact-value oracle through its name);
-/// - `AssertionTargetAffinity` means a test asserts on a token the seam's
-///   expression also names; for a module-level owner (a struct or field with
-///   no owning function) that assertion is how the owner is observed, but
-///   for a function-bodied owner the token can belong to any code, so it is
-///   not a path to the function. Diff mode emits that relation only for
-///   owners without a function, so the rule leaves it unchanged;
-/// - `SeamCalleeCall` runs the seam's converted callee, never the owner.
+/// owner, shared by diff-mode reach and repo-mode seam reach (#5335). The
+/// rule lives on [`RelationReason::establishes_reach`] so the classifier's
+/// miss reasons and the verdict corpus read the same answer (#7531).
 pub(in crate::analysis) fn relation_establishes_reach(
     reason: RelationReason,
     owner_is_function: bool,
 ) -> bool {
-    match reason {
-        RelationReason::DirectOwnerCall
-        | RelationReason::HelperOwnerCall
-        | RelationReason::ReExportChainFollowed => true,
-        RelationReason::AssertionTargetAffinity => !owner_is_function,
-        RelationReason::SameTestFile
-        | RelationReason::SameModule
-        | RelationReason::OwnerNamedTest
-        | RelationReason::ImportPathAffinity
-        | RelationReason::FixtureOwnerAffinity
-        | RelationReason::WeakTokenSubstring
-        | RelationReason::SeamCalleeCall => false,
-    }
+    reason.establishes_reach(owner_is_function)
 }
 
-/// Relations that come from file or name proximity alone, with no captured
-/// call, helper chain, or assertion affinity tying the test to the owner.
+/// Relations that come from file or name proximity alone
+/// ([`RelationReason::is_proximity_only`]).
 pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
-    matches!(
-        reason,
-        RelationReason::SameTestFile
-            | RelationReason::SameModule
-            | RelationReason::WeakTokenSubstring
-    )
+    reason.is_proximity_only()
 }
 
 #[cfg(test)]

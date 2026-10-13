@@ -72,6 +72,12 @@ Each finding should carry:
 - recommended next step
 - stop reason for unknowns
 
+Exhaustive human Changed source fragments preserve the complete source and wrap
+printable Unicode by display cells between extended grapheme clusters. The
+fixed payload budget, oversized-cluster exception, ASCII/multiline compatibility
+and literal consumer controls are specified by
+`fixtures/rust_long_expression_display_bound/SPEC.md` (#7595).
+
 ## Inputs
 
 - Rust/Cargo workspace root
