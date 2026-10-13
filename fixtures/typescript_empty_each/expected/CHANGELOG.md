@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_empty_each (3)
+
+Reason:
+RIPR-SPEC-0027 and RIPR-SPEC-0255: compose existing config-path disclosure; all empty-table finding values and independent literal oracles unchanged (#7596).
+
+Command:
+`cargo xtask goldens bless typescript_empty_each --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
