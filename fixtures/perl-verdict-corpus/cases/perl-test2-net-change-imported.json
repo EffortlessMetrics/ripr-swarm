@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-test2-net-change-imported",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-net-change-imported.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 45
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_is_exported_call",
+  "hard_case": "The call is an Exporter import, so the producer relates the test to the package only.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "$net = $net - $_ for @amounts;",
+        "mutated_line": "$net = $net - $_ for @amounts;",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: net change sums signed amounts",
+        "equivalence_review": "not equivalent: 5 and -3 net to -2"
+      },
+      {
+        "replacement": "$net = $net + abs($_) for @amounts;",
+        "mutated_line": "$net = $net + abs($_) for @amounts;",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: net change sums signed amounts",
+        "equivalence_review": "not equivalent: 5 and -3 net to 8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is(net_change(5, -3), 2) fails when the sum subtracts or takes absolute values. Spec cells: RIPR-SPEC-0064 relation kinds.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-net-change-imported.json",
+    "sha256": "435b232e73d434869a6e1a83bc35d1e1a73233df8f7e396c67e794b8bcabb0f5",
+    "provenance": "producer"
+  }
+}

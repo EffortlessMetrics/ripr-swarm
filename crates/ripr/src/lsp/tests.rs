@@ -2713,6 +2713,97 @@ fn diagnostic_witness_command_binds_the_workspace_root() -> Result<(), String> {
 }
 
 #[test]
+fn retained_hover_discloses_analysis_health_without_changing_evidence() -> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected retained snapshot".to_string())?;
+    let original = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "expected analysis snapshot".to_string())?;
+    let result_id = super::diagnostics::document_diagnostic_result_id(&original, &uri);
+    let params = hover_params(uri.clone(), 87, 1);
+    let text = || -> Result<String, String> {
+        match backend
+            .hover_for_position(&params)
+            .ok_or_else(|| "expected retained evidence hover".to_string())?
+            .contents
+        {
+            HoverContents::Markup(markup) => Ok(markup.value),
+            _ => Err("expected markup hover".to_string()),
+        }
+    };
+    assert!(!text()?.contains("retained evidence is not current"));
+    for state in [
+        AnalysisAttemptState::Queued,
+        AnalysisAttemptState::Running,
+        AnalysisAttemptState::Failed,
+        AnalysisAttemptState::Cancelled,
+        AnalysisAttemptState::Superseded,
+        AnalysisAttemptState::Stopped,
+    ] {
+        backend.set_analysis_attempt_state_for_test(state);
+        let rendered = text()?;
+        assert!(
+            rendered.starts_with("**ripr retained evidence is not current**"),
+            "{state:?} misleading hover: {rendered}"
+        );
+        assert!(rendered.contains(&format!("latest attempt: `{}`", state.as_str())));
+        assert!(
+            rendered.contains("do not use its repair or verification commands as current guidance")
+        );
+        if matches!(
+            state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            assert!(rendered.contains("Wait for saved-workspace analysis to complete"));
+        } else {
+            assert!(rendered.contains("`ripr.refresh`"));
+        }
+        assert!(rendered.contains("Add an exact boundary assertion."));
+        let retained = backend
+            .latest_analysis_snapshot()
+            .ok_or_else(|| "retained snapshot disappeared".to_string())?;
+        assert_eq!(retained.diagnostics_by_uri, original.diagnostics_by_uri);
+        assert_eq!(
+            super::diagnostics::document_diagnostic_result_id(&retained, &uri),
+            result_id
+        );
+    }
+    backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+    backend.set_snapshot_run_status_for_test("stale");
+    assert!(text()?.starts_with("**ripr retained evidence is not current**"));
+    backend.set_snapshot_run_status_for_test("full");
+    let recovered = text()?;
+    assert!(!recovered.contains("retained evidence is not current"));
+    assert!(recovered.contains("Add an exact boundary assertion."));
+    // Exercise the production changed-configuration failure recorder too,
+    // rather than relying only on the test-only lifecycle state setter.
+    backend.set_configuration_failure("changed ripr.toml input is invalid");
+    let failed = text()?;
+    assert!(failed.starts_with("**ripr retained evidence is not current**"));
+    assert!(failed.contains("latest attempt: `failed`"));
+    assert!(failed.contains("Resolve any reported analysis failure"));
+    let retained = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "configuration failure dropped retained evidence".to_string())?;
+    assert_eq!(retained.diagnostics_by_uri, original.diagnostics_by_uri);
+    assert_eq!(
+        super::diagnostics::document_diagnostic_result_id(&retained, &uri),
+        result_id
+    );
+    Ok(())
+}
+
+#[test]
 fn hover_for_position_shows_snapshot_age_and_refresh_duration() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();

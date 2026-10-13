@@ -21,7 +21,7 @@ use crate::config::OraclePolicy;
 use crate::domain::ExposureClass;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod static_limit;
@@ -228,10 +228,13 @@ impl LanguageAdapter for PerlAdapter {
         })?;
         let packet = self.consume_fact_packet(&packet_text, options)?;
 
-        // C2: convert the packet into Findings.
-        let findings = packet_to_findings_with_currentness(&packet, |file, change| {
-            perl_change_currentness(&options.root, changed_files, file, change)
-        });
+        // C2: convert the packet into Findings, each located on its changed
+        // line when the diff settles which line that is.
+        let change_lines = change_lines_from_diff(&packet, changed_files);
+        let findings =
+            packet_to_findings_with_currentness(&packet, &change_lines, |file, change| {
+                perl_change_currentness(&options.root, changed_files, file, change)
+            });
         let changed_files = packet
             .changes
             .iter()
@@ -400,9 +403,60 @@ fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::Or
 }
 
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
-    packet_to_findings_with_currentness(packet, |_, _| {
+    packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     })
+}
+
+/// The one-based new-file line of each packet change, settled against the
+/// diff ripr itself parsed.
+///
+/// SPEC-0064 says packet ranges are one-based, but the real `perl-ripr-facts`
+/// producer emits zero-based lines (`zero_based_coordinates` in
+/// `fixtures/perl_packet_contract_migration`; #3221 owns making the basis
+/// explicit). The packet does not declare which it used, so each change's
+/// first line is read both ways against the diff, and a reading counts only
+/// when exactly one of the two is an added line. One producer writes the whole
+/// packet, so every settled change must agree on the basis: if two disagree,
+/// no change gets a line. A change left out keeps its finding on the owner's
+/// declaration, as before. This only places the finding; probe and gap
+/// identity do not use it.
+fn change_lines_from_diff(
+    packet: &PerlFactPacket,
+    changed_files: &[ChangedFile],
+) -> BTreeMap<String, usize> {
+    // The flag is the basis the line was settled on: `true` for zero-based.
+    let mut settled: Vec<(String, usize, bool)> = Vec::new();
+    for change in &packet.changes {
+        let Some(file) = packet.file(&change.file_id) else {
+            continue;
+        };
+        let path = normalize_repo_relative(&file.path);
+        let Some(diff_file) = changed_files
+            .iter()
+            .find(|diff_file| normalize_repo_relative(&diff_file.path.to_string_lossy()) == path)
+        else {
+            continue;
+        };
+        let added: BTreeSet<usize> = diff_file.added_lines.iter().map(|l| l.line).collect();
+        let one_based = change.range.start_line;
+        let Some(zero_based) = change.range.start_line.checked_add(1) else {
+            continue;
+        };
+        match (added.contains(&one_based), added.contains(&zero_based)) {
+            (true, false) => settled.push((change.change_id.clone(), one_based, false)),
+            (false, true) => settled.push((change.change_id.clone(), zero_based, true)),
+            _ => {}
+        }
+    }
+    let bases: BTreeSet<bool> = settled.iter().map(|(_, _, zero)| *zero).collect();
+    if bases.len() > 1 {
+        return BTreeMap::new();
+    }
+    settled
+        .into_iter()
+        .map(|(change_id, line, _)| (change_id, line))
+        .collect()
 }
 
 /// #6586: a Perl change is candidate-current only when the consumer observed
@@ -460,8 +514,11 @@ fn perl_change_currentness(
     }
 }
 
+/// Each finding sits on the line `change_lines` settles for its change (see
+/// [`change_lines_from_diff`]), else on its owner's declaration.
 fn packet_to_findings_with_currentness(
     packet: &PerlFactPacket,
+    change_lines: &BTreeMap<String, usize>,
     currentness: impl Fn(&FileFact, &ChangeFact) -> crate::domain::SourceCurrentness,
 ) -> Vec<crate::domain::Finding> {
     use crate::domain::{
@@ -726,11 +783,14 @@ fn packet_to_findings_with_currentness(
         );
         let probe = Probe {
             id: ProbeId(probe_id.clone()),
-            location: SourceLocation::new(
-                std::path::PathBuf::from(&file.path),
-                owner.range.start_line,
-                owner.range.start_column,
-            ),
+            location: match change_lines.get(&change.change_id) {
+                Some(&line) => SourceLocation::new(std::path::PathBuf::from(&file.path), line, 1),
+                None => SourceLocation::new(
+                    std::path::PathBuf::from(&file.path),
+                    owner.range.start_line,
+                    owner.range.start_column,
+                ),
+            },
             owner: owner
                 .name
                 .as_ref()
@@ -1565,10 +1625,13 @@ impl PerlFactPacket {
             .iter()
             .find(|test| test.test_id == relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
+        // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
+        // relation, so it is neither classified nor displayed as its oracle.
         let oracle = relation
             .oracle_id
             .as_deref()
-            .and_then(|oracle_id| self.oracle(oracle_id));
+            .and_then(|oracle_id| self.oracle(oracle_id))
+            .filter(|oracle| oracle.test_id == relation.test_id);
         let verify_fact = self.verify_command_for_test(&test.test_id);
         let verify_command = verify_fact.map(|command| command.argv.clone());
         let owner = self.owner(&relation.owner_id);
@@ -2994,7 +3057,8 @@ fn perl_row_observation_unconfirmed(
 /// evidence:
 /// - the relation is a `DirectOwnerCall` with `Reachable` reachability (advisory
 ///   relations can never prove observation);
-/// - the linked oracle is strong-exact and targets the changed owner;
+/// - the linked oracle belongs to the relation's test, is strong-exact and
+///   targets the changed owner;
 /// - the oracle carries a non-empty `observed_sink`;
 /// - the change carries a non-empty `changed_observable`;
 /// - `observed_sink` and `changed_observable` refer to the same sink.
@@ -3034,6 +3098,11 @@ fn sink_aligned_observation(
             continue;
         };
         let oracle = packet.oracle(oracle_id)?;
+        // RIPR-SPEC-0235 rule 5: the oracle must belong to the relation's
+        // test, the same binding `classify_related_relation` uses.
+        if oracle.test_id != ev.test_id {
+            continue;
+        }
         // Strong-exact oracle targeting the changed owner.
         if !oracle.is_strong_exact() {
             continue;

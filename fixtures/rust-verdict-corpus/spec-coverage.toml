@@ -12,7 +12,17 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 88
+floor = 101
+
+# Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
+# oracle kind and strength a spec adopts; `verdict-corpus check` fails when
+# matches fall below `match_floor` or overclaims (ripr reads the test
+# stronger than the spec) rise above `overclaim_ceiling`. When ripr
+# improves, `check` prints the new numbers: raise the floor and lower the
+# ceiling to them. Loosening either is a reviewed edit with a reason.
+[oracle]
+match_floor = 26
+overclaim_ceiling = 5
 
 # LSP Repair Packet Command
 [[spec]]
@@ -419,6 +429,10 @@ reason = "dead write: `reset()` overwrites the changed `+= 2`, so every mutant o
 id = "RIPR-SPEC-0229"
 scope = "in"
 
+[[spec.waived]]
+example = 9
+reason = "both arms return 2 (`1 + 1` and `2`), so the widened pattern `0..=3` to `0..=4` and every other mutant of the edited pattern leave f unchanged for every input; the edit is equivalent and no runtime truth exists"
+
 # Rust oracle kind and strength admission
 [[spec]]
 id = "RIPR-SPEC-0231"
@@ -428,6 +442,22 @@ scope = "in"
 [[spec]]
 id = "RIPR-SPEC-0233"
 scope = "in"
+
+[[spec.waived]]
+example = 1
+reason = "the example's test asserts 5_000 where the unedited owner returns 3_500, so the unedited suite fails and `verdict-corpus relabel` refuses every mutant outcome; the claim is also repo-scope seam grip and receipt closure, not a diff verdict"
+
+[[spec.waived]]
+example = 2
+reason = "repo-scope seam credit: the example is the gap-closure and oracle-strength rule when an added test's literal agrees with the folded owner, which RIPR-SPEC-0233's Test Mapping says diff-scoped corpora do not pin; a diff case reads the same with or without the fold"
+
+[[spec.waived]]
+example = 3
+reason = "same wrong 5_000 literal as example 1 against a helper-calling owner, so the unedited suite fails and `verdict-corpus relabel` can establish no runtime truth"
+
+[[spec.waived]]
+example = 4
+reason = "the contradicted test fails on the unedited owner, so `verdict-corpus relabel` can establish no runtime truth; the claim is the outcome receipt's gap-closed wording and weak/unknown section, not a diff verdict"
 
 # Perl fact-packet classification
 [[spec]]
@@ -497,6 +527,12 @@ reason = "non-Rust language or packaging surface"
 # TypeScript default-import owner local
 [[spec]]
 id = "RIPR-SPEC-0251"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript node:test context assert
+[[spec]]
+id = "RIPR-SPEC-0252"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 

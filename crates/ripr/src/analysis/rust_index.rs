@@ -14,7 +14,7 @@ pub(crate) use super::extract::{
     extract_call_facts, extract_identifier_tokens, extract_line_scanned_oracles,
     extract_literal_facts, extract_literals, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_inequality_assertion, is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
 #[cfg(test)]
@@ -1430,6 +1430,67 @@ fn exact_boundary_value_is_checked() {
                 .iter()
                 .any(|assertion| assertion.text.contains("unwrap"))
         );
+        Ok(())
+    }
+
+    /// #6670 review: the oracles the parser and lexical adapters produce
+    /// follow RIPR-SPEC-0231 rule 1. A negated pattern beside other `&&`
+    /// conjuncts leaves them to decide the reading, a negation inside `||`
+    /// caps it at weak, and an inequality-named helper over
+    /// `matches!(.., Err(..))` never yields an oracle above weak (today
+    /// neither adapter admits it at all, #5713).
+    #[test]
+    fn parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations()
+    -> Result<(), String> {
+        let source = r#"
+#[test]
+fn checks() {
+    let result = check(20);
+    let score = score(2);
+    assert_not_equal(matches!(result, Err(E::Bad)), true);
+    ensure!(!matches!(result, Err(E::Bad)) && score == 4);
+    assert!(!matches!(result, Err(E::Bad)) || matches!(result, Err(E::Other)));
+}
+"#;
+        let adapters: [(&str, &dyn RustSyntaxAdapter); 2] = [
+            ("parser", &RaRustSyntaxAdapter),
+            ("lexical", &LexicalRustSyntaxAdapter),
+        ];
+        for (label, adapter) in adapters {
+            let facts = adapter.summarize_file(Path::new("tests/inequality.rs"), source)?;
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == "checks")
+                .ok_or_else(|| format!("{label}: expected the parsed test"))?;
+            let oracle = |needle: &str| {
+                test.assertions
+                    .iter()
+                    .find(|oracle| oracle.text.contains(needle))
+                    .map(|oracle| (oracle.kind.clone(), oracle.strength.clone()))
+                    .ok_or_else(|| {
+                        format!("{label}: no oracle for {needle}: {:?}", test.assertions)
+                    })
+            };
+            assert_eq!(
+                oracle("score == 4")?,
+                (OracleKind::ExactValue, OracleStrength::Strong),
+                "{label}"
+            );
+            assert_eq!(
+                oracle("Err(E::Other)")?,
+                (OracleKind::RelationalCheck, OracleStrength::Weak),
+                "{label}"
+            );
+            assert!(
+                test.assertions
+                    .iter()
+                    .filter(|oracle| oracle.text.contains("assert_not_equal"))
+                    .all(|oracle| oracle.strength.rank() <= OracleStrength::Weak.rank()),
+                "{label}: {:?}",
+                test.assertions
+            );
+        }
         Ok(())
     }
 

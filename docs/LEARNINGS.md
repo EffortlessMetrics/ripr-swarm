@@ -3,6 +3,30 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: An oversized `ripr_get_gap` must not recover by calling itself (#7462)
+
+The MCP response bound is 128 KiB. One canonical item can exceed it. The
+failure used to say "read narrower evidence (one item through ripr_get_gap)",
+which is the call that just failed. A too-large item now names `ripr check
+--committed --format json` outside MCP — `--committed` because the snapshot
+analyzed the committed default-branch diff, and a plain `ripr check` on a
+dirty tracked worktree silently analyzes a different diff — and discloses
+that the CLI JSON is a bounded summary (related tests cap per finding, a
+large findings array can omit findings). Recovery advice must be reachable:
+`ripr_list_gaps` byte-fits every page and refuses when nothing fits (#6021),
+so its overflow guard says there is no narrower read instead of promising a
+smaller-limit page no caller can need. Other tools name their own next read,
+or say there is no narrower MCP read.
+## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
+
+`ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
+cannot tell a same-repo mutant from a foreign record that happens to share
+a path and line. `ripr outcome` already discloses missing or differing heads
+on the same snapshot family. Calibrate must print the same class of caveat
+on stderr and in `--help`. Do not treat a file+line match as proof the
+artifacts share a subject, and do not refuse that join in the provenance
+fix. Do not fold producer-help (#7450), `matched_total` meaning (#7451), or
+the xtask duplicate renderer (#6691) into this disclosure.
 ## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
 
 Config discovery walks ancestors of the *selected analysis root*, not of the
