@@ -1860,8 +1860,10 @@ mod harness_projection_tests {
         let defaults = parse(&render_with_config(&output, &RiprConfig::default(), None))?;
         assert!(defaults.get("config_path").is_none());
 
-        let mut loaded = RiprConfig::default();
-        loaded.source_path = Some(std::path::PathBuf::from("repo/ripr.toml"));
+        let loaded = RiprConfig {
+            source_path: Some(std::path::PathBuf::from("repo/ripr.toml")),
+            ..RiprConfig::default()
+        };
         let rendered = parse(&render_with_config(&output, &loaded, None))?;
         assert_eq!(
             rendered.get("config_path").and_then(|value| value.as_str()),
@@ -1871,8 +1873,10 @@ mod harness_projection_tests {
         // The machine field keeps the lossless envelope encoding (like
         // `root`): a literal percent in the directory name is escaped, so
         // distinct files stay distinct.
-        let mut percent = RiprConfig::default();
-        percent.source_path = Some(std::path::PathBuf::from("repo/100%/ripr.toml"));
+        let percent = RiprConfig {
+            source_path: Some(std::path::PathBuf::from("repo/100%/ripr.toml")),
+            ..RiprConfig::default()
+        };
         let rendered = parse(&render_with_config(&output, &percent, None))?;
         assert_eq!(
             rendered.get("config_path").and_then(|value| value.as_str()),

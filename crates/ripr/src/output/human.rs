@@ -1059,8 +1059,10 @@ mod tests {
             partial_scope: None,
             analyzed_revisions: None,
         };
-        let mut loaded = RiprConfig::default();
-        loaded.source_path = Some(PathBuf::from("repo/ripr.toml"));
+        let loaded = RiprConfig {
+            source_path: Some(PathBuf::from("repo/ripr.toml")),
+            ..RiprConfig::default()
+        };
 
         let rendered = render_with_config(&output, &loaded);
 
