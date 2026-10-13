@@ -4,7 +4,7 @@
   "mode": "fast",
   "root": "fixtures/python_mock_assert_called/input",
   "config_path": "<cwd>/fixtures/python_mock_assert_called/input/ripr.toml",
-  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:1c890a3f48b0bd1fd4cfd4ceea1c1f478ddf21e46f8ab31e799dc6a942b276aa","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -24,9 +24,9 @@
         "normalized_discriminator": "callback_receipt.sent_order_id"
 
       },
-      "classification": "weakly_exposed",
-      "severity": "warning",
-      "confidence": 0.40,
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
       "probe": {
         "id": "probe:src_notify.py:python_preview:5f03d3bc",
         "family": "side_effect",
@@ -40,36 +40,26 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `send_receipt`"},
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python call or output effect can alter observable side effects: `callback(\"receipt.sent\", order_id)`"},
         "propagate": {"state":"weak","confidence":"low","summary":"Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `mock_expectation` (rank 4)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `call includes \"receipt.sent\"`."}
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `mock_expectation` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `mock_expectation` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `send_receipt`", "infection yes: Changed Python call or output effect can alter observable side effects: `callback(\"receipt.sent\", order_id)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation weak: Strongest extracted Python oracle kind: `mock_expectation` (rank 4)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `call includes \"receipt.sent\"`.", "local flow reaches call effect: callback(\"receipt.sent\", order_id) (line 2)", "related test tests/test_notify.py:6 test_send_receipt_notifies_callback uses medium mock expectation oracle: callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")", "missing discriminator call includes \"receipt.sent\": changed Python output/log/call effect at line 2 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `send_receipt`", "infection yes: Changed Python call or output effect can alter observable side effects: `callback(\"receipt.sent\", order_id)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `mock_expectation` (rank 5)", "discriminator yes: Related Python test uses a `mock_expectation` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: callback(\"receipt.sent\", order_id) (line 2)", "related test tests/test_notify.py:6 test_send_receipt_notifies_callback uses medium mock expectation oracle: callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")"],
       "flow_sinks": [
         {"kind":"call_effect","text":"callback(\"receipt.sent\", order_id)","line":2}
       ],
-      "evidence": ["owner: send_receipt", "owner_kind: function", "missing_discriminator: call includes \"receipt.sent\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_notify.py", "suggested_test_name: test_send_receipt_notifies_callback", "suggested_test_node_id: tests/test_notify.py::test_send_receipt_notifies_callback", "suggested_verify_command: python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
-      "missing": ["Related Python test reaches `send_receipt` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the changed output/log/call effect."],
+      "evidence": ["owner: send_receipt", "owner_kind: function", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
+      "missing": ["Related Python test reaches `send_receipt` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
       "activation": {
         "observed_values": [
         ],
         "missing_discriminators": [
-          {
-            "value": "call includes \"receipt.sent\"",
-            "reason": "changed Python output/log/call effect at line 2 lacks a concrete repair discriminator",
-            "flow_sink": {"kind":"call_effect","text":"callback(\"receipt.sent\", order_id)","line":2}
-          }
         ]
       },
       "observed_values": [
       ],
       "missing_discriminators": [
-        {
-          "value": "call includes \"receipt.sent\"",
-          "reason": "changed Python output/log/call effect at line 2 lacks a concrete repair discriminator",
-          "flow_sink": {"kind":"call_effect","text":"callback(\"receipt.sent\", order_id)","line":2}
-        }
       ],
       "related_tests_total": 1,
       "related_tests": [
@@ -82,55 +72,18 @@
           "oracle": "callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")"
         }
       ],
-      "repair_placement": {
-        "suggested_test_file": "tests/test_notify.py",
-        "suggested_test_name": "test_send_receipt_notifies_callback",
-        "suggested_test_node_id": "tests/test_notify.py::test_send_receipt_notifies_callback",
-        "verify_command": "python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback",
-        "verify_command_confidence": "high"
-       },
-      "python_repair_card": {
-        "card_version": "python_repair_card.v1",
-        "source": "check_python_preview",
-        "canonical_gap_id": "gap:python:src/notify.py:send_receipt:call_or_output_effect:side_effect:callback_receipt.sent_order_id",
-        "language": "python",
-        "language_status": "preview",
-        "authority_boundary": "preview_advisory_only",
-        "repair_action": "strengthen_existing_test",
-        "changed_owner": "send_receipt",
-        "changed_behavior": "call_or_output_effect changed at src/notify.py:2: `callback(\"receipt.sent\", order_id)`",
-        "current_test_evidence": "tests/test_notify.py:6 test_send_receipt_notifies_callback currently has oracle_strength=medium, oracle_kind=mock_expectation: callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")",
-        "missing_discriminator": "call includes \"receipt.sent\"",
-        "recommended_test_shape": "Strengthen the existing pytest output/log/call-effect assertion for `call includes \"receipt.sent\"`.",
-        "suggested_assertion": "Assert the changed output, log text, or call effect for `call includes \"receipt.sent\"`.",
-        "suggested_location": {
-          "test_file": "tests/test_notify.py",
-          "test_name": "test_send_receipt_notifies_callback",
-          "pytest_node_id": "tests/test_notify.py::test_send_receipt_notifies_callback"
-         },
-        "verify": {
-          "command": "python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback",
-          "confidence": "high"
-         },
-        "receipt": {
-          "command": null,
-          "status": "unavailable_until_python_gap_ledger",
-          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
-         },
-        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
-        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
-       },
       "stop_reasons": [],
       "oracle_kind": "mock_expectation",
       "oracle_strength": "medium",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes \"receipt.sent\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes \"receipt.sent\"`.",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
       "changed_sink": "callback, receipt, sent, order_id, receipt.sent",
-      "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle",
+      "observed_sink": "callback.assert_called_once_with(\"receipt.sent\", \"ord-123\")",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_changed_effect_channel",
       "source_currentness": "candidate_current"
     }
   ],
@@ -145,5 +98,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/notify.py","digest":"sha256:fb84c9c32e3ff75f00274828a60e3768f6558567914e935db4eebf4bcced91c1"},{"path":"tests/test_notify.py","digest":"sha256:2b0924c945b1ffefdb169a51308103e39b875564a3b8f0feb419e0789c91a965"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/notify.py","digest":"sha256:fb84c9c32e3ff75f00274828a60e3768f6558567914e935db4eebf4bcced91c1"}]}
 }
