@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "ok_return",
   "test_shape": "assert_matches_ok_wildcard_conjunct",
-  "hard_case": "Measured defect (#7695): ripr reported the related test's oracle `assert!(ready && matches!(check(5), Ok(_)))` as exact_value / strong, because any `matches!` text in an `&&` chain credited the whole condition whatever its pattern. RIPR-SPEC-0231 rule 3 (example 7 is the same `Ok(_)` pattern as the whole condition): the `Ok(_)` conjunct only checks the side and `ready` pins nothing, so the chain reads no stronger than `assert!(ready)`, relational_check / weak. The line verdict stays gap; the overclaim showed in the related test's reported oracle.",
+  "hard_case": "Measured defect (#7695): ripr reported the related test's oracle `assert!(ready && matches!(check(5), Ok(_)))` as exact_value / strong, because any `matches!` text in an `&&` chain credited the whole condition whatever its pattern. RIPR-SPEC-0231 rule 3 (example 7 is the same `Ok(_)` pattern as the whole condition): the `Ok(_)` conjunct only checks the side and `ready` pins nothing, so the chain reads no stronger than `assert!(ready)`, relational_check / weak. The line verdict stays gap; the overclaim showed in the related test's reported oracle. Since #7695's fix ripr reports relational_check / weak.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

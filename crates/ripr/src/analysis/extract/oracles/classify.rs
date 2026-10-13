@@ -195,7 +195,9 @@ fn classify_non_negated_assertion(
     if strongest.iter().any(|reading| **reading == whole) {
         return whole;
     }
-    strongest.first().map_or(whole.clone(), |reading| (*reading).clone())
+    strongest
+        .first()
+        .map_or(whole.clone(), |reading| (*reading).clone())
 }
 
 fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> OracleClassification {

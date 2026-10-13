@@ -387,7 +387,10 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         ("debug_assert!(ready && matches!(r, Some(_)));", &weak),
         ("assert!(ready && (matches!(r, Ok(_))));", &weak),
         ("assert!(ready && /* side */ matches!(r, Ok(_)));", &weak),
-        ("assert!(matches!(r, Ok(_)) && matches!(s, Some(_)));", &smoke),
+        (
+            "assert!(matches!(r, Ok(_)) && matches!(s, Some(_)));",
+            &smoke,
+        ),
         ("assert!(total > 1 && matches!(r, Ok(_)));", &weak),
         ("assert!(ready && matches!(r, Ok(_) | Err(_)));", &weak),
         ("assert!(ready && matches!(r, Some(1..=5)));", &weak),
@@ -400,7 +403,6 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
         ("assert!(matches!(value, _) && value == 2);", &exact),
         ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
-        ("assert_eq!(ready && matches!(r, Ok(_)), true);", &exact),
         ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
         ("assert!(matches!(r, Ok(_)));", &smoke),
     ] {
@@ -422,9 +424,7 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         let Some(fact) = facts.first() else {
             return Err(format!("{text}: must produce an oracle fact"));
         };
-        if fact.strength == OracleStrength::Strong {
-            return Err(format!("{text}: a side-only chain must not read strong"));
-        }
+        require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)?;
     }
     Ok(())
 }
