@@ -640,8 +640,12 @@ fn has_path_attribute(source: &str) -> bool {
     false
 }
 
+/// Rust identifiers continue with any XID_Continue char, which includes
+/// combining marks (`mo\u{301}dulo`) and connector punctuation. Every
+/// non-ASCII char counts as identifier-continuing, so a boundary is never
+/// found inside a longer name (fails closed).
 fn is_ident_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    !ch.is_ascii() || ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 /// Whether the char ending just before byte `at` continues an identifier.
@@ -897,6 +901,11 @@ fn head_word(head: &str) -> &str {
 
 /// The `a::b::` path segments ending `head`, outermost first.
 fn qualifier_before(head: &str) -> Option<Vec<String>> {
+    // A raw identifier (`b::r#render`) is not read: `#` would otherwise
+    // look like a boundary and turn the path into a bare call.
+    if head.ends_with('#') {
+        return None;
+    }
     let mut segments = Vec::new();
     let mut rest = head;
     while let Some(before) = rest.strip_suffix("::") {
@@ -907,6 +916,12 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
         let word = head_word(before);
         if word.is_empty() {
             // A leading `::name` (2015 extern path) spells no module.
+            return None;
+        }
+        if before
+            .get(..before.len() - word.len())
+            .is_some_and(|rest| rest.ends_with('#'))
+        {
             return None;
         }
         segments.push(word.to_string());
@@ -953,6 +968,20 @@ mod tests {
         assert_ne!(
             settle(&index, "::a::dulo", "only_qualified_modulo"),
             Some(CallTarget::Owner)
+        );
+    }
+
+    #[test]
+    fn decomposed_and_raw_identifiers_never_read_as_a_bare_call() {
+        assert!(call_qualifiers("fn t() { assert_eq!(mo\u{301}dulo(), 2); }", "dulo").is_empty());
+        assert!(call_qualifiers("fn t() { assert_eq!(x\u{203F}dulo(), 2); }", "dulo").is_empty());
+        assert_eq!(
+            call_qualifiers("fn t() { assert_eq!(crate::b::r#render(2), 4); }", "render"),
+            vec![None]
+        );
+        assert_eq!(
+            call_qualifiers("fn t() { assert_eq!(crate::r#b::render(2), 4); }", "render"),
+            vec![None]
         );
     }
 
