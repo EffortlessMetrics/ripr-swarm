@@ -101,3 +101,10 @@ Mixed scalar types remain conservatively uncredited, including actually unequal
 large integers versus rounded floats; no lossy numeric conversion supplies proof.
 Empty-list length changes retain a real discrimination witness. Nonliteral,
 unpaired and unsupported return shapes remain outside this bounded credit.
+
+Rendered CLI review of source `414b63c61dbc2a24753acd59380bd37d18a02505`
+found that its corrected weak finding still emitted an exact-assertion repair
+card for the assertion already present. The equal-values control therefore also
+requires no invented typed discriminator, placement, repair card or strengthen-
+test next step. The warning and strong oracle remain; withholding ungrounded
+repair authority does not suppress the finding or promote the change.

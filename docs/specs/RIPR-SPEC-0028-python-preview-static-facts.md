@@ -217,7 +217,9 @@ mock expectations, and custom `assert_*` helpers.
   different length or a same-type scalar constant that compares differently.
   Equal spellings/values and mixed scalar types (including Python-equal `1`,
   `True` and `1.0`) remain uncredited; numeric coercions and nonliteral return
-  elements are not evaluated by this bounded path.
+  elements are not evaluated by this bounded path. An unproved list-equality
+  change retains the finding and limitation without inventing a missing exact
+  assertion, typed repair placement or repair card.
 - `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’

@@ -22,3 +22,8 @@ withholds discrimination credit for an equality-indistinguishable change.
 
 Report `exposed` or discrimination yes. RIPR-SPEC-0108 independently pins the
 classification, oracle, non-promotion and nonempty result.
+
+The existing assertion cannot be prescribed as its own repair. No typed missing
+discriminator, repair placement, repair card or strengthen-test next step is
+grounded for this equality-indistinguishable edit; preserve the warning and
+explicit equality limitation.

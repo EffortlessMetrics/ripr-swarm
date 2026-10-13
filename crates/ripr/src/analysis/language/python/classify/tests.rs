@@ -331,6 +331,15 @@ fn unittest_list_equal_requires_changed_python_literal_value() -> Result<(), Str
         )?;
         assert_eq!(finding.class, expected_class, "{before} -> {after}");
         if expected_class == ExposureClass::WeaklyExposed {
+            assert!(finding.activation.missing_discriminators.is_empty());
+            assert!(finding.recommended_next_step.is_none());
+            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+            assert!(
+                !finding
+                    .evidence
+                    .iter()
+                    .any(|item| item.starts_with("suggested_repair_action:"))
+            );
             assert_eq!(
                 finding.missing[0],
                 "A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence."
