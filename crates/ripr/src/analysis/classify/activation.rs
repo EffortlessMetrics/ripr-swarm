@@ -1593,9 +1593,10 @@ fn missing_field_value_discriminator(
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
 /// binding, directly or through an inherent getter whose body returns the
-/// field. The test must call `owner` on nothing but that binding, and bind
-/// no local from it, since another value built through the owner, or a
-/// snapshot of the binding, may carry the same changed value into the other
+/// field. The test must call `owner` on nothing but that binding and must
+/// not copy the binding between its owner calls and the read
+/// (`binding_untouched_after_owner_call`), since another value built through
+/// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
 fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
@@ -1611,7 +1612,6 @@ fn pushed_collection_compared_whole(
         .into_iter()
         .any(|read| {
             !super::reveal::owner_called_on_other_receiver(&test.body, &read.binding, call.name())
-                && !super::reveal::test_snapshots_binding(&test.body, &read.binding)
                 && super::reveal::owner_call_precedes_read(
                     &test.body,
                     test.start_line,
