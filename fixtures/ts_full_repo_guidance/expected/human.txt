@@ -15,4 +15,4 @@ Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview an
 To enable, add to ripr.toml:
 
 [languages]
-enabled = ["rust", "typescript"]
+enabled = ["typescript"]
