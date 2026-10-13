@@ -16346,6 +16346,259 @@ fn retained_snapshot_during_queued_or_running_refresh_reports_wait_state() -> Re
 }
 
 #[test]
+fn retained_code_actions_disclose_health_on_the_public_handler() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, PathBuf::from("/workspace")));
+        let backend = service.inner();
+        let init: InitializeParams = serde_json::from_value(serde_json::json!({
+            "rootUri": "file:///workspace",
+            "capabilities": {
+                "textDocument": {"codeAction": {"disabledSupport": true}},
+                "experimental": {"riprEditor": {"version": "0.10.0", "commands": vscode_advertised_client_commands()?, "guardedTestEdit": false}}
+            }
+        }))
+        .map_err(|error| error.to_string())?;
+        backend
+            .initialize(init)
+            .await
+            .map_err(|error| error.to_string())?;
+        let (mut params, snapshot) = seam_code_action_request()?;
+        let uri = params.text_document.uri.clone();
+        backend
+            .refresh_plan(WorkspaceDiagnostics {
+                batches: vec![DiagnosticBatch {
+                    uri: uri.clone(),
+                    diagnostics: snapshot
+                        .diagnostics_by_uri
+                        .get(&uri)
+                        .cloned()
+                        .ok_or("missing fixture diagnostics")?,
+                }],
+                snapshot,
+            })
+            .ok_or("snapshot commit failed")?;
+        params.context.diagnostics = backend
+            .latest_analysis_snapshot()
+            .ok_or("snapshot absent")?
+            .diagnostics_for_uri(&uri)
+            .ok_or("served diagnostic absent")?
+            .to_vec();
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+        let baseline = backend
+            .code_action(params.clone())
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("baseline actions absent")?;
+        let addressed = code_action_literals(&baseline)?
+            .into_iter()
+            .filter(|action| action.diagnostics.is_some())
+            .collect::<Vec<_>>();
+        assert!(
+            !addressed.is_empty(),
+            "fixture must address real seam actions"
+        );
+        assert!(addressed.iter().any(|action| action.command.is_some()), "healthy control must be executable before disabling");
+        for state in [
+            AnalysisAttemptState::Queued,
+            AnalysisAttemptState::Running,
+            AnalysisAttemptState::Failed,
+            AnalysisAttemptState::Cancelled,
+            AnalysisAttemptState::Superseded,
+            AnalysisAttemptState::Stopped,
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let actions = backend
+                .code_action(params.clone())
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("retained actions absent")?;
+            let literals = code_action_literals(&actions)?;
+            let inert = literals
+                .iter()
+                .filter(|action| action.diagnostics.is_some())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                inert.len(),
+                addressed.len(),
+                "{state:?} makes the diagnostic menu disappear: {actions:?}"
+            );
+            for (actual, prior) in inert.iter().zip(&addressed) {
+                assert_eq!(
+                    actual.data.as_ref().and_then(|data| data.get("action_id")),
+                    prior.data.as_ref().and_then(|data| data.get("action_id"))
+                );
+                assert_eq!(actual.diagnostics, prior.diagnostics);
+                assert!(
+                    actual.command.is_none()
+                        && actual.edit.is_none()
+                        && actual.is_preferred != Some(true)
+                );
+                assert_eq!(disabled_reason_of(actual), Some("analysis_not_current"));
+                assert!(
+                    actual
+                        .disabled
+                        .as_ref()
+                        .is_some_and(|reason| reason.reason.contains(state.as_str()))
+                );
+                let resolved = backend
+                    .code_action_resolve((***actual).clone())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                assert!(resolved.command.is_none() && resolved.edit.is_none());
+            }
+            let refresh = literals
+                .iter()
+                .find(|action| {
+                    action
+                        .kind
+                        .as_ref()
+                        .is_some_and(|kind| kind.as_str() == "source.ripr.refresh")
+                })
+                .ok_or("refresh recovery absent")?;
+            assert!(refresh.disabled.is_none());
+            assert_eq!(
+                refresh
+                    .command
+                    .as_ref()
+                    .map(|command| command.command.as_str()),
+                Some(REFRESH_COMMAND)
+            );
+            let mut only = params.clone();
+            only.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.inspect")]);
+            let filtered = backend
+                .code_action(only)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("filtered actions absent")?;
+            assert!(!filtered.is_empty());
+            for action in code_action_literals(&filtered)? {
+                assert_eq!(
+                    action.kind.as_ref().map(|kind| kind.as_str()),
+                    Some("quickfix.ripr.inspect")
+                );
+                assert!(action.command.is_none() && action.edit.is_none());
+            }
+        }
+        let retained = backend.code_action(params.clone()).await.map_err(|error| error.to_string())?.ok_or("retained response absent")?;
+        let inert = code_action_literals(&retained)?.into_iter().find(|action| action.diagnostics.is_some()).ok_or("retained addressed action absent")?.clone();
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+        let resolved = backend.code_action_resolve(inert).await.map_err(|error| error.to_string())?;
+        assert!(resolved.command.is_none() && resolved.edit.is_none(), "recovery must not rearm an old inert action");
+        let recovered = backend
+            .code_action(params.clone())
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("recovered actions absent")?;
+        assert_eq!(recovered, baseline);
+        backend.set_snapshot_run_status_for_test("stale");
+        let stale = backend
+            .code_action(params)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("stale actions absent")?;
+        let stale_actions = code_action_literals(&stale)?.into_iter().filter(|action| action.diagnostics.is_some()).collect::<Vec<_>>();
+        assert_eq!(stale_actions.len(), addressed.len());
+        assert!(stale_actions.iter().all(|action| disabled_reason_of(action) == Some("analysis_not_current")));
+        Ok(())
+    })
+}
+
+#[test]
+fn framed_retained_code_actions_survive_changed_config_failure() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("retained-code-actions")?;
+        let root = temp.path().to_path_buf();
+        let root_uri = file_uri_for_path(&root)?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut reader, mut writer) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, root.clone()));
+        let mut server = tokio::spawn(async move { Server::new(server_read, server_write, socket).serve(service).await; });
+        let result = async {
+            write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "processId":null,"rootUri":root_uri.as_str(),
+                "initializationOptions":{"baseRef":"HEAD","checkMode":"instant","diagnosticProfile":"full","seamDiagnostics":true},
+                "capabilities":{"textDocument":{"codeAction":{"disabledSupport":true}},"workspace":{"didChangeConfiguration":{"dynamicRegistration":false}}}
+            }})).await?;
+            let init = read_lsp_response(&mut reader, 1).await?;
+            assert!(init.get("error").is_none(), "{init}");
+            write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}})).await?;
+            let notifications = run_wire_refresh_collecting(&mut reader, &mut writer, 2).await?;
+            let (uri, diagnostic) = notifications.iter().filter(|message| message["method"] == "textDocument/publishDiagnostics").find_map(|message| {
+                message["params"]["diagnostics"].as_array()?.iter().find(|diagnostic| diagnostic["data"]["seam_id"].is_string()).map(|diagnostic| (message["params"]["uri"].clone(), diagnostic.clone()))
+            }).ok_or_else(|| format!("full refresh must publish a real seam diagnostic: {notifications:?}"))?;
+            let params = serde_json::json!({"textDocument":{"uri":uri},"range":diagnostic["range"],"context":{"diagnostics":[diagnostic],"only":["quickfix"]}});
+            write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":params})).await?;
+            let baseline = read_lsp_response(&mut reader, 3).await?;
+            let prior = baseline["result"].as_array().ok_or_else(|| format!("codeAction failed: {baseline}"))?;
+            assert!(!prior.is_empty(), "healthy diagnostic menu must have actions: {baseline}");
+            std::fs::write(root.join("ripr.toml"), "mode = [").map_err(|error| error.to_string())?;
+            let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
+            write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":config_uri.as_str(),"type":1}]}})).await?;
+            let failure = tokio::time::timeout(Duration::from_secs(10), async {
+                loop { let message = read_lsp_message(&mut reader).await?; if message["method"] == "ripr/analysisStatus" && message["params"]["state"] == "failed" { return Ok::<_,String>(message); } }
+            }).await.map_err(|_| "config failure was not observed".to_string())??;
+            assert!(failure["params"]["snapshot_id"].is_string(), "failure must retain the snapshot: {failure}");
+            write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","id":4,"method":"textDocument/codeAction","params":params})).await?;
+            let failed = read_lsp_response(&mut reader, 4).await?;
+            let inert = failed["result"].as_array().ok_or_else(|| format!("codeAction failed: {failed}"))?;
+            assert_eq!(inert.len(), prior.len(), "changed config removes the lightbulb menu: {failed}; previously: {baseline}");
+            for (action, original) in inert.iter().zip(prior) {
+                assert_eq!(action["data"]["action_id"], original["data"]["action_id"]);
+                assert_eq!(action["diagnostics"], original["diagnostics"]);
+                assert_eq!(action["data"]["disabled_reason"], "analysis_not_current");
+                assert!(action["command"].is_null() && action["edit"].is_null());
+                assert!(action["disabled"]["reason"].as_str().is_some_and(|reason| reason.contains("failed")));
+            }
+            Ok::<(),String>(())
+        }.await;
+        let shutdown = shutdown_framed_session(&mut reader, &mut writer, &mut server, 5).await;
+        result?;
+        shutdown
+    })
+}
+
+#[test]
+fn retained_code_actions_preserve_client_root_and_item_gates() -> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        for disabled in [false, true] {
+            let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from("/workspace")));
+            let backend = service.inner();
+            let init = serde_json::from_value(serde_json::json!({"rootUri":"file:///workspace","capabilities":{"textDocument":{"codeAction":{"disabledSupport":disabled}},"experimental":{"riprEditor":{"version":"0.10.0","commands":vscode_advertised_client_commands()?,"guardedTestEdit":false}}}})).map_err(|error| error.to_string())?;
+            backend.initialize(init).await.map_err(|error| error.to_string())?;
+            let (mut params, snapshot) = seam_code_action_request()?;
+            let uri = params.text_document.uri.clone();
+            backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
+            let missing = backend.code_action(params.clone()).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
+            assert!(code_action_literals(&missing)?.iter().all(|action| action.diagnostics.is_none()), "missing snapshot cannot invent inert actions");
+            let batches = vec![DiagnosticBatch {uri:uri.clone(),diagnostics:snapshot.diagnostics_by_uri.get(&uri).cloned().ok_or("fixture missing")?}];
+            backend.refresh_plan(WorkspaceDiagnostics {snapshot: snapshot.clone(),batches}).ok_or("commit failed")?;
+            params.context.diagnostics = backend.latest_analysis_snapshot().ok_or("snapshot absent")?.diagnostics_for_uri(&uri).ok_or("diagnostics absent")?.to_vec();
+            let retained = backend.code_action(params.clone()).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
+            let count = code_action_literals(&retained)?.iter().filter(|action| action.diagnostics.is_some()).count();
+            if disabled { assert!(count > 0); } else { assert_eq!(count, 0, "legacy client must retain omission"); }
+            let mut unknown = params.clone();
+            unknown.context.diagnostics[0].data.as_mut().and_then(serde_json::Value::as_object_mut).ok_or("data absent")?.insert("seam_id".to_string(), serde_json::Value::String("seam:unknown".to_string()));
+            let unrelated = backend.code_action(unknown).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
+            assert!(code_action_literals(&unrelated)?.iter().all(|action| action.diagnostics.is_none()), "unknown item must not acquire retained actions");
+            let mut outside = params.clone();
+            outside.text_document.uri = test_uri("file:///elsewhere/pricing.rs")?;
+            let wrong_uri = backend.code_action(outside).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
+            assert!(code_action_literals(&wrong_uri)?.iter().all(|action| action.diagnostics.is_none()), "wrong URI must not acquire retained actions");
+            backend.invalidate_workspace_root_for_test().await;
+            let batches = vec![DiagnosticBatch {uri:uri.clone(),diagnostics:snapshot.diagnostics_by_uri.get(&uri).cloned().ok_or("fixture missing")?}];
+            backend.refresh_plan(WorkspaceDiagnostics {snapshot,batches}).ok_or("retained fixture commit failed")?;
+            params.context.diagnostics = backend.latest_analysis_snapshot().ok_or("blocked-root fixture snapshot absent")?.diagnostics_for_uri(&uri).ok_or("blocked-root fixture diagnostics absent")?.to_vec();
+            backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
+            let blocked = backend.code_action(params).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
+            assert!(code_action_literals(&blocked)?.iter().all(|action| action.diagnostics.is_none()), "blocked root must not expose retained actions even if a fixture snapshot is present");
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn refresh_transaction_does_not_replace_snapshot_before_commit() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
