@@ -2556,6 +2556,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "num-bigint",
  "ra_ap_syntax",
  "rayon",
  "repo-policy",

@@ -2564,9 +2564,10 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         let sample = verdict_corpus_sample(
             &absolute,
             absolute.source.trim_start_matches("verdict-corpus:"),
+            &mut BTreeMap::new(),
         );
         assert!(
-            matches!(sample.outcome, SampleOutcome::Value(v) if (v - numerator / denominator).abs() < 1e-12),
+            matches!(&sample.outcome, SampleOutcome::Corpus(population) if population.value().is_some_and(|v| (v - numerator / denominator).abs() < 1e-12)),
             "{}: {:?} {}",
             metric.id,
             sample.outcome,
@@ -2586,7 +2587,11 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         .cloned()
         .ok_or("no verdict-corpus metric")?;
     missing.source = "verdict-corpus:no/such/corpus#false_verdict_rate".to_string();
-    let sample = verdict_corpus_sample(&missing, "no/such/corpus#false_verdict_rate");
+    let sample = verdict_corpus_sample(
+        &missing,
+        "no/such/corpus#false_verdict_rate",
+        &mut BTreeMap::new(),
+    );
     assert!(
         matches!(sample.outcome, SampleOutcome::NotMeasured),
         "{:?}",
@@ -2610,7 +2615,7 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         r#"{"case_id": "a-case"}"#,
     );
     let reference = format!("{}#false_verdict_rate", dir.display());
-    let sample = verdict_corpus_sample(&missing, &reference);
+    let sample = verdict_corpus_sample(&missing, &reference, &mut BTreeMap::new());
     assert!(
         matches!(sample.outcome, SampleOutcome::Failed),
         "{:?} {}",
@@ -2651,6 +2656,7 @@ fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), St
     let sample = verdict_corpus_sample(
         &absolute,
         absolute.source.trim_start_matches("verdict-corpus:"),
+        &mut BTreeMap::new(),
     );
     let SampleOutcome::Value(rate) = sample.outcome else {
         return Err(format!(
@@ -2688,7 +2694,7 @@ fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), St
     fs::create_dir(isolated.join("subjects")).map_err(|err| err.to_string())?;
     fs::create_dir(isolated.join("cases")).map_err(|err| err.to_string())?;
     let missing_ledger = format!("{}#spec_example_coverage.coverage", isolated.display());
-    let failed = verdict_corpus_sample(&absolute, &missing_ledger);
+    let failed = verdict_corpus_sample(&absolute, &missing_ledger, &mut BTreeMap::new());
     assert!(
         matches!(failed.outcome, SampleOutcome::Failed),
         "{:?} {}",
