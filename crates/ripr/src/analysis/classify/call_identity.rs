@@ -28,6 +28,12 @@
 //! parser could not place) stays unsettled, and callers keep their prior
 //! behavior: an unsettled call never grants new credit.
 //!
+//! A test that may reach the owner without a spelled call of its name (the
+//! owner passed as a value, `.map(crate::a::render)`, or called through a
+//! renaming import, `use crate::a::render as fast;`) never settles on
+//! another definition: it stays unsettled. A test in another package, or a
+//! module that matches no placed definition, is unsettled the same way.
+//!
 //! [`OwnerCallIdentity::resolve_test`] aggregates a test's calls for coarse
 //! related-test selection; the owner-return pin resolves its asserted call
 //! alone with [`OwnerCallIdentity::resolve_call`].
@@ -226,11 +232,59 @@ impl OwnerCallIdentity {
         }
         if owner {
             CallTarget::Owner
-        } else if unsettled {
+        } else if unsettled || self.reached_without_a_call(&test.body, &scope) {
             CallTarget::Unsettled
         } else {
             CallTarget::Other
         }
+    }
+
+    /// Whether the test may reach the owner without a spelled call of its
+    /// name: the owner passed as a value (`.map(crate::a::render)`, `let f =
+    /// render;`) or called through a renaming import (`use crate::a::render
+    /// as fast;`). Such a test is unsettled, never `Other`, so it keeps the
+    /// name-only behavior; it never becomes `Owner` either.
+    fn reached_without_a_call(&self, body: &str, test: &TestScope) -> bool {
+        let reaches = |matches: Matches| self.target_of(&matches) != CallTarget::Other;
+        if value_mentions(body, &self.name)
+            .into_iter()
+            .any(|qualifier| match qualifier {
+                None => true,
+                Some(segments) => reaches(self.resolve_spelled(&segments, test)),
+            })
+        {
+            return true;
+        }
+        let Some(scopes) = test.scopes.as_deref() else {
+            return false;
+        };
+        for scope in &scopes.scopes {
+            if scope.block_rename_targets.contains(&self.name) {
+                return true;
+            }
+            let base = test
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &scope.modules));
+            for import in &scope.imports {
+                let UseBinding::Renamed(path) = &import.binding else {
+                    continue;
+                };
+                let Some((original, module)) = path.split_last() else {
+                    continue;
+                };
+                if *original != self.name || !mentions_word(body, &import.bound) {
+                    continue;
+                }
+                let module = (!module.is_empty())
+                    .then(|| use_target(module, base.as_deref(), scope, &test.crate_names))
+                    .flatten();
+                if reaches(self.matches_module(module)) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn test_scope(&self, test: &TestSummary, index: &RustIndex) -> TestScope {
@@ -253,7 +307,12 @@ impl OwnerCallIdentity {
                 scopes
             }
         };
-        let same_crate = self.owner_crate.is_some() && crate_class(&test.file) == self.owner_crate;
+        // `crate::`, `self::`, `super::` and local modules name the owner's
+        // modules only from the owner's own crate: same package, same crate
+        // within it.
+        let same_crate = self.owner_crate.is_some()
+            && crate_class(&test.file) == self.owner_crate
+            && super::related_tests::package_prefix(&test.file) == self.owner_package;
         TestScope {
             file_segments: file_module_segments(&test.file).filter(|_| same_crate),
             scopes,
@@ -464,11 +523,22 @@ impl OwnerCallIdentity {
     }
 
     /// The definitions declared directly in the crate-anchored `module`;
-    /// `Any` when the module could not be resolved.
+    /// `Any` when the module could not be resolved. An unplaced definition
+    /// matches every module, so a module that matches no placed definition
+    /// (a re-export module, a path ripr misread) is `Any` too: an unplaced
+    /// rival alone never settles a call away from the owner.
     fn matches_module(&self, module: Option<Vec<String>>) -> Matches {
         let Some(module) = module else {
             return Matches::Any;
         };
+        if !self
+            .definitions
+            .iter()
+            .flatten()
+            .any(|path| *path == module)
+        {
+            return Matches::Any;
+        }
         let set = self
             .definitions
             .iter()
@@ -722,6 +792,89 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         calls.push(qualifier_before(head));
     }
     calls
+}
+
+/// The spelled module path of every mention of `name` in `body` that is no
+/// call and could be the function used as a value (`.map(a::render)`, `let
+/// f = render;`), in the same shape as [`call_qualifiers`]. Calls, method
+/// and field accesses, macro invocations, path segments (`render::x`),
+/// `name:` fields or ascriptions, definitions, local bindings and `use`
+/// items are skipped; anything else counts, which only fails closed.
+fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let use_items = use_item_ranges(&masked);
+    let mut mentions = Vec::new();
+    for (start, _) in masked.match_indices(name) {
+        let end = start + name.len();
+        if start > 0 && bytes.get(start - 1).copied().is_some_and(is_ident) {
+            continue;
+        }
+        if bytes.get(end).copied().is_some_and(is_ident) {
+            continue;
+        }
+        if use_items.iter().any(|range| range.contains(&start)) {
+            continue;
+        }
+        let tail = masked[end..].trim_start();
+        if tail.starts_with('(') || tail.starts_with(':') || tail.starts_with('!') {
+            continue;
+        }
+        let head = masked[..start].trim_end();
+        if head.ends_with('.')
+            || head.ends_with('\'')
+            || matches!(
+                head_word(head),
+                "fn" | "let"
+                    | "mut"
+                    | "ref"
+                    | "struct"
+                    | "enum"
+                    | "union"
+                    | "mod"
+                    | "const"
+                    | "static"
+                    | "type"
+                    | "trait"
+            )
+        {
+            continue;
+        }
+        mentions.push(qualifier_before(head));
+    }
+    mentions
+}
+
+/// Byte ranges of the `use` items in masked `text`, each from its `use`
+/// keyword through its `;`.
+fn use_item_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    text.match_indices("use")
+        .filter(|(start, _)| {
+            (*start == 0 || !bytes.get(start - 1).copied().is_some_and(is_ident))
+                && !bytes.get(start + 3).copied().is_some_and(is_ident)
+        })
+        .map(|(start, _)| {
+            let end = text[start..]
+                .find(';')
+                .map_or(text.len(), |offset| start + offset + 1);
+            start..end
+        })
+        .collect()
+}
+
+/// Whether `word` occurs in `body`'s code (not a comment or string) as a
+/// whole identifier.
+fn mentions_word(body: &str, word: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked.match_indices(word).any(|(start, _)| {
+        (start == 0 || !bytes.get(start - 1).copied().is_some_and(is_ident))
+            && !bytes.get(start + word.len()).copied().is_some_and(is_ident)
+    })
 }
 
 fn head_word(head: &str) -> &str {
@@ -1280,6 +1433,251 @@ fn other_crate() {
         ));
         assert!(!has_path_attribute("fn f() { let path = 1; }"));
         assert!(!has_path_attribute("#[doc = \"x\"]\n#[cfg(test)]\nmod z;"));
+    }
+
+    const SPLIT_A: &str = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n";
+
+    const SPLIT_B: &str = "\
+pub fn render(x: i32) -> i32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passes_owner_as_value() {
+        let v: Vec<i32> = [1, 2].iter().copied().map(crate::a::render).collect();
+        assert_eq!(render(3), 6);
+        assert_eq!(v, [2, 3]);
+    }
+
+    #[test]
+    fn renamed_owner_import() {
+        use crate::a::render as fast;
+        assert_eq!(fast(2), render(2) - 1);
+    }
+
+    #[test]
+    fn block_renamed_owner_import() {
+        {
+            use crate::a::render as fast;
+            let _ = fast(1);
+        }
+        assert_eq!(render(2), 4);
+    }
+
+    #[test]
+    fn bare_value_mention() {
+        let f: fn(i32) -> i32 = render;
+        assert_eq!(f(2), render(2));
+    }
+
+    #[test]
+    fn rival_only_value_and_rename() {
+        use crate::b::render as twice;
+        let v: Vec<i32> = [1].iter().copied().map(crate::b::render).collect();
+        assert_eq!(twice(2), render(2));
+        assert_eq!(v, [2]);
+    }
+}
+
+#[cfg(test)]
+mod renamed_in_module {
+    use super::*;
+    use crate::a::render as fast;
+
+    #[test]
+    fn module_renamed_owner_import() {
+        assert_eq!(fast(2), render(2) - 1);
+    }
+}
+";
+
+    /// Review gap 1: a test that reaches the owner without spelling a call
+    /// of its name (a function value, a renaming import at the body, block
+    /// or module level) is unsettled, not settled on the rival; it is never
+    /// credited to the owner either. A test that only reaches the rival by
+    /// value and rename stays `Other` (control).
+    #[test]
+    fn reaching_the_owner_without_a_spelled_call_is_unsettled() {
+        let index = index(&[("src/a.rs", SPLIT_A), ("src/b.rs", SPLIT_B)]);
+        for test in [
+            "passes_owner_as_value",
+            "renamed_owner_import",
+            "block_renamed_owner_import",
+            "module_renamed_owner_import",
+        ] {
+            assert_eq!(
+                settle(&index, "a.rs::render", test),
+                Some(CallTarget::Unsettled),
+                "{test} may reach a::render without a spelled call"
+            );
+        }
+        assert_eq!(
+            settle(&index, "b.rs::render", "passes_owner_as_value"),
+            Some(CallTarget::Owner),
+            "the bare `render(3)` is b's own"
+        );
+        assert_eq!(
+            settle(&index, "a.rs::render", "rival_only_value_and_rename"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "a.rs::render", "bare_value_mention"),
+            Some(CallTarget::Other),
+            "a bare value `render` is resolved like a bare call: b's own"
+        );
+        assert_eq!(
+            settle(&index, "b.rs::render", "rival_only_value_and_rename"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    const NESTED_FN_LIB: &str = "\
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::b::render;
+
+    #[test]
+    fn helper_imports_a() {
+        fn via_a(x: i32) -> i32 {
+            use crate::a::render;
+            render(x)
+        }
+        assert_eq!(via_a(1), 2);
+    }
+
+    #[test]
+    fn plain_b() {
+        assert_eq!(render(2), 4);
+    }
+}
+";
+
+    /// Review gap 2: a nested fn's own `use` binds only in that fn while
+    /// its calls are in the test's text, so the bare `render(x)` is
+    /// unsettled for both definitions, never settled by the module's
+    /// `use crate::b::render`. Without the nested fn, the module import
+    /// settles the call (control).
+    #[test]
+    fn a_nested_fn_import_leaves_the_test_unsettled() {
+        let index = index(&[("src/lib.rs", NESTED_FN_LIB)]);
+        assert_eq!(
+            settle(&index, "::a::render", "helper_imports_a"),
+            Some(CallTarget::Unsettled)
+        );
+        assert_eq!(
+            settle(&index, "::b::render", "helper_imports_a"),
+            Some(CallTarget::Unsettled)
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "plain_b"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "::b::render", "plain_b"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// Review gap 3: `crate::a::render` in another package's library names
+    /// that package's `a`, not the owner's: unsettled both ways. The same
+    /// spelling inside the owner's package settles (control).
+    #[test]
+    fn crate_paths_in_another_package_are_unsettled() {
+        let other = "\
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn other_package_a() {
+        assert_eq!(crate::a::render(1), 2);
+    }
+
+    #[test]
+    fn other_package_b() {
+        assert_eq!(crate::b::render(2), 4);
+    }
+}
+";
+        let index = index(&[
+            ("crates/x/src/lib.rs", RENDER_LIB),
+            ("crates/y/src/lib.rs", other),
+        ]);
+        assert_eq!(
+            settle(&index, "::a::render", "other_package_a"),
+            Some(CallTarget::Unsettled),
+            "never owner credit from another package's `crate::a`"
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "other_package_b"),
+            Some(CallTarget::Unsettled),
+            "never dropped on another package's `crate::b`"
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "crate_path_names_a"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "doubles_two"),
+            Some(CallTarget::Other)
+        );
+    }
+
+    /// Review gap 4: an unplaced rival matches every module, so a module
+    /// that matches no placed definition is `Any` (unsettled), not a set
+    /// holding only the unplaced rival (`Other`).
+    #[test]
+    fn a_module_matching_no_placed_definition_is_unsettled() {
+        let identity = OwnerCallIdentity {
+            name: "render".to_string(),
+            owner_crate: Some("lib".to_string()),
+            owner_file: PathBuf::from("src/lib.rs"),
+            owner_package: None,
+            definitions: vec![Some(strings(&["a"])), Some(strings(&["b"])), None],
+            memo: Mutex::new(BTreeMap::new()),
+            scopes: Mutex::new(BTreeMap::new()),
+        };
+        let target =
+            |module: &[&str]| identity.target_of(&identity.matches_module(Some(strings(module))));
+        assert_eq!(target(&["c"]), CallTarget::Unsettled);
+        assert_eq!(
+            target(&["a"]),
+            CallTarget::Unsettled,
+            "the unplaced rival competes"
+        );
+        assert_eq!(target(&["b"]), CallTarget::Other);
+        assert!(matches!(
+            identity.matches_module(Some(strings(&["c"]))),
+            Matches::Any
+        ));
+    }
+
+    #[test]
+    fn value_mentions_skip_calls_uses_fields_and_definitions() {
+        let body = "fn t() {\n    use crate::a::render;\n    render(1);\n    \
+                    let f = crate::b::render;\n    x.render;\n    render!(2);\n    \
+                    S { render: 3 };\n    render::helper();\n    let render = 4;\n    \
+                    [render];\n    // c::render\n}";
+        assert_eq!(
+            value_mentions(body, "render"),
+            vec![Some(strings(&["crate", "b"])), Some(Vec::new())]
+        );
+        assert!(mentions_word("let x = fast(1);", "fast"));
+        assert!(!mentions_word("let x = faster(1); // fast", "fast"));
     }
 
     #[test]

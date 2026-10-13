@@ -10,7 +10,8 @@
 //! body, an `if` arm) binds its name only in that block; the scan does not
 //! track which calls sit in that block, so it records the name as
 //! block-bound and the caller treats every call of it in the function as
-//! unsettled.
+//! unsettled. An item inside a nested `fn` (or a module nested in the body)
+//! is block-bound the same way.
 
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
@@ -49,6 +50,10 @@ pub(crate) struct NameScope {
     /// A nested block of this function body holds a glob import, which
     /// may bind any name there.
     pub(crate) block_globs: bool,
+    /// Original names a renaming `use` inside a nested block of this
+    /// function body imports under another name (`use a::render as fast;`
+    /// records `render`).
+    pub(crate) block_rename_targets: BTreeSet<String>,
 }
 
 impl NameScope {
@@ -121,24 +126,25 @@ pub(crate) fn name_scopes_for_fn(
             };
             if let Some(body) = enclosing_fn.body() {
                 let top_level = body.stmt_list().map(|list| list.syntax().clone());
+                let inner = (ancestor != *function.syntax()).then(|| function.syntax());
                 for node in body.syntax().descendants() {
-                    if nearest_item_scope(&node).as_ref() != Some(&ancestor) {
-                        continue;
-                    }
                     let Some(item) = ast::Item::cast(node.clone()) else {
                         continue;
                     };
-                    if node.parent() == top_level {
-                        record_item(&item, &mut scope);
-                    } else {
-                        let mut block = NameScope::default();
-                        record_item(&item, &mut block);
-                        scope.block_globs |= !block.globs.is_empty();
-                        scope
-                            .block_bindings
-                            .extend(block.imports.into_iter().map(|import| import.bound));
-                        scope.block_bindings.extend(block.defines);
-                        scope.block_bindings.extend(block.child_modules);
+                    if nearest_item_scope(&node).as_ref() == Some(&ancestor) {
+                        if node.parent() == top_level {
+                            record_item(&item, &mut scope);
+                        } else {
+                            record_block_item(&item, &mut scope);
+                        }
+                    } else if !inner
+                        .is_some_and(|inner| inner.text_range().contains_range(node.text_range()))
+                    {
+                        // An item inside a nested fn (or a module nested in
+                        // the body) binds only there, but the caller scans
+                        // the whole body's calls: it is block-bound. The
+                        // test fn's own items belong to its inner scope.
+                        record_block_item(&item, &mut scope);
                     }
                 }
             }
@@ -167,6 +173,24 @@ pub(crate) fn name_scopes_for_fn(
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
+}
+
+/// Record an item that binds its name only in a nested block or nested fn
+/// of the function body `scope`: block-bound, never the body's own import.
+fn record_block_item(item: &ast::Item, scope: &mut NameScope) {
+    let mut block = NameScope::default();
+    record_item(item, &mut block);
+    scope.block_globs |= !block.globs.is_empty();
+    for import in block.imports {
+        if let UseBinding::Renamed(path) = &import.binding
+            && let Some(original) = path.last()
+        {
+            scope.block_rename_targets.insert(original.clone());
+        }
+        scope.block_bindings.insert(import.bound);
+    }
+    scope.block_bindings.extend(block.defines);
+    scope.block_bindings.extend(block.child_modules);
 }
 
 /// The nearest enclosing fn or module of `node`, excluding `node` itself.
@@ -424,6 +448,51 @@ fn top() {
             imports_of(&found.scopes[0], "render"),
             vec![UseBinding::Path(strings(&["crate", "a", "render"]))]
         );
+    }
+
+    /// Review finding: a nested fn's own `use` binds only inside that fn,
+    /// yet its calls are part of the test body's text, so it is
+    /// block-bound; a block-local rename records the name it renames.
+    #[test]
+    fn a_nested_fn_item_and_a_block_rename_are_block_bound() {
+        let source = "\
+mod tests {
+    use crate::b::render;
+    #[test]
+    fn t() {
+        fn via_a(x: i32) -> i32 {
+            use crate::a::render;
+            render(x)
+        }
+        {
+            use crate::a::draw as fast;
+        }
+        assert_eq!(via_a(1), 2);
+    }
+}
+";
+        let found = scopes(source, 4, "t");
+        let body = &found.scopes[0];
+        assert!(body.fn_body);
+        assert!(body.defines.contains("via_a"));
+        assert!(imports_of(body, "render").is_empty());
+        assert!(
+            body.block_binds("render"),
+            "the nested fn's `use` is block-bound"
+        );
+        assert!(body.block_bindings.contains("fast"));
+        assert!(body.block_rename_targets.contains("draw"));
+        assert!(!body.block_rename_targets.contains("render"));
+
+        // From the nested fn itself, its `use` is its own top-level import,
+        // and the enclosing test body does not re-count it as block-bound.
+        let inner = scopes(source, 5, "via_a");
+        assert_eq!(
+            imports_of(&inner.scopes[0], "render"),
+            vec![UseBinding::Path(strings(&["crate", "a", "render"]))]
+        );
+        assert!(inner.scopes[1].fn_body);
+        assert!(!inner.scopes[1].block_bindings.contains("render"));
     }
 
     /// Segments come from the syntax tree: spacing around `::` does not
