@@ -27,6 +27,15 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
     let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
         Err(TestStubError::NotFound(message)) => {
+            if options.json {
+                let document = not_found_refusal_document(&options.selector, &message);
+                // A JSON document, not report text: keep it parseable (#6309),
+                // mirroring the post-resolution refusal envelope (#7390).
+                ::std::eprintln!(
+                    "{}",
+                    crate::terminal_text::json_terminal_safe(render(&document)?)
+                );
+            }
             let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
             return Err(CommandError::Decision(format!(
                 "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
@@ -170,6 +179,23 @@ fn write_command(options: &AgentStubOptions) -> String {
     format!("ripr agent stub --root {root} {selector} --write")
 }
 
+/// The `rust_test_stub` refused envelope for a selector that named no gap
+/// (#7390): same document kind and `state` as the post-resolution refusal,
+/// with `seam_id` set only when the caller selected by seam id.
+fn not_found_refusal_document(selector: &TestStubSelector, message: &str) -> serde_json::Value {
+    let seam_id = match selector {
+        TestStubSelector::SeamId(id) => serde_json::Value::String(id.clone()),
+        TestStubSelector::At { .. } => serde_json::Value::Null,
+    };
+    serde_json::json!({
+        "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
+        "kind": "rust_test_stub",
+        "seam_id": seam_id,
+        "state": "refused",
+        "refusal": {"kind": "seam_not_found", "reason": message},
+    })
+}
+
 fn render(document: &serde_json::Value) -> Result<String, CommandError> {
     serde_json::to_string_pretty(document).map_err(|error| {
         CommandError::Failure(format!("serialize agent stub document failed: {error}"))
@@ -207,6 +233,34 @@ fn stub_grip_disclosure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn not_found_refusal_document_names_the_seam_and_kind() {
+        let document = not_found_refusal_document(
+            &TestStubSelector::SeamId("no-such-seam".to_string()),
+            "seam_id no-such-seam was not found",
+        );
+        assert_eq!(document["schema_version"], RUST_TEST_STUB_SCHEMA_VERSION);
+        assert_eq!(document["kind"], "rust_test_stub");
+        assert_eq!(document["seam_id"], "no-such-seam");
+        assert_eq!(document["state"], "refused");
+        assert_eq!(document["refusal"]["kind"], "seam_not_found");
+        assert_eq!(
+            document["refusal"]["reason"],
+            "seam_id no-such-seam was not found"
+        );
+
+        let at = not_found_refusal_document(
+            &TestStubSelector::At {
+                file: "src/lib.rs".to_string(),
+                line: 2,
+                kind: None,
+            },
+            "no gap at src/lib.rs:2",
+        );
+        assert!(at["seam_id"].is_null());
+        assert_eq!(at["refusal"]["kind"], "seam_not_found");
+    }
 
     #[test]
     fn strongly_gripped_stub_reuses_the_packet_omission_reason() {
