@@ -64,6 +64,17 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
    that permits resumption. Do not repeat that failure on each dependent PR,
    duplicate its repair, or bless baseline failures. After the prerequisite lands,
    verify the resulting basis and refresh only affected proof and review.
+   Before Ready, inspect GitHub's PR merge ref through an available permitted
+   Git/API read. Record its commit, parents and tree against the reviewed head,
+   basis and material prerequisites; local `merge-tree` proof does not establish
+   that remote subject. Judge differences for applicability, without behind-only
+   restacking. A stale subject missing a material prerequisite keeps Draft until
+   its owner corrects the source ancestry or remote ref state and the changed
+   subject is verified. A landing notification alone is not that verification.
+   If the ref cannot be queried, retain the exact read limit and leave the hosted
+   subject unestablished. An existing authorized, credibly expected-green route
+   may obtain that evidence; do not spend known-red qualification to discover
+   whether its prerequisite reached the hosted subject.
 4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
    only for the unchanged, reviewed and composed candidate when green is
    reasonably expected, with no unresolved material finding or known applicable
@@ -76,6 +87,13 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
    applicable local check, unfinished review or repair, a known-red test, or
    missing claim-essential native proof. Ready requests qualification;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+
+After Ready, inspect the actual job checkout commit, parents and tree against
+the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
+does not guarantee the checkout. If a material mismatch appears, retain the
+actual run/subject, return to Draft and resume only after the changed prerequisite
+or subject is verified; do not relabel that run as proof for the local tree or
+repeat Ready toggles to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
 repair/proof/review wave before another Ready transition. Preserve unaffected
@@ -90,7 +108,7 @@ their prose. Live GitHub metadata remains authoritative over a stale block.
 
 ```text
 Owner / governing claim:
-Candidate: PR / exact head / integration basis (combined tree if exercised)
+Candidate: PR / exact head / reviewed basis and tree / observed GitHub merge subject
 Review: exact-head record / remaining findings or evidence
 Validation: command + result links / unrun applicable dimensions
 Dependency: canonical issue or PR / owner / blocking reason, or none

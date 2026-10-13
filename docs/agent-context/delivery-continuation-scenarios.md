@@ -118,6 +118,17 @@ Cases are independent. Use current instructions in the assigned repository.
 24. **Native evidence is claim-essential.** Linux checks pass, but the claim
     depends on unestablished native Windows semantics. A generic Linux hosted
     qualification is available; it does not exercise that native dimension.
+25. **Stale hosted subject.** Draft H's reviewed local composition includes
+    landed prerequisite P, which repairs a known deterministic required-gate
+    failure. GitHub's observed PR merge ref has H but omits P and differs from
+    that local tree. All other review and available checks are complete.
+26. **Merge ref unavailable.** Draft H has complete independent review,
+    composition and available proof, no known applicable failure or material
+    prerequisite/native gap, and an existing authorized expected-green hosted
+    route. The permitted PR merge-ref read is unavailable; no hosted job has run.
+27. **Checkout differs after admission.** A pre-Ready merge-ref observation
+    matched reviewed H plus required prerequisite P. The started run names H,
+    but its actual job checkout omits P and differs from the reviewed tree.
 
 ## Independent expected outcomes
 
@@ -149,3 +160,6 @@ These are examiner pins, withheld from decision workers.
 | 22 | Keep Draft; repair or resume through the existing dependency owner | A known failure cannot be relabeled unavailable or rerun as qualification |
 | 23 | Keep Draft; finish the repair, run the available check and refresh affected review | Hosted fallback does not excuse unfinished applicable work |
 | 24 | Keep Draft; name the missing native proof, owner and supported route | Linux evidence cannot establish Windows semantics or generic fallback readiness |
+| 25 | Keep Draft; retain the exact remote subject and repair owner; resume after the changed subject includes P and affected review/proof is current | Local composition and a landed-P notification cannot qualify the stale remote tree; no blind re-toggle |
+| 26 | Record the read limit and unestablished hosted subject; use the existing expected-green route and inspect actual checkout when available | No inferred local/remote equality, invented access or guarantee from the PR head SHA |
+| 27 | Return to Draft; retain the run's actual subject and resolve the material mismatch before another qualification | Earlier ref equality and a matching run head cannot substitute for actual checkout identity |
