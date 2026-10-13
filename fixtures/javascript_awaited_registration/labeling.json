@@ -1,0 +1,48 @@
+{
+  "observed_at_utc": "2026-10-13T01:25:00Z",
+  "native_toolchain": "Node v24.19.0 (node:test and node:assert/strict built in)",
+  "package": "nanoid@6.0.2",
+  "baseline_source_sha256": "6c25ff996c0fc5e4ef65fceb3ffc8e76d21d51e2a23a66febce306b848a187dd",
+  "mutant_source_sha256": "36b72cf1fbc7cd5d77101df5503aaad11949d35df47e284faf657e5d138d87c2",
+  "test_source_sha256": "56fbb95bce52ec95b9b36d89d472c4db5fbd9f00766e29e5161470c14570ba21",
+  "native_results": [
+    {
+      "case": "baseline_exact",
+      "exit_code": 0,
+      "command": "node --test test/nanoid.test.js",
+      "output_sha256": "d9be774b5b372fd5ac71cd761b6999bb0ba4485184f3e540e9c01cd41bbf8db1"
+    },
+    {
+      "case": "mutant_exact",
+      "exit_code": 1,
+      "command": "node --test test/nanoid.test.js",
+      "output_sha256": "4d87299271c4bef8e225b1da11b496781287c18aea37fc3d0848744f876b9a5f"
+    },
+    {
+      "case": "mutant_smoke",
+      "exit_code": 0,
+      "command": "node --test test/nanoid.test.js",
+      "output_sha256": "9918692234d55146d6f6b2643e2932d9df6b3dc44ff5804662d17e0db1d11fca"
+    },
+    {
+      "case": "mutant_skip",
+      "exit_code": 0,
+      "command": "node --test test/nanoid.test.js",
+      "output_sha256": "91a7ae190b47cf0407f151d9dbe67cca245b53afbe32e56cc6072e76ecdb9b08"
+    }
+  ],
+  "baseline_analyzer": {
+    "source_commit": "9b53560c11b2e1130c775a7de8da630b8f883a1e",
+    "binary_sha256": "512feef28ffb33292b8d690ef74a518951a35fa185eda255daa77683ebad3e7d",
+    "command": "ripr check --root fixtures/javascript_awaited_registration/input --diff fixtures/javascript_awaited_registration/diff.patch --json",
+    "awaited_exact": "no_static_path",
+    "bare_exact": "exposed",
+    "awaited_report_sha256": "8622c155b44997938043f6c9c09ec798250d708304d97141a9caee0b6b1ae1c2",
+    "bare_report_sha256": "90c9abc4e349671dec7a8ec16f697b2102897c176ffd024099177282a053f61a"
+  },
+  "non_claims": [
+    "The consumer test is authored, not an upstream test suite.",
+    "One listed mutant is not exhaustive mutation coverage.",
+    "Runtime results label the fixture; static classifications retain their existing preview authority."
+  ]
+}

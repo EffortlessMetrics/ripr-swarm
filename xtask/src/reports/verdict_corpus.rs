@@ -2504,15 +2504,7 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
-    let mut check: Value = serde_json::from_str(&stdout).map_err(|err| {
-        format!(
-            "case `{}`: ripr check did not emit JSON: {err}",
-            case.case_id
-        )
-    })?;
-    if case.perl_facts.is_some() {
-        refuse_unavailable_perl(&check, &case.case_id, &binary)?;
-    }
+    let mut check = case_check_output(&stdout, case, &binary)?;
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2522,9 +2514,26 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     Ok((check, anchor_line))
 }
 
-/// A binary without `lang-perl` reports the Perl run `unavailable` and exits
-/// 0 with no findings, which would score every packet case as silent. Refuse
-/// the run instead, so a wrong binary is a named error, never a verdict.
+/// Parse one case's `ripr check --json` output. A packet case whose Perl run
+/// is `unavailable` is refused here, before any row can be scored.
+pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Result<Value, String> {
+    let check: Value = serde_json::from_str(stdout).map_err(|err| {
+        format!(
+            "case `{}`: ripr check did not emit JSON: {err}",
+            case.case_id
+        )
+    })?;
+    if case.perl_facts.is_some() {
+        refuse_unavailable_perl(&check, &case.case_id, binary)?;
+    }
+    Ok(check)
+}
+
+/// A Perl run reported `unavailable` exits 0 with no findings, which would
+/// score the packet case as silent. Refuse the run instead, so it is a named
+/// error, never a verdict. Two causes report `unavailable`: a binary without
+/// `lang-perl` (another build replaced it before the copy), or a packet ripr
+/// could not read or accept. The run's own reason says which.
 pub(crate) fn refuse_unavailable_perl(
     check: &Value,
     case_id: &str,
@@ -2535,13 +2544,17 @@ pub(crate) fn refuse_unavailable_perl(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|run| {
+        .find(|run| {
             run.get("language").and_then(Value::as_str) == Some("perl")
                 && run.get("status").and_then(Value::as_str) == Some("unavailable")
         });
-    if unavailable {
+    if let Some(run) = unavailable {
+        let reason = run
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("no reason given");
         return Err(format!(
-            "case `{case_id}`: {binary} has no Perl adapter (language run `unavailable`); it is not the lang-perl build, so another build may have replaced it before the copy; rerun the corpus check"
+            "case `{case_id}`: {binary} reported the Perl language run `unavailable`: {reason}. If the reason says Perl is not available, the binary is not the lang-perl build (another build may have replaced it before the copy), so rerun the corpus check; otherwise ripr refused the case's packet"
         ));
     }
     Ok(())
