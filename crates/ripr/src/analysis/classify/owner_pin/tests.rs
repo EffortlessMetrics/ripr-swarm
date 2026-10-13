@@ -1115,6 +1115,104 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
     );
 }
 
+/// An early `return Err(String::from("big"))` beside an `Ok(x)` tail.
+fn lib_twin() -> &'static str {
+    "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"big\")); }\n    Ok(x)\n}\n"
+}
+
+#[test]
+fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
+    // RIPR-SPEC-0231 example 5: ripr files a changed `return Err(..)` as an
+    // `error_path` probe. The early-return gate is the one a `return_value`
+    // probe of the same line gets, so `assert_eq!(f(..), Err(..))` pins it.
+    let lib = "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"b\") + \"ig\"); }\n    Ok(x)\n}\n";
+    let tests = "use demo::check;\n\n#[test]\nfn checks() {\n    assert_eq!(check(20), Err(String::from(\"big\")));\n    assert_eq!(check(2), Ok(2));\n}\n";
+    let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let error_probe = |index: &RustIndex, name: &str, expression: &str| {
+        let owner = owner(index, name);
+        let probe = Probe {
+            family: ProbeFamily::ErrorPath,
+            ..return_probe(owner, expression)
+        };
+        OwnerReturnPin::establish(&probe, owner, index)
+    };
+    let changed = "return Err(String::from(\"b\") + \"ig\");";
+    let pin = error_probe(&err_index, "check", changed);
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&err_index, &pin),
+        vec!["assert_eq!(check(20), Err(String::from(\"big\")));".to_string()]
+    );
+
+    // A `?` is a second `Err` source, so an early `return Err(..)` beside
+    // one pins nothing for an `error_path` probe either.
+    let lib = "pub fn parse(s: &str) -> Result<u32, String> {\n    if s.is_empty() { return Err(String::from(\"empty\")); }\n    let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;\n    Ok(n)\n}\n";
+    let question_index = index(&[(LIB, lib)]);
+    assert!(
+        error_probe(
+            &question_index,
+            "parse",
+            "return Err(String::from(\"empty\"));"
+        )
+        .is_none()
+    );
+
+    // A test-local `fn Err` that returns `Ok` makes the expected value
+    // something else, so the test's own scope refuses the pin; a glob the
+    // scan cannot see through does not (a test module's routine
+    // `use super::sub::*;`).
+    let pinned = |tests: &str| {
+        let test_index = index(&[(LIB, lib_twin()), (TESTS, tests)]);
+        let pin = error_probe(&test_index, "check", "return Err(String::from(\"big\"));");
+        pin.map(|pin| admitted_texts(&test_index, &pin))
+    };
+    let assertion = "    assert_eq!(check(2), Err(String::from(\"big\")));\n";
+    let rebound = format!(
+        "use demo::check;\n\n#[allow(non_snake_case)]\nfn Err(_: String) -> Result<u32, String> {{\n    Ok(2)\n}}\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&rebound), Some(Vec::new()));
+    let globbed = format!(
+        "use demo::check;\nuse demo::retail::*;\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&globbed), Some(vec![assertion.trim().to_string()]));
+
+    // The gate reads the tail `Ok(x)` as the prelude variant: a rebound
+    // `Ok` in the owner's file can be a second `Err` exit.
+    let shadowed = format!(
+        "{}\n#[allow(non_snake_case)]\nfn Ok(x: u32) -> Result<u32, String> {{\n    Err(x.to_string())\n}}\n",
+        lib_twin()
+    );
+    let shadowed_index = index(&[(LIB, &shadowed)]);
+    assert!(
+        error_probe(
+            &shadowed_index,
+            "check",
+            "return Err(String::from(\"big\"));"
+        )
+        .is_none()
+    );
+    // A `None =>` arm names the variant, not a binding (E0530), so an
+    // ordinary match elsewhere in the file keeps an early `Some` pin.
+    let matched = "pub fn lookup(k: u32) -> Option<u32> {\n    if k == 1 { return Some(k + 2); }\n    None\n}\n\npub fn describe(v: Option<u32>) -> u32 {\n    match v { Some(n) => n, None => 0 }\n}\n";
+    let matched_index = index(&[(LIB, matched)]);
+    assert!(establish(&matched_index, "lookup", "return Some(k + 2);").is_some());
+    // A comment that only mentions the attribute changes nothing.
+    let mentioned = format!("// no_implicit_prelude is not set here\n{matched}");
+    let mentioned_index = index(&[(LIB, &mentioned)]);
+    assert!(establish(&mentioned_index, "lookup", "return Some(k + 2);").is_some());
+    // Without the prelude, the same arm binds a fresh `None`.
+    let no_prelude = format!("#![no_implicit_prelude]\n{matched}");
+    let no_prelude_index = index(&[(LIB, &no_prelude)]);
+    assert!(establish(&no_prelude_index, "lookup", "return Some(k + 2);").is_none());
+    // An early `return None;` keeps its long-standing pin beside a glob the
+    // binding scan cannot see through: only the `Err` gate this change
+    // opened reads the other exits by spelling.
+    let glob = "use crate::prelude::*;\n\npub fn whole(x: u64) -> Option<u64> {\n    if x == 0 { return None; }\n    Some(x)\n}\n";
+    let glob_index = index(&[(LIB, glob)]);
+    assert!(establish(&glob_index, "whole", "return None;").is_some());
+}
+
 #[test]
 fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
     // RIPR-SPEC-0231 example 23: an early `return Some(..)` beside a `None`
@@ -1600,6 +1698,18 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+    // A bare `#[case]` that no `#[rstest]` consumes is an unknown attribute
+    // macro, which may emit a `tokio` or `serial_test` module.
+    for attributes in [
+        "use other::case;\n#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case::row]\nstruct Decoy;\n#[tokio::test]\n#[serial_test::serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
     // A sync `fn` under `#[tokio::test]` does not compile.
     let tests =
         "use demo::weight;\n#[tokio::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
@@ -1610,6 +1720,167 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         "the sync tokio test must be indexed"
     );
     assert!(weight_admitted(tests).is_empty(), "{tests}");
+}
+
+#[test]
+fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
+    let case_test = |prelude: &str, attributes: &str, parameters: &str, name: &str| {
+        format!(
+            "use demo::weight;\n{prelude}\n{attributes}\nfn {name}({parameters}) {{\n    assert_eq!(weight(x), expected);\n}}\n"
+        )
+    };
+    let cases = "#[case] x: u32, #[case] expected: u32";
+    for (prelude, attributes) in [
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]",
+        ),
+        (
+            "use rstest::{fixture, rstest};",
+            "#[rstest]\n#[case::four(4, 12)]",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]\n#[serial_test::serial]",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, cases, "weighs");
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    // A parameterless `#[rstest]` runs its body once, as `#[test]` does.
+    let tests = "use demo::weight;\nuse rstest::rstest;\n#[rstest]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(weight_admitted(tests).len(), 1, "{tests}");
+    for (prelude, attributes, parameters, name) in [
+        // A row value that is not a literal may compute the owner itself.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, weight(4))]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 3 * 4)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4)]",
+            cases,
+            "weighs",
+        ),
+        // A row above `#[rstest]` is not consumed by it.
+        (
+            "use rstest::rstest;",
+            "#[case(4, 12)]\n#[rstest]",
+            cases,
+            "weighs",
+        ),
+        // Arguments, fixtures, value matrices and other attributes.
+        (
+            "use rstest::rstest;",
+            "#[rstest(foo)]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, \"12\")]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] ref x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "#[values(4, 5)] x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[ignore]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[timeout(std::time::Duration::from_secs(1))]",
+            cases,
+            "weighs",
+        ),
+        // `rstest` is not the crate, or the bare name is another macro.
+        (
+            "use other::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::*;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;\nuse rstest::fixture as case;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "mod rstest { pub use other::rstest; }\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use other as rstest;\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        // A test named after a checked crate expands to a module that
+        // shadows it.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "rstest",
+        ),
+        (
+            "use rstest::rstest;\nuse serial_test::serial;",
+            "#[rstest]\n#[case(4, 12)]\n#[serial]",
+            cases,
+            "serial_test",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, parameters, name);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
 }
 
 #[test]

@@ -240,8 +240,10 @@ const PYTHON_VENDOR_DIRS: &[&str] = &[
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
 
-/// Whether a repository-relative path is a Python test file: `test_*.py` or
-/// `*_test.py`, or any `.py` below a `tests/` or `test/` directory.
+/// Whether a repository-relative path is a Python test file: `test_*.py`,
+/// `*_test.py`, a bare `tests.py` or `test.py` module (the Django
+/// `startapp` convention), or any `.py` below a `tests/` or `test/`
+/// directory.
 pub(crate) fn is_python_test_path(relative: &Path) -> bool {
     let Some(name) = relative.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -249,7 +251,7 @@ pub(crate) fn is_python_test_path(relative: &Path) -> bool {
     let Some(stem) = name.strip_suffix(".py") else {
         return false;
     };
-    if stem.starts_with("test_") || stem.ends_with("_test") {
+    if stem.starts_with("test_") || stem.ends_with("_test") || stem == "tests" || stem == "test" {
         return true;
     }
     relative
@@ -469,6 +471,9 @@ mod tests {
             "pkg/y_test.py",
             "tests/helpers/conftest.py",
             "test/util.py",
+            "tests.py",
+            "blog/tests.py",
+            "test.py",
         ] {
             assert!(is_python_test_path(Path::new(yes)), "{yes}");
         }
@@ -477,7 +482,6 @@ mod tests {
             "python/pkg/mod.py",
             "tests/test_x.rs",
             "contest/mod.py",
-            "tests.py",
             "pkg/latest.py",
         ] {
             assert!(!is_python_test_path(Path::new(no)), "{no}");

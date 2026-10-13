@@ -61,6 +61,17 @@ pub(super) struct PythonTermFacts {
     /// As a caller: the names its body binds, so a callee name it shadows is
     /// not read as the module function.
     bound_names: Option<Vec<String>>,
+    /// The parameter the function hands back: its one `return` is the last
+    /// statement, `return <parameter>`, the parameter is never rebound, and
+    /// the function is undecorated and not a generator. A caller's result is
+    /// then the very object it passed (RIPR-SPEC-0238 rule 17, #7586).
+    returned_parameter: Option<String>,
+}
+
+impl PythonTermFacts {
+    pub(super) fn returned_parameter(&self) -> Option<&str> {
+        self.returned_parameter.as_deref()
+    }
 }
 
 /// The rule 20 facts of a function owner.
@@ -83,27 +94,51 @@ pub(super) fn term_facts(
             .collect(),
         _ => Vec::new(),
     };
+    let returned_parameter = match body.last() {
+        Some(Stmt::Return(ast::StmtReturn {
+            value: Some(value), ..
+        })) if !wrapped
+            && code_mention_count(owner_text, "return") == 1
+            && code_mention_count(owner_text, "yield") == 0 =>
+        {
+            match value.as_ref() {
+                Expr::Name(name) if stable_parameters.iter().any(|p| p == name.id.as_str()) => {
+                    Some(name.id.to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
     PythonTermFacts {
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),
         stable_parameters,
         bound_names,
+        returned_parameter,
     }
 }
 
 /// Whether `text` holds `token` as code, not in a string, docstring or
 /// comment; a word token must stand as a whole identifier.
 fn code_mentions(text: &str, token: &str) -> bool {
+    code_mention_count(text, token) > 0
+}
+
+/// How many times `text` holds `token` as code (see `code_mentions`).
+fn code_mention_count(text: &str, token: &str) -> usize {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let word = token.chars().all(is_word);
-    text.match_indices(token).any(|(start, _)| {
-        let end = start + token.len();
-        let whole = !word
-            || (!text[..start].chars().next_back().is_some_and(is_word)
-                && !text[end..].chars().next().is_some_and(is_word));
-        whole && !python_text_hides_code(text, start)
-    })
+    text.match_indices(token)
+        .filter(|(start, _)| {
+            let (start, end) = (*start, start + token.len());
+            let whole = !word
+                || (!text[..start].chars().next_back().is_some_and(is_word)
+                    && !text[end..].chars().next().is_some_and(is_word));
+            whole && !python_text_hides_code(text, start)
+        })
+        .count()
 }
 
 /// The guarded-return shape of a function body, when it has exactly that

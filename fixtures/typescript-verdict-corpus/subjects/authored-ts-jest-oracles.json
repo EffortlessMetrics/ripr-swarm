@@ -78,6 +78,26 @@
       "sha256": "84db0895d714b66a403828600004e7391f1491f3d785ad93d455c4c5b8b64d29"
     },
     {
+      "path": "src/priceFee.ts",
+      "sha256": "0b3ecfe6f91168264daa6f667c4945ec3ddbb2d871553f619c5b55dc7dfcc05f"
+    },
+    {
+      "path": "src/priceFeeRebound.ts",
+      "sha256": "e3ae5d32a08a3957f2bba3a3c3577087e04f45cd86e8b4e84e4606cf58b56080"
+    },
+    {
+      "path": "src/priceFeeTwo.ts",
+      "sha256": "1a8a3e6b79a8c2548e7d355fa33b0a5de6e1f55aa4fca5508d6a43279f2d5051"
+    },
+    {
+      "path": "src/priceFeeZero.ts",
+      "sha256": "b5d988f05825330d36d9e69c4d23167f915db802c412df734ee44c80a503987f"
+    },
+    {
+      "path": "src/priceFlat.ts",
+      "sha256": "6a558385599a2b7d849813df809484aade97e555860068471c17ab3f79625bff"
+    },
+    {
       "path": "test/__snapshots__/priceEx03.test.ts.snap",
       "sha256": "4f75e28a8e86ad22ab5374cbc9dfc71d6f9bd78b134bfb71d310b81c340f6fe6"
     },
@@ -140,6 +160,26 @@
     {
       "path": "test/priceEx15.test.ts",
       "sha256": "17a0e3ee0c82c9d1c54202881782337e6d4a4add0cda812274f04015f6b2efc8"
+    },
+    {
+      "path": "test/priceFee.test.ts",
+      "sha256": "18b18d43989676d84e7d35d1dbbd0f701543bb7019b44edce3cec146cb8adfe3"
+    },
+    {
+      "path": "test/priceFeeRebound.test.ts",
+      "sha256": "e1e235f7055b4fb0c174e922d7f2a711b6cb2eb17487be04a2bf142a07f9e37a"
+    },
+    {
+      "path": "test/priceFeeTwo.test.ts",
+      "sha256": "d42eb0f08d94967759111652dfd3cd85c6f5653c78675bc9dbb76d22e930cd21"
+    },
+    {
+      "path": "test/priceFeeZero.test.ts",
+      "sha256": "10ad4062f85de18eb67fa0272c364d4d1b89484128c82b65a637e3978a6b14b6"
+    },
+    {
+      "path": "test/priceFlat.test.ts",
+      "sha256": "464d8825360d4f8547cf3c69508d59e524b970ccc65a6ec8c8ad60b8ae2508ef"
     },
     {
       "path": "tsconfig.json",

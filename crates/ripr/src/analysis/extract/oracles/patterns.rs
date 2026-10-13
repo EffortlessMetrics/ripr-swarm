@@ -564,6 +564,37 @@ pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
 
+/// RIPR-SPEC-0231 rule 3 (#7695): for a boolean assertion whose condition is
+/// a top-level `&&` chain with at least one whole `matches!(..)` conjunct,
+/// the same assertion over each conjunct alone (`None` otherwise). A
+/// conjunction is no stronger than its strongest conjunct, so the caller
+/// reads each one and a `matches!` keeps its pattern's reading inside the
+/// chain (`assert!(ready && matches!(r, Ok(_)))` reads as `Ok(_)` does).
+pub(super) fn pattern_conjunct_assertions(line: &str) -> Option<Vec<String>> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let is_pattern = |conjunct: &str| {
+        // Masked, so a leading comment cannot hide the pattern.
+        let masked = mask_comments_and_strings(conjunct.trim());
+        is_complete_macro_invocation(unwrap_parentheses(masked.trim()), "matches!")
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| is_pattern(conjunct)) {
+        return None;
+    }
+    // Each conjunct ends its own line, so a trailing `//` comment cannot
+    // swallow the closing `);`.
+    Some(
+        conjuncts
+            .iter()
+            .map(|conjunct| format!("{macro_name}({}\n);", conjunct.trim()))
+            .collect(),
+    )
+}
+
 /// RIPR-SPEC-0231 rule 1 (#7558): the boolean assertion with every
 /// parenthesized `&&` conjunct that a `||` decides removed, so the other
 /// conjuncts decide the reading, as they do beside a negated pattern
@@ -1070,9 +1101,11 @@ pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
                 if let Some(inner) = super::arguments::parenthesized_contents(masked) {
                     return has_top_level_exact_equality(inner);
                 }
+                // `value == value` compares a value with itself and pins
+                // nothing.
                 top_level_comparison_operator(masked).is_some_and(|(at, _)| {
                     masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
-                })
+                }) && !is_duplicative_comparison(conjunct.trim())
             })
 }
 
