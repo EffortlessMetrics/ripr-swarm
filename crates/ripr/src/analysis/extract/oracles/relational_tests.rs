@@ -492,8 +492,44 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
             "assert!(xs.iter().any(|x| ::core::matches!(x, Some(_))));",
             &weak,
         ),
+        // #7772: a comment before the constructor never hides it.
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , */ Some(_))));",
+            &weak,
+        ),
+        ("ensure!(matches!(r, /* , */ Ok(_)) == true);", &weak),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, // ,\n Some(_))));",
+            &weak,
+        ),
+        ("ensure!(matches!(r, // ,\n Ok(_)) == true);", &weak),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , /* , */ */ Some(_))));",
+            &weak,
+        ),
+        (
+            "ensure!(matches!(r, /* , /* , */ */ Ok(_)) == true);",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, Some /* c */ (_))));",
+            &weak,
+        ),
         // Controls: a pattern that pins keeps exact credit in every form.
         ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , */ Some(3))));",
+            &exact,
+        ),
+        ("ensure!(matches!(r, /* , */ Ok(3)) == true);", &exact),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, // ,\n Some(3))));",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, /* , /* , */ */ Ok(3)) == true);",
+            &exact,
+        ),
         // Rule 1 already reads a compared pattern nested in a chain as not
         // positive, whatever its pattern.
         ("assert!(ready && matches!(r, Ok(3)) == true);", &weak),

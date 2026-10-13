@@ -394,7 +394,7 @@ fn or_pattern_classification(alternatives: &[&str], guarded: bool) -> Option<Ora
 fn top_side(pattern: &str) -> Option<Side> {
     let pattern = strip_wrappers(pattern);
     let (path, _) = constructor_parts(pattern);
-    side_of_path(path)
+    side_of_path(&path)
 }
 
 /// The `Option`/`Result` constructor a path names: bare (`Some`) or
@@ -469,20 +469,22 @@ fn is_binding(text: &str) -> bool {
 }
 
 /// `(path, delimited payload)` for `Path(..)`, `Path { .. }` or a bare path.
-fn constructor_parts(pattern: &str) -> (&str, Option<(char, &str)>) {
+/// The path is read from the masked text, so a comment around it
+/// (`/* , */ Some(_)`, #7772) never hides the constructor it names.
+fn constructor_parts(pattern: &str) -> (String, Option<(char, &str)>) {
     let masked = mask_comments_and_strings(pattern);
     let Some(open) = masked.find(['(', '{', '[']) else {
-        return (pattern.trim(), None);
+        return (masked.trim().to_string(), None);
     };
     let delimiter = masked[open..].chars().next().unwrap_or('(');
     // The first delimiter must close at the very end: `A(x) | B(y)` or
     // `(a) .. (b)` is not one constructor.
     let end = masked.trim_end().len().saturating_sub(1);
     if matching_close(&masked, open) != Some(end) {
-        return (pattern.trim(), None);
+        return (masked.trim().to_string(), None);
     }
     (
-        pattern[..open].trim(),
+        masked[..open].trim().to_string(),
         Some((delimiter, pattern.get(open + 1..end).unwrap_or_default())),
     )
 }
@@ -527,7 +529,7 @@ fn read_pattern(pattern: &str) -> Reading {
     match payload {
         Some(('(', inner)) if path.is_empty() => tuple_reading(inner),
         Some(('[', inner)) if path.is_empty() => slice_reading(inner),
-        Some(('(', inner)) => match side_of_path(path) {
+        Some(('(', inner)) => match side_of_path(&path) {
             Some(side) => side_payload_reading(side, inner),
             // A tuple-struct or variant the line cannot resolve.
             None => Reading::Pins,
@@ -535,7 +537,7 @@ fn read_pattern(pattern: &str) -> Reading {
         // A struct-like path is read as a variant unless it can be shown to
         // name a struct, which needs type information this reader lacks.
         Some(_) => Reading::Pins,
-        None => match side_of_path(path) {
+        None => match side_of_path(&path) {
             Some(Side::None) => Reading::SideOnly(Side::None),
             _ => Reading::Pins,
         },

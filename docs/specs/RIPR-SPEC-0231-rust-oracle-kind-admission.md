@@ -320,7 +320,8 @@ Two pattern terms are used below.
    which is no pinning `==` either) is credited only when its own pattern
    pins a value or a pinning `==` conjunct keeps the chain (#7715). A
    `matches!` named only in a comment or string is no invocation and earns
-   nothing. A user macro, by path (`custom::matches!`,
+   nothing, and a comment around the pattern's constructor
+   (`matches!(x, /* , */ Some(_))`) does not hide it (#7772). A user macro, by path (`custom::matches!`,
    `helpers::std::matches!`) or by name (`expect_matches!`), keeps today's
    reading; only `matches!`, `std::matches!` and `core::matches!` (with an
    optional leading `::`) are the std pattern test.
