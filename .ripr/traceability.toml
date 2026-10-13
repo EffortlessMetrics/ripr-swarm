@@ -3062,6 +3062,10 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_literal_path_dots_cannot_name_another_module",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_dot_free_paths_preserve_qualified_and_quoted_selectors",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::pytest_keeps_literal_path_dots_in_its_file_selector",
+  "crates/ripr/tests/cli_smoke/python_unittest_selectors.rs::python_unittest_selectors_preserve_literal_file_identity",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",

@@ -151,7 +151,12 @@ Test discovery:
   cross-spec contract)
 - framework-shaped verify commands for related tests when the static selector
   is known: `python -m pytest path::node` for pytest and
-  `python -m unittest module.Class.test_method` for unittest. The pytest form
+  `python -m unittest module.Class.test_method` for unittest. A literal dot
+  in a unittest path component, after removing the `.py` extension, leaves
+  module identity unresolved: omit the verify command and repair placement
+  while retaining related-test evidence. Shell quoting cannot preserve such
+  a dot against unittest's module splitting. Ordinary quoted paths and pytest
+  file selectors retain their existing behavior. The pytest form
   runs through `python -m` so the working directory is on `sys.path` and a
   flat-layout package at the repository root imports without a `pythonpath`
   setting; bare `pytest path::node` fails collection there with

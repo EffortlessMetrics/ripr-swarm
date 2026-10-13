@@ -201,7 +201,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
             ))
         }
         "unittest" => {
-            let module = shell_quote_file_arg(&unittest_module_for_path(&path));
+            let module = shell_quote_file_arg(&unittest_module_for_path(&path)?);
             Some(format!(
                 "python -m unittest {module}.{}",
                 test.qualified_name
@@ -211,10 +211,15 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
     }
 }
 
-fn unittest_module_for_path(path: &str) -> String {
-    path.strip_suffix(".py")
-        .unwrap_or(path)
-        .replace(['/', '\\'], ".")
+fn unittest_module_for_path(path: &str) -> Option<String> {
+    let module_path = path.strip_suffix(".py").unwrap_or(path);
+    // unittest splits every dot as a module separator. A literal path dot
+    // can therefore select a different file, even when shell quoting is
+    // correct. Keep that unresolved identity out of verification routes.
+    if module_path.contains('.') {
+        return None;
+    }
+    Some(module_path.replace(['/', '\\'], "."))
 }
 
 /// Quote one path or module token for a POSIX shell.

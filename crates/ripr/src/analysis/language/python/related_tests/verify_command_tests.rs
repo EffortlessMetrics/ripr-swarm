@@ -46,6 +46,14 @@ fn unittest_dot_free_paths_preserve_qualified_and_quoted_selectors() {
             "python -m unittest tests.test_checkout.CheckoutTests.test_same",
         ),
         (
+            "./tests/test_checkout.py",
+            "python -m unittest tests.test_checkout.CheckoutTests.test_same",
+        ),
+        (
+            "tests\\test_checkout.py",
+            "python -m unittest tests.test_checkout.CheckoutTests.test_same",
+        ),
+        (
             "tests/my file.py",
             "python -m unittest 'tests.my file'.CheckoutTests.test_same",
         ),
