@@ -186,13 +186,14 @@ impl TypeMentionIndex {
 
 /// The function ids the dispatch walk has reached. Every walk returns most
 /// of a large workspace's functions, so each membership check is a lookup
-/// by address rather than a hash of the id: bevy asked it 1.8 million times.
+/// by address rather than a comparison of id strings.
 struct ReachedIds<'f> {
     /// Per function, by address: its position in `sort_functions` order,
     /// so callees sort by an integer instead of by path, and its id's slot.
     /// The keys are the reach graph's own `FunctionSummary` values, which
     /// `production_functions` and `functions_reached_from` both borrow, so
-    /// every function the build meets has a key.
+    /// every function the build meets today has a key; the lookups by id
+    /// below only keep membership by id should that ever change.
     by_address: HashMap<*const FunctionSummary, (usize, usize)>,
     /// Id to slot. Functions sharing an id share a slot, as they shared a
     /// set entry when membership was by id string.

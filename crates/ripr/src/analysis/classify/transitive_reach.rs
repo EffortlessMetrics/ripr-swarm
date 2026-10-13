@@ -196,7 +196,7 @@ struct ReachGraph<'a> {
 /// The forward walk's edges with each production function name interned.
 /// Trait-dispatch reach walks from hundreds of trait methods, and each walk
 /// visits most of a large workspace; hashing every call name of every
-/// function on each visit made that walk most of bevy's cold pilot wait.
+/// function on each visit made that walk most of the dispatch index's build.
 struct NameGraph<'a> {
     /// Every name in `by_name`, sorted, so ids order as their names do.
     names: Vec<&'a str>,
