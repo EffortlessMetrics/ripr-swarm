@@ -9391,7 +9391,7 @@ fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
 #[test]
 fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
     let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
-    text.push_str(concat!("#", "[allow(dead_code, warnings)]"));
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
 
     let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
 
@@ -9399,6 +9399,7 @@ fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
         findings,
         vec![
             (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
             (129, "allow(warnings)".to_string()),
         ]
     );

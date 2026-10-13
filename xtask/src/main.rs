@@ -20609,10 +20609,11 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
                 // Rejected hash markers need no prefix scan for a line number.
-                let line = byte_line_number(text, index);
+                let line = *line.get_or_insert_with(|| byte_line_number(text, index));
                 findings.push((line, format!("{kind}({lint})")));
             }
         }
