@@ -190,7 +190,9 @@ fn discover_config_path(root: &Path) -> Option<PathBuf> {
 }
 
 fn is_repository_boundary(directory: &Path) -> bool {
-    if directory.join(".git").exists() {
+    // The directory entry bounds repository policy even when its target is
+    // missing or cyclic. Following it would admit an enclosing repo's config.
+    if std::fs::symlink_metadata(directory.join(".git")).is_ok() {
         return true;
     }
 
