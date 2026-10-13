@@ -218,6 +218,11 @@ fallback for absent or empty environment values. Relative home paths resolve at
 the metadata command's selected root, independently of the RIPR caller's cwd.
 Only genuinely unavailable discovery withholds classified provenance and reuse;
 successful fallback still binds the discovered home's configuration bytes.
+Existing home directories use canonical directory authority, including Windows
+verbatim spelling, while the original home's canonical parent remains bound for
+config-relative paths. Distinct homes and symlink aliases with different parent
+contexts stay distinct. Raw command-environment values remain bound separately;
+changing the spelling of an actual environment value need not preserve the key.
 An unreadable, non-regular, or over-budget configuration identity cannot admit or
 publish full or compact classified evidence. Per-file parser facts remain usable;
 prior entries are preserved so reverting the configuration restores warm reuse.
