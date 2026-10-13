@@ -1309,6 +1309,14 @@ owner = "product-analysis"
 standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0256"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0254"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
