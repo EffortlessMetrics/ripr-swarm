@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "test_quote_for_a_large_bronze_order asserts total_cents exactly, but for a 6000-cent order that ships free, so dropping the shipping term passes. ripr credits the dict construction exposed, a false exposed verdict; this is the Python twin of pricing-quote-total-field.",
+  "reasoning": "test_quote_for_a_large_bronze_order asserts total_cents exactly, but for a 6000-cent order that ships free, so dropping the shipping term passes. ripr credits the dict construction exposed, a false exposed verdict; this is the Python twin of pricing-quote-total-field. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",
@@ -40,5 +40,8 @@
       "exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#40"
+  ]
 }

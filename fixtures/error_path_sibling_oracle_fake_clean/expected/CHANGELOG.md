@@ -404,3 +404,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_sibling_oracle_fake_clean (32)
+
+Reason:
+RIPR-SPEC-0122 #7394: attributable shared CLI evidence and compact empty section spacing preserve every complete finding record; library legacy bytes remain unchanged. This refresh changes presentation only, with no analyzer, JSON, oracle or recommendation change.
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
