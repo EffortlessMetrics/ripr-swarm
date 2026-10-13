@@ -2170,8 +2170,12 @@ fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), Str
     for (name, source) in [
         ("verdict-declared-rust-ledger", repo_corpus_dir()),
         ("verdict-declared-ts-ledger", typescript_corpus_dir()),
+        ("verdict-declared-py-ledger", python_corpus_dir()),
     ] {
-        let copy = crate::tests::temp_dir(name);
+        // Keep the source directory name: the coverage mode is keyed on it,
+        // so a copy named anything else would read as the Rust corpus.
+        let leaf = source.file_name().ok_or("corpus dir has no name")?;
+        let copy = crate::tests::temp_dir(name).join(leaf);
         crate::tests::copy_dir_recursive(&source, &copy)?;
         fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
         let err = validated_corpus_declared(&copy)
