@@ -51,7 +51,10 @@ fn validate_repo_scope_diff_inputs(
         if diff != Path::new("-") && !diff.is_file() {
             // Untyped on purpose: a missing `--diff` names no analysis
             // stage, matching the diff-scoped loader's fallback identity.
-            return Err(format!("check: --diff {} is not a readable file", diff.display()).into());
+            return Err(format!(
+                "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                diff.display()
+            ).into());
         }
         return Ok(());
     }
@@ -100,8 +103,14 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
 }
 
 fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String> {
-    if !dir.join(".git").exists() {
+    let marker = dir.join(".git");
+    if std::fs::symlink_metadata(&marker).is_err() {
         return Ok(None);
+    }
+    // A dangling or cyclic marker is still a boundary, but Git cannot
+    // certify its target. Do not let an enclosing workspace claim this root.
+    if !marker.exists() {
+        return Ok(Some(WorkTreeRootProbe::Unverified));
     }
     crate::git::probe_work_tree_root(dir)
         .map(Some)

@@ -1,5 +1,6 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
+    is_inequality_assertion,
 };
 
 use super::arm_selection::ArmSelector;
@@ -3227,11 +3228,14 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     // RIPR-SPEC-0231: no rule raises a strength. A family override may lower
     // the classifier's reading, but an assertion the classifier weakened
     // (`assert_ne!` against a struct literal keeps `whole_object_equality`
-    // at weak) never comes back as strong because of its kind.
-    if matches!(
+    // at weak) never comes back as strong because of its kind. Rule 1: an
+    // inequality is never lifted above its classified strength, whatever
+    // that strength is.
+    if (matches!(
         assertion.strength,
         OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
-    ) && overridden.rank() > assertion.strength.rank()
+    ) || is_inequality_assertion(&assertion.text))
+        && overridden.rank() > assertion.strength.rank()
     {
         assertion.strength.clone()
     } else {
@@ -5166,6 +5170,59 @@ return Err(\"typed pin\".into());
                 expected
             );
         }
+    }
+
+    /// RIPR-SPEC-0231 rule 1 (#6670 review): the classifier keeps
+    /// `assert_ne!(build(), Config { retries: 9 })` at
+    /// `whole_object_equality` / weak, and the family override that gives
+    /// that kind strong credit for equality must not lift the inequality.
+    #[test]
+    fn probe_relative_oracle_strength_never_promotes_an_inequality() {
+        let fact = |text: &str| {
+            let classification = crate::analysis::rust_index::classify_assertion(text);
+            oracle(text, classification.kind, classification.strength)
+        };
+        let inequality = fact("assert_ne!(build(), Config { retries: 9 });");
+        let debug_inequality = fact("debug_assert_ne!(build(), Config { retries: 9 });");
+        let equality = fact("assert_eq!(build(), Config { retries: 9 });");
+        assert_eq!(inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(inequality.strength, OracleStrength::Weak);
+        assert_eq!(debug_inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(debug_inequality.strength, OracleStrength::Weak);
+        assert_eq!(equality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(equality.strength, OracleStrength::Strong);
+        for family in [
+            ProbeFamily::ReturnValue,
+            ProbeFamily::Predicate,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::SideEffect,
+        ] {
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted an inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &debug_inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted a debug inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &equality),
+                OracleStrength::Strong,
+                "{family:?} lost equality's strong credit"
+            );
+        }
+        // A family override may still lower an inequality.
+        let smoke = oracle(
+            "assert_ne!(run(), Config { retries: 9 });",
+            OracleKind::SmokeOnly,
+            OracleStrength::Weak,
+        );
+        assert_eq!(
+            probe_relative_oracle_strength(&ProbeFamily::ReturnValue, &smoke),
+            OracleStrength::Smoke
+        );
     }
 
     fn owned_probe(family: ProbeFamily, expression: &str, owner: &str) -> Probe {
