@@ -156,11 +156,14 @@ Test discovery:
   module identity unresolved: omit that test's verify command while retaining
   related-test evidence. Repair placement uses the first oracle-eligible test
   in candidate order with a known verify command, or stays absent when none
-  exists; repair-card evidence describes that same selected file and test.
+  exists; repair-card and context/diagnostic-witness evidence describe that
+  same selected file and test through one shared row resolver.
   When related rows share a file and bare method name, placement carries the
   selected source line as evidence so the card can distinguish them. Older
   reports without that line require a unique matching row to establish card
-  identity.
+  identity. An incomplete, malformed, or ambiguous declared identity cannot
+  borrow a differently ranked test's oracle. With no declared repair target,
+  the diagnostic witness retains its existing related-test fallback.
   Shell quoting cannot preserve such
   a dot against unittest's module splitting. Ordinary quoted paths and pytest
   file selectors retain their existing behavior. The pytest form
