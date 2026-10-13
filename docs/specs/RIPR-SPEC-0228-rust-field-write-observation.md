@@ -322,8 +322,10 @@ changes `self.count += 2` to `self.count += 1`.
   and whose other operand does not name that binding. Either operand may
   be the read. The test must call the owner on nothing but that binding (no
   `other.add(..)`, `Order::add(&mut other, ..)` or chained
-  `Order::new().add(..)`): a value built through the owner may carry the
-  changed field into the other operand. Between
+  `Order::new().add(..)`), nor bind a local from it
+  (`let before = order.log.clone()`): a value built through the owner, or a
+  snapshot of the binding, may carry the changed field into the other
+  operand. Between
   the owner call and the assertion the test may write nothing through the
   binding (`binding_untouched_after_owner_call` in `reveal.rs`): the call is
   a bare statement (optionally ending in `.unwrap()`, `.expect(..)` or `?`,

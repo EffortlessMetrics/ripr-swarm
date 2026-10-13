@@ -564,7 +564,9 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
                 let name_start = inner[..bang]
                     .rfind(|ch: char| !ident(ch))
                     .map_or(0, |index| index + 1);
-                !invoked || matches!(&inner[name_start..bang], "vec" | "format")
+                !invoked
+                    || (matches!(&inner[name_start..bang], "vec" | "format")
+                        && !inner[..name_start].ends_with(':'))
             })
         }) && !statement.contains(['{', '|'])
             && mentions.iter().all(|at| {
@@ -599,24 +601,49 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
 ) -> bool {
     let masked = mask_comments_and_strings(body);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let call = format!("{method}(");
-    masked.match_indices(&call).any(|(at, _)| {
+    masked.match_indices(method).any(|(at, name)| {
         let before = &masked[..at];
-        if before.chars().next_back().is_some_and(ident) {
-            // A longer name ending in `method`.
+        if before.chars().next_back().is_some_and(ident)
+            || masked[at + name.len()..].starts_with(ident)
+        {
+            // Part of a longer name.
             return false;
         }
-        if before.ends_with("::") {
+        // A path (`Order::add(..)`, `let f = Order::add;`) may run the owner
+        // on any value.
+        if before.trim_end().ends_with("::") {
             return true;
         }
-        let Some(receiver_end) = before.strip_suffix('.').map(str::len) else {
-            // A free function of the same name is not the owner method.
+        let Some(receiver_end) = before.trim_end().strip_suffix('.').map(str::len) else {
+            // A free function or local of the same name is not the method.
             return false;
         };
+        let receiver_end = masked[..receiver_end].trim_end().len();
         let receiver_start = masked[..receiver_end]
             .rfind(|ch: char| !ident(ch))
             .map_or(0, |index| index + 1);
-        masked[..receiver_start].ends_with('.') || masked[receiver_start..receiver_end] != *binding
+        masked[..receiver_start].trim_end().ends_with('.')
+            || masked[receiver_start..receiver_end] != *binding
+    })
+}
+
+/// Whether the test body binds a local from `binding`
+/// (`let before = order.log.clone();`): such a snapshot may hold the owner's
+/// changed value and stand on the other side of an equality.
+pub(in crate::analysis) fn test_snapshots_binding(body: &str, binding: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.split([';', '{', '}']).any(|statement| {
+        let Some(rest) = statement.trim_start().strip_prefix("let ") else {
+            return false;
+        };
+        let Some((_, initializer)) = rest.split_once('=') else {
+            return false;
+        };
+        initializer.match_indices(binding).any(|(at, name)| {
+            !initializer[..at].chars().next_back().is_some_and(ident)
+                && !initializer[at + name.len()..].starts_with(ident)
+        })
     })
 }
 
@@ -3610,8 +3637,33 @@ mod tests {
             "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset![1, order, 2], \"m\");\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(my::vec![1, order, 2].is_empty());\n    assert_eq!(order.log, vec![]);",
         ] {
             assert!(!untouched(refused), "{refused}");
+        }
+    }
+
+    /// #7688 review: a local read from the binding may hold the owner's
+    /// changed value and stand on the other side of the equality.
+    #[test]
+    fn test_snapshots_binding_sees_a_local_read_from_the_binding() {
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        assert!(test_snapshots_binding(
+            &body(
+                "    let mut order = Order::new();\n    order.add(4);\n    let before = order.log.clone();"
+            ),
+            "order"
+        ));
+        assert!(test_snapshots_binding(
+            &body("    let n: usize = order.log.len();"),
+            "order"
+        ));
+        for kept in [
+            "    let mut order = Order::new();\n    order.add(4);",
+            "    let orders = Vec::new();\n    let s = \"order\";",
+            "    let mut order: Order = Default::default();",
+        ] {
+            assert!(!test_snapshots_binding(&body(kept), "order"), "{kept}");
         }
     }
 
@@ -3635,6 +3687,9 @@ mod tests {
             "    Order::add(&mut exp, 4);\n    order.add(4);",
             "    let exp = Order::new().add(4).clone();\n    order.add(4);",
             "    let exp = self.order.add(4);\n    order.add(4);",
+            "    let f = Order::add;\n    f(&mut exp, 4);\n    order.add(4);",
+            "    exp. add(4);\n    order.add(4);",
+            "    Order::new()\n        .add(4);\n    order.add(4);",
         ] {
             assert!(called(refused), "{refused}");
         }
