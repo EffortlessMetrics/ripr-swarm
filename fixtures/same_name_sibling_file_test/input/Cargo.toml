@@ -1,0 +1,4 @@
+[package]
+name = "same_name_sibling_file_test_fixture"
+version = "0.0.0"
+edition = "2024"

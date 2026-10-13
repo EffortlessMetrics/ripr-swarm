@@ -10830,10 +10830,37 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs",
   "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::qualified_calls_settle_on_the_module_they_spell",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_use_import_settles_a_bare_call",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_bare_call_binds_its_own_files_definition_through_use_super_glob",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::integration_test_paths_through_the_crate_name_settle",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_unique_or_method_owner_has_no_identity",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::call_qualifiers_read_bare_qualified_method_and_definition_spellings",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::file_module_segments_follow_the_crate_layout",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_foreign_crate_namesake_path_is_unsettled",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::an_own_crate_name_path_settles_and_a_foreign_one_does_not",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_qualified_call_resolves_through_a_module_alias",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_block_local_binding_leaves_the_test_unsettled",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::resolve_call_settles_one_spelled_call",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_mixed_test_settles_coarsely_on_the_owner_but_its_bare_call_on_the_rival",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_path_remapped_package_has_no_identity",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_sibling_files_same_named_function_test_does_not_relate",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::records_scopes_innermost_first_with_imports_globs_and_definitions",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_module_item_of_the_name_is_a_definition_of_that_scope",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::unparseable_or_missing_function_yields_none",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_block_local_use_is_block_bound_not_function_wide",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::use_paths_are_read_through_the_syntax_tree",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_qualified_call_to_another_modules_function_does_not_grip_the_owner",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/same_name_sibling_file_test",
+  "fixtures/same_name_qualified_other_module",
+]
 code = [
   "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/call_identity.rs",
+  "crates/ripr/src/analysis/syntax/name_scope.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
   "crates/ripr/src/analysis/classifier.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
@@ -10841,6 +10868,12 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md",
+  "fixtures/same_name_sibling_file_test/expected/check.json",
+  "fixtures/same_name_sibling_file_test/expected/human.txt",
+  "fixtures/same_name_sibling_file_test/expected/human-full.txt",
+  "fixtures/same_name_qualified_other_module/expected/check.json",
+  "fixtures/same_name_qualified_other_module/expected/human.txt",
+  "fixtures/same_name_qualified_other_module/expected/human-full.txt",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -12154,6 +12187,9 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_import_extraction_is_bounded_to_selected_files",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_without_module_names_does_not_extract_imports",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_imports_in_another_file_still_defeat_a_module_name",
@@ -12396,11 +12432,13 @@ fixtures = [
   "fixtures/owner_return_pin_cfg_false_file",
   "fixtures/owner_return_pin_cfg_attr_module",
   "fixtures/owner_return_pin_out_of_line_cfg",
+  "fixtures/same_name_use_imported_owner",
   "fixtures/owner_return_pin_test_module_shadow",
   "fixtures/owner_return_pin_out_of_line_test_module_shadow",
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/output/observed_values.rs",
   "crates/ripr/src/output/human/evidence_lines.rs",
   "crates/ripr/src/output/json/report.rs",
@@ -12543,6 +12581,9 @@ outputs = [
   "fixtures/owner_return_pin_out_of_line_cfg/expected/check.json",
   "fixtures/owner_return_pin_out_of_line_cfg/expected/human.txt",
   "fixtures/owner_return_pin_out_of_line_cfg/expected/human-full.txt",
+  "fixtures/same_name_use_imported_owner/expected/check.json",
+  "fixtures/same_name_use_imported_owner/expected/human.txt",
+  "fixtures/same_name_use_imported_owner/expected/human-full.txt",
 ]
 metrics = [
   "owner_return_pin_false_exposed",

@@ -3,6 +3,7 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_test_macros;
 mod module_tree;
+mod name_scope;
 mod nesting;
 mod owner_pin;
 mod pattern_pin;
@@ -26,6 +27,7 @@ pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
+pub(crate) use name_scope::{NameScope, NameScopes, UseBinding, name_scopes_for_fn};
 pub(crate) use nesting::{non_code_token_end, parse_clean_source_file, rust_nesting_refusal};
 pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;

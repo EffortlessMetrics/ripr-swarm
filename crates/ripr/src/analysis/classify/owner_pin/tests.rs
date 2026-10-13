@@ -944,8 +944,32 @@ fn bare_call_names_only_a_module_level_function() {
 #[test]
 fn bare_call_is_defeated_by_another_free_function_or_a_local_binding() {
     let lib = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n\npub mod other {\n    pub fn scaled(x: i32) -> i32 {\n        x\n    }\n}\n";
-    let index_with_twin = index(&[(LIB, lib)]);
-    assert!(establish(&index_with_twin, "scaled", "x * 10").is_none());
+    // #6544: a same-package module-level twin no longer refuses the pin at
+    // `establish`; each test's import or path must settle the bare call on
+    // the owner, and one that settles on the twin (or on nothing) is still
+    // defeated.
+    for (import, pinned) in [
+        ("use demo::other::scaled;", false),
+        ("use demo::other::*;", false),
+        // The crate-name glob brings the crate root's own `scaled`.
+        ("use demo::*;", true),
+        ("use demo::scaled;", true),
+    ] {
+        let tests =
+            format!("{import}\n\n#[test]\nfn scales() {{\n    assert_eq!(scaled(3), 30);\n}}\n");
+        let index_with_twin = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index_with_twin, "scaled", "x * 10");
+        assert!(pin.is_some(), "{import}");
+        let admitted = pin
+            .map(|pin| admitted_texts(&index_with_twin, &pin).len())
+            .unwrap_or_default();
+        assert_eq!(admitted, usize::from(pinned), "{import}");
+    }
+    // A twin outside the owner's package is not settled per test and still
+    // refuses the pin outright.
+    let foreign_twin = "pub fn scaled(x: i32) -> i32 {\n    x\n}\n";
+    let index_with_foreign_twin = index(&[(LIB, lib), ("crates/other/src/lib.rs", foreign_twin)]);
+    assert!(establish(&index_with_foreign_twin, "scaled", "x * 10").is_none());
 
     let lib = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n";
     for body in [
@@ -3441,6 +3465,103 @@ fn a_trait_receiver_pins_only_through_its_one_constructor() {
         BTreeSet::from(["Meter".to_string()])
     );
     assert!(trait_impl_self_type_names(other_meter, "Gauge").is_empty());
+}
+
+const SNAP_LIB: &str = "pub mod celsius {\n    pub fn snap(v: u32) -> u32 {\n        (v + 5) / 10 * 10\n    }\n}\n\npub mod fahrenheit {\n    pub fn snap(v: u32) -> u32 {\n        (v + 6) / 12 * 12\n    }\n}\n\n#[cfg(test)]\nmod snap_tests {\n    use super::celsius::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n        assert_eq!(snap(17), 20);\n    }\n}\n";
+
+fn module_owner<'a>(index: &'a RustIndex, id_suffix: &str) -> Option<&'a FunctionSummary> {
+    index
+        .functions()
+        .iter()
+        .find(|function| function.id.0.ends_with(id_suffix))
+}
+
+fn module_pin(index: &RustIndex, id_suffix: &str, expression: &str) -> Option<OwnerReturnPin> {
+    let owner = module_owner(index, id_suffix);
+    assert!(owner.is_some(), "`{id_suffix}` must be indexed");
+    let owner = owner?;
+    assert_eq!(owner.item.container, FunctionContainer::Free);
+    OwnerReturnPin::establish(&return_probe(owner, expression), owner, index)
+}
+
+/// #6544: same-named module-level rivals no longer refuse the pin outright.
+/// The test's `use super::celsius::snap` settles the bare call on
+/// `celsius::snap`, so its exact assert pins that owner and never the
+/// `fahrenheit::snap` rival it does not import.
+#[test]
+fn an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import() {
+    let index = index(&[(LIB, SNAP_LIB)]);
+    let pin = module_pin(&index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(
+        pin.is_some(),
+        "rivals settled per test must not refuse the pin"
+    );
+    let admitted = pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_default();
+    assert_eq!(admitted, vec!["assert_eq!(snap(17), 20);".to_string()]);
+
+    let rival_pin = module_pin(&index, "::fahrenheit::snap", "(v + 6) / 12 * 12");
+    assert!(rival_pin.is_some());
+    let rival_admitted = rival_pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(
+        rival_admitted.is_empty(),
+        "the import names celsius::snap, never fahrenheit::snap: {rival_admitted:?}"
+    );
+}
+
+/// Review finding 4: the pin resolves the asserted call itself. A test that
+/// imports the rival and also calls the owner by its full path pins the
+/// rival through the bare `snap(17)`, never the owner; with the imports
+/// swapped (control) the same assertion pins the owner. The per-call
+/// resolution is the identity gate; the import-reading reach gate (#7097)
+/// refuses the same shape independently.
+#[test]
+fn a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call() {
+    let mixed = SNAP_LIB.replace(
+        "    use super::celsius::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    use super::fahrenheit::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::celsius::snap(1);\n",
+    );
+    assert_ne!(mixed, SNAP_LIB, "the fixture must be rewritten");
+    let mixed_index = index(&[(LIB, mixed.as_str())]);
+    let pin = module_pin(&mixed_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(pin.is_some());
+    let admitted = pin
+        .map(|pin| admitted_texts(&mixed_index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(
+        admitted.is_empty(),
+        "`snap(17)` is fahrenheit's; the path call lends it nothing: {admitted:?}"
+    );
+
+    let control = SNAP_LIB.replace(
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::fahrenheit::snap(1);\n",
+    );
+    assert_ne!(control, SNAP_LIB, "the control fixture must be rewritten");
+    let control_index = index(&[(LIB, control.as_str())]);
+    let pin = module_pin(&control_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    let admitted = pin
+        .map(|pin| admitted_texts(&control_index, &pin))
+        .unwrap_or_default();
+    assert_eq!(admitted, vec!["assert_eq!(snap(17), 20);".to_string()]);
+}
+
+/// #6544 trap pair: with only `use super::*`, the bare `snap` is bound by
+/// no scope ripr can read (both rivals sit in sibling modules), so neither
+/// rival is pinned.
+#[test]
+fn a_bare_call_no_import_settles_pins_neither_rival() {
+    let source = SNAP_LIB.replace("    use super::celsius::snap;\n", "    use super::*;\n");
+    let index = index(&[(LIB, source.as_str())]);
+    let pin = module_pin(&index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(pin.is_some());
+    let admitted = pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(admitted.is_empty(), "{admitted:?}");
 }
 
 const WINDOW_LIB: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
