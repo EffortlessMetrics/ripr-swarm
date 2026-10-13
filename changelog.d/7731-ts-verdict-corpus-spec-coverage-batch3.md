@@ -6,4 +6,4 @@
   RIPR-SPEC-0250), default-import owners (RIPR-SPEC-0251), lookup tables
   (RIPR-SPEC-0254) and mock object arguments (RIPR-SPEC-0256). Every
   in-scope example now has a case: spec-example coverage rises from 67 to
-  103 of 103, and the ledger floor with it (#TBD).
+  103 of 103, and the ledger floor with it (#7731).
