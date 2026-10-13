@@ -13280,20 +13280,30 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::a_report_and_its_rebless_hint_name_the_corpus_language",
   "xtask/src/reports/verdict_corpus_tests.rs::only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_perl_corpus_is_valid_and_covers_each_test_library",
+  "xtask/src/reports/verdict_corpus_tests.rs::perl_expected_rows_agree_with_corpus_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_holds_perl_packets_to_their_pins_and_provenance",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_perl_facts_and_a_producer_outside_the_perl_corpus",
+  "xtask/src/reports/verdict_corpus_tests.rs::packet_findings_count_while_their_subject_is_unresolved_and_others_do_not",
+  "xtask/src/reports/verdict_corpus_tests.rs::report_keeps_edited_packet_rates_apart_from_producer_rates",
+  "xtask/src/reports/verdict_corpus_tests.rs::a_packet_case_refuses_a_binary_without_the_perl_adapter",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_python_corpus_is_valid_and_covers_each_test_library",
   "xtask/src/reports/verdict_corpus_tests.rs::python_expected_rows_agree_with_corpus_labels",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
   "fixtures/typescript-verdict-corpus",
+  "fixtures/perl-verdict-corpus",
   "fixtures/python-verdict-corpus",
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
+  "xtask/src/reports/fixtures.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/rows",
   "fixtures/typescript-verdict-corpus/expected/rows",
+  "fixtures/perl-verdict-corpus/expected/rows",
   "fixtures/python-verdict-corpus/expected/rows",
 ]
 metrics = [
