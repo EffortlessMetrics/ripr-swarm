@@ -905,3 +905,18 @@ fn arguments_deleted_together_from_a_kept_call_are_one_record() -> Result<(), St
     assert_eq!(base_side_texts(&findings), vec!["CAP,"], "{findings:?}");
     Ok(())
 }
+
+/// Inside a kept call, a removed argument an added argument replaces is the
+/// candidate side's record, so the argument deleted after it still gets
+/// its own base-side record (#7690).
+#[test]
+fn argument_deleted_after_a_replaced_one_in_a_kept_call_is_recorded() -> Result<(), String> {
+    let findings = analyze(
+        "kept-call-replaced-argument",
+        "def keep(items):\n    total = min(\n        c,\n    )\n    return total\n",
+        &[3],
+        vec![line(3, 3, "        a,"), line(4, 3, "        b,")],
+    )?;
+    assert_eq!(base_side_texts(&findings), vec!["b,"], "{findings:?}");
+    Ok(())
+}

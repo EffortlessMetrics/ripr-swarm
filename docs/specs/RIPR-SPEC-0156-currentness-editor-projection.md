@@ -47,7 +47,12 @@ no end-to-end corpus a downstream consumer could run against.
     declaration, comment, docstring, import or lone bracket records
     nothing. A deleted statement that spans lines (an open bracket, a
     triple-quoted string, a trailing backslash) is one record on the
-    line that starts it; its continuation lines record nothing (#7690).
+    line that starts it, when that line is a behavior line; its
+    continuation lines record nothing and do not decide which owner
+    held it (#7690). Lines deleted from inside a statement the
+    candidate keeps (an argument of a kept call, a line of a kept
+    string) are one record on the first unpaired behavior line among
+    them.
     Base-side lines are not counted as candidate lines.
   - **deleted TypeScript statement** (#7689) — the same rule for
     TypeScript and JavaScript: an unpaired removed behavior line is a

@@ -56,8 +56,10 @@ pub(super) fn deleted_line_findings(
     for finding in findings {
         *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
     }
+    // A paired line is the candidate side's record, not this deletion's, so
+    // it does not use up the one record a run inside a kept statement gets.
     let continuations = continuation_lines(changed, new_source, |removed| {
-        is_removed_behavior_line(removed, old_side)
+        !paired.contains(&removed.line) && is_removed_behavior_line(removed, old_side)
     });
     let mut out = Vec::new();
     for removed in &changed.removed_lines {
@@ -287,22 +289,25 @@ fn indent_width(text: &str) -> usize {
     text.len() - text.trim_start().len()
 }
 
-/// Removed lines that continue a statement begun on an earlier removed line:
-/// inside an open bracket, inside a triple-quoted string, or after a
-/// trailing backslash. Only the line that starts a statement is its record;
-/// the others would each attach a fragment (`p,`, `) -> int:`, a string
+/// Removed lines that are fragments of a statement rather than records of
+/// their own: inside an open bracket, inside a triple-quoted string, or after
+/// a trailing backslash. A deleted statement's record is the line that starts
+/// it; the others would each attach a fragment (`p,`, `) -> int:`, a string
 /// body at column 0) to whatever owner their own indent suggests (#7690).
 /// The state runs across each contiguous old-side run and restarts at a gap
-/// from the state the candidate file's kept lines leave there. When that
-/// state continues, the run deletes from inside a statement that a kept line
-/// starts (an argument of a kept call, a line of a kept string): its first
-/// behavior line is the deletion's record and only the rest of that
-/// statement are fragments.
+/// from the state the candidate file's lines above it leave there. When that
+/// state continues, the run deletes from inside a statement the candidate
+/// still starts (an argument of a kept call, a line of a kept string): its
+/// first unpaired behavior line is the deletion's record and the rest of
+/// that statement are fragments.
 fn continuation_lines(
     changed: &ChangedFile,
     new_source: NewSource<'_>,
     is_behavior: impl Fn(&ChangedLine) -> bool,
 ) -> BTreeSet<usize> {
+    if changed.removed_lines.is_empty() {
+        return BTreeSet::new();
+    }
     let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
     by_old_line.sort_by_key(|line| line.line);
     let kept_states = states_before_each_line(new_source);
@@ -358,7 +363,7 @@ struct StatementState {
     depth: usize,
     /// The quote character of an open triple-quoted string.
     triple: Option<char>,
-    /// The line ended with a backslash outside any string.
+    /// The line ended with a backslash outside any string or comment.
     backslash: bool,
 }
 
