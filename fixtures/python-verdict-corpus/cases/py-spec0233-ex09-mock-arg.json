@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0233-ex09-mock-arg",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex09-mock-arg.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 175
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_mock_result_assert_called_once_with",
+  "hard_case": "a mock expectation (medium strength) on the owner's returned handler that pins the exact argument",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "handler(int(text) + 1)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_handler.py::test_on_parse_hands_the_number_to_its_handler",
+        "equivalence_review": "not equivalent: the handler receives 2 instead of 1 for '1'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 9: `m = on_parse('1', Mock())` then `m.assert_called_once_with(1)`. The owner returns the handler it was given, as registration helpers do, so `m` is the owner's result. The edit hands the handler 2, and assert_called_once_with(1) fails, so the test discriminates the change. The spec keeps this shape `mock_expectation` / medium and `weakly_exposed`, so a gap here is a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "6da363f9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#9"
+  ]
+}
