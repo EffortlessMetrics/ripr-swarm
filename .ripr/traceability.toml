@@ -3938,6 +3938,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/init_workflow.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/main.rs",
 ]
