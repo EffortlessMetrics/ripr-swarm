@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-quickcheck-macro-relational-bound",
+  "subject_id": "authored-lib-quickcheck",
+  "diff": "cases/lib-quickcheck-macro-relational-bound.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "quickcheck_macro_relational_property",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.len().min(max).saturating_sub(1)",
+        "mutated_line": "xs[..xs.len().min(max).saturating_sub(1)].to_vec()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: truncate([1], 5) = [] instead of [1] (length still <= max)"
+      },
+      {
+        "replacement": "xs.len().min(max + 1)",
+        "mutated_line": "xs[..xs.len().min(max + 1)].to_vec()",
+        "outcome": "tests_failed",
+        "failing_test": "tests::truncate_never_exceeds",
+        "equivalence_review": "not equivalent: truncate([1,2], 0) = [1], length 1 > 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The quickcheck! macro property only asserts len <= max, so dropping an extra element goes undetected while keeping max+1 elements violates the bound.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

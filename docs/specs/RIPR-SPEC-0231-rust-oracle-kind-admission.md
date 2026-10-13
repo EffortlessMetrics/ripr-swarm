@@ -107,6 +107,25 @@ argument, for the macros `assertion_oracle_text` recognizes; a custom helper
 is read from its whole line. The RIPR-SPEC-0106 upgrade never applies to an
 assertion that an admission rule below weakened.
 
+### Assertion macro paths
+
+The parser's assertion recognizer (`is_assertion_macro`) reads a macro called
+through one path segment into a drop-in assertion crate as its leaf:
+`std::`, `core::` (each optionally `::`-rooted), `pretty_assertions::` and
+`similar_asserts::` change only the failure output, and `assert_matches::`
+exports the std-shaped `assert_matches!`. So `pretty_assertions::assert_eq!`
+classifies exactly as `assert_eq!`. Any other crate path
+(`other::assert_eq!`), a deeper path (`pretty_assertions::nested::assert_eq!`)
+or a leaf outside the std set stays unrecognized. A recognized qualified
+`assert_eq!` faces the same RIPR-SPEC-0197 execution admission as the bare
+spelling, so the qualified path never gains credit the bare one is refused.
+The parser refuses a qualified path whose crate root may be rebound
+(example 30): a same-file module, import of another item, `extern crate`
+rename or item-position macro, or a function read without its file.
+The token-level `is_known_rust_assertion_macro` in
+`analysis/language/rust/oracles.rs` reads any path's last segment; aligning
+the two crate rules is outside this spec.
+
 ### Precedence
 
 The chain runs in this order; the first match wins. Before it, the
@@ -174,15 +193,56 @@ Two pattern terms are used below.
   `p` is.
 
 1. **Inequality is never exact.** At steps 0, 1, 5 and 10, an inequality
-   assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
-   `!=` in an `ensure!` condition, a negated `!matches!(..)` (which today
-   reads `exact_error_variant` / strong at step 1 when its pattern is
-   `Err(E::X)`), and a custom helper whose name has a `ne`, `not` or `neq`
-   segment that step 10 admits today. At step 4, every `assert_ne!` assigns
-   weak strength: a struct-literal operand keeps the `whole_object_equality`
-   kind, as RIPR-SPEC-0225 says, with no field credit; any other `{` (a
-   closure or block operand) assigns `relational_check`. A negated pattern
-   assertion takes rule 1 before rules 2 and 3.
+   assigns `relational_check` / weak, whatever its operands: `assert_ne!`
+   (and any `*assert_ne!` spelling such as `soft_assert_ne!`), `!=` in an
+   `ensure!` condition, a negated `!matches!(..)` (which today reads
+   `exact_error_variant` / strong at step 1 when its pattern is
+   `Err(E::X)`; also `matches!(..).not()` and the `prop_assert!` form), an
+   assertion macro whose name has an inequality segment
+   (`assert_not_matches!`), a `matches!` comparison that is not positive
+   (below), and a custom helper whose
+   name has a `ne`, `neq`, `not`, `noteq`, `notequal`, `nonequal`,
+   `unequal`, `inequal`, `differ`, `differs`, `different` or `distinct`
+   segment that step 10 admits today; such a name never earns step 10's
+   clear-exact credit. One structural polarity rule reads a `matches!`
+   compared with `==` or `!=`, as the operands of an equality macro
+   (`assert_eq!`, `assert_ne!` and their `debug_` and `prop_` spellings)
+   or at the top level of an `assert!`, `debug_assert!`, `prop_assert!` or
+   `ensure!` condition, in either operand order: against a boolean literal
+   or a negated literal, `== true`, `!= false` and `== !false` are
+   positive and keep the pattern's reading; `== false`, `!= true`,
+   `== !true` and `!= !false` are negative. A negative comparison, a
+   comparison against anything that is not a boolean literal (a variable,
+   a call, another `matches!`), a negated pattern operand
+   (`!matches!(..) == false`, a double negation not read through) and a
+   compared pattern nested in a larger condition all fail closed at
+   `relational_check` / weak. `assert_ne!` stays an inequality whatever
+   the literal. A `!=` in a boolean assertion condition is rule 1's
+   inequality only when `!=` is the condition's only comparison
+   (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
+   strings and comments keeps the reading that `==` earns
+   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). At
+   step 4, every `assert_ne!` assigns weak strength: a struct-literal
+   operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
+   with no field credit; any other `{` (a closure or block operand) assigns
+   `relational_check`. A negated pattern
+   assertion takes rule 1 before rules 2 and 3. A negated pattern is an
+   inequality only when it is the whole condition; in a top-level `&&` chain
+   with no top-level `||` the other conjuncts decide the reading, and
+   anywhere else (`||` at any level, a nested group) the reading is capped
+   at weak. An inequality-named helper is recognized before any exact-kind
+   step, so a `matches!(.., Err(E::X))` argument cannot lend it a kind, and
+   the cap keeps a reading already below weak. A call-count or
+   observation helper keeps its own reading below the cap:
+   `mock.assert_not_called()` stays `mock_expectation` / medium, and
+   `assert_not_sent(..)` reads unknown, as `assert_sent(..)` does under
+   rule 5, rather than a relation. Only the helper name
+   and its receiver decide that exemption, never its arguments, and a
+   name with a value-comparison segment (`equal`, `eq`, `ne`) is never
+   exempt: `assert_not_equal(expect_value(), 3)`,
+   `mock.assert_ne(x, 3)` and `assert_ne_state(machine, State::Idle)`
+   read weak. No probe-family strength override in reveal lifts an
+   inequality above its classified strength.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
    irrefutable, `..` or pins no value (rule 3's test) assigns
@@ -368,7 +428,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   `static_unknown` back to a named gap.
 - Under #5416, a test whose only assertion is `assert_ne!` no longer
   withholds a gap as `static_unknown`.
-- Rule 7: every acceptance example 27 onward reads the kind and strength
+- Rule 7: acceptance examples 27 to 29 read the kind and strength
   stated there, in JSON `related_tests[]`.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
@@ -493,6 +553,20 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(xs.iter().any(|x| { x == 1 }))`,
     `assert!(x == ".any(|l| l == 1")`: `relational_check` / weak
     (unchanged).
+30. `pretty_assertions::assert_eq!(score(2), 4)` and
+    `std::assert_eq!(score(2), 4)`: recognized as `assert_eq!`; under
+    `if false { .. }` or in any context RIPR-SPEC-0197 refuses, no oracle
+    (`assertion_not_credited`). `other::assert_eq!(score(2), 4)`: not an
+    assertion. Nor is `pretty_assertions::assert_eq!(score(2), 4)` when the
+    name `pretty_assertions` may mean something other than the crate: the
+    file declares a module or an `extern crate` rename with that name,
+    imports another item under it (`use pretty_assertions;` and
+    `use pretty_assertions::{self};` bind the crate and still count), or
+    has an item-position macro call that could emit such a binding; or the
+    call sits in a promoted function (a `#[test_case]` test, a borrowed
+    check helper, a harness trial) whose oracles are read from the function
+    text alone. A binding in another file reached through a glob import, and
+    a Cargo package rename, are not detected.
 
 ## Test Mapping
 
@@ -511,6 +585,11 @@ rejected alternative. Any can be reversed later without touching the rest.
   (a family override never raises a weakened strength).
 - Existing: `reveal.rs::tests::pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`
   (decision 4's owner-pin gate and its RIPR-SPEC-0197 bool-owner exception).
+- Existing (example 30): `crates/ripr/src/analysis/syntax/ra/property_macros.rs`
+  `drop_in_assertion_crate_paths_keep_assertion_authority`,
+  `qualified_drop_in_assertions_classify_unless_their_root_is_bound_locally` and
+  `crates/ripr/src/analysis/classify/owner_pin/tests.rs`
+  `shared_return_admission_uses_the_outer_invocation_identity`.
 - Verdict corpus: 28 cases `spec0231-*` in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-26
   (two forms each for 21 and 23), each naming its example in its reasoning
@@ -518,8 +597,33 @@ rejected alternative. Any can be reversed later without touching the rest.
   oracle-kind error that leaves the line verdict unchanged, so each case's
   `hard_case` records where ripr's related-test kind or strength differs
   from this spec.
-- Planned: a fixture for example 1 showing the related test's reported kind
-  and strength.
+- Rule 1 (inequality): `classify.rs`
+  `spec_0231_rule_1_inequality_is_never_exact` covers acceptance examples 1,
+  2, 11, 13, 14, 19, 20 and the negated half of 26, with equality controls.
+  Fixture `fixtures/inequality_assertion_not_exact` shows example 1's related
+  test as `relational_check` / weak, and `cli_smoke.rs`
+  `repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip`
+  shows its seam is weakly gripped in the repo audit (strongly gripped
+  before). `spec_0231_rule_1_inequality_helper_precedes_exact_kinds` and
+  `spec_0231_rule_1_negated_pattern_must_be_the_whole_condition` pin the
+  helper and compound-negation readings, and `rust_index.rs`
+  `parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations`
+  checks them on both adapters. `reveal.rs`
+  `probe_relative_oracle_strength_never_promotes_an_inequality` and fixture
+  `fixtures/inequality_struct_assertion_not_exact` show example 14's struct
+  inequality stays weak under every probe family.
+  `spec_0231_rule_1_negated_matches_operand_in_equality_is_weak`,
+  `spec_0231_rule_1_negated_conjunct_respects_or_precedence`,
+  `spec_0231_rule_1_inequality_spellings_are_weak` and
+  `spec_0231_rule_1_inequality_helper_keeps_observer_readings` pin the
+  negated or `false`-compared `matches!` operand, the `||` boundary, the
+  helper and `*assert_ne!` spellings, and the observer exemption.
+  `spec_0231_rule_1_matches_comparison_polarity_is_structural`,
+  `spec_0231_rule_1_negation_spellings_follow_the_polarity_rule` and
+  `spec_0231_rule_1_observer_exemption_reads_receiver_and_name_only` pin
+  the polarity rule in every operand order and macro form, the
+  `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
+  name-and-receiver-only observer exemption.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is

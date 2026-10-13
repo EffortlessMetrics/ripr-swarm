@@ -3,7 +3,7 @@ id = "ripr.slice.check-config-path-disclosure.v1"
 generation = 1
 
 source_issue = "issue:7536"
-design_reference = "RIPR-SPEC-0254"
+design_reference = "RIPR-SPEC-0255"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
@@ -14,7 +14,10 @@ actually loaded. Built-in defaults stay an explicit absence on both
 surfaces — no member, no line, no fake path. Both renderers read the loaded
 config's `source_path` through the render-time config, so a bound
 `--candidate-tree` subject (which ignores the worktree config) discloses
-nothing, consistent with its null `config_identity`. Additive in check
+no path. That omission does not imply a null `config_identity`: a tree
+carrying its own `ripr.toml` has its text fingerprinted in
+`identity.config_identity`, while a tree without one is a defaults-only
+run whose `config_identity` stays null. Additive in check
 schema 0.2 with no version bump; `schemas/ripr/check.schema.json` gains the
 optional member. Claims no change to which file loads, to analysis
 behavior, or to finding content.
@@ -48,7 +51,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0254"
+requirement_id = "RIPR-SPEC-0255"
 requirement_generation = 1
 
 [implementation_claim]

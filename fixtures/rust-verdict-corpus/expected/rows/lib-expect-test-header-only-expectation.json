@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-expect-test-header-only-expectation",
+  "subject_id": "authored-lib-expect-test",
+  "origin": "authored",
+  "anchor": "src/lib.rs:26",
+  "behavior_family": "return_value",
+  "test_shape": "expect_test_partial_output",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

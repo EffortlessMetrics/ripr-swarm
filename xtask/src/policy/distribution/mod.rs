@@ -302,3 +302,6 @@ fn evaluate_contract(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod python_guidance_tests;

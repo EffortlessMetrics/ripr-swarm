@@ -225,6 +225,11 @@ fn assertion_from_expression_any(
                 .receiver
                 .and_then(|r| ava_assertion_from_expression(expr, source, r))
         })
+        .or_else(|| {
+            context
+                .receiver
+                .and_then(|r| node_test_context_assert_assertion(expr, source, r, context.bindings))
+        })
         .or_else(|| module_assert_assertion_from_expression(expr, source, context.bindings))
 }
 
@@ -786,6 +791,13 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_modules: Vec<String>,
     /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
     expect_binding: ExpectBinding,
+    /// Identifiers bound to `node:test`'s default export, `test` or `it`,
+    /// whose test context carries `t.assert` (RIPR-SPEC-0252).
+    node_test_locals: Vec<String>,
+    /// Whether the test being read was registered through one of
+    /// `node_test_locals`; set only by `for_registration`, so any other
+    /// path reads no context assert.
+    node_test_runner: bool,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -857,6 +869,12 @@ impl TypeScriptAssertionBindings {
                 bindings.bind(&module, Some(member.property.name.as_str()), false, local);
             }
         }
+        // `export { test } from "node:test"` reaches here as an import but
+        // binds no local, so a `test` in scope is some other binding.
+        let reexported = node_test_reexported_names(statements);
+        bindings
+            .node_test_locals
+            .retain(|local| !reexported.iter().any(|name| name == local));
         bindings
     }
 
@@ -864,6 +882,12 @@ impl TypeScriptAssertionBindings {
     /// namespace import) of `module`.
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
+        // Only a binding of the test function itself can register a test
+        // whose callback receives a `TestContext`; `describe as test` hands
+        // its callback a `SuiteContext` with no `assert` (RIPR-SPEC-0252).
+        if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
+            self.node_test_locals.push(local.clone());
+        }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
                 AssertFlavor::NodeStrict
@@ -933,7 +957,25 @@ impl TypeScriptAssertionBindings {
             } else {
                 self.expect_binding
             },
+            node_test_locals: self
+                .node_test_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            node_test_runner: self.node_test_runner,
         }
+    }
+
+    /// These bindings for a test registered through a callee whose root
+    /// identifier is `callee_root` (`test`, `it`, `test.only`): the
+    /// `node:test` context assert is read only when that root is bound to
+    /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
+    pub(crate) fn for_registration(&self, callee_root: Option<&str>) -> Self {
+        let mut bindings = self.clone();
+        bindings.node_test_runner =
+            callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
+        bindings
     }
 
     /// These bindings with `expect` destructured from the Vitest test
@@ -1076,6 +1118,72 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
     )
 }
 
+/// Names a top-level `export { ... } from "node:test"` re-exports. The
+/// import extractor records them as imports, but they bind nothing in this
+/// file.
+fn node_test_reexported_names(statements: &oxc_allocator::Vec<'_, Statement<'_>>) -> Vec<String> {
+    let mut names = Vec::new();
+    for stmt in statements {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.declaration.is_some()
+            || export.source.as_ref().map(|source| source.value.as_str()) != Some("node:test")
+        {
+            continue;
+        }
+        names.extend(
+            export.specifiers.iter().filter_map(|specifier| {
+                super::owners::module_export_name_text(&specifier.exported)
+            }),
+        );
+    }
+    names
+}
+
+/// RIPR-SPEC-0252 rule 1: `t.assert.<method>(...)` on a `node:test` test
+/// context. `t.assert` exposes the top-level `node:assert` functions, so the
+/// call reads as legacy `node:assert` does (`equal` is loose `==`). Only a
+/// test registered through a `node:test` binding has this receiver shape; AVA's
+/// `t.assert(value)` is a call, not a member object, and is read elsewhere.
+fn node_test_context_assert_assertion(
+    expr: &Expression<'_>,
+    source: &SourceText<'_>,
+    receiver: &str,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<TypeScriptAssertion> {
+    if !bindings.node_test_runner {
+        return None;
+    }
+    let expr = match expr {
+        Expression::AwaitExpression(await_expr) => &await_expr.argument,
+        _ => expr,
+    };
+    let Expression::CallExpression(call) = expr else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(assert_member) = &member.object else {
+        return None;
+    };
+    let Expression::Identifier(object) = &assert_member.object else {
+        return None;
+    };
+    if object.name.as_str() != receiver || assert_member.property.name.as_str() != "assert" {
+        return None;
+    }
+    let method = member.property.name.as_str();
+    assert_call_assertion(
+        call,
+        source,
+        method,
+        AssertFlavor::NodeLegacy,
+        format!("{receiver}.assert.{method}"),
+    )
+}
+
 /// Match a `node:assert` / chai `assert` call made through an imported
 /// binding (#4547): `assert.strictEqual(actual, expected)`,
 /// `chai.assert.equal(...)`, a bare named method `strictEqual(actual,
@@ -1115,6 +1223,19 @@ pub(crate) fn module_assert_assertion_from_expression(
         }
         _ => return None,
     };
+    assert_call_assertion(call, source, method, flavor, callee_text)
+}
+
+/// The assertion an `assert`-style call reads as once its method and API
+/// flavor are known: shared by imported `node:assert` / chai bindings and
+/// the `node:test` context's `t.assert`.
+fn assert_call_assertion(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    method: &str,
+    flavor: AssertFlavor,
+    callee_text: String,
+) -> Option<TypeScriptAssertion> {
     let (mut oracle_kind, mut oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0254: Check config path disclosure
+# RIPR-SPEC-0255: Check config path disclosure
 
 Status: proposed
 

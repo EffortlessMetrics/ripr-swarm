@@ -1919,10 +1919,13 @@ fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<
         return None;
     }
     let uri = file_uri_for_path(&absolute).ok()?;
+    // #7460: do not invent line 1 when the ledger omits `target_line`.
+    // Prefer the gap diagnostic's producer-owned anchor line, then drop
+    // the action when no navigation line is available.
     let line = route
         .get("target_line")
         .and_then(Value::as_u64)
-        .unwrap_or(1);
+        .or_else(|| value_at(data, &["anchor", "line"]).and_then(Value::as_u64))?;
     Some(serde_json::json!({
         "uri": uri.as_str(),
         "line": line,

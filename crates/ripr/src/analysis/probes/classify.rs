@@ -312,7 +312,7 @@ pub(crate) fn parser_expression_for_probe<'a>(
         .map(|shape| shape.text)
 }
 
-fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
+pub(super) fn file_facts<'a>(index: &'a RustIndex, file: &Path) -> Option<&'a FileData> {
     index
         .files()
         .get(file)

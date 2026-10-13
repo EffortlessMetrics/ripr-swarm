@@ -19,6 +19,7 @@ use super::related_tests::{
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
+use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
@@ -270,6 +271,26 @@ pub(super) fn classify_change_with_context(
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
     let mut boundary_downgraded = false;
+    // A removed or added additive call term changes the result only where the
+    // term is nonzero (#6733). When every strong related call gives it the
+    // value 0, a strong oracle passes either way.
+    let inactive_term = (static_limit.is_none()
+        && boundary_gap.is_none()
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            old_line_text.and_then(|old| {
+                python_inactive_term_evidence(
+                    old,
+                    line_text,
+                    owner,
+                    owners,
+                    &related_candidates,
+                    &focus,
+                )
+            })
+        })
+        .flatten();
+    let mut term_downgraded = false;
 
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if static_limit
         .is_some()
@@ -323,6 +344,7 @@ pub(super) fn classify_change_with_context(
         && alignment.observes()
         && changed_default_exercised_ok
         && boundary_gap.is_none()
+        && inactive_term.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -377,6 +399,21 @@ pub(super) fn classify_change_with_context(
                     .map(|value| format!(" `{value}`"))
                     .unwrap_or_default(),
                 gap.reason,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(term) = &inactive_term
+    {
+        term_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Add a test input where `{}`.",
+                owner.name, term.reason, term.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -492,7 +529,7 @@ pub(super) fn classify_change_with_context(
     let infect = StageEvidence::new(
         if static_limit.is_some() {
             StageState::Unknown
-        } else if boundary_downgraded {
+        } else if boundary_downgraded || term_downgraded {
             StageState::Weak
         } else {
             StageState::Yes
@@ -505,6 +542,8 @@ pub(super) fn classify_change_with_context(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if term_downgraded {
+            "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
         } else {
             python_infection_evidence(&family, line_text).summary
         },
@@ -531,6 +570,16 @@ pub(super) fn classify_change_with_context(
                             reason: gap.reason.clone(),
                             flow_sink: flow_sink.clone(),
                         })
+                })
+                .into_iter()
+                .collect()
+        } else if term_downgraded {
+            inactive_term
+                .as_ref()
+                .map(|term| MissingDiscriminatorFact {
+                    value: term.discriminator.clone(),
+                    reason: term.reason.clone(),
+                    flow_sink: flow_sink.clone(),
                 })
                 .into_iter()
                 .collect()
@@ -774,9 +823,17 @@ pub(super) fn classify_change_with_context(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation: crate::domain::ActivationEvidence {
-            observed_values: boundary
-                .map(|evidence| evidence.observed_values)
-                .unwrap_or_default(),
+            // A term downgrade names `f(...) != 0`; show the values that
+            // support it even when a predicate line also has boundary values.
+            observed_values: if term_downgraded {
+                inactive_term
+                    .map(|term| term.observed_values)
+                    .unwrap_or_default()
+            } else {
+                boundary
+                    .map(|evidence| evidence.observed_values)
+                    .unwrap_or_default()
+            },
             missing_discriminators,
         },
         stop_reasons: static_limit

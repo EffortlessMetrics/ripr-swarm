@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 17: one test holds pytest.raises(KeyError, match=\"empty\") and the success-value assert; the message edit fails the raises block. The spec credits exposed; ripr today reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "RIPR-SPEC-0238 example 17: one test holds pytest.raises(KeyError, match=\"empty\") and the success-value assert; the message edit fails the raises block. The spec credits exposed; ripr today reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

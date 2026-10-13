@@ -199,7 +199,7 @@ pub(crate) fn render_with_config(
         &crate::output::path::display_path(&output.root),
         true,
     );
-    // RIPR-SPEC-0254 (#7536): name the ripr.toml that governed the run so
+    // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run so
     // JSON consumers and stderr-discarding CI logs can tell which file
     // applied. Absent exactly when built-in defaults governed.
     if let Some(path) = config.source_path() {
@@ -1852,7 +1852,7 @@ mod harness_projection_tests {
         serde_json::from_str(rendered)
     }
 
-    /// RIPR-SPEC-0254 (#7536): a loaded `ripr.toml` is named by the
+    /// RIPR-SPEC-0255 (#7536): a loaded `ripr.toml` is named by the
     /// top-level `config_path`; built-in defaults omit the member entirely.
     #[test]
     fn config_path_names_the_loaded_file_and_defaults_omit_it() -> TestResult {
