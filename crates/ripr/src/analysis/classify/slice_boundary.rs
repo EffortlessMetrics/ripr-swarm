@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasName},
+    ast::{self, HasGenericParams, HasName},
 };
 
 struct BoundaryValues {
@@ -209,6 +209,33 @@ fn slice_parameter(owner: &FunctionSummary, name: &str) -> Option<usize> {
         .syntax()
         .descendants()
         .find_map(ast::Fn::cast)?;
+    if function.generic_param_list().is_some()
+        || !function
+            .ret_type()
+            .and_then(|result| result.ty())
+            .is_some_and(|ty| {
+                matches!(
+                    ty.syntax().text().to_string().trim(),
+                    "u8" | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "f32"
+                        | "f64"
+                        | "bool"
+                        | "char"
+                )
+            })
+    {
+        return None;
+    }
     if function.async_token().is_some() {
         return None;
     }

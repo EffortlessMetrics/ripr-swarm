@@ -13,9 +13,8 @@ const ROWS: &str = "let samples: [&[u64]; 3] = [&[5], &[3, 9], &[10, 20, 30]];";
 
 #[test]
 fn fully_executed_slice_table_needs_no_assertion_for_activation() -> Result<(), String> {
-    let source = include_str!("../../../fixtures/rust_slice_table_try_exit/input/src/lib.rs")
-        .replace("                Err(())?;\n", "");
-    assert!(!source.contains("Err(())?"));
+    let source = ordinary_assertion_free_table();
+    assert_eq!(source.matches("#[cfg(test)]").count(), 1);
     for (source, has_empty) in [
         (source.clone(), true),
         (source.replace("[&[5], &[]]", "[&[5], &[6]]"), false),
@@ -36,6 +35,114 @@ fn fully_executed_slice_table_needs_no_assertion_for_activation() -> Result<(), 
                 .iter()
                 .any(|fact| fact.value == "samples.len() == 0"),
             !has_empty
+        );
+    }
+    Ok(())
+}
+
+fn ordinary_assertion_free_table() -> String {
+    let source = include_str!("../../../fixtures/rust_slice_table_try_exit/input/src/lib.rs")
+        .replace("        let _ = (|| -> Result<(), ()> {\n", "")
+        .replace("                Err(())?;\n", "")
+        .replace("            Ok(())\n        })();\n", "");
+    assert!(!source.contains("Err(())?") && !source.contains("|| -> Result"));
+    source
+}
+
+#[test]
+fn unresolved_calls_cannot_credit_skipped_slice_rows() -> Result<(), String> {
+    let source = ordinary_assertion_free_table();
+    let mut credited = Vec::new();
+    for (effect, setup) in [
+        ("std::process::exit(0);", ""),
+        ("loop {}", ""),
+        ("while true {}", ""),
+        ("assert!({ loop {}; true });", ""),
+        (
+            "assert!(Stop == Stop);",
+            "struct Stop; impl PartialEq for Stop { fn eq(&self, _: &Self) -> bool { std::process::exit(0) } }\n",
+        ),
+        (
+            "terminate();",
+            "fn terminate() { std::process::exit(0); }\n",
+        ),
+        ("finish(0);", "use std::process::exit as finish;\n"),
+        (
+            "Stop.finish();",
+            "struct Stop; impl Stop { fn finish(&self) { std::process::exit(0); } }\n",
+        ),
+        ("assert!({ std::process::exit(0); true });", ""),
+        (
+            "assert!({ terminate(); true });",
+            "fn terminate() { std::process::exit(0); }\n",
+        ),
+        (
+            "assert!({ Stop.finish(); true });",
+            "struct Stop; impl Stop { fn finish(&self) { std::process::exit(0); } }\n",
+        ),
+    ] {
+        for (rows, kind) in [("[&[5], &[]]", "observed"), ("[&[5], &[6]]", "missing")] {
+            for (needle, position) in [
+                ("            let samples:", "before_loop"),
+                ("                let _ = mean_latency(s);", "before_call"),
+                ("            }\n", "after_first_call"),
+            ] {
+                assert_eq!(source.matches(needle).count(), 1, "{position}");
+                let text = source
+                    .replace("#[cfg(test)]", &format!("{setup}#[cfg(test)]"))
+                    .replace("[&[5], &[]]", rows)
+                    .replacen(needle, &format!("{effect}\n{needle}"), 1);
+                let finding = Subject::new(&text)?.finding()?;
+                if finding.class != ExposureClass::InfectionUnknown
+                    || finding
+                        .activation
+                        .observed_values
+                        .iter()
+                        .map(|fact| fact.value.as_str())
+                        .chain(
+                            finding
+                                .activation
+                                .missing_discriminators
+                                .iter()
+                                .map(|fact| fact.value.as_str()),
+                        )
+                        .any(|value| value == "samples.len() == 0")
+                {
+                    credited.push(format!(
+                        "{effect}/{kind}/{position}: {:?}",
+                        finding.activation
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        credited.is_empty(),
+        "skipped rows were credited: {credited:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn fallible_slice_observations_cannot_credit_later_rows() -> Result<(), String> {
+    for row in ["&[]", "&[ /* empty */ ]"] {
+        let source =
+            candidate().replace(ROWS, &format!("let samples: [&[u64]; 2] = [{row}, &[5]];"));
+        let finding = Subject::new(&source)?.finding()?;
+        assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .all(|fact| fact.value != "samples.len() == 0")
+        );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|fact| fact.value != "samples.len() == 0")
         );
     }
     Ok(())

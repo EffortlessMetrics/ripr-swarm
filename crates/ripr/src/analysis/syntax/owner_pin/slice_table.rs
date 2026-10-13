@@ -9,7 +9,7 @@ use crate::analysis::classify::{
 };
 use ra_ap_syntax::{
     AstNode, SyntaxKind,
-    ast::{self, HasArgList},
+    ast::{self, HasArgList, HasGenericArgs, HasName},
 };
 
 /// Conservative reference completeness, not dispatch resolution. Imports,
@@ -20,6 +20,29 @@ pub(crate) fn owner_reference_count(source: &str, owner: &str) -> Option<usize> 
         || invokes_opaque_macro(source)
         || macro_binding_candidates(&parse.tree()).may_bind_any_trusted()
         || parse.tree().syntax().descendants().any(|node| {
+            // This family does not resolve user-defined operators or aliases
+            // of primitive type names. Keep that uncertainty explicit across
+            // the indexed files rather than treating their methods as intrinsic.
+            if ast::Struct::can_cast(node.kind())
+                || ast::Enum::can_cast(node.kind())
+                || ast::Union::can_cast(node.kind())
+                || ast::Trait::can_cast(node.kind())
+                || ast::Impl::can_cast(node.kind())
+                || ast::TypeAlias::can_cast(node.kind())
+                || ast::ExternCrate::can_cast(node.kind())
+            {
+                return true;
+            }
+            if let Some(import) = ast::Use::cast(node.clone()) {
+                return import
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+                    != "usesuper::*;";
+            }
             if let Some(attribute) = ast::Attr::cast(node.clone()) {
                 return attribute.meta().is_none_or(|meta| {
                     !matches!(meta.simple_name().as_deref(), Some("test"))
@@ -90,14 +113,17 @@ pub(crate) fn constant_table_call_column(
     if function.async_token().is_some() {
         return None;
     }
-    // A discarded fallible closure may exit before this call or after its
-    // first row. Assertion admission also refuses these exits, but tables
-    // without assertions must establish every row independently of it.
-    if function
-        .syntax()
-        .descendants()
-        .any(|node| ast::TryExpr::can_cast(node.kind()))
-    {
+    // Suspension and nested execution may skip this call or later rows.
+    // Tables without assertions must refuse these independently of the
+    // assertion admission authority.
+    if function.syntax().descendants().any(|node| {
+        ast::TryExpr::can_cast(node.kind())
+            || ast::YieldExpr::can_cast(node.kind())
+            || ast::AwaitExpr::can_cast(node.kind())
+            || ast::ClosureExpr::can_cast(node.kind())
+            || ast::LoopExpr::can_cast(node.kind())
+            || ast::WhileExpr::can_cast(node.kind())
+    }) {
         return None;
     }
     let macros: Vec<_> = function
@@ -136,6 +162,14 @@ pub(crate) fn constant_table_call_column(
     if calls.next().is_some() {
         return None;
     }
+    // Calls can terminate successfully or change control flow without an
+    // explicit return/try token. This reader does not resolve their effects.
+    if function.syntax().descendants().any(|node| {
+        (ast::CallExpr::can_cast(node.kind()) && &node != call.syntax())
+            || ast::MethodCallExpr::can_cast(node.kind())
+    }) {
+        return None;
+    }
     let first_return = function
         .syntax()
         .descendants_with_tokens()
@@ -156,5 +190,143 @@ pub(crate) fn constant_table_call_column(
         .text()
         .to_string();
     let column = constant_table_column(fn_text, &name)?;
+    if column.len() > 64 || column.iter().any(|row| row.len() > 4096) {
+        return None;
+    }
+    let result = call
+        .syntax()
+        .parent()
+        .and_then(ast::LetStmt::cast)
+        .and_then(|binding| binding.pat())
+        .and_then(|pattern| match pattern {
+            ast::Pat::IdentPat(pattern)
+                if pattern.mut_token().is_none()
+                    && pattern.ref_token().is_none()
+                    && pattern.at_token().is_none() =>
+            {
+                pattern.name()
+            }
+            _ => None,
+        })
+        .filter(|result| {
+            function
+                .syntax()
+                .descendants()
+                .filter_map(|node| ast::AnyHasName::cast(node).and_then(|item| item.name()))
+                .filter(|name| name.text() == result.text())
+                .count()
+                == 1
+        });
+    for assertion in &macros {
+        if !assertion_operands_are_bounded(assertion, &name, result.as_ref(), &column)? {
+            return None;
+        }
+    }
     Some((column, call.syntax().text().to_string(), macros.len()))
+}
+
+fn assertion_operands_are_bounded(
+    assertion: &ast::MacroCall,
+    column: &str,
+    result: Option<&ast::Name>,
+    rows: &[String],
+) -> Option<bool> {
+    let tokens = assertion.token_tree()?.syntax().text().to_string();
+    let inner = [('(', ')'), ('[', ']'), ('{', '}')]
+        .iter()
+        .find_map(|(open, close)| tokens.strip_prefix(*open)?.strip_suffix(*close))?;
+    let parse = parse_clean_source_file(&format!("fn operands() {{ let _ = ({inner}); }}"))?;
+    let operands = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?
+        .initializer()?;
+    Some(operands.syntax().descendants().all(|node| {
+        if let Some(path) = ast::PathExpr::cast(node.clone()) {
+            return path.path().is_some_and(|path| {
+                path.qualifier().is_none()
+                    && path.segment().is_some_and(|segment| {
+                        segment.generic_arg_list().is_none()
+                            && segment.name_ref().is_some_and(|name| {
+                                name.text() == column
+                                    || result.is_some_and(|result| name.text() == result.text())
+                            })
+                    })
+            });
+        }
+        if let Some(method) = ast::MethodCallExpr::cast(node.clone()) {
+            return slice_observation(&method, column, rows);
+        }
+        !ast::CallExpr::can_cast(node.kind())
+            && !ast::ClosureExpr::can_cast(node.kind())
+            && !ast::AwaitExpr::can_cast(node.kind())
+            && !ast::YieldExpr::can_cast(node.kind())
+            && !ast::LoopExpr::can_cast(node.kind())
+            && !ast::WhileExpr::can_cast(node.kind())
+            && !ast::ForExpr::can_cast(node.kind())
+            && !ast::RecordExpr::can_cast(node.kind())
+            && !ast::FieldExpr::can_cast(node.kind())
+            && !ast::IndexExpr::can_cast(node.kind())
+            && !ast::LetStmt::can_cast(node.kind())
+            && !ast::Item::can_cast(node.kind())
+    }))
+}
+
+// Only intrinsic slice observations needed by the retained property are
+// admitted inside assertions. A matching method name on another receiver is
+// not evidence that its implementation returns or preserves the iteration.
+fn slice_observation(method: &ast::MethodCallExpr, column: &str, rows: &[String]) -> bool {
+    if method.generic_arg_list().is_some() {
+        return false;
+    }
+    let Some(name) = method.name_ref() else {
+        return false;
+    };
+    let Some(arguments) = method.arg_list() else {
+        return false;
+    };
+    let args: Vec<_> = arguments.args().collect();
+    let Some(receiver) = method.receiver() else {
+        return false;
+    };
+    if name.text() == "iter" {
+        return args.is_empty()
+            && matches!(receiver, ast::Expr::PathExpr(path)
+                if path.path().is_some_and(|path| path.qualifier().is_none()
+                    && path.segment().is_some_and(|segment| segment.generic_arg_list().is_none()
+                        && segment.name_ref().is_some_and(|name| name.text() == column))));
+    }
+    let ast::Expr::MethodCallExpr(previous) = receiver else {
+        return false;
+    };
+    let Some(previous_name) = previous.name_ref() else {
+        return false;
+    };
+    let shape = match name.text() {
+        "min" | "max" => args.is_empty() && previous_name.text() == "iter",
+        "unwrap" => {
+            args.is_empty()
+                && matches!(previous_name.text(), "min" | "max")
+                && rows.iter().all(|row| {
+                    parse_clean_source_file(&format!("fn input() {{ let row = {row}; }}"))
+                        .and_then(|parse| {
+                            parse
+                                .tree()
+                                .syntax()
+                                .descendants()
+                                .find_map(ast::ArrayExpr::cast)
+                        })
+                        .is_some_and(|array| array.exprs().next().is_some())
+                })
+        }
+        "unwrap_or" => {
+            matches!(previous_name.text(), "min" | "max")
+                && matches!(args.as_slice(), [ast::Expr::RefExpr(value)]
+                if value.mut_token().is_none() && value.raw_token().is_none()
+                    && matches!(value.expr(), Some(ast::Expr::Literal(_))))
+        }
+        _ => false,
+    };
+    shape && slice_observation(&previous, column, rows)
 }

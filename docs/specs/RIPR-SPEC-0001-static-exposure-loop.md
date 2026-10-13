@@ -325,7 +325,19 @@ macros. Equality keeps the matching call's source and line; otherwise all
 observed lengths support the missing equality. Computed rows, extra calls,
 helper or alias reach, opaque macros, mutable or shadowed bindings, skipped
 loops, asynchronous owners and custom `.len()` receivers remain outside this
-family. A try expression anywhere in the test function withholds this producer:
+family. Other ordinary calls, method calls, closure invocation, suspension and
+yielding, explicit `loop` and `while` constructs remain outside the family. Standard assertion operands are parsed too:
+only the direct immutable result binding and intrinsic `iter().min()` /
+`iter().max()` observations rooted at the exact
+immutable slice column are admitted. Their `unwrap()` requires every row to be
+nonempty; `unwrap_or(&literal)` also admits empty slices. Same-named methods on
+other receivers and unresolved calls inside assertion operands are refused.
+Owners must be nongeneric with a primitive scalar result. User-defined types,
+traits, implementations, type aliases and imports other than `use super::*`
+in the indexed files withhold this family; it does not resolve operator dispatch
+or primitive-name aliases. Other assertion value paths and local operand
+bindings remain unsupported.
+A try expression anywhere in the test function withholds this producer:
 a discarded fallible closure can exit before the call or skip later rows, and
 this family does not resolve that control flow. The refusal also applies when
 no assertion invokes the independent assertion-context authority. Every source
@@ -456,9 +468,12 @@ Fixture coverage:
 - `workspace_expansion_limits_withhold_partial_slice_evidence`
 - `ignored_fallible_closure_cannot_credit_skipped_slice_rows`
 - `fully_executed_slice_table_needs_no_assertion_for_activation`
+- `unresolved_calls_cannot_credit_skipped_slice_rows`
+- `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
 - `fixtures/rust_slice_table_try_exit`
+- `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
