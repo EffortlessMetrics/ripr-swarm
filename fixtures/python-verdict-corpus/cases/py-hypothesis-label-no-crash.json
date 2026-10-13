@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "test_label_never_crashes calls grade_label with no assertion, so changing \"pass\" to \"passed\" passes. ripr reports static_unknown with property_based_test, an acceptable limit; the ideal is a gap.",
+  "reasoning": "test_label_never_crashes calls grade_label with no assertion, so changing \"pass\" to \"passed\" passes. ripr reports static_unknown with property_based_test, an acceptable limit; the ideal is a gap. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "limited",

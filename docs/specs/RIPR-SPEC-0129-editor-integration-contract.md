@@ -200,6 +200,14 @@ action that a standard client cannot execute, a repair packet that an
 inspect-only gap does not own, or an absent next step. Missing test paths remain
 qualified as static analysis results; diagnostic codes and data remain stable.
 
+Retained snapshot hovers disclose when the shared analysis-health authority
+does not allow current repairs (#7458). The warning precedes the evidence,
+names the latest attempt and run status, and qualifies repair/verification
+commands as historical guidance. Queued/running attempts advise waiting;
+failed, cancelled, superseded, stopped, or explicitly stale completed states
+name `ripr.refresh` as recovery. A current completion removes the warning.
+This presentation must preserve the snapshot's diagnostics and result IDs.
+
 - A standard LSP client (e.g. Neovim) that does NOT advertise
   `experimental.riprEditor` receives zero `ripr.copyContext` or
   `ripr.openRelatedTest` command IDs in code actions — only server-executed
@@ -312,6 +320,9 @@ qualified as static analysis results; diagnostic codes and data remain stable.
   `hover_for_position_adds_snapshot_status_to_seam_hover`) verify hover
   falls back to snapshot status and never fabricates content without a
   snapshot.
+- `tests.rs::retained_hover_discloses_analysis_health_without_changing_evidence`
+  verifies retained-hover lifecycle disclosure, recovery, and unchanged
+  diagnostic payload/result identity.
 - Hover reaches line-level diagnostics: a line-level range (zero-width or
   the projected full-line span) is hoverable at every column of its own
   line, and a zero-width one highlights that line. Within one diagnostic
