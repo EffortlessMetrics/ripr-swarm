@@ -180,11 +180,12 @@ fn withhold_helper_uniqueness_as_unknown(
     restore_reveal_misses(&mut finding.related_tests, reveal_misses);
 }
 
-/// #7532: a withheld finding reports what `reveal` recorded for each row, as
-/// any other `static_unknown` finding does, rather than the `no_call_path`
-/// the `no_static_path` annotation wrote. A `no_call_path` from `reveal`
-/// itself is cleared too: the abstention establishes no missing call.
-/// `build_finding` keeps reveal's row order, so rows pair by position.
+/// #7532: a withheld finding reports the miss `reveal` recorded for each
+/// row rather than the `no_call_path` the `no_static_path` annotation wrote.
+/// Unlike other `static_unknown` findings, a `no_call_path` from `reveal`
+/// itself is cleared too: the abstention is about which function the tests
+/// call, so it establishes no missing call. `build_finding` keeps reveal's
+/// row order, so rows pair by position.
 fn restore_reveal_misses(
     related_tests: &mut [RelatedTest],
     reveal_misses: &[Option<RelatedTestMiss>],
