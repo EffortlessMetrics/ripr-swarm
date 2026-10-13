@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-insta-json-unredacted-sibling-field",
+  "subject_id": "authored-lib-insta",
+  "diff": "cases/lib-insta-json-unredacted-sibling-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 46
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "insta_json_snapshot_redacted_field",
+  "hard_case": "Control for the redaction case: same assertion, but this field is not redacted, so the snapshot does pin it; ripr reports the same weakly_exposed for both.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "items.iter().count() + 1",
+        "mutated_line": "items: items.iter().count() + 1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::record_json_with_redacted_id",
+        "equivalence_review": "not equivalent: 2 items gives items=3"
+      },
+      {
+        "replacement": "items.iter().skip(1).count()",
+        "mutated_line": "items: items.iter().skip(1).count(),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::record_json_with_redacted_id",
+        "equivalence_review": "not equivalent: 2 items gives items=1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The redaction only covers `.id`; `items` is serialized verbatim into the committed .snap, so both mutants change the JSON and fail.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

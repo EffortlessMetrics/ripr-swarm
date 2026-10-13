@@ -12218,6 +12218,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::lexical_source_values_do_not_claim_observed_oracles",
   "crates/ripr/tests/owner_pin_execution.rs::equality_family_admission_preserves_mixed_oracle_identity_and_projection",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_default_pinned_through_a_byte_slice_receiver",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::serial_test_locks_keep_the_pin_and_other_attributes_refuse_it",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_method_needs_its_trait_imported_from_the_workspace",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unit_struct_receiver_is_typed_by_its_own_name",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unit_struct_value_admits_only_spellings_nothing_else_can_bind",
@@ -14165,6 +14166,8 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
   "crates/ripr/src/analysis/rust_index.rs::tests::parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations",
   "crates/ripr/tests/cli_smoke.rs::repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::drop_in_assertion_crate_paths_keep_assertion_authority",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::shared_return_admission_uses_the_outer_invocation_identity",
 ]
 fixtures = [
   "fixtures/inequality_assertion_not_exact",

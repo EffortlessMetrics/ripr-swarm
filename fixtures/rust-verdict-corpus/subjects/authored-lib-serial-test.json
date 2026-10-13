@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-serial-test",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against serial_test 3.5.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "46e09a38ed1cbd00bbf0f84c779f6d0c018fad7a20f505fd9777a337a1538650"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "41bbfb84621157867e3bdcd0112dc35b1cb3a74d70313a8c09a3edb36587bfb7"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c60d32548412015334031a022d64939f3f6d893d35496fdd66ff05474fef4842"
+    }
+  ]
+}

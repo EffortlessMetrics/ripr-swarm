@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-mockall-recipient-predicate",
+  "subject_id": "authored-lib-mockall",
+  "diff": "cases/lib-mockall-recipient-predicate.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "mockall_with_eq_and_returning_closure",
+  "hard_case": "The recipient is pinned through the mock: .with(eq(\"ann\"), ..) and a returning(|to, _| to != \"cy\") closure whose result feeds an assert_eq! count.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "mailer.send(\"ann\", &body)",
+        "mutated_line": "return mailer.send(\"ann\", &body);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_the_delivered_reminders",
+        "equivalence_review": "not equivalent: cy's reminder goes to ann"
+      },
+      {
+        "replacement": "mailer.send(&body, &body)",
+        "mutated_line": "return mailer.send(&body, &body);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_the_delivered_reminders",
+        "equivalence_review": "not equivalent: the recipient is the message body"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Sending every reminder to \"ann\" makes cy's delivery succeed (count 2, not 1), and sending to the body breaks both the eq(\"ann\") predicate and the count.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

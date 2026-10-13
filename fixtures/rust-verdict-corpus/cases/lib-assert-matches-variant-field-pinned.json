@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-assert-matches-variant-field-pinned",
+  "subject_id": "authored-lib-assert-matches",
+  "diff": "cases/lib-assert-matches-variant-field-pinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "assert_matches_variant_field_pattern",
+  "hard_case": "ripr reads the assert_matches! pattern as exact_error_variant strong yet still reports weakly_exposed, so a fully pinned variant-field pattern is not credited.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pos: i + 1",
+        "mutated_line": "let d = c.to_digit(10).ok_or(ParseError::BadDigit { pos: i + 1 })?;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bad_digit_reports_position",
+        "equivalence_review": "not equivalent: parse_num(\"x1\") yields BadDigit{pos:1} instead of pos:0"
+      },
+      {
+        "replacement": "pos: 0",
+        "mutated_line": "let d = c.to_digit(10).ok_or(ParseError::BadDigit { pos: 0 })?;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bad_digit_reports_position",
+        "equivalence_review": "not equivalent: parse_num(\"1x\") yields BadDigit{pos:0} instead of pos:1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_matches! with a struct-variant pattern `BadDigit { pos: 0 }` / `{ pos: 1 }` compares the field literally at two positions, so both position mutants fail.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

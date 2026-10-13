@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 159e349..a6d53bf 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,7 @@
+         return 0;
+     }
+     let raw = u64::from(part) * 100 / u64::from(whole);
+-    raw.min(100) as u32
++    std::cmp::min(raw, 100) as u32
+ }
+ 
+ /// Sum of the even values, written for speed.
