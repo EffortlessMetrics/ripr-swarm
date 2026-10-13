@@ -25,15 +25,15 @@
       "strength": "weak",
       "spec": "RIPR-SPEC-0231#2"
     },
-    "observed_kind": "relational_check",
-    "observed_strength": "weak",
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
     "observed_all": [
       {
         "test": "check_twenty_is_not_ok",
-        "kind": "relational_check",
-        "strength": "weak"
+        "kind": "exact_value",
+        "strength": "strong"
       }
     ],
-    "outcome": "match"
+    "outcome": "overclaim"
   }
 }
