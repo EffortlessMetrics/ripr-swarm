@@ -160,8 +160,9 @@ can only hint that a caller "may lead here" without changing anything.
   it keeps the abstention, as do any exact, snapshot, mock or unknown
   oracle, a bare `assert!(caller(..))`, an `==` comparison, any other
   projection and a test-local hop caller (fail closed). Effect families
-  take this only across a local-macro argument hop (RIPR-SPEC-0117
-  example 7), whose unexpanded body is not checked for data carrying.
+  take this only when every observed hop is a local-macro argument hop
+  (RIPR-SPEC-0117 example 7), whose unexpanded body is not checked for
+  data carrying; a plain fn hop above it keeps the target-passing rule.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same

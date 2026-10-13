@@ -1044,8 +1044,9 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
 /// discriminate the caller's result exactly, so it cannot discriminate the
 /// owner's either, and the weak oracle's gap is established without
 /// pairing. Value families take this for any hop; side-effect and
-/// call-deletion families keep their target-passing rule except across a
-/// local-macro argument hop, which never passes a target either way.
+/// call-deletion families keep their target-passing rule unless every
+/// observed hop is a local-macro argument hop, which never passes a target
+/// either way.
 pub(crate) fn hop_reach_keeps_weak_oracle_gap(
     owner: &FunctionSummary,
     chain: &HelperChain,
@@ -1059,7 +1060,10 @@ pub(crate) fn hop_reach_keeps_weak_oracle_gap(
     if !caller_oracles_are_all_weak(owner, hops, related_tests) {
         return false;
     }
-    !effect_family || hops.iter().any(|hop| hop.through_macro)
+    // An effect family takes the exception only when every observed hop is
+    // a local-macro argument hop (#7622 review): a plain fn hop keeps the
+    // target-passing rule.
+    !effect_family || hops.iter().all(|hop| hop.through_macro)
 }
 
 /// Whether the related tests that call a caller hold at least one oracle

@@ -1071,6 +1071,47 @@ fn weak_oracle_does_not_lift_the_effect_target_rule() -> Result<(), String> {
     Ok(())
 }
 
+/// An effect owner behind a local-macro hop, called by `entry`. `wrapper`
+/// is either the macro caller itself or a plain fn hop above it.
+fn macro_record_source(entry: &str, test: &str) -> String {
+    format!(
+        "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\nmacro_rules! fresh {{\n    ($f:ident) => {{{{ $f(&mut Vec::new()); 7 }}}};\n}}\n\npub fn inner() -> u32 {{\n    fresh!(record)\n}}\n\n{entry}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn wrapper_returns_seven() {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn effect_macro_exception_needs_every_hop_through_the_macro() -> Result<(), String> {
+    // #7622 review: the local-macro exception covers the macro hop only. A
+    // plain fn hop above it keeps the effect target-passing rule.
+    let direct = all_findings(
+        &macro_record_source("", "assert!(inner() > 0);"),
+        RECORD_DIFF,
+    )?;
+    let direct = direct["findings"].as_array().ok_or("missing findings")?;
+    assert!(!direct.is_empty());
+    for finding in direct {
+        assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    }
+    let mixed = all_findings(
+        &macro_record_source(
+            "pub fn outer() -> u32 {\n    inner()\n}",
+            "assert!(outer() > 0);",
+        ),
+        RECORD_DIFF,
+    )?;
+    let mixed = mixed["findings"].as_array().ok_or("missing findings")?;
+    assert!(!mixed.is_empty());
+    for finding in mixed {
+        assert_eq!(
+            relation_of(finding, "wrapper_returns_seven"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert_not_forwarded(finding);
+    }
+    Ok(())
+}
+
 #[test]
 fn user_type_between_owner_and_caller_abstains() -> Result<(), String> {
     // #7549 review B3: `format!`, `to_string` and `clone` run the owner's
