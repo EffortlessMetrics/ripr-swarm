@@ -105,6 +105,19 @@ Cases are independent. Use current instructions in the assigned repository.
 20. **Feature consumer.** Python/card controls pass for changed guidance, but
     the shared human renderer has a Rust-only mock under another applicable
     feature selection. That consumer has not been inspected or tested.
+21. **Unavailable local execution.** Draft H has complete independent source
+    review and composition, all applicable available checks green, no known
+    failure and no claim-essential native proof gap. The local toolchain is
+    unavailable. An existing authorized narrow hosted route can establish the
+    remaining qualification, and green is reasonably expected.
+22. **Failure is not unavailability.** Same as case 21, but an applicable test
+    has a known deterministic failure on H's integration basis.
+23. **Unfinished work is not unavailability.** Same as case 21, but a required
+    focused check is executable locally and remains unrun, and an accepted
+    repair is unfinished.
+24. **Native evidence is claim-essential.** Linux checks pass, but the claim
+    depends on unestablished native Windows semantics. A generic Linux hosted
+    qualification is available; it does not exercise that native dimension.
 
 ## Independent expected outcomes
 
@@ -132,3 +145,7 @@ These are examiner pins, withheld from decision workers.
 | 18 | Return to Draft; batch correction with affected proof/review before Ready | A small source change still invalidates affected evidence |
 | 19 | Keep Draft; inspect and run the downstream consumer, resolving its literal expectation from the contract | No automatic tuple update or replacement with a production-derived oracle |
 | 20 | Keep Draft; inspect and run the relevant consumer/feature shape | Passing other features does not establish this one; no blanket full matrix |
+| 21 | Record the unavailable dimension/reason, available results and hosted route; verify live H/run state, then mark Ready | No local-pass claim; exact-head hosted proof and final review still precede merge |
+| 22 | Keep Draft; repair or resume through the existing dependency owner | A known failure cannot be relabeled unavailable or rerun as qualification |
+| 23 | Keep Draft; finish the repair, run the available check and refresh affected review | Hosted fallback does not excuse unfinished applicable work |
+| 24 | Keep Draft; name the missing native proof, owner and supported route | Linux evidence cannot establish Windows semantics or generic fallback readiness |

@@ -989,10 +989,11 @@ dropped delivery from a post-Ready push, but its summary row carries each PR's
 a glance. A head mutated after Ready has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
 `pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
-conflicts first: query the PR's `mergeable_state`; `dirty` means merge `main`
-into the branch first, and only then convert the PR to Draft and mark it Ready
-for review again, which runs the full Ready-triggered qualification on the
-exact head and also recovers a dropped delivery. The required check, not run existence, is the
+conflicts first: query the PR's `mergeable_state`; `dirty` means repair the
+conflict while Draft, then apply the shared
+[Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before requesting
+qualification for the composed head. That handoff also governs recovery from a
+dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120

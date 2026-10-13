@@ -49,7 +49,7 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
 1. Bind the exact candidate head and integration basis. Complete independent
    substantive review through `review-pr`, disposition every known finding, and
    compose accepted repairs into that candidate while Draft.
-2. Run applicable local proof on the composed head and refresh affected review.
+2. Run applicable, available local proof on the composed head and refresh affected review.
    Follow changed expectations into their consumers: corpus rows can change a
    scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
    passing Python/card tests. Check the relevant test placement, private imports,
@@ -65,12 +65,17 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
    duplicate its repair, or bless baseline failures. After the prerequisite lands,
    verify the resulting basis and refresh only affected proof and review.
 4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
-   only for the unchanged, reviewed and locally qualified candidate, with no
-   unresolved material finding or known applicable gate blocker. Missing
-   Ready-triggered hosted proof is expected here: `REVIEW_INCOMPLETE` may name
-   that remaining evidence, but must not conceal unfinished semantic review or
-   applicable local proof. Ready requests qualification; `REVIEW_READY` and
-   required proof still govern merge under the current `finish-pr` contract.
+   only for the unchanged, reviewed and composed candidate when green is
+   reasonably expected, with no unresolved material finding or known applicable
+   gate blocker. If local execution is genuinely unavailable, follow the existing
+   [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
+   record the unavailable dimension and reason, completed available checks, and
+   existing authorized narrow hosted qualification that will establish it.
+   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   applicable local check, unfinished review or repair, a known-red test, or
+   missing claim-essential native proof. Ready requests qualification;
+   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 A new head or material finding returns the candidate to Draft for one joined
 repair/proof/review wave before another Ready transition. Preserve unaffected
