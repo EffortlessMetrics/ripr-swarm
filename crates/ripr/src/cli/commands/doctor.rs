@@ -3276,6 +3276,39 @@ mod tests {
         Ok(())
     }
 
+    /// #7506 fence: nested `rust/Cargo.toml` does not become a Rust language
+    /// marker. Scope uses the cargo-only locator; `detect_languages` stays
+    /// a shallow root scan.
+    #[test]
+    fn detect_languages_stays_shallow_when_nested_rust_lives_under_typescript_root()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("detect-polyglot-ts-nested-rust");
+        std::fs::create_dir_all(root.join("rust/crates/x/src"))
+            .map_err(|err| format!("create nested crate: {err}"))?;
+        std::fs::write(root.join("package.json"), "{\"name\": \"site\"}\n")
+            .map_err(|err| format!("write package.json: {err}"))?;
+        std::fs::write(
+            root.join("rust/Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/x\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        std::fs::write(
+            root.join("rust/crates/x/Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write package manifest: {err}"))?;
+        std::fs::write(root.join("rust/crates/x/src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        let detected = detect_languages(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        if detected != vec![LanguageId::TypeScript] {
+            return Err(format!(
+                "detect_languages must stay shallow (TypeScript only): {detected:?}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn enabled_language_keeps_primary_runtime_required_when_other_tool_is_detected() {
         let mut probes = vec![("typescript", "yarn", "install Yarn")];

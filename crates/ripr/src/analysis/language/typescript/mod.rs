@@ -68,6 +68,7 @@ mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
+mod lookup_table_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -116,6 +117,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
+pub(crate) use lookup_table_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;

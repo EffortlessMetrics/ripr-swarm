@@ -323,7 +323,8 @@ an assertion inside that helper is refused like any untrusted macro.
    (`assert_eq!(doubled(), 14)`, `let d = doubled(); assert_eq!(d, 14)`)
    reads `propagation_unknown` (`helper_result_not_forwarded`), neither
    credit nor gap. A test whose oracles are all weak on their own terms
-   (`assert!(doubled() > 0)`) keeps the prior evidence, and no edge forms
+   (`assert!(doubled() > 0)`, under the RIPR-SPEC-0159 weak-oracle rule,
+   #7549) keeps the prior evidence, and no edge forms
    for an owner named only in a string literal, a caller that binds a local
    or parameter of the owner's name, or a second invocation site.
 
