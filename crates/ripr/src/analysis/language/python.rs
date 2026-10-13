@@ -154,7 +154,6 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-#[cfg(test)]
 use workspace::{
     collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
 };

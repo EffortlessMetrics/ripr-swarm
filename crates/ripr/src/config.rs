@@ -21,10 +21,10 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
-/// Test-only: lets output-layer unit tests construct an enabled-language set
-/// directly, because `load_for_root` intentionally refuses preview languages
-/// a feature-less binary cannot analyze.
-#[cfg(test)]
+/// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
+/// pipeline and check entry points thread the per-language config (including
+/// `handwritten_files`) into diff-mode discovery, so production paths name the
+/// type, not only output-layer unit tests.
 pub(crate) use model::LanguagesConfig;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
@@ -633,9 +633,7 @@ impl RiprConfig {
                         &paths,
                         "languages.typescript.handwritten_files",
                         "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
-                        |extension| {
-                            crate::analysis::language::is_ts_js_source_extension(extension)
-                        },
+                        |extension| crate::analysis::is_ts_js_source_extension(extension),
                     )?;
                 }
             }
