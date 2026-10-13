@@ -303,6 +303,18 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     ExpectedFindingCount {
         count: u64,
     },
+    /// Judged against a repo-exposure report's `seams[]`: the seam whose
+    /// `owner` matches and whose `expression` contains the selector must pin
+    /// the given `grip_class` and `evidence.reach`. A selector that matches
+    /// no seam is a violation, never a vacuous pass. This is how repo-mode
+    /// reach honesty (e.g. the #5335 uncalled-sibling false promotion) is
+    /// pinned independently of the unit oracles.
+    ExpectedRepoSeamGrip {
+        owner: String,
+        expression: String,
+        grip_class: String,
+        reach: String,
+    },
     MustDiscloseWitness,
     MustDiscloseLimitationDetail,
     ExpectedLimitationDetail {
@@ -729,6 +741,61 @@ fn evidence_promotion_parse_assertion(
         "expected_finding_count" => Ok(EvidencePromotionSemanticAssertion::ExpectedFindingCount {
             count: evidence_promotion_required_assertion_u64(case_id, index, assertion, "count")?,
         }),
+        "expected_repo_seam_grip" => {
+            let grip_class = evidence_promotion_required_assertion_string(
+                case_id,
+                index,
+                assertion,
+                "grip_class",
+            )?;
+            if !matches!(
+                grip_class.as_str(),
+                "strongly_gripped"
+                    | "weakly_gripped"
+                    | "ungripped"
+                    | "reachable_unrevealed"
+                    | "activation_unknown"
+                    | "propagation_unknown"
+                    | "observation_unknown"
+                    | "discrimination_unknown"
+                    | "opaque"
+                    | "intentional"
+                    | "suppressed"
+            ) {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: \
+                     expected_repo_seam_grip.grip_class must be a SeamGripClass string \
+                     (strongly_gripped, weakly_gripped, ungripped, reachable_unrevealed, \
+                     activation_unknown, propagation_unknown, observation_unknown, \
+                     discrimination_unknown, opaque, intentional, or suppressed)"
+                ));
+            }
+            let reach =
+                evidence_promotion_required_assertion_string(case_id, index, assertion, "reach")?;
+            if !matches!(
+                reach.as_str(),
+                "yes" | "weak" | "no" | "unknown" | "opaque" | "not_applicable"
+            ) {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: \
+                     expected_repo_seam_grip.reach must be one of yes, weak, no, unknown, \
+                     opaque, or not_applicable"
+                ));
+            }
+            Ok(EvidencePromotionSemanticAssertion::ExpectedRepoSeamGrip {
+                owner: evidence_promotion_required_assertion_string(
+                    case_id, index, assertion, "owner",
+                )?,
+                expression: evidence_promotion_required_assertion_string(
+                    case_id,
+                    index,
+                    assertion,
+                    "expression",
+                )?,
+                grip_class,
+                reach,
+            })
+        }
         "must_disclose_witness" => Ok(EvidencePromotionSemanticAssertion::MustDiscloseWitness),
         "must_disclose_limitation_detail" => {
             Ok(EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail)
@@ -1349,6 +1416,62 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                         let finding_id = evidence_promotion_finding_id(finding);
                         violations.push(format!(
                             "{case_label}: finding `{finding_id}` promoted to exposed (classification `exposed`) but `must_not_promote` is asserted"
+                        ));
+                    }
+                }
+            }
+            EvidencePromotionSemanticAssertion::ExpectedRepoSeamGrip {
+                owner,
+                expression,
+                grip_class,
+                reach,
+            } => {
+                let Some(seams) = check_json.get("seams").and_then(Value::as_array) else {
+                    violations.push(format!(
+                        "{case_label}: `expected_repo_seam_grip` requires a repo-exposure \
+                         report with a `seams` array"
+                    ));
+                    continue;
+                };
+                let matched: Vec<&Value> = seams
+                    .iter()
+                    .filter(|seam| {
+                        seam.get("owner").and_then(Value::as_str) == Some(owner.as_str())
+                            && seam
+                                .get("expression")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| text.contains(expression.as_str()))
+                    })
+                    .collect();
+                if matched.is_empty() {
+                    violations.push(format!(
+                        "{case_label}: `expected_repo_seam_grip` matched no seam with owner \
+                         `{owner}` and expression containing `{expression}`; a selector that \
+                         matches nothing must fail, never pass vacuously"
+                    ));
+                    continue;
+                }
+                for seam in matched {
+                    let seam_label = seam
+                        .get("seam_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing seam_id>");
+                    let actual_class = seam.get("grip_class").and_then(Value::as_str).unwrap_or("");
+                    if actual_class != grip_class {
+                        violations.push(format!(
+                            "{case_label}: seam `{seam_label}` has grip_class \
+                             `{actual_class}` but the corpus pins `{grip_class}`"
+                        ));
+                    }
+                    let actual_reach = seam
+                        .get("evidence")
+                        .and_then(|evidence| evidence.get("reach"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if actual_reach != reach {
+                        violations.push(format!(
+                            "{case_label}: seam `{seam_label}` has reach `{actual_reach}` \
+                             but the corpus pins `{reach}`"
                         ));
                     }
                 }
@@ -4569,6 +4692,164 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod repo_seam_grip_assertion_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn repo_seam_report() -> Value {
+        json!({
+            "schema_version": "0.1",
+            "seams": [
+                {
+                    "seam_id": "seam:src/lib.rs::Size::as_kb:13",
+                    "kind": "return_value",
+                    "file": "src/lib.rs",
+                    "line": 4,
+                    "owner": "as_kb",
+                    "expression": "self.0 as f64 / 1000.0",
+                    "grip_class": "ungripped",
+                    "evidence": {"reach": "no", "activate": "unknown", "propagate": "unknown", "observe": "unknown", "discriminate": "unknown"}
+                },
+                {
+                    "seam_id": "seam:src/lib.rs::Size::as_kib:18",
+                    "kind": "return_value",
+                    "file": "src/lib.rs",
+                    "line": 8,
+                    "owner": "as_kib",
+                    "expression": "self.0 as f64 / 1024.0",
+                    "grip_class": "strongly_gripped",
+                    "evidence": {"reach": "yes", "activate": "yes", "propagate": "yes", "observe": "yes", "discriminate": "yes"}
+                }
+            ]
+        })
+    }
+
+    fn violations_for(assertion: Value) -> Result<Vec<String>, String> {
+        let parsed = match evidence_promotion_parse_assertion("repo_seam_grip_case", 0, &assertion)
+        {
+            Ok(parsed) => parsed,
+            Err(error) => return Err(format!("assertion was rejected: {error}")),
+        };
+        Ok(evidence_promotion_semantic_violations(
+            "repo_seam_grip_case",
+            Some("fixtures/evidence-promotion-honesty-corpus/reports/x.json"),
+            &[parsed],
+            &repo_seam_report(),
+            None,
+            false,
+        ))
+    }
+
+    #[test]
+    fn matched_seam_with_wrong_grip_class_is_a_violation() -> Result<(), String> {
+        let violations = violations_for(json!({
+            "type": "expected_repo_seam_grip",
+            "owner": "as_kb",
+            "expression": "1000.0",
+            "grip_class": "strongly_gripped",
+            "reach": "no"
+        }))?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("grip_class `ungripped`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn matched_seam_with_wrong_reach_is_a_violation() -> Result<(), String> {
+        let violations = violations_for(json!({
+            "type": "expected_repo_seam_grip",
+            "owner": "as_kb",
+            "expression": "1000.0",
+            "grip_class": "ungripped",
+            "reach": "yes"
+        }))?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("reach `no`"), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_grip_that_holds_passes() -> Result<(), String> {
+        let violations = violations_for(json!({
+            "type": "expected_repo_seam_grip",
+            "owner": "as_kb",
+            "expression": "1000.0",
+            "grip_class": "ungripped",
+            "reach": "no"
+        }))?;
+        assert!(violations.is_empty(), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn selector_matching_no_seam_is_a_violation_never_vacuous() -> Result<(), String> {
+        for (owner, expression) in [("no_such_owner", "1000.0"), ("as_kb", "no-such-expression")] {
+            let violations = violations_for(json!({
+                "type": "expected_repo_seam_grip",
+                "owner": owner,
+                "expression": expression,
+                "grip_class": "ungripped",
+                "reach": "no"
+            }))?;
+            assert_eq!(violations.len(), 1, "{owner}: {violations:?}");
+            assert!(violations[0].contains("matched no seam"), "{violations:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_repo_exposure_report_is_a_violation() -> Result<(), String> {
+        let parsed = match evidence_promotion_parse_assertion(
+            "repo_seam_grip_case",
+            0,
+            &json!({
+                "type": "expected_repo_seam_grip",
+                "owner": "as_kb",
+                "expression": "1000.0",
+                "grip_class": "ungripped",
+                "reach": "no"
+            }),
+        ) {
+            Ok(parsed) => parsed,
+            Err(error) => return Err(format!("assertion was rejected: {error}")),
+        };
+        let violations = evidence_promotion_semantic_violations(
+            "repo_seam_grip_case",
+            Some("fixtures/x.json"),
+            &[parsed],
+            &json!({"findings": []}),
+            None,
+            false,
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("`seams` array"), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn parser_rejects_unknown_grip_class_and_reach() -> Result<(), String> {
+        for field in ["grip_class", "reach"] {
+            let mut assertion = json!({
+                "type": "expected_repo_seam_grip",
+                "owner": "as_kb",
+                "expression": "1000.0",
+                "grip_class": "ungripped",
+                "reach": "no"
+            });
+            assertion[field] = json!("totally_bogus");
+            match evidence_promotion_parse_assertion("repo_seam_grip_case", 0, &assertion) {
+                Err(error) => assert!(error.contains(field), "{error}"),
+                Ok(_) => return Err(format!("bogus `{field}` value must be rejected")),
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

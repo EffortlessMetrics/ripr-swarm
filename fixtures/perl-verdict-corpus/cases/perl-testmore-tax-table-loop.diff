@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..05fa23e 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -61,7 +61,7 @@ sub is_bulk {
+ 
+ sub tax_for {
+     my ($region, $amount) = @_;
+-    my $rate = $region eq 'north' ? 0.2 : 0.1;
++    my $rate = $region ne 'north' ? 0.1 : 0.2;
+     return $amount * $rate;
+ }
+ 
