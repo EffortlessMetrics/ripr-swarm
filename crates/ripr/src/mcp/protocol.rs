@@ -317,6 +317,12 @@ fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
 /// their page until this is `false`, so a tool that advertises an
 /// `outputSchema` always returns a structured result (#6021 review).
 pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, String> {
+    structured_envelope_bytes(document).map(|bytes| bytes > super::MAX_RESPONSE_BYTES)
+}
+
+/// Measure the shared full tool envelope. Paging adapters also reserve the
+/// actual request ID and SDK/JSON-RPC wrapper before comparing these bytes.
+pub(super) fn structured_envelope_bytes(document: &Value) -> Result<usize, String> {
     let text = serde_json::to_string(document)
         .map_err(|error| format!("render tool document: {error}"))?;
     let structured = json!({
@@ -324,7 +330,7 @@ pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, St
         "structuredContent": document,
         "isError": false,
     });
-    Ok(envelope_bytes(&structured)? > super::MAX_RESPONSE_BYTES)
+    envelope_bytes(&structured)
 }
 
 /// A typed tool failure envelope: standard `isError` semantics with the

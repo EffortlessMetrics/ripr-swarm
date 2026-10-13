@@ -107,6 +107,7 @@ pub(super) fn list_document(
     requested: Option<&str>,
     offset: usize,
     limit: Option<usize>,
+    max_envelope_bytes: usize,
 ) -> Result<Value, AttemptFailure> {
     let root = root.ok_or_else(|| {
         AttemptFailure::new(
@@ -209,8 +210,8 @@ pub(super) fn list_document(
             .map_err(serialization_failure)?
             .len();
         Ok(bytes <= super::MAX_TOOL_DOCUMENT_BYTES
-            && !protocol::structured_envelope_overflows(candidate)
-                .map_err(serialization_failure)?)
+            && protocol::structured_envelope_bytes(candidate).map_err(serialization_failure)?
+                <= max_envelope_bytes)
     };
     let whole = document(count);
     if fits(&whole)? {

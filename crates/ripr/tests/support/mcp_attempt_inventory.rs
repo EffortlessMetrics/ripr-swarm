@@ -208,6 +208,11 @@ fn inventory_real_durable_attempt_edit_refresh_and_corruption_recovery() -> Resu
             || as_str(row, "/repository_head", "valid row")? != head.trim()
             || as_str(row, "/seam_id", "valid row")? != seam
             || as_str(row, "/receipt_status", "valid row")? != "awaiting_edit"
+            || row
+                .pointer("/currentness/head_current")
+                .and_then(Value::as_bool)
+                != Some(true)
+            || as_str(row, "/currentness/state", "valid row")? != "current"
         {
             return Err(format!(
                 "inventory invented producer fields or receipt strength: {row}"
@@ -227,6 +232,11 @@ fn inventory_real_durable_attempt_edit_refresh_and_corruption_recovery() -> Resu
             } else {
                 "/status"
             };
+            if field == "receipt_id" && row["currentness"] != detail["currentness"] {
+                return Err(format!(
+                    "inventory currentness differs from discovered receipt: {row} vs {detail}"
+                ));
+            }
             if as_str(detail, pointer, tool)? != "awaiting_edit" {
                 return Err(format!(
                     "discovered ID cannot be consumed honestly: {detail}"
@@ -371,7 +381,13 @@ fn inventory_real_durable_attempt_edit_refresh_and_corruption_recovery() -> Resu
             .iter()
             .find(|row| row.get("attempt_id").and_then(Value::as_str) == Some(&attempt))
             .ok_or_else(|| "historical inventory lost attempt".to_string())?;
-        if as_str(row, "/receipt_status", "historical attempt")? != "stale" {
+        if as_str(row, "/receipt_status", "historical attempt")? != "stale"
+            || row
+                .pointer("/currentness/head_current")
+                .and_then(Value::as_bool)
+                != Some(false)
+            || as_str(row, "/currentness/state", "historical attempt")? != "historical"
+        {
             return Err(format!("historical attempt was promoted: {row}"));
         }
         Ok(())
@@ -442,4 +458,88 @@ fn inventory_byte_pages_preserve_every_invalid_identity() -> Result<(), String> 
         &snapshot_tree(&fixture.root)?,
         "byte inventory reads",
     )
+}
+
+/// #7463: the full wire wrapper, SDK resultType and actual escaped request ID
+/// must fit alongside the structured document, not just the inner tool result.
+#[cfg(unix)]
+#[test]
+fn inventory_near_cap_keeps_structured_pages_for_small_and_escaped_ids() -> Result<(), String> {
+    let fixture = install_b4_fixture("inventory-near-cap")?;
+    for index in 0..300 {
+        let quotes = if index == 70 { 29 } else { 240 };
+        let directory = format!("{index:04}-{}", "\"".repeat(quotes));
+        invalid_manifest(&fixture.root, &directory)?;
+    }
+    let before = snapshot_tree(&fixture.root)?;
+    with_session(&fixture.root, |session, tools| {
+        let name = tool_named(tools, INVENTORY_TOOL)?;
+        let mut identities = Vec::new();
+        for id in ["inventory".to_string(), "\"".repeat(6000)] {
+            let reply = session.call(&id, &name, json!({"limit": 256}))?;
+            let document = tool_success(&reply, "near-cap inventory")?;
+            if entries(document)?.is_empty()
+                || !as_bool(document, "/page/has_more", "near-cap inventory")?
+            {
+                return Err("near-cap fixture never reached a progressing page".into());
+            }
+            let next = at(
+                document,
+                "/continuation/next_page/arguments",
+                "near-cap continuation",
+            )?
+            .clone();
+            let continued = inventory(session, tools, next)?;
+            if entries(&continued)?.is_empty() {
+                return Err("near-cap continuation lost the remaining rows".into());
+            }
+            identities.push(document["inventory_id"].clone());
+        }
+        if identities[0] != identities[1] {
+            return Err("request ID changed inventory identity".into());
+        }
+        Ok(())
+    })?;
+    modern_near_cap_reads(&fixture.root)?;
+    require_tree_equal(
+        &before,
+        &snapshot_tree(&fixture.root)?,
+        "near-cap wire reads",
+    )
+}
+
+#[cfg(unix)]
+fn modern_near_cap_reads(root: &Path) -> Result<(), String> {
+    let mut session = McpSession::spawn(root)?;
+    let result = (|| {
+        let meta = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "inventory-wire-consumer", "version": "1"}
+        });
+        session.send_value(&json!({"jsonrpc": "2.0", "id": "modern-tools", "method": "tools/list", "params": {"_meta": meta}}))?;
+        let tools = session.await_reply("modern-tools", REPLY_TIMEOUT)?;
+        let name = tool_named(&tools, INVENTORY_TOOL)?;
+        for id in ["inventory".to_string(), "\"".repeat(6000)] {
+            session.send_value(&json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"_meta": meta, "name": name, "arguments": {"limit": 256}}}))?;
+            let reply = session.await_reply(&id, REPLY_TIMEOUT)?;
+            let document = tool_success(&reply, "modern near-cap inventory")?;
+            if reply.pointer("/result/resultType").and_then(Value::as_str) != Some("complete")
+                || entries(document)?.is_empty()
+                || !as_bool(document, "/page/has_more", "modern near-cap page")?
+                || document
+                    .pointer("/continuation/next_page/arguments")
+                    .is_none()
+            {
+                return Err(format!(
+                    "modern lifecycle lost complete structured inventory: {reply}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let closeout = session.finish(EXPECTED_MAX_RESPONSE_BYTES);
+    result?;
+    closeout?;
+    Ok(())
 }

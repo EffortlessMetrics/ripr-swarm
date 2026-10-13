@@ -107,3 +107,13 @@ plain long names; Unix also exercises JSON-escaped names. Native Windows executi
 remains a separate proof dimension. Retained transport cancellation controls own
 cancellation semantics; this journey adds no physical-abort or atomic-filesystem
 snapshot claim, and output bounds do not imply bounded whole-store validation.
+
+Independent code review also reproduced a near-cap page on exact predecessor
+`87921ee008a5a0e4d6f0b4b3b1a5ba2ba8d5a7ce`: 300 invalid rows, the first 70
+names with 240 quotes and row 71 with 29. The inner tool envelope fitted, but
+JSON-RPC wrapper bytes caused the actual writer to return error `-32603`, losing
+structured inventory and continuation. The Rust stdio regression failed on that
+same boundary. Inventory fitting now reserves the actual serialized request ID
+and SDK/wrapper bytes. The retained counterexample runs with short and escaped
+IDs through both legacy initialization and the current inline metadata lifecycle;
+it requires complete structured pages and continuing reads, not a generic error.
