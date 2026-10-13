@@ -4747,7 +4747,11 @@ mod tests {
         // The genuine output assertion stays exposed and carries no card. The
         // module-comparison control is weakly exposed without a module card.
         // Both are therefore excluded from this repair-card inventory.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 12, 1) {
+        // #7586: `python_call_argument_shape` and `python_mock_assert_called`
+        // pass a mock for the called parameter and pin the changed argument
+        // (RIPR-SPEC-0238 rule 17), so both are `exposed` and drop their
+        // `no_strong_oracle` cards.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 12, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

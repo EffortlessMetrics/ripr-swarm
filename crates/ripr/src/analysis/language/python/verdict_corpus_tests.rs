@@ -1338,6 +1338,8 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
     for old in [
         "    client.send(user)  # notify",
         "    sent = client.send(user)",
+        "    self.sent = client.send(user)",
+        "    log(); client.send(user)",
     ] {
         assert_eq!(
             classify(
