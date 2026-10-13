@@ -140,7 +140,10 @@ Collection writes on a field path (`self.items.push(x)`,
 limited to `push` on a bare identifier in
 `analysis/classify/propagation_witness.rs`) to field-path receivers and to
 `insert`, so `c.items` in the test is the observed subject for `self.items`
-in the owner. This is new behavior, not reuse.
+in the owner. This is new behavior, not reuse. The getter rule under Limits applies to
+these reads too (Decision 2): `c.history()` observes `self.log` only when
+`history` resolves to a body returning `self.log`, and a shared name alone
+never confirms a field-path collection write (examples 12 and 13).
 
 ### Limits
 
@@ -223,6 +226,14 @@ changes `self.count += 2` to `self.count += 1`.
 11. `bump` writes `self.count += 2; self.reset();` (first statement
     changed from `+= 3`), with `reset` setting `count = 0`, test
     `c.bump(); assert_eq!(c.count, 0)`: not `exposed`.
+12. `self.lines.push(qty)` with argument changed, test
+    `o.add(4); assert_eq!(o.entries(), &[4])` with
+    `fn entries(&self) -> &[u32] { &self.lines }`: `exposed`. The getter
+    shares no name with the field; its body resolves the read.
+13. `self.held.push(qty)` with argument changed, test
+    `o.hold(3); assert_eq!(o.held(), &[] as &[u32])` with
+    `fn held(&self) -> &[u32] { &self.lines }`: not `exposed`. A method named
+    after the field is not a read of it.
 
 ## Test Mapping
 
@@ -254,6 +265,22 @@ changes `self.count += 2` to `self.count += 1`.
   owner call; `FieldValue` for sibling reads.
 - `crates/ripr/src/analysis/classify/propagation_witness.rs`: field-path
   receivers for collection writes.
+
+## Implementation Status
+
+- Collection writes on a field path (`self.f.push(..)`, `self.f.insert(..)`)
+  are implemented for side-effect and call-deletion probes (#7131 lane):
+  `field_collection_write_path` and `assertion_field_collection_read` in
+  `propagation_witness.rs`, `field_collection_observer_confirms` in
+  `reveal.rs`, `getter_plainly_reads` in `builder_override.rs`. The read
+  must come from the binding the test called the owner on; a getter
+  confirms only when its body is `self.f`, `&self.f`, `&self.f[..]`,
+  `self.f.clone()` or `self.f.as_slice()`. Rule 3 (no intervening write
+  between the owner call and the read) is not yet checked for these
+  writes, as before for bare-receiver pushes. A field of a struct literal
+  pushed onto the collection is not yet credited (#7131).
+- Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
+  their corpus cases read `static_unknown`.
 
 ## Metrics
 

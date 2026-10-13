@@ -1721,6 +1721,75 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0228: a collection write on a field path of `self` names
+    /// its field path; any other receiver or method does not.
+    #[test]
+    fn field_collection_write_path_reads_self_field_receivers() {
+        assert_eq!(
+            field_collection_write_path("self.log.push(x);"),
+            Some("log")
+        );
+        assert_eq!(
+            field_collection_write_path("self.stock.insert(sku.to_string(), n)"),
+            Some("stock")
+        );
+        assert_eq!(field_collection_write_path("self.a.b.push(x)"), Some("a.b"));
+        for other in [
+            "items.push(x)",
+            "self.log.extend(xs)",
+            "self.log.push",
+            "other.log.push(x)",
+            "self.log().push(x)",
+            "self.log[0].push(x)",
+        ] {
+            assert_eq!(field_collection_write_path(other), None, "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228: the assertion's primary subject reads the field
+    /// collection directly or through one argument-free method; the expected
+    /// side, another field, or a call with arguments is not such a read.
+    #[test]
+    fn assertion_field_collection_read_names_binding_and_getter() {
+        let direct = |binding: &str| {
+            Some(FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: None,
+            })
+        };
+        let through = |binding: &str, getter: &str| {
+            Some(FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: Some(getter.to_string()),
+            })
+        };
+        assert_eq!(
+            assertion_field_collection_read("assert_eq!(inv.log, vec![1]);", "log"),
+            direct("inv")
+        );
+        assert_eq!(
+            assertion_field_collection_read("assert_eq!(&inv.log[0], &1);", "log"),
+            direct("inv")
+        );
+        assert_eq!(
+            assertion_field_collection_read("assert_eq!(inv.history(), &[1]);", "log"),
+            through("inv", "history")
+        );
+        for other in [
+            "assert_eq!(inv.logs, vec![1]);",
+            "assert_eq!(vec![1], inv.log);",
+            "assert_eq!(inv.at(0), 1);",
+            "assert_eq!(make().log, vec![1]);",
+            "assert_eq!(inv.history().first().copied().unwrap() + 1, 2);",
+        ] {
+            assert_eq!(
+                assertion_field_collection_read(other, "log"),
+                None,
+                "{other}"
+            );
+        }
+    }
+
     #[test]
     fn direct_collection_push_completes_effect_target_and_rejects_wrong_observer()
     -> Result<(), String> {

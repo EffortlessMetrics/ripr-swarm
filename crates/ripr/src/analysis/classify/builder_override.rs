@@ -845,6 +845,54 @@ mod tests {
         ));
     }
 
+    /// RIPR-SPEC-0228 examples 12 and 13: a getter reads a field only when
+    /// its body returns that field itself.
+    #[test]
+    fn getter_counts_only_when_its_body_returns_the_field() {
+        for getter in [
+            "pub fn entries(&self) -> &[u32] { &self.attempts }",
+            "pub fn entries(&self) -> u32 { self.attempts }",
+            "pub fn entries(&self) -> &[u32] { &self.attempts[..] }",
+            "pub fn entries(&self) -> Vec<u32> { self.attempts.clone() }",
+            "pub fn entries(&self) -> &[u32] { self.attempts.as_slice() }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                getter_plainly_reads(&index, "RetryBuilder", "entries", "attempts"),
+                "{getter}"
+            );
+        }
+        for getter in [
+            // Another field, a value computed from the field, a statement
+            // first, an argument, or a `&mut self` receiver.
+            "pub fn entries(&self) -> u64 { self.delay_ms }",
+            "pub fn entries(&self) -> u32 { self.attempts + 1 }",
+            "pub fn entries(&self) -> Option<u32> { self.attempts.checked_sub(1) }",
+            "pub fn entries(&self) -> u32 { let n = self.attempts; n }",
+            "pub fn entries(&self, n: u32) -> u32 { self.attempts }",
+            "pub fn entries(&mut self) -> u32 { self.attempts }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                !getter_plainly_reads(&index, "RetryBuilder", "entries", "attempts"),
+                "{getter}"
+            );
+        }
+        // A method named after the field that returns another field.
+        let index = settings_index("pub fn attempts(&self) -> u64 { self.delay_ms }");
+        assert!(!getter_plainly_reads(
+            &index,
+            "RetryBuilder",
+            "attempts",
+            "attempts"
+        ));
+        // Another type's method of the same name proves nothing.
+        let index = settings_index("pub fn entries(&self) -> u32 { self.attempts }");
+        assert!(!getter_plainly_reads(
+            &index, "Retry", "entries", "attempts"
+        ));
+    }
+
     #[test]
     fn unverified_setter_name_leaves_the_token_confirming() {
         let body = "fn case() {\n    let retry = RetryBuilder::new().attempts(5).build();\n    assert_eq!(retry.attempts, 5);\n}";
