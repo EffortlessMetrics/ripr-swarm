@@ -17,7 +17,10 @@ cause.
 
 Support-tier impact:
 
-- None. This is unpublished repository automation output.
+- None.
+
+This spec concerns unpublished repository automation output; it does not
+change any language or platform support tier.
 
 Policy impact:
 
@@ -27,11 +30,14 @@ Policy impact:
 ## Behavior
 
 The adapter may read at most the bounded prefix supplied by its caller and
-recognizes only LLVM raw64 little-endian version 10 profile ID blocks. It keeps
-at most 32 unique IDs of at most 128 bytes each. If a later ID exceeds that
-count, already parsed IDs remain available, `binary_ids.status` is `partial`,
-and the reason is `id_count_limit`. A partial profile makes the aggregate
-mapping partial; unmatched retained IDs are not reported as definitive misses.
+recognizes only LLVM raw64 little-endian version 10 profile ID blocks. Each
+profile retains at most 32 ID entries of at most 128 bytes each. If a later
+entry exceeds that per-profile count, already parsed entries remain available,
+`binary_ids.status` is `partial`, and the reason is `id_count_limit`. The
+aggregate mapping deduplicates across captured profiles and retains at most 32
+unique IDs total; further unique IDs set `profile_ids_truncated` and make the
+aggregate mapping partial. A partial profile makes the aggregate mapping
+partial; unmatched retained IDs are not reported as definitive misses.
 An unavailable profile-ID input also prevents definitive misses for IDs from
 other profiles. Malformed or unsupported data remains unavailable or partial
 and never discards the original profile or changes the recorded failed coverage

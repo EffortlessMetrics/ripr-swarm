@@ -57,8 +57,9 @@ Expected artifacts after a coverage run:
   fails; unsupported platforms exercise the adapter refusal control.
 
 The failure manifest also associates supported raw-profile binary IDs with GNU
-build IDs in instrumented Linux ELF files under the coverage target's `debug`,
-`debug/deps`, `release`, and `release/deps` directories. It captures bounded
+build IDs in instrumented Linux ELF files found only as direct entries in the
+coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
+directories. It captures bounded
 identifiers and file metadata, never whole binaries. Exact ID equality and LLVM
 profile sections are required; multiple candidate paths remain ambiguous.
 Unavailable, unmatched within the inspected scope, and truncated results remain

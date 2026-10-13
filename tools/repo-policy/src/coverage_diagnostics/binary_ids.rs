@@ -28,10 +28,10 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
             return Err("unsupported_magic");
         }
         // Keep the full version visible; only the known layout is admitted.
-        if u64le(prefix, 8).map_err(|_| "truncated_field")? != 10 {
+        if u64le(prefix, 8).map_err(|_error| "truncated_field")? != 10 {
             return Err("unsupported_raw_version");
         }
-        let size = usize::try_from(u64le(prefix, 16).map_err(|_| "truncated_field")?)
+        let size = usize::try_from(u64le(prefix, 16).map_err(|_error| "truncated_field")?)
             .map_err(|_error| "id_block_limit")?;
         if size > ID_BLOCK_BYTES {
             return Err("id_block_limit");
@@ -44,7 +44,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
             if ids.len() == IDS {
                 return Err("id_count_limit");
             }
-            let size = usize::try_from(u64le(block, at).map_err(|_| "invalid_id_length")?)
+            let size = usize::try_from(u64le(block, at).map_err(|_error| "invalid_id_length")?)
                 .map_err(|_error| "invalid_id_length")?;
             if size == 0 || size > ID_BYTES {
                 return Err("invalid_id_length");
