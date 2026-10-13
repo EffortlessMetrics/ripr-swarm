@@ -792,6 +792,11 @@ impl ArmSelector {
             PatternHead::UncasedVariant { .. } if !self.uncased_inputs_trusted => {
                 PatternHead::Opaque
             }
+            // A test's `Self` is the test-side impl's type, not the owner's,
+            // so the owner's impl context cannot resolve it.
+            PatternHead::UncasedVariant { qualifier, .. } if qualifier == "Self" => {
+                PatternHead::Opaque
+            }
             head => self.resolve_head(head),
         };
         if input == PatternHead::Opaque {
@@ -2645,6 +2650,12 @@ mod tests {
         assert_eq!(
             judged("Kind", on_parameter, "Kind::f(Kind::B)")?,
             Some(ArmSelection::Selects)
+        );
+        // A test-side `Self::B` names the test's own impl type, which the
+        // owner's `impl Kind` says nothing about.
+        assert_eq!(
+            judged("Kind", on_parameter, "Kind::f(Self::B)")?,
+            Some(ArmSelection::Unknown)
         );
         let on_receiver = "pub fn f(self) -> i32 {\n    match self {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
         assert_eq!(
