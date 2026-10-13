@@ -457,6 +457,19 @@ object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
 projects JSON and Markdown. The protocol does not execute agents, grade
 repairs, or claim intervention value.
 
+## Work portfolio ranking keys
+
+The read-only `cargo xtask work portfolio`, `work candidates`, and
+`work explain` v1 JSON documents carry an additive candidate `ranking_key`
+array of exactly eight integers, in the factor order declared by
+[RIPR-SPEC-0234](specs/RIPR-SPEC-0234-work-portfolio-compiler.md).
+Candidates sort by this key ascending lexicographically, then by
+`candidate_id` ascending. The existing `ranking_factors` retain their prose
+and source references. Legacy rows can omit the key; omission or null means
+unavailable, not zero. Regenerated portfolio identities include the key.
+Markdown displays the same key and tie-break; this advisory ordering does
+not select work or grant authority.
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -2520,13 +2533,13 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `unresolved_pytest_fixture`
 - `unsupported_syntax`
 - `cross_language_oracle_visibility_unresolved` — The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known — verify the external oracle rather than adding a Rust test.
-- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim.
+- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim. The same kind discloses an unsearched dependent caller closure for an eligible finding with a recognized weak direct oracle (#7542), without changing its known direct reach, stages, class or related rows. That over-limit detail names no concrete skipped test or macro witness and withholds canonical gap advice.
 
 - `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
-- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a coverage claim.
+- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a coverage claim.
 
-- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
+- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a reach, coverage, or oracle claim.
 
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
 

@@ -805,6 +805,49 @@ fn validator_requires_both_truth_directions() -> Result<(), String> {
 }
 
 #[test]
+fn checkout_module_path_oracle_is_described_as_same_file() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.case_id == "checkout-daily-limit-imported-const")
+        .ok_or("missing checkout module-path boundary case")?;
+    let source = read(&dir.join("subjects/authored-checkout/src/limits.rs.txt"))?;
+    assert!(source.contains(
+        "pub mod config {\n    pub const DAILY_LIMIT: u32 = 10;\n}\n\nuse config::DAILY_LIMIT;"
+    ));
+    assert!(source.contains("assert!(over_daily_limit(DAILY_LIMIT));"));
+    assert!(source.contains("assert!(!over_daily_limit(DAILY_LIMIT - 1));"));
+
+    // The descriptive contract is independent of the analyzer verdict.
+    // Pin the rendered value literally: case and golden agreeing on the old
+    // cross-file-looking label must not make this regression pass.
+    let row = case_row(
+        case,
+        SubjectOrigin::Authored,
+        &json!({"findings": []}),
+        None,
+    )?;
+    let rendered: Value =
+        serde_json::from_str(&render_row_json(&row)?).map_err(|err| err.to_string())?;
+    assert_eq!(
+        rendered["test_shape"],
+        json!("boundary_via_module_path_const")
+    );
+    let expected = parse_json(&dir.join("expected/rows/checkout-daily-limit-imported-const.json"))?;
+    assert_eq!(
+        expected["test_shape"],
+        json!("boundary_via_module_path_const")
+    );
+    assert_eq!(expected["truth"], json!("discriminated"));
+    assert_eq!(expected["observed_verdict"], json!("credited"));
+    assert_eq!(case.subject_id, "authored-checkout");
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    Ok(())
+}
+
+#[test]
 fn expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
     let dir = repo_corpus_dir();
     let corpus = load_corpus(&dir)?;

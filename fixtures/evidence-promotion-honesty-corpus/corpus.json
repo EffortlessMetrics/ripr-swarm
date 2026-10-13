@@ -2834,6 +2834,60 @@
       ]
     },
     {
+      "id": "rust_mixed_direct_macro_witness_not_a_gap",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_mixed_direct_macro_reach",
+      "vector": "weak_direct_test_does_not_erase_unresolved_macro_witness",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_macro_reach_unresolved"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
+        {
+          "type": "expected_limitation_detail",
+          "last_established_edge": "test `outer_triples` (src/lib.rs:22) -> entry `outer` -> macro `call_inner!` at src/lib.rs:10",
+          "first_unresolved_edge": "macro `call_inner!` expansion toward owner `inner`",
+          "non_claim": "named limitation only; ripr cannot confirm or deny that the macro-generated path observes the change"
+        },
+        {
+          "type": "expected_limitation_route",
+          "route": "analysis/rust-macro-aware-reach"
+        },
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_macro_wrapped_test_call_named_limitation",
       "language": "rust",
       "tier": "pure",
@@ -5219,6 +5273,75 @@
           "line": 4,
           "kind": "exact_value",
           "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "javascript_awaited_local_registration_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-local-root.json",
+      "vector": "local_async_test_helper_does_not_execute_exact_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "javascript_awaited_forged_require_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-forged-require.json",
+      "vector": "awaited_commonjs_forged_require_does_not_execute_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "javascript_awaited_rebound_runner_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-rebound-runner.json",
+      "vector": "awaited_commonjs_rebound_runner_does_not_execute_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
         }
       ]
     }
