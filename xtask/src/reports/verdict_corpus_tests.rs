@@ -2368,7 +2368,7 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
     let Err(err) = refuse_unavailable_perl(&unavailable, "c", "ripr-lang-perl") else {
         return Err("an unavailable Perl run must be refused".to_string());
     };
-    assert!(err.contains("has no Perl adapter"), "{err}");
+    assert!(err.contains("`unavailable`: not compiled"), "{err}");
     for ok in [
         json!({"findings": [], "language_runs": [{"language": "perl", "status": "ok"}]}),
         json!({"findings": [], "language_runs": [{"language": "rust", "status": "unavailable"}]}),
@@ -2379,6 +2379,37 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
             "{ok}"
         );
     }
+    Ok(())
+}
+
+/// #7566: the refusal is bound where a case's output is read, not only in the
+/// helper. A packet case whose packet ripr refused names the run's reason; the
+/// same output for a case without a packet is not refused.
+#[test]
+fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus: Corpus =
+        serde_json::from_value(corpus_value(&dir)?).map_err(|err| err.to_string())?;
+    let packet_case = corpus
+        .cases
+        .iter()
+        .find(|case| case.perl_facts.is_some())
+        .ok_or("the Perl corpus has no packet case")?;
+    let stdout = json!({"findings": [], "language_runs": [
+        {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
+    ]})
+    .to_string();
+    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl") else {
+        return Err("a packet case with an unavailable Perl run must be refused".to_string());
+    };
+    assert!(
+        err.contains(&packet_case.case_id) && err.contains("packet is not valid JSON"),
+        "{err}"
+    );
+    let mut plain_case = packet_case.clone();
+    plain_case.perl_facts = None;
+    let check = case_check_output(&stdout, &plain_case, "ripr")?;
+    assert_eq!(check["language_runs"][0]["status"], json!("unavailable"));
     Ok(())
 }
 
