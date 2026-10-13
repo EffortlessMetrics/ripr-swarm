@@ -215,20 +215,33 @@ credits one.
 Implemented:
 
 - integer, char, bool, and cooked or raw string literals, compared by value;
+- integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
+  matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,
   `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings;
 - or-patterns of these, and a top-level `_` or bare binding;
 - first-match order: a guarded earlier arm blocks selection, and an earlier
   arm that provably matches means the input selects another arm;
-- a changed pattern earns no selection credit, and names the arm only when
-  neither the original nor the changed pattern selects any observed input.
+- a changed pattern names the arm only when neither the original nor the
+  changed pattern selects any observed input. It earns selection credit
+  only from an input that moved: the input runs this arm under exactly one
+  of the two patterns, the first later arm that provably takes it under
+  the other is found with no guarded arm in between, and the two arms'
+  results are provably unequal values (#5992). The original `match` is
+  read as the current one with this arm's old pattern restored, so the
+  credit says the test notices this line reverting; it needs the diff's
+  old text to be this arm with the same body (a head cut anchored on the
+  unchanged body, or a whole old line with an equal body). Results compare
+  as literals of one kind, or variants by last path segment and literal
+  payload, so `Kind::Alpha` and an imported `Alpha` never read as unequal.
   A pattern whose alternatives were only reordered (`"CA" | "MX"` to
   `"MX" | "CA"`) takes the same inputs and reads as unchanged.
   A changed arm's original is the adjacent removed arm with the same
   pattern, else the first adjacent removed line sharing a token. A
   qualified enum name is such a token for every arm of a multi-line hunk,
   so a token-paired original counts as read only when it shares an
-  alternative with the changed pattern. A token-paired original that
+  alternative with the changed pattern, or is a head cut anchored on this
+  line's unchanged body (`1..=8 =>` for `1..=9 => "digit",`). A token-paired original that
   shares one may still be another arm of the hunk; the arm is then named
   against that arm's pattern;
 - selection outranks tokens whenever the scrutinee is a direct owner input.
@@ -241,10 +254,10 @@ Implemented:
 
 Not yet implemented (each reads as not provable):
 
-- integer ranges, tuple patterns, refutable payload subpatterns and `@`;
+- char ranges, path-bounded ranges, tuple patterns, refutable payload
+  subpatterns and `@`;
 - arguments resolved through an immutable `let` in the test;
-- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing);
-- credit for an input that moved between arms with unequal literal results.
+- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing).
 
 The implementation adds these fail-closed conditions, which the Behavior
 implies but does not spell out:
@@ -363,8 +376,14 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
-- Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
-  arguments are implemented.
+- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for ranges
+  and moved-input credit (examples 7 to 9): `integer_range_arms_select_by_value`,
+  `an_input_that_moved_to_an_unequal_result_credits_a_changed_pattern`,
+  `moved_input_credit_needs_provably_unequal_results`.
+- Verdict corpus cases `spec0229-unselected-range-arm` (example 7),
+  `spec0229-range-widened-inside-input` and
+  `spec0229-range-widened-moved-input` (example 8).
+- Planned: a fixture for example 3 once `let` arguments are implemented.
 
 ## Implementation Mapping
 
