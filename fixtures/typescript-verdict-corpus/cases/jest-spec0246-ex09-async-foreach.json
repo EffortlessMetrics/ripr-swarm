@@ -20,7 +20,7 @@
         "replacement": "return amount - 20;",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "tickPrice",
+        "failing_test": "(no named test: process exit from an unhandled rejection raised in the `tickPrice` test callback)",
         "equivalence_review": "not equivalent: `tickPrice(150)` returns 130 instead of 140. No test reports a failure: the discarded callback's failing `expect` becomes an unhandled promise rejection raised from the `tickPrice` test's callback, which ends the jest process with exit code 1 and no results, so the test command fails"
       }
     ]

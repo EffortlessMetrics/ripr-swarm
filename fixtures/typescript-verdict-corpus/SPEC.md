@@ -19,7 +19,8 @@ under this repository's license, grouped by test runner:
   `authored-ts-jest-mined` (default-export objects, test functions passed by
   reference, suite factories, copy-versus-identity equality).
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
-  (vitest 3.2).
+  (its older cases labeled under vitest 3.2.7; its `package.json` now pins
+  4.1.11).
 - mocha with chai: `authored-ts-mocha-ledger` (`expect` and `assert` styles,
   async tests, `.not`, chai `throw` with a message, `deep` equality, and a
   jest-style `toBe` swallowed by `try`/`catch`).
@@ -83,11 +84,14 @@ files so no older case's truth could move; the five
 `jest-spec0249-ex0[3-8]-*` rewrites list, hand-applied, the same StrykerJS
 set for their `if` line (with the block and string mutants a one-line `if`
 adds), `jest-spec0248-drop-literal-zero` lists the arithmetic mutant
-StrykerJS makes of its `+`, and the `vitest-spec0254-*` cases ran the subject's pinned vitest
-4.1.11. In `jest-spec0246-ex09-async-foreach` no test reports a failure:
+StrykerJS makes of its `+`, and the `vitest-spec0254-*` cases ran vitest
+4.1.11, the version the cart subject's `package.json` pins today; the cart's
+older cases keep the 3.2.7 labels recorded above. In `jest-spec0246-ex09-async-foreach` no test reports a failure:
 the discarded async callback's failing `expect` is an unhandled rejection
-that ends the jest process with exit code 1, so the test command fails and
-the case names the test whose callback raised it.
+that ends the jest process with exit code 1. The test command fails, which
+is what counts as detection, but no test is named as failing, and the case's
+`failing_test` says so rather than naming the test whose callback raised it
+(#7734).
 
 ## Layout
 
