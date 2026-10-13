@@ -1599,8 +1599,16 @@ fn typescript_corpus_dir() -> PathBuf {
 
 #[test]
 fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> Result<(), String> {
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // TypeScript corpus in `check-all`.
     let dir = typescript_corpus_dir();
-    let corpus = validated_corpus_without_coverage(&dir)?;
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/typescript-verdict-corpus/spec-coverage.toml"
+    );
+    let corpus = load_corpus(&dir)?;
     assert!(
         corpus.cases.len() >= 40,
         "typescript corpus shrank to {}",
@@ -2141,7 +2149,9 @@ fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_ru
     // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
     // deleting that ledger fails instead of dropping the coverage floor.
     // (The gated half needs the repo-relative specs tree, so the `validate`
-    // and `check-all` CLI runs prove it, not a unit test.)
+    // and `check-all` CLI runs prove it, not a unit test.) The Perl corpus
+    // is the ledgerless non-Rust example; TypeScript and Python carry
+    // ledgers.
     let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
     crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
     fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
@@ -2150,7 +2160,7 @@ fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_ru
         .ok_or("a Rust corpus without its spec-example ledger validated")?;
     assert!(err.contains(coverage::LEDGER_FILE), "{err}");
 
-    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
+    let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())
