@@ -195,7 +195,9 @@ and the rejected alternative. Recorded on #6654.
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
-   `jest-spec0234-ex03`.
+   `jest-spec0234-ex03`; and for a same-file strict-equality
+   custom matcher by RIPR-SPEC-0259, which credits
+   `jest-cents-custom-matcher`.
 
 ## Required Evidence
 
@@ -213,7 +215,9 @@ and the rejected alternative. Recorded on #6654.
   could reach.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
   `toHaveBeenCalledTimes`.
-- No change to committed snapshot strength.
+- No change to committed snapshot strength, except the named committed
+  entry RIPR-SPEC-0258 reads as strong; every other committed snapshot
+  stays medium.
 - No change to `t.assert.*`, which still yields no assertion.
 - No change to Rust or Python oracle classification.
 
