@@ -169,12 +169,15 @@ any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
 The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
-`.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with
+scope for the root: Rust is enabled and either a Cargo.toml is found at the
+selected root, an ancestor Cargo project bounded by git, or nested in this
+tree; Rust markers (`.rs` files) are detected at the selected root; or no
+other language is detected or enabled. A Python-only or TypeScript-only root
+with no nested or ancestor Cargo.toml reports those checks as `skipped` with
 the reason and does not fail on them. A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
-(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+(for example `rust/Cargo.toml` at a polyglot git root that also has
+`package.json`) passes `cargo_toml`.
 A root with Rust sources but no Cargo.toml anywhere in that bounded search,
 and an empty root under the Rust-only default, still fail on a missing
 manifest.

@@ -3,6 +3,18 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-13: Nested Cargo.toml keeps doctor Rust checks in scope (#7506)
+
+`detect_languages` is a shallow root scan. A `package.json` at a polyglot
+git root therefore omitted Rust, and `rust_toolchain_scope` skipped
+`cargo_toml` before the cargo-only locator could name `rust/Cargo.toml`.
+Keep that locator cargo-only; do not fold nested-manifest discovery into
+language detection, rebind `--root`, or change which `ripr.toml` applies.
+When the locator finds a nested or ancestor Cargo.toml and Rust is still
+enabled, the toolchain checks stay required. A TypeScript-only root with no
+such manifest still skips. `enabled = ["typescript"]` still puts Rust out of
+scope even when a nested Cargo.toml exists.
+
 ## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
 
 `ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
@@ -42,8 +54,9 @@ ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
 fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
 is which `ripr.toml` applies). Empty roots and Rust sources with no
 manifest must still fail.
-A TypeScript marker at the git root can still skip `cargo_toml` before the
-locator runs (`detect_languages` is shallow); that is a separate claim.
+A TypeScript marker at the git root used to skip `cargo_toml` before the
+locator ran (`detect_languages` is shallow); #7506 keeps the locator
+cargo-only and teaches `rust_toolchain_scope` about its result.
 
 ## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
 

@@ -454,10 +454,12 @@ Checks:
     project's selected toolchain and its actual execution result; doctor does
     not run verification.
 
-Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
-or when no other language is detected or enabled. Otherwise (for example a
-Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
-print as skipped with the reason and do not fail doctor.
+Rust is in scope when it is enabled and Cargo.toml is found at the selected
+root, an ancestor Cargo project bounded by git, or nested in this tree; when
+.rs files are detected at the selected root; or when no other language is
+detected or enabled. Otherwise (for example a Python-only or TypeScript-only
+root with no nested or ancestor Cargo.toml) the Cargo.toml, cargo, and rustc
+checks print as skipped with the reason and do not fail doctor.
 
 First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its

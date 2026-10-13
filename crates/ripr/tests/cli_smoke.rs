@@ -12770,6 +12770,81 @@ fn doctor_git_root_with_nested_workspace_passes_cargo_toml() -> Result<(), Strin
     json_result.and(human_result)
 }
 
+/// #7506: a TypeScript marker at the git root must not skip `cargo_toml`
+/// when `rust/Cargo.toml` exists. This is the production path: shallow
+/// `detect_languages` plus the cargo-only locator.
+#[test]
+fn doctor_polyglot_git_root_with_typescript_passes_nested_cargo_toml() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-gitroot-polyglot-ts-nested");
+    std::fs::create_dir_all(workspace.join("rust/crates/x/src"))
+        .map_err(|error| format!("create rust crate: {error}"))?;
+    std::fs::write(workspace.join("package.json"), "{\"name\": \"site\"}\n")
+        .map_err(|error| format!("write package.json: {error}"))?;
+    std::fs::write(workspace.join("README.md"), "docs\n")
+        .map_err(|error| format!("write README: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\n",
+    )
+    .map_err(|error| format!("write workspace manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| format!("write package manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/src/lib.rs"),
+        "pub fn f() {}\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    run_git(&workspace, &["init", "-b", "main"])?;
+
+    let json = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &["doctor", "--json"],
+        &[],
+    )
+    .map_err(|error| format!("run doctor --json: {error}"))?;
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    let cargo_toml = report["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == "cargo_toml")
+        .cloned()
+        .ok_or_else(|| format!("missing cargo_toml: {report}"))?;
+    let evidence = cargo_toml["evidence"].as_str().unwrap_or("");
+    let json_result = if cargo_toml["status"] != "pass"
+        || !evidence.contains("via workspace root")
+        || !evidence.contains("rust")
+    {
+        Err(format!(
+            "polyglot git-root nested workspace must pass cargo_toml: {cargo_toml}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let human = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &workspace, &["doctor"], &[])
+        .map_err(|error| format!("run doctor: {error}"))?;
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let human_result = if stdout.contains("Cargo.toml check skipped")
+        || stdout.contains("! no Cargo.toml found")
+        || !stdout.contains("via workspace root")
+    {
+        Err(format!(
+            "human doctor must not skip cargo_toml at a TypeScript polyglot git root:\n{stdout}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    ignore_remove_dir_all(&workspace);
+    json_result.and(human_result)
+}
+
 #[test]
 fn doctor_reports_loaded_config_path() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
