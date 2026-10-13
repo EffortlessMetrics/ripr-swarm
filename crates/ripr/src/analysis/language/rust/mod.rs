@@ -2170,6 +2170,7 @@ impl RustAdapter {
                 let related_test_candidate_index =
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
+                            .with_analysis_root(&options.root)
                             .with_withheld_macro_bindings(std::mem::take(
                                 &mut withheld_macro_bindings,
                             ))
@@ -2687,8 +2688,11 @@ impl RustAdapter {
             for seeded in probes {
                 seeded.record_span(&mut parser_spans);
                 let probe = seeded.probe;
-                let related_test_candidate_index = related_test_candidate_index
-                    .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
+                let related_test_candidate_index =
+                    related_test_candidate_index.get_or_insert_with(|| {
+                        classify::RelatedTestCandidateIndex::new(&index)
+                            .with_analysis_root(&options.root)
+                    });
                 let mut finding = classifier::classify_probe_with_candidate_index(
                     &probe,
                     &index,
