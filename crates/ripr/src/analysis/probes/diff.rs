@@ -166,6 +166,14 @@ pub(crate) fn probes_for_file_with_relations(
                         return line;
                     }
                     match removed_span_of_shape(text, &canonical_text, &line) {
+                        // A cut that is the whole old head line (`1..=9 =>`
+                        // for `1..=8 =>`) cut nothing: its body is on the
+                        // next old line, so it is an uncut head too.
+                        Some(cut)
+                            if shape.family == ProbeFamily::MatchArm && cut == line.trim() =>
+                        {
+                            with_old_arm_body(&line, changed, index)
+                        }
                         Some(cut) => cut,
                         // An uncut old arm head (`0 =>`, its body on the next
                         // old line) would read like a head cut, which arm
@@ -1090,13 +1098,24 @@ fn with_old_arm_body(line: &str, changed: &ChangedFile, index: &RustIndex) -> St
         .collect::<Vec<_>>();
     let old_source = super::classify::file_facts(index, &changed.path)
         .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed));
+    // The paired line's identity is not carried here, so heads with this
+    // text elsewhere in the file must all share one old body; otherwise
+    // the body may be another arm's, and the head stays unread.
     let body = old_source.as_deref().and_then(|old| {
-        // `line` is 1-based, so the next old line sits at index `line`.
-        heads
+        let bodies = heads
             .iter()
-            .find_map(|head| old.lines().nth(*head).map(str::trim))
-            .filter(|body| !body.is_empty())
-            .map(str::to_string)
+            .map(|head| {
+                // `line` is 1-based, so the next old line sits at index `line`.
+                old.lines()
+                    .nth(*head)
+                    .map(str::trim)
+                    .filter(|body| !body.is_empty())
+            })
+            .collect::<Option<std::collections::BTreeSet<_>>>()?;
+        match bodies.into_iter().collect::<Vec<_>>().as_slice() {
+            [body] => Some(body.to_string()),
+            _ => None,
+        }
     });
     match body {
         Some(body) => format!("{} {body}", line.trim_end()),
@@ -1387,11 +1406,41 @@ mod tests {
             "1..=4 => 2,"
         );
         assert_eq!(with_old_arm_body("_ => 0,", &changed, &index), "_ => 0,");
+        // Two heads with this text and different old bodies: which one was
+        // paired is not known, so the head is marked unread.
+        let mut duplicated = changed.clone();
+        duplicated.removed_lines.push(line(6, "    1..=4 =>"));
+        assert_eq!(
+            with_old_arm_body("1..=4 =>", &duplicated, &index),
+            "1..=4 => /* old body unread */"
+        );
         // Without the old file the head is marked unread.
         let unindexed = RustIndex::default();
         assert_eq!(
             with_old_arm_body("1..=4 =>", &changed, &unindexed),
             "1..=4 => /* old body unread */"
+        );
+    }
+
+    /// #5992 review: a head-only arm line whose "cut" is the whole old
+    /// line still reaches arm selection with its old body joined, never as
+    /// a bare head that reads like a cut of this line.
+    #[test]
+    fn a_whole_line_head_cut_carries_its_old_body() {
+        let probes = single_shape_probes(
+            "    1..=8 =>",
+            "    1..=9 =>",
+            ProbeShapeKind::MatchArm,
+            "1..=8 =>",
+            "match n {\n    0 => 0,\n    1..=8 =>\n        \"many\",\n    _ => \"x\",\n}\n",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("1..=9 => \"many\",")
         );
     }
 
