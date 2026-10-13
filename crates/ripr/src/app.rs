@@ -93,7 +93,7 @@ pub use check::{
 };
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
-pub(crate) use context::collect_context_with_config_and_worktree;
+pub(crate) use context::collect_context_with_config_worktree_and_progress;
 pub use context::{collect_context, collect_context_with_input};
 #[cfg(test)]
 pub(crate) use explain::explain_finding_from_artifact;
@@ -101,7 +101,7 @@ pub use explain::explain_finding_with_config;
 pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
-    explain_finding_with_config_and_navigation_mode,
+    explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
     CheckDiffProvenance, FindingDrillIn, FindingNavigation, finding_navigation,

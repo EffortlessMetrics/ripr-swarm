@@ -249,7 +249,9 @@ Implemented:
 - integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
   matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,
-  `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings;
+  `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings. A
+  variant name with no lowercase letter (`Kind::A`, `Method::GET`) is read
+  only as described below;
 - or-patterns of these, and a top-level `_` or bare binding;
 - first-match order: a guarded earlier arm blocks selection, and an earlier
   arm that provably matches means the input selects another arm;
@@ -329,6 +331,22 @@ implies but does not spell out:
   leading name from outside the workspace roots
   (`use other_crate::RenameRule;`). A module glob in a test file
   (`use other_crate::prelude::*`) is not read and stays a known gap;
+- a qualified name with no lowercase letter (`Kind::A`, `Method::GET`) may
+  be an associated constant, which a pattern compares by value. It reads as
+  a variant only when its path is `Type::NAME`, with `Type` the
+  scrutinee's type written unqualified (in the parameter's signature, or
+  the impl header for `self`), or `Self` in that type's own impl. The
+  owner's file must declare exactly one enum of that name listing `NAME`
+  and no struct, union, trait or type alias of that name, import nothing by
+  that name, glob-import no module (a `use super::*` inside an inline
+  module, such as `mod tests`, brings in only that file's items) and call
+  no macro at file or module item level. A test's uncased input is read
+  only when no related test file outside the owner's file declares an item
+  of that name, renames an import to it, or glob-imports a module other
+  than `super`, a workspace root or the type's own variants, since a
+  test-side `struct Kind` with `const A` makes `Kind::A` a constant.
+  Otherwise, and for a bare uncased name (`A`), the pattern or input is not
+  provable;
 - a bare lowercase pattern (`target =>`) is a binding only when the owner's
   file declares no `const` or `static` of that name, imports no item by
   that name, and has no glob import of a module, since Rust compares a
@@ -425,6 +443,8 @@ the diff changes `None => 1` to `None => 0`.
   elements, first-match order (examples 4 and 5), changed patterns, unread
   inputs, matches the call may skip, mutable typed receivers and foreign
   call paths.
+- `crates/ripr/tests/match_arm_uncased_variant.rs`: examples 4 and 6 with
+  single-letter variants, and the same crate with the enum imported.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).

@@ -87,6 +87,8 @@ mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
+#[cfg(test)]
+mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;

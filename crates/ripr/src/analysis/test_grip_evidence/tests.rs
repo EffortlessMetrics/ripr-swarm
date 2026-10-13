@@ -18453,6 +18453,413 @@ mod tests {
     Ok(())
 }
 
+/// #5577: a `Debug` impl of the `amount > 100` shape, plus `tests/amount.rs`
+/// with `test_body` as the body of its one test.
+fn debug_impl_case(test_body: &str) -> Result<(StageEvidence, SeamGripClass), String> {
+    let test_source =
+        format!("use ripr_fixture::Amount;\n#[test] fn renders() {{ {test_body} }}\n");
+    unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } pub fn get(&self) -> u32 { self.0 } }\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        ("tests/amount.rs", test_source.as_str()),
+    ])
+}
+
+#[test]
+fn debug_impl_of_a_type_tests_never_debug_format_stays_ungripped() -> Result<(), String> {
+    // The test builds and reads `Amount` but never formats it with `{:?}`;
+    // `assert_eq!` formats its operands only when it fails.
+    let (reach, class) =
+        debug_impl_case("let value = Amount::new(150); assert_eq!(value.get(), 150);")?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_of_a_type_a_test_debug_formats_is_opaque() -> Result<(), String> {
+    let (reach, class) = debug_impl_case(
+        "let text = format!(\"{:?}\", Amount::new(150)); assert_eq!(text, \"large\");",
+    )?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("and `renders` (tests/amount.rs:2) uses `{:?}`, which runs `Debug`"),
+        "the trait syntax is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn display_impl_names_the_syntax_that_runs_it() -> Result<(), String> {
+    let (reach, _) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn renders() { assert_eq!(Amount(150).to_string(), \"large\"); }\n",
+        ),
+    ])?;
+    assert!(
+        reach
+            .summary
+            .contains("uses `to_string`, which runs `Display`"),
+        "{}",
+        reach.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn display_delegation_does_not_reach_an_unused_debug_impl() -> Result<(), String> {
+    // `Outer::fmt` calls `.fmt(f)`. Name matching reaches every `fmt`, but
+    // nothing test-reached debug-formats, so `Inner`'s `Debug` stays a gap.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "struct Inner(u32);\n\
+             impl std::fmt::Debug for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Outer { label: String }\n\
+             impl Outer { pub fn new() -> Self { Outer { label: String::new() } } }\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     self.label.fmt(f)\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer::new().to_string(), \"\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait()
+-> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub trait Encode { fn encode(&self) -> u8; }\n\
+             impl Encode for u32 {\n\
+                 fn encode(&self) -> u8 { let amount = *self; if amount > 100 { 1 } else { 0 } }\n\
+             }\n\
+             pub fn encode_all<T: Encode>(items: &[T]) -> Vec<u8> { items.iter().map(Encode::encode).collect() }\n",
+        ),
+        (
+            "tests/encode.rs",
+            "#[test] fn bulk() { let items: [u32; 1] = [150]; assert_eq!(ripr_fixture::encode_all(&items), vec![1]); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("trait method of `u32`"),
+        "{}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub trait Encode { fn encode(&self) -> u8; }\n\
+             impl Encode for u32 {\n\
+                 fn encode(&self) -> u8 { let amount = *self; if amount > 100 { 1 } else { 0 } }\n\
+             }\n\
+             pub fn double(n: u32) -> u32 { n * 2 }\n",
+        ),
+        (
+            "tests/double.rs",
+            "#[test] fn doubles() { assert_eq!(ripr_fixture::double(2u32), 4); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn a_test_does_not_call_a_helper_that_shares_its_name() -> Result<(), String> {
+    // The test `check`'s own signature is not a call to the helper `check`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn check(amount: u32) -> bool { surcharge(amount) }\n\
+             fn surcharge(amount: u32) -> bool { amount > 100 }\n\
+             pub fn total(n: u32) -> u32 { n + 1 }\n",
+        ),
+        (
+            "tests/total.rs",
+            "#[test] fn check() { assert_eq!(ripr_fixture::total(1), 2); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn display_impl_run_through_a_generic_helper_is_opaque() -> Result<(), String> {
+    // #6662 review: `render<T: Display>` names no `Amount`, but runs its
+    // `Display` for whatever type the test passes.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } }\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub fn render<T: std::fmt::Display>(value: &T) -> String { value.to_string() }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::{Amount, render};\n\
+             #[test] fn renders() { let value = Amount::new(150); assert_eq!(render(&value), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("`render` (src/lib.rs:9) uses `to_string`"),
+        "{}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_snapshot_macro_formats_is_opaque() -> Result<(), String> {
+    let (reach, class) = debug_impl_case("insta::assert_debug_snapshot!(Amount::new(150));")?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn serde_impl_a_test_file_imports_a_format_crate_for_is_opaque() -> Result<(), String> {
+    // The test body says only `to_string`; the file's `use` says serde.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } }\n\
+             impl serde::Serialize for Amount {\n\
+                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { s.serialize_str(\"large\") } else { s.serialize_str(\"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             use serde_json::to_string;\n\
+             #[test] fn encodes() { assert_eq!(to_string(&Amount::new(150)).ok(), Some(\"\\\"large\\\"\".into())); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn serde_impl_no_test_serializes_stays_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } pub fn get(&self) -> u32 { self.0 } }\n\
+             impl serde::Serialize for Amount {\n\
+                 fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { s.serialize_str(\"large\") } else { s.serialize_str(\"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn reads() { assert_eq!(Amount::new(150).get(), 150); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn display_impl_a_method_runs_on_self_is_opaque() -> Result<(), String> {
+    // #6662 review: `render` calls `self.to_string()` and names no type, but
+    // runs `Amount`'s own `Display`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn new(n: u32) -> Self { Amount(n) } pub fn render(&self) -> String { self.to_string() } }\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn renders() { assert_eq!(Amount::new(150).render(), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("`render` (src/lib.rs:2) uses `to_string`"),
+        "{}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String> {
+    // #6662 review: `describe` formats `self.inner`, an `Amount`, without
+    // naming it; `Wrapper`'s fields say what it holds.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Wrapper { inner: Amount }\n\
+             impl Wrapper { pub fn new(inner: Amount) -> Self { Wrapper { inner } } pub fn describe(&self) -> String { format!(\"{:?}\", self.inner) } }\n",
+        ),
+        (
+            "tests/wrapper.rs",
+            "use ripr_fixture::{Amount, Wrapper};\n\
+             #[test] fn renders() { assert_eq!(Wrapper::new(Amount(150)).describe(), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_of_a_parameters_field_type_is_opaque() -> Result<(), String> {
+    // #6662 review: `describe` formats `item.inner`, an `Amount`, through a
+    // parameter; only `Wrapper` is named.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Wrapper { pub inner: Amount }\n\
+             pub fn describe(item: &Wrapper) -> String { format!(\"{:?}\", item.inner) }\n",
+        ),
+        (
+            "tests/wrapper.rs",
+            "use ripr_fixture::{Amount, Wrapper, describe};\n\
+             #[test] fn renders() { assert_eq!(describe(&Wrapper { inner: Amount(150) }), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+fn held_depth_case(levels: usize) -> Result<(StageEvidence, SeamGripClass), String> {
+    // `Wrapper` holds `Amount` through `levels - 1` intermediate structs;
+    // `describe` formats `self.inner` without naming `Amount`.
+    let mut source = String::from(
+        "pub struct Amount(pub u32);\n\
+         impl std::fmt::Debug for Amount {\n\
+             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                 let amount = self.0;\n\
+                 if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+             }\n\
+         }\n",
+    );
+    let mut held = String::from("Amount");
+    let mut value = String::from("Amount(150)");
+    for level in 1..levels {
+        source.push_str(&format!(
+            "pub struct Level{level} {{ pub inner: {held} }}\n"
+        ));
+        held = format!("Level{level}");
+        value = format!("{held} {{ inner: {value} }}");
+    }
+    source.push_str(&format!(
+        "pub struct Wrapper {{ inner: {held} }}\n\
+         impl Wrapper {{ pub fn new(inner: {held}) -> Self {{ Wrapper {{ inner }} }} pub fn describe(&self) -> String {{ format!(\"{{:?}}\", self.inner) }} }}\n"
+    ));
+    let test = format!(
+        "use ripr_fixture::*;\n\
+         #[test] fn renders() {{ assert_eq!(Wrapper::new({value}).describe(), \"large\"); }}\n"
+    );
+    unresolved_reach_case(&[
+        ("src/lib.rs", source.as_str()),
+        ("tests/wrapper.rs", test.as_str()),
+    ])
+}
+
+#[test]
+fn debug_impl_of_a_type_held_three_levels_down_is_opaque() -> Result<(), String> {
+    let (reach, class) = held_depth_case(3)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
 /// #6292: repo mode shares the diff-mode call-identity rule. The only test
 /// calls `b::render`, so it neither relates to nor grips the never-called
 /// `a::render`, while `b::render` keeps it as a direct owner call.
@@ -18615,6 +19022,16 @@ fn called_sibling_stays_strongly_gripped_beside_an_uncalled_one() -> Result<(), 
 }
 
 #[test]
+fn debug_impl_of_a_type_held_four_levels_down_stays_ungripped() -> Result<(), String> {
+    // #6662 review: `HELD_TYPE_DEPTH` stops at three levels, a narrowing the
+    // spec names.
+    let (reach, class) = held_depth_case(4)?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
 fn given_mod_rs_owner_when_grip_associates_then_module_identity_decides_same_test_file()
 -> Result<(), String> {
     // #5395: `serialize/mod.rs` is module `serialize`. Its companion
@@ -18686,6 +19103,43 @@ fn uncalled_sibling_with_only_same_file_tests_has_no_static_path() -> Result<(),
 }
 
 #[test]
+fn debug_callee_deferred_until_a_later_root_uses_its_syntax_is_opaque() -> Result<(), String> {
+    // #6662 review: `Outer`'s `.fmt(f)` reaches `Hidden`'s `Debug::fmt`
+    // before any `{:?}` is seen, so it waits; `Second`'s `Display`, reached
+    // in the same round, formats its `Hidden` field with `{:?}`, and the
+    // retry then reaches it. No reached body names `Hidden`, so it never
+    // becomes a dispatch root itself.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Hidden(pub u32);\n\
+             impl std::fmt::Debug for Hidden {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Second { hidden: Hidden }\n\
+             impl std::fmt::Display for Second {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, \"{:?}\", self.hidden) }\n\
+             }\n\
+             pub struct Outer(pub u32);\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer(150).to_string(), \"150\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
 fn uncalled_sibling_named_by_a_doctest_keeps_weak_reach() -> Result<(), String> {
     // A doc example may call `as_kb`; ripr does not index doctests, so the
     // shared diff-mode rule keeps reach undecided rather than claiming a gap.
@@ -18707,6 +19161,236 @@ fn uncalled_sibling_named_by_a_doctest_keeps_weak_reach() -> Result<(), String> 
     assert_eq!(compact_reach, StageState::Weak);
     assert_ne!(class, SeamGripClass::StronglyGripped);
     assert_ne!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_method_does_not_hold_stays_ungripped() -> Result<(), String> {
+    // Negative control: `describe` formats a `u32` field, so building an
+    // `Amount` elsewhere does not run `Amount`'s `Debug`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Counter { count: u32 }\n\
+             impl Counter { pub fn new(count: u32) -> Self { Counter { count } } pub fn describe(&self) -> String { format!(\"{:?}\", self.count) } }\n",
+        ),
+        (
+            "tests/counter.rs",
+            "use ripr_fixture::{Amount, Counter};\n\
+             #[test] fn renders() { let _amount = Amount(150); assert_eq!(Counter::new(3).describe(), \"3\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn display_impl_another_display_impl_delegates_to_is_opaque() -> Result<(), String> {
+    // #6662 review: `Outer`'s `Display` passes its gate through `to_string`
+    // and delegates to `Inner`'s, which no test-reached body names.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Inner(pub u32);\n\
+             impl std::fmt::Display for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Outer(pub Inner);\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }\n\
+             }\n\
+             pub fn describe(outer: &Outer) -> String { outer.to_string() }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::{describe, Outer};\n\
+             #[test] fn renders() { assert_eq!(describe(&Outer(ripr_fixture::Inner(150))), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), String> {
+    // #6662 review: `Amount(1)<Amount(2)` runs `PartialOrd` as much as a
+    // spaced `<` does.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(PartialEq)]\n\
+             pub struct Amount(pub u32);\n\
+             impl PartialOrd for Amount {\n\
+                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { None } else { Some(amount.cmp(&other.0)) }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn ordered() { assert!(Amount(1)<Amount(2)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque() -> Result<(), String> {
+    // #6662 review: a `HashMap` lookup compares keys with `PartialEq`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(Hash, Eq)]\n\
+             pub struct Amount(pub u32);\n\
+             impl PartialEq for Amount {\n\
+                 fn eq(&self, other: &Self) -> bool {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { false } else { amount == other.0 }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             use std::collections::HashMap;\n\
+             #[test] fn found() { let mut m = HashMap::new(); m.insert(Amount(1), 1); assert!(m.get(&Amount(1)).is_some()); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
+    // #6662 review: a `#[should_panic]` test passes by panicking, so its
+    // panic message formats `Amount` with `Debug`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             #[should_panic]\n\
+             fn reports() { panic!(\"{:?}\", Amount(150)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Result<(), String> {
+    // Negative control: without `#[should_panic]` the panic message formats
+    // only when the test fails.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn get(&self) -> u32 { self.0 } }\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             fn reports() { let a = Amount(150); if a.get() != 150 { panic!(\"{:?}\", a); } }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_catch_unwind_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
+    // #6662 review: a comment line above `catch_unwind` must not hide it,
+    // and the caught panic formats `Amount` with `Debug`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             fn reports() {\n\
+                 // the panic below is expected\n\
+                 let caught = std::panic::catch_unwind(|| panic!(\"{:?}\", Amount(150)));\n\
+                 assert!(caught.is_err());\n\
+             }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_production_code_a_should_panic_test_reaches_formats_is_opaque() -> Result<(), String>
+{
+    // A `#[should_panic]` test passes through `check`'s panic, whose message
+    // formats `Amount` with `Debug`; the test's own body formats nothing.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub fn check(value: &Amount) { if value.0 != 0 { panic!(\"bad {:?}\", value as &Amount); } }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::{check, Amount};\n\
+             #[test]\n\
+             #[should_panic]\n\
+             fn rejects() { check(&Amount(150)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
 
