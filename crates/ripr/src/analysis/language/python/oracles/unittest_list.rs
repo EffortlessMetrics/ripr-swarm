@@ -81,6 +81,9 @@ fn static_callee(expr: &Expr) -> bool {
 }
 
 pub(in crate::analysis::language::python) fn literal_text(text: &str) -> bool {
+    if !text.contains("assertListEqual") {
+        return false;
+    }
     let Ok(Mod::Module(module)) =
         super::super::source_facts::parse_module_result(Path::new("<unittest-list-oracle>"), text)
     else {
@@ -88,6 +91,48 @@ pub(in crate::analysis::language::python) fn literal_text(text: &str) -> bool {
     };
     matches!(module.body.as_slice(), [Stmt::Expr(expr)]
         if matches!(expr.value.as_ref(), Expr::Call(call) if literal_call(call)))
+}
+
+/// Whole-list equality only discriminates a value change, not a different
+/// spelling or a Python-equal scalar (for example `1` and `True`). Keep mixed
+/// scalar types and nonliteral elements uncredited instead of approximating
+/// Python's numeric coercion rules.
+pub(in crate::analysis::language::python) fn literal_change_discriminated(
+    before: Option<&str>,
+    after: &str,
+) -> bool {
+    let Some((old, new)) = before.and_then(literal_return).zip(literal_return(after)) else {
+        return false;
+    };
+    old.len() != new.len()
+        || old.iter().zip(&new).any(|(old, new)| {
+            std::mem::discriminant(old) == std::mem::discriminant(new) && old != new
+        })
+}
+
+fn literal_return(line: &str) -> Option<Vec<ast::Constant>> {
+    let expression = line.trim().strip_prefix("return ")?.trim();
+    let Mod::Module(module) = super::super::source_facts::parse_module_result(
+        Path::new("<unittest-list-return>"),
+        expression,
+    )
+    .ok()?
+    else {
+        return None;
+    };
+    let [Stmt::Expr(statement)] = module.body.as_slice() else {
+        return None;
+    };
+    let Expr::List(list) = statement.value.as_ref() else {
+        return None;
+    };
+    list.elts
+        .iter()
+        .map(|element| match element {
+            Expr::Constant(constant) => Some(constant.value.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(in crate::analysis::language::python) fn withhold_modified_oracles(tests: &mut [PythonTest]) {

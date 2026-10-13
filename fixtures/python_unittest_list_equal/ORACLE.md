@@ -85,3 +85,19 @@ not. These outcomes retain independent literal expectations.
 This proves a bounded static evidence correction and native discrimination of
 these source-derived examples. It does not establish general unittest support,
 runtime test adequacy, hosted CI, branch protection, or merge readiness.
+
+Published review of `50c3b2a10675055268b2f59cd0a3c6d842552866` identified
+a Python-equality edge: `[1, 1]` and `[1, True]` compare equal. Independently
+executing the exact assertion against each implementation runs one test with
+zero failures/errors and exit 0, yet that candidate's real CLI reports one
+`exposed`, strong, yes finding. The permanent equal-values fixture and honesty
+row require one `weakly_exposed`, exact-value, strong finding and forbid
+promotion: the assertion is strong in shape but cannot distinguish this edit.
+
+Whole-list change credit now requires literal-list returns on both sides and
+either unequal lengths or a provably different same-kind scalar value. Decoded
+values avoid false credit for alternate integer, float or string spellings.
+Mixed scalar types remain conservatively uncredited, including actually unequal
+large integers versus rounded floats; no lossy numeric conversion supplies proof.
+Empty-list length changes retain a real discrimination witness. Nonliteral,
+unpaired and unsupported return shapes remain outside this bounded credit.

@@ -2180,6 +2180,21 @@
       ]
     },
     {
+      "id": "py_unittest_list_equal_equal_values",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_equal_values",
+      "vector": "unittest_list_python_equal_scalar_change",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_derived_result",
       "language": "python",
       "tier": "pure",

@@ -321,9 +321,6 @@ fn oracle_observes_changed_list_element(
     changed_indices: &[usize],
     changed_values: &[String],
 ) -> bool {
-    if super::oracles::unittest_list::literal_text(oracle) {
-        return true;
-    }
     if oracle.contains("=={")
         || oracle.contains("== {")
         || oracle.contains("==[")
@@ -774,8 +771,14 @@ pub(super) fn classify_sink_alignment_with_old(
     } else {
         None
     };
+    let list_equality_discriminates = units
+        .iter()
+        .any(|unit| super::oracles::unittest_list::literal_text(&unit.text))
+        && super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
-        if let Some((changed_keys, changed_values)) = &dict_change {
+        if super::oracles::unittest_list::literal_text(&unit.text) {
+            list_equality_discriminates
+        } else if let Some((changed_keys, changed_values)) = &dict_change {
             oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
         } else if let Some((changed_indices, changed_values)) = &list_change {
             oracle_observes_changed_list_element(&unit.text, changed_indices, changed_values)

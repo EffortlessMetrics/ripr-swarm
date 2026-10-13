@@ -213,6 +213,11 @@ mock expectations, and custom `assert_*` helpers.
   matching expected literals in another row
   or a nested wrapper cannot supply sink alignment. Skip and parser limitations
   remain governed by their existing admission paths.
+  Whole-list credit additionally requires old/new literal-list returns with a
+  different length or a same-type scalar constant that compares differently.
+  Equal spellings/values and mixed scalar types (including Python-equal `1`,
+  `True` and `1.0`) remain uncredited; numeric coercions and nonliteral return
+  elements are not evaluated by this bounded path.
 - `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’

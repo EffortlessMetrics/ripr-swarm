@@ -251,6 +251,97 @@ fn unittest_list_equal_withholds_derived_owner_results() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn unittest_list_equal_requires_changed_python_literal_value() -> Result<(), String> {
+    for (before, after, expected_class, expected_discrimination) in [
+        (
+            "[1, 1]",
+            "[1, True]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1, False]",
+            "[1, 0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1]",
+            "[1.0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1_0]",
+            "[10]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "['a']",
+            "[\"a\"]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1.0]",
+            "[1e0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[16]",
+            "[0x10]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[9007199254740993]",
+            "[9007199254740992.0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        // Mixed scalar types stay conservative, even when Python distinguishes them.
+        (
+            "[2]",
+            "[True]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        ("[1, 1]", "[1, 2]", ExposureClass::Exposed, StageState::Yes),
+        ("[False]", "[True]", ExposureClass::Exposed, StageState::Yes),
+        ("[1.0]", "[2.0]", ExposureClass::Exposed, StageState::Yes),
+        ("[1]", "[]", ExposureClass::Exposed, StageState::Yes),
+        ("[]", "[1]", ExposureClass::Exposed, StageState::Yes),
+    ] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), {after})\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            &format!("def labels():\n    return {after}\n"),
+            &tests,
+            2,
+            &format!("    return {before}"),
+            &format!("    return {after}"),
+        )?;
+        assert_eq!(finding.class, expected_class, "{before} -> {after}");
+        assert_eq!(
+            finding.ripr.reveal.discriminate.state,
+            expected_discrimination
+        );
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    Ok(())
+}
+
 /// Exercise the existing source-fact producer and final classifier together.
 fn classify_case(
     source: &str,
