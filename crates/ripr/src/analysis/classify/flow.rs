@@ -238,6 +238,14 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    if let Some(branch) = tail_if_branch_value(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            branch.text,
+            branch.line,
+            owner,
+        )];
+    }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
             FlowSinkKind::ReturnValue,
@@ -462,6 +470,101 @@ fn predicate_as_owner_tail(
         line: probe.location.line,
         text: expression,
     })
+}
+
+/// The branch value of a tail `if` whose branches are written inline on the
+/// changed line (`if quantity >= 7 { 20 } else { 0 }` as the owner's last
+/// expression): the predicate's outcome is the returned value, so the first
+/// branch flows to the return. Fails closed unless the owner returns a
+/// non-unit value, the changed line holds the whole `if`/`else`, only the
+/// function's closing brace follows it, and each branch is one plain value
+/// (identifier, literal, or obvious return expression) without nesting (#6781).
+fn tail_if_branch_value(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    let function = owner_fn?;
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let signature = masked.lines().next()?;
+    if !signature.contains("->") || signature.contains("-> ()") {
+        return None;
+    }
+    let offset = probe.location.line.checked_sub(function.start_line)?;
+    if offset == 0 {
+        return None;
+    }
+    let changed = masked.lines().nth(offset)?.trim();
+    if !changed.starts_with("if ") || !changed.contains(&code(&probe.expression)) {
+        return None;
+    }
+    let rest = masked
+        .lines()
+        .skip(offset + 1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if rest != ["}"] {
+        return None;
+    }
+    let (then_branch, after_then) = braced_block(changed)?;
+    let after_else = after_then.trim().strip_prefix("else")?.trim();
+    if after_else.starts_with("if ") {
+        return None;
+    }
+    let (else_branch, after_else_block) = braced_block(after_else)?;
+    if !after_else_block.trim().is_empty() {
+        return None;
+    }
+    for branch in [then_branch, else_branch] {
+        let branch = branch.trim();
+        if branch.is_empty()
+            || branch.contains(';')
+            || branch.contains('{')
+            || branch.contains('}')
+            || !(looks_like_branch_tail_expression(branch) || is_plain_identifier(branch))
+        {
+            return None;
+        }
+    }
+    Some(LocalTextFact {
+        line: probe.location.line,
+        text: then_branch.trim().to_string(),
+    })
+}
+
+/// The contents of the first balanced `{ ... }` block in `text` and the text
+/// after it; `None` when there is no balanced block.
+fn braced_block(text: &str) -> Option<(&str, &str)> {
+    let open = text.find('{')?;
+    let mut depth = 0usize;
+    for (relative, ch) in text[open + 1..].char_indices() {
+        let index = open + 1 + relative;
+        match ch {
+            '{' => depth += 1,
+            '}' if depth == 0 => {
+                return Some((&text[open + 1..index], &text[index + 1..]));
+            }
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_plain_identifier(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && text
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
 }
 
 fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Option<LocalTextFact> {
@@ -1219,6 +1322,59 @@ mod tests {
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "items >= 10");
         assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn tail_if_with_inline_literal_branches_flows_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn discount(quantity: u32) -> u32 {\n    if quantity >= 7 { 20 } else { 0 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "quantity >= 7", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "20");
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn tail_if_with_inline_parameter_branches_flows_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn capped(value: i32, cap: i32) -> i32 {\n    if value > cap { cap } else { value }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "value > cap", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].line, 2);
+    }
+
+    #[test]
+    fn tail_if_sink_fails_closed_when_the_if_is_not_the_tail_or_branches_are_not_values() {
+        for body in [
+            // The `if` is a statement, not the tail expression.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { 20 } else { 0 };\n    do_work();\n    42\n}",
+            // A unit owner has no return value to flow to.
+            "pub fn check(x: i32) {\n    if x > 1 { foo(); } else { bar(); }\n}",
+            // A nested block branch is not a plain branch value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { { 20 } } else { 0 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
     }
 
     #[test]

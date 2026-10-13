@@ -11,7 +11,7 @@ Start here:
   State: limited by static analysis (static_limited)
   Safe next action: review the unresolved static path and existing tests before treating this as repair-ready.
   File: ./src/lib.rs:2
-  Static exposure: no path (no_static_path, warning, confidence 0.35)
+  Static exposure: no path (no_static_path, warning, confidence 0.48)
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:price:predicate_boundary:predicate:amount==100
   Changed behavior: amount > 100
@@ -20,10 +20,10 @@ Start here:
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
     observes the changed behavior so a discriminator exists.
-  Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+  Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
     - reach no: No static test path found for the changed owner
     - infection unknown: No tests were found, so activation/infection cannot be estimated
-    - 8 more detail line(s) in --format human-full
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/benches_harness_evidence/input --diff <cwd>/fixtures/benches_harness_evidence/diff.patch --mode fast probe:src_lib.rs:predicate:9b2a72c1
