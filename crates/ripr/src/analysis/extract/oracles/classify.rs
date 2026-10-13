@@ -70,18 +70,14 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         };
     }
     // A parenthesized `&&` conjunct that a `||` decides pins nothing, so the
-    // other conjuncts decide; the group itself is still a relation, so the
-    // reading is never below `relational_check` / weak (#7558).
+    // other conjuncts decide, as beside a negated pattern; with nothing else
+    // left the group is only a relation (#7558). The rest's own reading is
+    // kept, never lifted, so rule 1 never raises a strength.
     if let Some(rest) = deciding_disjunction_conjunct_rest(line) {
         return if rest.is_empty() {
             RELATION
         } else {
-            let classification = classify_assertion(&rest);
-            if classification.strength.rank() >= RELATION.strength.rank() {
-                classification
-            } else {
-                RELATION
-            }
+            classify_assertion(&rest)
         };
     }
     // A `matches!` compared with `==` or `!=` reads as the pattern only with

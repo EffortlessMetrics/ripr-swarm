@@ -300,6 +300,11 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
             &err,
         ),
         ("ensure!(ready && /* fallback */ (a == b || c));", &weak),
+        // The rest keeps its own reading and is never lifted to weak.
+        (
+            "assert!(opt.is_some() && (a == b || c));",
+            &(OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
         // A disjunction with a broad error arm passes without an error.
         ("assert!(ready || r.is_err());", &weak),
         ("ensure!(ready || r.is_err());", &weak),

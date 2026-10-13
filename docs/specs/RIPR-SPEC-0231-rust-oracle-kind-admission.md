@@ -235,9 +235,9 @@ Two pattern terms are used below.
    arm, which is not read through, and an arm such as `r.is_err()` that
    would otherwise earn `broad_error`. A parenthesized `&&` conjunct that
    such a `||` decides pins nothing, so, as beside a negated pattern, the
-   other conjuncts decide and the reading is never below
-   `relational_check` / weak (`ensure!(c == d && (a || b))` reads as
-   `ensure!(c == d)`). A `||` inside a call argument, closure or pattern
+   other conjuncts decide with their own reading, or `relational_check` /
+   weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads
+   as `ensure!(c == d)`). A `||` inside a call argument, closure or pattern
    does not decide the condition
    (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
    `exact_value`). At
