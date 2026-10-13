@@ -3054,7 +3054,8 @@ fn perl_row_observation_unconfirmed(
 /// evidence:
 /// - the relation is a `DirectOwnerCall` with `Reachable` reachability (advisory
 ///   relations can never prove observation);
-/// - the linked oracle is strong-exact and targets the changed owner;
+/// - the linked oracle belongs to the relation's test, is strong-exact and
+///   targets the changed owner;
 /// - the oracle carries a non-empty `observed_sink`;
 /// - the change carries a non-empty `changed_observable`;
 /// - `observed_sink` and `changed_observable` refer to the same sink.
@@ -3094,6 +3095,11 @@ fn sink_aligned_observation(
             continue;
         };
         let oracle = packet.oracle(oracle_id)?;
+        // RIPR-SPEC-0235 rule 5: the oracle must belong to the relation's
+        // test, the same binding `classify_related_relation` uses.
+        if oracle.test_id != ev.test_id {
+            continue;
+        }
         // Strong-exact oracle targeting the changed owner.
         if !oracle.is_strong_exact() {
             continue;
