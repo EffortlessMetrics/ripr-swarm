@@ -244,9 +244,15 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Weak,
         }
     } else if is_mock_expectation_line(line) || is_effect_observer_subject_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::MockExpectation,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || events_sent.contains(&id))` passes without the
+        // observation, so a deciding `||` earns no observer credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::MockExpectation,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_clear_exact_custom_assertion_helper(line) {
         OracleClassification {
