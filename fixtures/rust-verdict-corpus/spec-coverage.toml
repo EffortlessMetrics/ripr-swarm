@@ -530,6 +530,12 @@ id = "RIPR-SPEC-0251"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
+# TypeScript node:test context assert
+[[spec]]
+id = "RIPR-SPEC-0252"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # Local collect-all policy scans
 [[spec]]
 id = "RIPR-SPEC-0253"

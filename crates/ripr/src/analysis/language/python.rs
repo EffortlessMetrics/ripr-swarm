@@ -137,6 +137,7 @@ mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod same_class_callees;
 mod static_limits;
+mod term_activation;
 mod test_activation;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
@@ -211,6 +212,10 @@ struct PythonOwner {
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
     class_path: String,
+    /// What a function owner's body lets RIPR-SPEC-0238 rule 20 read: its
+    /// guarded-return shape as a callee, and whether its parameters hold
+    /// their call-site values as a caller (`term_activation.rs`, #6733).
+    term_facts: term_activation::PythonTermFacts,
 }
 
 /// One declared parameter of a Python function owner.
@@ -315,6 +320,10 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// The call a callable-form exception assertion makes
+    /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
+    /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
+    callable_call: Option<String>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
