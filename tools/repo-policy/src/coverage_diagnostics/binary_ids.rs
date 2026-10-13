@@ -30,7 +30,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
         if u64le(prefix, 8)? != 10 {
             return Err("unsupported_raw_version".into());
         }
-        let size = usize::try_from(u64le(prefix, 16)?).map_err(|_| "id_block_limit")?;
+        let size = usize::try_from(u64le(prefix, 16)?).map_err(|_error| "id_block_limit")?;
         if size > ID_BLOCK_BYTES {
             return Err("id_block_limit".into());
         }
@@ -43,7 +43,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
             if ids.len() == IDS {
                 return Err("id_count_limit".into());
             }
-            let size = usize::try_from(u64le(block, at)?).map_err(|_| "invalid_id_length")?;
+            let size = usize::try_from(u64le(block, at)?).map_err(|_error| "invalid_id_length")?;
             if size == 0 || size > ID_BYTES {
                 return Err("invalid_id_length".into());
             }
@@ -70,7 +70,7 @@ fn u64le(bytes: &[u8], at: usize) -> Result<u64> {
         .get(at..at.saturating_add(8))
         .ok_or("truncated_field")?
         .try_into()
-        .map_err(|_| "truncated_field")?;
+        .map_err(|_error| "truncated_field")?;
     Ok(u64::from_le_bytes(value))
 }
 #[cfg(target_os = "linux")]
@@ -79,7 +79,7 @@ fn u32le(bytes: &[u8], at: usize) -> Result<u32> {
         .get(at..at.saturating_add(4))
         .ok_or("truncated_field")?
         .try_into()
-        .map_err(|_| "truncated_field")?;
+        .map_err(|_error| "truncated_field")?;
     Ok(u32::from_le_bytes(value))
 }
 #[cfg(target_os = "linux")]
@@ -88,7 +88,7 @@ fn u16le(bytes: &[u8], at: usize) -> Result<u16> {
         .get(at..at.saturating_add(2))
         .ok_or("truncated_field")?
         .try_into()
-        .map_err(|_| "truncated_field")?;
+        .map_err(|_error| "truncated_field")?;
     Ok(u16::from_le_bytes(value))
 }
 
@@ -208,13 +208,13 @@ mod elf {
             path.to_owned()
         } else {
             std::env::current_dir()
-                .map_err(|_| "cwd_unavailable")?
+                .map_err(|_error| "cwd_unavailable")?
                 .join(path)
         };
         if absolute.components().count() > 128 {
             return Err("root_depth_limit".into());
         }
-        let mut directory = File::open("/").map_err(|_| "root_unavailable")?;
+        let mut directory = File::open("/").map_err(|_error| "root_unavailable")?;
         for component in absolute.components() {
             match component {
                 Component::RootDir => (),
@@ -226,7 +226,7 @@ mod elf {
                         .read(true)
                         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
                         .open(anchored)
-                        .map_err(|_| "directory_unavailable_or_symlink")?;
+                        .map_err(|_error| "directory_unavailable_or_symlink")?;
                 }
                 _ => return Err("outside_or_non_normal_root".into()),
             }
@@ -266,7 +266,7 @@ mod elf {
             *local += count;
             let mut bytes = vec![0; count];
             file.read_exact_at(&mut bytes, offset)
-                .map_err(|_| "read_unavailable")?;
+                .map_err(|_error| "read_unavailable")?;
             Ok(bytes)
         }
     }
@@ -280,14 +280,14 @@ mod elf {
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)
-            .map_err(|_| "file_unavailable_or_symlink")?;
-        let opened = file.metadata().map_err(|_| "metadata_unavailable")?;
+            .map_err(|_error| "file_unavailable_or_symlink")?;
+        let opened = file.metadata().map_err(|_error| "metadata_unavailable")?;
         if !opened.is_file() || file_identity(&opened) != file_identity(expected) {
             return Err("identity_changed_or_nonregular".into());
         }
         let result = parse(&file, opened.len(), budget);
-        let after = file.metadata().map_err(|_| "metadata_unavailable")?;
-        let source = fs::symlink_metadata(path).map_err(|_| "source_unavailable")?;
+        let after = file.metadata().map_err(|_error| "metadata_unavailable")?;
+        let source = fs::symlink_metadata(path).map_err(|_error| "source_unavailable")?;
         if file_identity(&after) != file_identity(expected)
             || !source.is_file()
             || file_identity(&source) != file_identity(expected)
@@ -330,7 +330,7 @@ mod elf {
         if u32le(strings, 4)? != 3 {
             return Err("invalid_section_names".into());
         }
-        let names_size = usize::try_from(u64le(strings, 32)?).map_err(|_| "name_limit")?;
+        let names_size = usize::try_from(u64le(strings, 32)?).map_err(|_error| "name_limit")?;
         if names_size > 32768 {
             return Err("name_limit".into());
         }
@@ -339,7 +339,8 @@ mod elf {
         let mut counters = false;
         let mut note = None;
         for section in table.chunks_exact(64) {
-            let at = usize::try_from(u32le(section, 0)?).map_err(|_| "invalid_section_name")?;
+            let at =
+                usize::try_from(u32le(section, 0)?).map_err(|_error| "invalid_section_name")?;
             let tail = names.get(at..).ok_or("invalid_section_name")?;
             let name = &tail[..tail
                 .iter()
@@ -381,7 +382,7 @@ mod elf {
         }) {
             return Err("build_id_not_in_note_segment".into());
         }
-        let length = usize::try_from(length).map_err(|_| "note_limit")?;
+        let length = usize::try_from(length).map_err(|_error| "note_limit")?;
         if length > 4096 {
             return Err("note_limit".into());
         }
@@ -389,8 +390,9 @@ mod elf {
         let mut ids = Vec::new();
         let mut at = 0;
         while at < notes.len() {
-            let name_len = usize::try_from(u32le(&notes, at)?).map_err(|_| "invalid_note")?;
-            let id_len = usize::try_from(u32le(&notes, at + 4)?).map_err(|_| "invalid_note")?;
+            let name_len = usize::try_from(u32le(&notes, at)?).map_err(|_error| "invalid_note")?;
+            let id_len =
+                usize::try_from(u32le(&notes, at + 4)?).map_err(|_error| "invalid_note")?;
             let kind = u32le(&notes, at + 8)?;
             let name_at = at.checked_add(12).ok_or("invalid_note")?;
             let id_at = name_at

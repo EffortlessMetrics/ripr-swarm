@@ -300,7 +300,9 @@ fn outside_roots_symlinks_and_changed_file_identity_are_refused() -> Result<()> 
         associate_with_limits(&root_link, &ids(&id), LIMITS)["status"],
         "unavailable"
     );
-    assert!(elf::directory(&f.0.join("../")).is_err());
+    assert!(
+        matches!(elf::directory(&f.0.join("../")), Err(reason) if reason == "outside_or_non_normal_root")
+    );
     let path = f.0.join("debug/deps/rebound");
     write_executable(&path, &elf_bytes(&id, true))?;
     let expected = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
@@ -353,7 +355,7 @@ fn mapping_failure_cannot_abort_the_original_profile_manifest() -> Result<()> {
     let malformed = f.0.join("debug/deps/bad");
     write_executable(&malformed, b"not an ELF")?;
     let out = f.0.join("evidence");
-    let report = capture(&f.0, &list, &out, |a| mock_replay(a))?;
+    let report = capture(&f.0, &list, &out, mock_replay)?;
     assert_eq!(
         report["captured"][0]["binary_ids"]["ids"],
         json!([hex(&id)])
