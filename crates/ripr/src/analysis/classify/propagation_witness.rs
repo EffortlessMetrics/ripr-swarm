@@ -695,6 +695,144 @@ fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldColle
     })
 }
 
+/// #7131: the field path `self.<path>` whose `push` takes, as its whole
+/// argument, the struct or enum literal that encloses `expression` on `line`
+/// of `body` (the owner body, starting at `start_line`):
+/// `self.log.push(Event::Shipped { sku: sku.to_owned(), qty })` gives `log`
+/// for `sku: sku.to_owned()`. Any other placement gives `None`, and so does
+/// a later write to the field in the same body other than another `push`,
+/// since that write could undo the pushed element before a test reads it.
+pub(in crate::analysis) fn pushed_literal_collection_path(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let line_start = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(start_line)?)
+        .map(str::len)
+        .sum::<usize>();
+    let line_text = body.get(line_start..)?.lines().next()?;
+    let probe_at = line_start + line_text.find(expression.trim())?;
+    // The group opened at `from` must close after the probe: a net count of
+    // delimiters would let a later `Ok(` hold an already closed `push(` open.
+    let encloses_probe = |from: usize, open: char, close: char| {
+        delimited_closer(&masked[from + 1..], open, close)
+            .is_some_and(|closer| from + 1 + closer > probe_at)
+    };
+    masked[..probe_at]
+        .rmatch_indices(".push(")
+        .find_map(|(at, call)| {
+            let paren = at + call.len() - 1;
+            if !encloses_probe(paren, '(', ')') {
+                return None;
+            }
+            let argument = &masked[paren + 1..];
+            let literal_path = argument.trim_start();
+            let path_len = literal_path
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .unwrap_or(literal_path.len());
+            let brace = paren + 1 + (argument.len() - literal_path.len()) + path_len;
+            let brace = brace + masked[brace..].len() - masked[brace..].trim_start().len();
+            if path_len == 0 || !masked[brace..].starts_with('{') || brace >= probe_at {
+                return None;
+            }
+            if !encloses_probe(brace, '{', '}') {
+                return None;
+            }
+            let literal_end = brace + 1 + delimited_closer(&masked[brace + 1..], '{', '}')?;
+            let after_literal = masked[literal_end + 1..].trim_start();
+            if !after_literal.starts_with(')') {
+                return None;
+            }
+            let call_line_start = masked[..at].rfind('\n').map_or(0, |index| index + 1);
+            let path = field_collection_write_path(body.get(call_line_start..=paren)?)?;
+            let call_end = masked.len() - after_literal.len();
+            let receiver = format!("self.{path}");
+            let later_write = masked[call_end..]
+                .match_indices(&receiver)
+                .any(|(index, matched)| {
+                    let rest = &masked[call_end + index + matched.len()..];
+                    !rest.starts_with(".push(")
+                        && !rest
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                });
+            (!later_write).then(|| path.to_string())
+        })
+}
+
+/// The offset in `after_open` of the `close` that balances an `open` just
+/// before it.
+fn delimited_closer(after_open: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in after_open.char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            if depth == 0 {
+                return Some(index);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+/// #7131: the read of the whole field collection `path` that an
+/// `assert_eq!` compares with its other operand: `inv.log` or a getter
+/// call `inv.history()`, optionally borrowed. A projection (`.len()`,
+/// `[0]`, `.iter().map(..)`) is not a whole read, and neither is a side
+/// whose other operand names the same binding: that operand may copy the
+/// owner's value and cannot fail on it.
+pub(in crate::analysis) fn assertion_whole_collection_equality(
+    assertion_text: &str,
+    path: &str,
+) -> Option<FieldCollectionRead> {
+    let payload = macro_payload(assertion_text, "assert_eq")?.trim_start();
+    let first = first_call_argument(payload)?;
+    let second = payload
+        .strip_prefix(first.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix(','))
+        .and_then(first_call_argument)?;
+    [(&first, &second), (&second, &first)]
+        .into_iter()
+        .find_map(|(side, other)| {
+            let read = whole_collection_read(side, path)?;
+            let masked = crate::analysis::extract::mask_comments_and_strings(other);
+            let names_binding = masked.match_indices(read.binding.as_str()).any(|(at, name)| {
+                let ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+                !masked[..at].chars().next_back().is_some_and(ident)
+                    && !masked[at + name.len()..].chars().next().is_some_and(ident)
+            });
+            (!names_binding).then_some(read)
+        })
+}
+
+fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> {
+    let mut bare = side.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let (binding, after) = bare.split_once('.')?;
+    if !is_bare_ident(binding) {
+        return None;
+    }
+    if after == path {
+        return Some(FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: None,
+        });
+    }
+    let getter = after.strip_suffix("()").filter(|name| is_bare_ident(name))?;
+    Some(FieldCollectionRead {
+        binding: binding.to_string(),
+        getter: Some(getter.to_string()),
+    })
+}
+
 fn assertion_primary_subject(text: &str) -> Option<String> {
     let payload = macro_payload(text, "assert_eq")
         .or_else(|| macro_payload(text, "assert_ne"))
@@ -1799,6 +1937,67 @@ mod tests {
             "self.log[0].push(x)",
         ] {
             assert_eq!(field_collection_write_path(other), None, "{other}");
+        }
+    }
+
+    /// #7131: a field credits through a pushed collection only when its
+    /// literal is the whole `push` argument on a field path of `self` and
+    /// nothing after the push writes that field again.
+    #[test]
+    fn pushed_literal_collection_path_needs_the_whole_pushed_literal() {
+        let path = |body: &str, line: usize| {
+            pushed_literal_collection_path(body, 1, line, "sku: sku.to_owned()")
+        };
+        let one_line = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: sku.to_owned(), qty });\n}";
+        assert_eq!(path(one_line, 2).as_deref(), Some("log"));
+        let split = "fn add(&mut self) {\n    self.a.b.push(Line {\n        sku: sku.to_owned(),\n        qty,\n    });\n    self.a.b.push(other);\n}";
+        assert_eq!(path(split, 3).as_deref(), Some("a.b"));
+        for (body, line) in [
+            ("fn add(&mut self) {\n    let e = Line { sku: sku.to_owned() };\n    self.log.push(e);\n}", 2),
+            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }.clone());\n}", 2),
+            ("fn add(&mut self) {\n    items.push(Line { sku: sku.to_owned() });\n}", 2),
+            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log.clear();\n}", 2),
+            ("fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log = Vec::new();\n}", 2),
+            ("fn add(&mut self) {\n    self.log.push(wrap(Line { sku: sku.to_owned() }));\n}", 2),
+            ("fn add(&mut self) {\n    self.log.push(x);\n    let l = Line { sku: sku.to_owned() };\n}", 3),
+            ("fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty });\n    Ok(Receipt {\n        sku: sku.to_owned(),\n    })\n}", 4),
+            ("fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty }); Ok(Receipt { sku: sku.to_owned() })\n}", 2),
+        ] {
+            assert_eq!(path(body, line), None, "{body}");
+        }
+    }
+
+    /// #7131: only an `assert_eq!` on the whole collection, against an
+    /// operand that does not name the same binding, compares every pushed
+    /// field.
+    #[test]
+    fn assertion_whole_collection_equality_rejects_projections_and_copies() {
+        let whole = |text: &str| assertion_whole_collection_equality(text, "log");
+        assert_eq!(
+            whole("assert_eq!(inv.history(), &[Event::A]);"),
+            Some(FieldCollectionRead {
+                binding: "inv".to_string(),
+                getter: Some("history".to_string()),
+            })
+        );
+        assert_eq!(
+            whole("assert_eq!(vec![Event::A], inv.log);"),
+            Some(FieldCollectionRead {
+                binding: "inv".to_string(),
+                getter: None,
+            })
+        );
+        for other in [
+            "assert_eq!(inv.history().len(), 1);",
+            "assert_eq!(inv.log[0].qty, 2);",
+            "assert_eq!(inv.log.iter().map(|e| e.qty).sum::<u32>(), 2);",
+            "assert_eq!(inv.history(), inv.history());",
+            "assert_eq!(inv.log, expected(&inv));",
+            "assert_ne!(inv.history(), &[]);",
+            "assert!(inv.history().is_empty());",
+            "assert_eq!(inv.stock, vec![]);",
+        ] {
+            assert_eq!(whole(other), None, "{other}");
         }
     }
 

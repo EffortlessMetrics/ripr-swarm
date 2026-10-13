@@ -1,4 +1,4 @@
-use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -811,12 +811,8 @@ fn missing_discriminator_facts(
         missing.push(fact);
     }
     if matches!(probe.family, ProbeFamily::FieldConstruction)
-        && let Some(fact) = missing_field_value_discriminator(
-            probe,
-            owner_fn.map(|owner| owner.name.as_str()),
-            related_tests,
-            flow_sinks,
-        )
+        && let Some(fact) =
+            missing_field_value_discriminator(probe, owner_fn, related_tests, flow_sinks, index)
     {
         missing.push(fact);
     }
@@ -1505,10 +1501,12 @@ fn may_reach_owner_unread(
 /// oracle, the discriminator is NOT missing and this returns `None`.
 fn missing_field_value_discriminator(
     probe: &Probe,
-    owner_name: Option<&str>,
+    owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
+    let owner_name = owner_fn.map(|owner| owner.name.as_str());
     // Only meaningful when there is a StructField flow sink.
     let has_struct_field_sink = flow_sinks
         .iter()
@@ -1530,6 +1528,24 @@ fn missing_field_value_discriminator(
     // `fallback.retries` on an unrelated value would clear the fact and let
     // the shared field token promote the initializer (#4428 review).
     let field_read = constructed_field_name(&probe.expression).map(|name| format!(".{name}"));
+    // #7131: a literal pushed onto a field collection (`self.log.push(Event
+    // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
+    // collection, read after the owner call directly or through a getter
+    // whose body returns the field (RIPR-SPEC-0228 Decision 2).
+    let pushed_into = owner_fn.and_then(|owner| {
+        super::propagation_witness::pushed_literal_collection_path(
+            owner.body.as_str(),
+            owner.start_line,
+            probe.location.line,
+            &probe.expression,
+        )
+        .map(|path| (owner, path))
+    });
+    let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
+        pushed_into.as_ref().is_some_and(|(owner, path)| {
+            pushed_collection_compared_whole(owner, path, test, assertion, index)
+        })
+    };
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -1545,6 +1561,7 @@ fn missing_field_value_discriminator(
                     .is_some_and(|(read, owner)| {
                         reads_owner_result_field(&test.body, &assertion.text, read, owner)
                     }))
+                || pushed_literal_observed(test, assertion)
         })
     });
     if field_already_observed {
@@ -1562,6 +1579,36 @@ fn missing_field_value_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
     })
+}
+
+/// #7131: whether `assertion` compares the whole field collection `path`
+/// that `owner` pushes onto, read from the binding the test called `owner`
+/// on, after that call, directly or through an inherent getter whose body
+/// returns the field.
+fn pushed_collection_compared_whole(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
+    super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
+        .is_some_and(|read| {
+            super::reveal::owner_call_precedes_read(
+                &test.body,
+                test.start_line,
+                &read.binding,
+                call.name(),
+                assertion.line,
+            ) && read.getter.as_deref().is_none_or(|getter| {
+                call.impl_type().is_some_and(|impl_type| {
+                    super::builder_override::getter_plainly_reads(index, impl_type, getter, path)
+                })
+            })
+        })
 }
 
 /// The field a struct-literal initializer line constructs: `retries: 1,` and
