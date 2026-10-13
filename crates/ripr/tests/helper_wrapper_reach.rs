@@ -1006,6 +1006,10 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
             "pub fn banner() -> String {\n    format!(\"{}\", title().len() > 3)\n}",
             "assert!(!banner().is_empty());",
         ),
+        (
+            "pub fn mode() -> String {\n    title().into()\n}",
+            "assert!(!mode().is_empty());",
+        ),
     ] {
         assert_abstains_through_hop(&title_item_finding(item, test)?, test);
     }
@@ -1046,5 +1050,16 @@ fn weak_oracle_does_not_lift_the_effect_target_rule() -> Result<(), String> {
         );
         assert_not_forwarded(finding);
     }
+    Ok(())
+}
+
+#[test]
+fn user_type_between_owner_and_caller_abstains() -> Result<(), String> {
+    // #7549 review B3: `format!`, `to_string` and `clone` run the owner's
+    // type's own impls, which may decide on the value.
+    let source = "#[derive(Clone, PartialEq, Debug)]\npub struct Mode(u8);\n\nimpl std::fmt::Display for Mode {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        if self.0 == 1 { write!(f, \"fast\") } else { write!(f, \"\") }\n    }\n}\n\nfn mode() -> Mode {\n    Mode(2 - 1)\n}\n\npub fn banner() -> String {\n    format!(\"{}\", mode())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_check() {\n        assert!(!banner().is_empty());\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -10,3 +10,3 @@ impl std::fmt::Display for Mode {\n fn mode() -> Mode {\n-    Mode(1)\n+    Mode(2 - 1)\n }\n";
+    let finding = family_finding(source, diff, "return_value")?;
+    assert_abstains_through_hop(&finding, "user Display");
     Ok(())
 }

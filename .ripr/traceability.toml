@@ -10460,6 +10460,7 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::caller_that_branches_on_the_owner_abstains_under_a_loose_check",
   "crates/ripr/tests/helper_wrapper_reach.rs::test_local_helper_hop_is_part_of_the_oracle",
   "crates/ripr/tests/helper_wrapper_reach.rs::weak_oracle_does_not_lift_the_effect_target_rule",
+  "crates/ripr/tests/helper_wrapper_reach.rs::user_type_between_owner_and_caller_abstains",
 ]
 fixtures = [
   "fixtures/helper_chain_one_hop",

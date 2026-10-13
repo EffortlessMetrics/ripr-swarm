@@ -301,7 +301,7 @@ impl ClassifiedProbeEvidence {
                     // without pairing the caller to the owner; only an
                     // oracle that might pin the owner abstains.
                     && !crate::analysis::classify::hop_reach_keeps_weak_oracle_gap(
-                        &owner.name,
+                        owner,
                         chain,
                         &context.related_tests,
                         effect_family,

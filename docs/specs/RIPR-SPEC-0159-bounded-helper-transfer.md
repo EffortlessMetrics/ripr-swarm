@@ -127,9 +127,12 @@ can only hint that a caller "may lead here" without changing anything.
 - Weak oracle behind a non-forwarding hop (#7549): the abstention above
   does not apply when every observed hop's caller is production code;
   every observed call hop carries its callee's value as data (allowlist:
+  the callee declares a std string or scalar return type (`&str`,
+  `&'static str`, `String`, `char`, an integer or a float), since a user
+  type's `Display`, `Clone`, `From` or `Add` impl may decide on the value;
   the caller parses cleanly and does not return `bool`; it calls only its
   callee, `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
-  argument-free methods `to_string`/`to_owned`/`clone`/`into`; its only
+  argument-free methods `to_string`/`to_owned`/`clone`; its only
   operator is `+` with a string literal operand; its only macros are
   `format!` and `concat!`, whose tokens name only the callee, the caller's
   parameters and those methods; anything else, including a branch, loop,

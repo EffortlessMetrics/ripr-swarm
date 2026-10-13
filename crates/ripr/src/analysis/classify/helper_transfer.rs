@@ -1047,7 +1047,7 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
 /// call-deletion families keep their target-passing rule except across a
 /// local-macro argument hop, which never passes a target either way.
 pub(crate) fn hop_reach_keeps_weak_oracle_gap(
-    owner_name: &str,
+    owner: &FunctionSummary,
     chain: &HelperChain,
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
@@ -1056,7 +1056,7 @@ pub(crate) fn hop_reach_keeps_weak_oracle_gap(
     effect_family: bool,
 ) -> bool {
     let hops = observed_hops(chain, related_tests);
-    if !caller_oracles_are_all_weak(owner_name, hops, related_tests) {
+    if !caller_oracles_are_all_weak(owner, hops, related_tests) {
         return false;
     }
     !effect_family || hops.iter().any(|hop| hop.through_macro)
@@ -1087,7 +1087,7 @@ pub(crate) fn hop_reach_keeps_weak_oracle_gap(
 /// - No such test unwraps or propagates with `?`, `unwrap` or `expect`,
 ///   which are implicit oracles on the caller's shape.
 fn caller_oracles_are_all_weak(
-    owner_name: &str,
+    owner: &FunctionSummary,
     hops: &[HelperHop],
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
@@ -1099,13 +1099,15 @@ fn caller_oracles_are_all_weak(
     if hops.is_empty()
         || hops.iter().enumerate().any(|(step, hop)| {
             let callee = match step.checked_sub(1) {
-                None => owner_name,
-                Some(below) => hops
-                    .get(below)
-                    .map_or("", |lower| lower.caller.name.as_str()),
+                None => Some(owner),
+                Some(below) => hops.get(below).map(|lower| &lower.caller),
             };
             hop.caller.source_role != FunctionSourceRole::Production
-                || (!hop.through_macro && !caller_carries_callee_as_data(&hop.caller.body, callee))
+                || (!hop.through_macro
+                    && !callee.is_some_and(|callee| {
+                        returns_std_scalar_or_string(&callee.body)
+                            && caller_carries_callee_as_data(&hop.caller.body, &callee.name)
+                    }))
         })
     {
         return false;
@@ -1192,11 +1194,63 @@ fn condition_is_weak(condition: &str) -> bool {
     }
 }
 
+/// Whether `body`'s declared return type is a std string or scalar
+/// (`&str`, `&'static str`, `String`, `char`, an integer or a float), so
+/// `format!`, `to_string`, `clone` and `+ "lit"` on the value run std code
+/// that carries data (#7549 review B3). A user type may carry a `Display`,
+/// `Clone`, `From` or `Add` impl that decides on the value, so it fails
+/// closed.
+fn returns_std_scalar_or_string(body: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast;
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let Some(ty) = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.ret_type())
+        .and_then(|ret| ret.ty())
+    else {
+        return false;
+    };
+    let text: String = ty
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    matches!(
+        text.as_str(),
+        "&str"
+            | "&'staticstr"
+            | "String"
+            | "char"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    )
+}
+
 /// Whether a hop caller hands its callee's value on as data, never as a
 /// decision (#7549 review). Allowlist, fail closed: the caller parses
 /// cleanly and does not return `bool`; its body calls only the callee, the
 /// wrappers `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
-/// argument-free methods `to_string`/`to_owned`/`clone`/`into`; its only
+/// argument-free methods `to_string`/`to_owned`/`clone`; its only
 /// operator is `+` with a string literal operand; its only macros are
 /// `format!` and `concat!`, whose tokens name only the callee, the caller's
 /// parameters and those methods; and it holds no branch, loop, early exit,
@@ -1208,7 +1262,7 @@ fn condition_is_weak(condition: &str) -> bool {
 fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
     use ra_ap_syntax::ast::{self, ArithOp, BinaryOp, HasArgList, HasName};
     use ra_ap_syntax::{AstNode, SyntaxKind};
-    const METHODS: [&str; 4] = ["to_string", "to_owned", "clone", "into"];
+    const METHODS: [&str; 3] = ["to_string", "to_owned", "clone"];
     const WRAPPERS: [&str; 5] = ["Some", "Ok", "Err", "String::from", "Box::new"];
     if callee.is_empty() {
         return false;
