@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-lives-and-is",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-lives-and-is.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 50
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testexception_lives_and_wraps_is",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return $balance - ($amount + 2);",
+        "mutated_line": "return $balance - ($amount + 2);",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: a withdrawal costs a fee of one",
+        "equivalence_review": "not equivalent: the fee doubles"
+      },
+      {
+        "replacement": "return $balance - ($amount - 1);",
+        "mutated_line": "return $balance - ($amount - 1);",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: a withdrawal costs a fee of one",
+        "equivalence_review": "not equivalent: the fee becomes a refund"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "lives_and { is(balance_after(10, 4), 5) } pins the fee of one, so either fee mutant fails. Spec cells: RIPR-SPEC-0064 lives_and.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-lives-and-is.json",
+    "sha256": "2d45343801be5b8ca0329cc53e1f3230f6b85d2314da763d15c716afaf3a3e8e",
+    "provenance": "producer"
+  }
+}

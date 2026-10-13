@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-test2-format-entry-like",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-format-entry-like.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_format",
+  "test_shape": "test2_like_prefix_regex",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return sprintf(\"%s %d\", $date, $amount);",
+        "mutated_line": "return sprintf(\"%s %d\", $date, $amount);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the sign is dropped"
+      },
+      {
+        "replacement": "return sprintf(\"%s %+d\", $date, -$amount);",
+        "mutated_line": "return sprintf(\"%s %+d\", $date, -$amount);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the sign flips"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "like(..., qr/^2026/) only checks the date prefix, so dropping or flipping the sign keeps it green. Spec cells: RIPR-SPEC-0064 Test2 like/weak_broad.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-format-entry-like.json",
+    "sha256": "6b8bd348a9a5e27216fd0873a8b105b80ea9d63b906e31c72a559b1ece2f99e9",
+    "provenance": "producer"
+  }
+}

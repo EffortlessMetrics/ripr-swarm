@@ -1,0 +1,58 @@
+{
+  "case_id": "perl-0235-ex14-helper-call",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-0235-ex14-helper-call.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 72
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_helper_call_relation",
+  "hard_case": "RIPR-SPEC-0235 example 14: the relation is a helper_call bound to the is() inside the test helper sub.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return $sum - (3 < @$items ? 5 : 0);",
+        "mutated_line": "return $sum - (3 < @$items ? 5 : 0);",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: three items earn the bundle discount",
+        "equivalence_review": "not equivalent: three items lose the discount"
+      },
+      {
+        "replacement": "return $sum - (2 <= @$items ? 5 : 0);",
+        "mutated_line": "return $sum - (2 <= @$items ? 5 : 0);",
+        "outcome": "tests_failed",
+        "failing_test": "t/bulk.t: two items do not",
+        "equivalence_review": "not equivalent: two items earn the discount"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The helper sub checks bundle_price on both sides of three items, so both mutants fail t/bulk.t. With the helper_call relation bound to that oracle the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex14-helper-call.json",
+    "sha256": "d9363fed9745c47b6046efebb474d1132b099e74a291d9fcf88702be4cac2417",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-testmore-bundle-helper-sub, then in relations where {\"test_id\": \"test:t/bulk.t\"} set {\"change_id\": \"$CHANGE_ID\", \"oracle_id\": \"oracle:t/bulk.t:is:490-528\", \"owner_id\": \"$CHANGE_OWNER\", \"reachability_hint\": \"reachable\", \"relation_kind\": \"helper_call\"}; in oracles where {\"oracle_id\": \"oracle:t/bulk.t:is:490-528\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; the packet fingerprint was recomputed."
+  }
+}

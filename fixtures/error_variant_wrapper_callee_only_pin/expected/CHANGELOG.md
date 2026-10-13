@@ -252,3 +252,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (20)
+
+Reason:
+RIPR-SPEC-0005: the shared reach-bearing relation rule (#5335 review) no longer credits owner-name/import/fixture affinity as reach; nothing invokes parse_summary so the honest class is no_static_path (was weakly_exposed via a substring name match)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
