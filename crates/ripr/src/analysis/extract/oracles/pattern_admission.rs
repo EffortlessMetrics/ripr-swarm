@@ -41,12 +41,73 @@ enum Reading {
 /// `None` when the pattern pins a value and the ordinary chain decides.
 pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClassification> {
     let (scrutinee, pattern) = asserted_pattern(line)?;
-    let (pattern, guard) = split_guard(&pattern);
+    pattern_pair_classification(&scrutinee, &pattern)
+}
+
+/// RIPR-SPEC-0231 rule 3 (#7715): whether some `matches!` invocation in
+/// `text` pins a value. A `matches!` nested in a call or closure
+/// (`xs.iter().any(|x| matches!(x, Some(_)))`), compared with a bool
+/// (`matches!(r, Ok(_)) == true`), or named only in a comment or string
+/// earns no exact credit unless its own pattern pins a value. An invocation
+/// this cannot read counts as pinning, which keeps today's reading.
+pub(super) fn some_matches_pins_a_value(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.match_indices("matches!").any(|(index, name)| {
+        let before = &masked[..index];
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            return false;
+        }
+        // A user macro (`custom::matches!`) is not the std pattern test, so
+        // it keeps today's reading.
+        if let Some(path) = before.trim_end().strip_suffix("::") {
+            let segment = path
+                .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .next()
+                .unwrap_or_default();
+            if !matches!(segment, "std" | "core") {
+                return true;
+            }
+        }
+        let after = index + name.len();
+        let Some((offset, '(' | '[' | '{')) = masked[after..]
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+        else {
+            return false;
+        };
+        super::arguments::delimited_contents_at(text, after + offset).is_none_or(|contents| {
+            match super::arguments::split_top_level_commas(&contents).as_slice() {
+                [scrutinee, pattern, ..] => {
+                    pattern_pair_classification(scrutinee, pattern).is_none()
+                }
+                _ => true,
+            }
+        })
+    })
+}
+
+/// Whether `text` is one complete `matches!` invocation whose pattern pins
+/// no value (`matches!(r, Ok(_))`), as RIPR-SPEC-0231 rule 3 reads it.
+pub(super) fn is_unpinned_pattern(text: &str) -> bool {
+    complete_macro_arguments(text, "matches!").is_some_and(|arguments| {
+        matches!(arguments.as_slice(), [scrutinee, pattern, ..]
+            if pattern_pair_classification(scrutinee, pattern).is_some())
+    })
+}
+
+/// The reading a `matches!` with this scrutinee and pattern earns, or `None`
+/// when the pattern pins a value and the ordinary chain decides.
+fn pattern_pair_classification(scrutinee: &str, pattern: &str) -> Option<OracleClassification> {
+    let (pattern, guard) = split_guard(pattern);
     // A guard that equates the scrutinee or a pattern binding with a value
     // pins that value itself (`_ if value == 2`, RIPR-SPEC-0108's
     // runtime-controlled fixtures), so the ordinary chain keeps its reading
     // (decision 7).
-    if guard.is_some_and(|guard| guard_pins_value(guard, &scrutinee, pattern)) {
+    if guard.is_some_and(|guard| guard_pins_value(guard, scrutinee, pattern)) {
         return None;
     }
     let guarded = guard.is_some();
@@ -58,8 +119,9 @@ pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClass
 }
 
 /// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, or
-/// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`
-/// or `ensure!`. A compound condition is not a pattern assertion.
+/// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`,
+/// `prop_assert!` or `ensure!`. A compound condition is not a pattern
+/// assertion.
 fn asserted_pattern(line: &str) -> Option<(String, String)> {
     let pair = |arguments: Vec<String>| match arguments.as_slice() {
         [scrutinee, pattern] => Some((scrutinee.clone(), pattern.clone())),
@@ -71,7 +133,7 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
     {
         return pair(arguments);
     }
-    let condition = ["assert!", "debug_assert!", "ensure!"]
+    let condition = ["assert!", "debug_assert!", "prop_assert!", "ensure!"]
         .into_iter()
         .find_map(|name| complete_macro_arguments(line, name)?.into_iter().next())?;
     let mut expression = condition.trim();

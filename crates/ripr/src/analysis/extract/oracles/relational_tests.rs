@@ -445,6 +445,46 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), String> {
+    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    for (text, expected) in [
+        // #7715: `prop_assert!` reads its pattern like `assert!` does.
+        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
+        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
+        // A `matches!` nested in a closure earns nothing from its text alone.
+        (
+            "assert!(ready && matches!(r, Ok(_)) && xs.iter().any(|x| matches!(x, Some(_))));",
+            &weak,
+        ),
+        ("assert!(xs.iter().any(|x| matches!(x, Some(_))));", &weak),
+        // `matches!` named only in a comment or string is no pattern.
+        (
+            "assert!(ready /* matches! */ && matches!(r, Ok(_)));",
+            &weak,
+        ),
+        ("assert!(ready, \"matches!(r, Ok(3))\");", &weak),
+        // Comparing an unpinned pattern with a bool pins nothing.
+        ("assert!(matches!(r, Ok(_)) == true);", &weak),
+        ("ensure!(matches!(r, Ok(_)) == true);", &weak),
+        // Controls: a pattern that pins keeps exact credit in every form.
+        ("prop_assert!(matches!(r, Ok(3)));", &exact),
+        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
+        // Rule 1 already reads a compared pattern nested in a chain as not
+        // positive, whatever its pattern.
+        ("assert!(ready && matches!(r, Ok(3)) == true);", &weak),
+        ("ensure!(matches!(r, Ok(3)) == true);", &exact),
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(flag == true && matches!(r, Ok(_)));", &exact),
+    ] {
+        require_classification(text, expected)?;
+    }
+    Ok(())
+}
+
 fn require_classification(
     text: &str,
     expected: &(OracleKind, OracleStrength),
