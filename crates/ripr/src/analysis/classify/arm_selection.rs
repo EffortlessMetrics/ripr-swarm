@@ -62,6 +62,10 @@ pub(in crate::analysis) struct ArmSelector {
     /// name is the scrutinee's type. `in_workspace` reads that enum's
     /// variants for uncased names (#7543).
     bare_scrutinee_type: Option<String>,
+    /// Whether the owner's impl type is `bare_scrutinee_type`, so `Self::A`
+    /// names the scrutinee's type. In `impl Router`, a match on `m: Method`
+    /// may compare `Self::GET`, a `Router` constant, by value.
+    self_is_scrutinee_type: bool,
     binding: ScrutineeBinding,
     owner: String,
     method: bool,
@@ -248,6 +252,13 @@ impl ArmSelector {
                 let bare = declared.type_name.clone().filter(|_| !declared.qualified);
                 (ScrutineeBinding::Parameter(index), declared.type_name, bare)
             };
+        let self_is_scrutinee_type = match &owner.impl_context {
+            crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
+                let impl_type = self_type.split('<').next().unwrap_or(self_type).trim();
+                is_identifier(impl_type) && bare_scrutinee_type.as_deref() == Some(impl_type)
+            }
+            _ => false,
+        };
         if let crate::analysis::facts::FunctionImplContext::Impl { self_type } = &owner.impl_context
             && let Some(type_name) = self_type
                 .split('<')
@@ -265,6 +276,7 @@ impl ArmSelector {
             scrutinee,
             scrutinee_type,
             bare_scrutinee_type,
+            self_is_scrutinee_type,
             declared_variants: None,
             binding,
             owner: owner.name.clone(),
@@ -296,10 +308,7 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
-        self.declared_variants = owner_source.as_deref().and_then(|source| {
-            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
-        });
-        self.resolve_uncased_variants();
+        self.resolve_uncased_variants(owner_source.as_deref());
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
@@ -345,7 +354,12 @@ impl ArmSelector {
     /// Each uncased pattern name becomes a `Variant` when the scrutinee's
     /// declared enum lists it under its own name or `Self`, and `Opaque`
     /// otherwise.
-    fn resolve_uncased_variants(&mut self) {
+    /// Reads each uncased name (`Kind::A`) as a variant or as unreadable,
+    /// from the enum the owner's file declares (#7543).
+    fn resolve_uncased_variants(&mut self, owner_source: Option<&str>) {
+        self.declared_variants = owner_source.and_then(|source| {
+            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
+        });
         let resolve = |heads: &mut Vec<PatternHead>, selector: &Self| {
             for head in heads.iter_mut() {
                 *head = selector.resolve_head(std::mem::replace(head, PatternHead::Opaque));
@@ -376,8 +390,11 @@ impl ArmSelector {
         else {
             return head;
         };
-        let names_scrutinee_type =
-            qualifier == "Self" || self.bare_scrutinee_type.as_deref() == Some(qualifier.as_str());
+        let names_scrutinee_type = if qualifier == "Self" {
+            self.self_is_scrutinee_type
+        } else {
+            self.bare_scrutinee_type.as_deref() == Some(qualifier.as_str())
+        };
         if names_scrutinee_type
             && self
                 .declared_variants
@@ -876,23 +893,39 @@ fn may_name_constant(source: &str, name: &str) -> bool {
 }
 
 /// The variant names of the one enum named `type_name` that `source`
-/// declares (#7543). `None` when the file declares no such enum or more
-/// than one, declares another item of that name, or imports the name (an
-/// import may bind a different type), so an uncased `Kind::A` stays
-/// unreadable unless the file itself shows `A` is a variant of `Kind`.
+/// declares (#7543). `None` when the file may bind that name to anything
+/// else: it declares no such enum or more than one, declares another item
+/// of that name, imports the name, glob-imports a module (which may bring
+/// a same-named struct with constants), or calls an item macro (whose
+/// output is not read). So an uncased `Kind::A` stays unreadable unless the
+/// file itself shows `A` is a variant of `Kind`.
 fn declared_enum_variants(
     source: &str,
     type_name: &str,
 ) -> Option<std::collections::BTreeSet<String>> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
-    let imported = flattened_use_paths(source).iter().any(|import| {
-        let last = import.path.rsplit("::").next().unwrap_or("");
-        import
-            .alias
-            .as_deref()
-            .map_or(last == type_name, |alias| alias == type_name)
+    // Cheap text test before the parse: most owner files declare no enum
+    // of the scrutinee's type at all.
+    let masked = mask_comments_and_strings(source);
+    let declares_enum = whole_word_offsets(&masked, type_name)
+        .into_iter()
+        .any(|offset| masked[..offset].trim_end().ends_with("enum"));
+    if !declares_enum {
+        return None;
+    }
+    let may_rebind = flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let mut last = segments.next().unwrap_or("");
+        if last == "self" {
+            last = segments.next().unwrap_or("");
+        }
+        match &import.alias {
+            Some(alias) => alias == type_name,
+            None if last == "*" => !segments.next().is_some_and(is_variant_name),
+            None => last == type_name,
+        }
     });
-    if imported {
+    if may_rebind {
         return None;
     }
     let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
@@ -917,6 +950,11 @@ fn declared_enum_variants(
             || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+            || (ast::MacroCall::can_cast(node.kind())
+                && node.parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                }))
         {
             return None;
         }
@@ -940,7 +978,9 @@ fn input_head(input: &str) -> PatternHead {
 }
 
 struct VariantParts<'a> {
-    /// The segment before the name (`Kind` in `a::Kind::A`), if any.
+    /// The whole path before the name (`a::Kind` in `a::Kind::A`), if
+    /// any, so only a one-segment qualifier can equal the scrutinee's bare
+    /// type: `presets::Kind` may be another type than the owner's `Kind`.
     qualifier: Option<&'a str>,
     name: &'a str,
     /// The payload text without its delimiters.
@@ -963,7 +1003,7 @@ fn variant_parts(text: &str) -> Option<VariantParts<'_>> {
         return None;
     }
     let (name, qualifier) = match segments.as_slice() {
-        [.., qualifier, name] => (*name, Some(*qualifier)),
+        [.., _, name] => (*name, path.rsplit_once("::").map(|(prefix, _)| prefix)),
         [name] => (*name, None),
         [] => return None,
     };
@@ -1886,15 +1926,18 @@ mod tests {
         Ok(())
     }
 
-    /// #7543: what `in_workspace` does with the owner's file for uncased
-    /// variant names.
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
         let mut selector = selector.clone();
-        selector.declared_variants = source.and_then(|source| {
-            declared_enum_variants(source, selector.bare_scrutinee_type.as_deref()?)
-        });
-        selector.resolve_uncased_variants();
+        selector.resolve_uncased_variants(source);
         selector
+    }
+
+    fn selection_of(selector: &ArmSelector, owner_call: &str) -> Option<ArmSelection> {
+        selector
+            .observed_inputs(&test_with(&format!(
+                "fn t() {{\n    assert_eq!({owner_call}, 0);\n}}\n"
+            )))
+            .map(|observed| observed.selection)
     }
 
     const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
@@ -1904,11 +1947,7 @@ mod tests {
         let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
             .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
         let judged = |source: Option<&str>, input: &str| {
-            resolve_with(&selector, source)
-                .observed_inputs(&test_with(&format!(
-                    "fn t() {{\n    assert_eq!(f({input}), 0);\n}}\n"
-                )))
-                .map(|observed| observed.selection)
+            selection_of(&resolve_with(&selector, source), &format!("f({input})"))
         };
         let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
         assert_eq!(
@@ -1919,21 +1958,39 @@ mod tests {
             judged(Some(&declared), "Kind::B"),
             Some(ArmSelection::Selects)
         );
-        // An unread owner file, or one that does not show `A` is a variant
-        // of this `Kind`, leaves `Kind::A` unreadable: it may be a constant.
+        // Every source below declares `enum Kind { A, .. }` too, except the
+        // first two, so each refusal is what keeps `Kind::A` unreadable: it
+        // may be a constant, which a pattern compares by value.
         for source in [
             None,
             Some(KIND.to_string()),
             Some(format!(
-                "pub struct Kind(u8);\nimpl Kind {{\n    pub const A: Kind = Kind(0);\n}}\n{KIND}"
+                "pub enum Kind {{ A, B }}\npub struct Kind(u8);\n{KIND}"
             )),
-            Some(format!("use other::Kind;\nenum Kind {{ A, B }}\n{KIND}")),
-            Some(format!("use other::Thing as Kind;\n{KIND}")),
             Some(format!(
-                "mod a {{\n    enum Kind {{ A }}\n}}\nmod b {{\n    enum Kind {{ B }}\n}}\n{KIND}"
+                "pub enum Kind {{ A, B }}\npub union Kind {{ a: u8 }}\n{KIND}"
+            )),
+            Some(format!(
+                "pub enum Kind {{ A, B }}\npub trait Kind {{}}\n{KIND}"
+            )),
+            Some(format!("enum Kind {{ A, B }}\ntype Kind = u8;\n{KIND}")),
+            Some(format!("use other::Kind;\nenum Kind {{ A, B }}\n{KIND}")),
+            Some(format!(
+                "use other::Thing as Kind;\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "use other::Kind::{{self}};\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "use crate::flags::*;\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "bitflags! {{ struct Kind: u8 {{ const A = 1; }} }}\nmod legacy {{\n    pub enum Kind {{ A, B }}\n}}\n{KIND}"
+            )),
+            Some(format!(
+                "mod a {{\n    enum Kind {{ A }}\n}}\nmod b {{\n    enum Kind {{ A, B }}\n}}\n{KIND}"
             )),
             Some(format!("enum Kind {{ Alpha, B }}\n{KIND}")),
-            Some(format!("enum Kind {{ A, B }}\ntype Kind = u8;\n{KIND}")),
         ] {
             assert_eq!(
                 judged(source.as_deref(), "Kind::A"),
@@ -1941,10 +1998,89 @@ mod tests {
                 "{source:?}"
             );
         }
+        // A variant glob of the enum itself binds no type name.
+        assert_eq!(
+            judged(Some(&format!("use Kind::*;\n{declared}")), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
         // Another type's uncased name is never this enum's variant.
         assert_eq!(
             judged(Some(&declared), "Other::A"),
             Some(ArmSelection::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_uncased_pattern_reads_only_through_the_bare_scrutinee_type() -> Result<(), String> {
+        let declared = "pub enum Method {\n    GET,\n    POST,\n    PUT,\n}\n";
+        let judged = |arms: &str, input: &str| -> Result<Option<ArmSelection>, String> {
+            let body = format!(
+                "pub fn f(m: Method) -> i32 {{\n    match m {{\n{arms}\n        _ => 0,\n    }}\n}}\n"
+            );
+            let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
+                .ok_or_else(|| "premise: the arm reads its scrutinee from m".to_string())?;
+            let source = format!("{declared}{body}");
+            Ok(selection_of(
+                &resolve_with(&selector, Some(&source)),
+                &format!("f({input})"),
+            ))
+        };
+        // A multi-letter uncased variant.
+        assert_eq!(
+            judged("        Method::GET => 1,", "Method::GET")?,
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged("        Method::GET => 1,", "Method::POST")?,
+            Some(ArmSelection::Selects)
+        );
+        // `Other::GET` and `presets::Method::GET` may be constants of other
+        // types, which could equal `Method::POST`.
+        for earlier in [
+            "        Other::GET => 1,",
+            "        presets::Method::GET => 1,",
+        ] {
+            assert_eq!(
+                judged(earlier, "Method::POST")?,
+                Some(ArmSelection::Unknown),
+                "{earlier}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn self_names_the_scrutinee_enum_only_in_its_own_impl() -> Result<(), String> {
+        let judged = |impl_type: &str, body: &str, input: &str| -> Result<_, String> {
+            let mut function = owner(body, "f");
+            function.impl_context = crate::analysis::facts::FunctionImplContext::Impl {
+                self_type: impl_type.to_string(),
+            };
+            let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &function)
+                .ok_or_else(|| "premise: the arm reads its scrutinee".to_string())?;
+            let source = format!("pub enum Kind {{ A, B }}\nimpl {impl_type} {{\n{body}}}\n");
+            Ok(selection_of(&resolve_with(&selector, Some(&source)), input))
+        };
+        let on_parameter = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
+        // In `impl Router`, `Self::A` is a `Router` constant: it may equal
+        // `Kind::B`, so a `Kind::B` input is not proven to reach `_`.
+        assert_eq!(
+            judged("Router", on_parameter, "Router::f(Kind::B)")?,
+            Some(ArmSelection::Unknown)
+        );
+        assert_eq!(
+            judged("Kind", on_parameter, "Kind::f(Kind::B)")?,
+            Some(ArmSelection::Selects)
+        );
+        let on_receiver = "pub fn f(self) -> i32 {\n    match self {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
+        assert_eq!(
+            judged("Kind", on_receiver, "Kind::A.f()")?,
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged("Kind", on_receiver, "Kind::B.f()")?,
+            Some(ArmSelection::Selects)
         );
         Ok(())
     }
@@ -1955,23 +2091,52 @@ mod tests {
         let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
             .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
         let source = format!("pub enum Kind {{ A, B }}\n{body}");
-        let observed = resolve_with(&selector, Some(&source))
-            .observed_inputs(&test_with("fn t() {\n    assert_eq!(f(Kind::A), 1);\n}\n"))
-            .map(|observed| observed.selection);
-        assert_eq!(observed, Some(ArmSelection::Unknown));
+        assert_eq!(
+            selection_of(&resolve_with(&selector, Some(&source)), "f(Kind::B)"),
+            Some(ArmSelection::Unknown)
+        );
         Ok(())
     }
 
     #[test]
-    fn a_changed_uncased_variant_arm_reads_through_the_declared_enum() -> Result<(), String> {
-        let body = "pub fn f(k: Kind) -> Kind {\n    match k {\n        Kind::A => Kind::B,\n        Kind::B => Kind::A,\n    }\n}\n";
-        let selector =
-            ArmSelector::establish(&arm_probe("Kind::B => Kind::A,", 4), &owner(body, "f"))
-                .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
-        let source = format!("pub enum Kind {{ A, B }}\n{body}");
-        let selector = resolve_with(&selector, Some(&source));
-        assert!(selector.assertion_selects("assert_eq!(f(Kind::B), Kind::A);"));
-        assert!(!selector.assertion_selects("assert_eq!(f(Kind::A), Kind::B);"));
+    fn a_changed_uncased_pattern_resolves_both_sides() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A | Kind::B => 1,\n        _ => 0,\n    }\n}\n";
+        let source = format!("pub enum Kind {{ A, B, C, D }}\n{body}");
+        let changed = |before: &str| -> Result<ArmSelector, String> {
+            let mut probe = arm_probe("Kind::A | Kind::B => 1,", 3);
+            probe.before = Some(before.to_string());
+            ArmSelector::establish(&probe, &owner(body, "f"))
+                .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())
+        };
+        let selector = changed("Kind::A | Kind::C => 1,")?;
+        let resolved = resolve_with(&selector, Some(&source));
+        // Neither pattern takes `Kind::D`; the old one took `Kind::C`.
+        assert_eq!(
+            selection_of(&resolved, "f(Kind::D)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            selection_of(&resolved, "f(Kind::C)"),
+            Some(ArmSelection::Unknown)
+        );
+        assert_eq!(
+            selection_of(&resolve_with(&selector, None), "f(Kind::D)"),
+            Some(ArmSelection::Unknown)
+        );
+        // An original pattern that cannot be read stays unreadable.
+        let unreadable = changed("Kind::A => 1, Kind::C => 1,")?;
+        if unreadable.changed_from != Some(None) {
+            return Err(format!(
+                "premise: a two-arm old line is unreadable, got {:?}",
+                unreadable.changed_from
+            ));
+        }
+        let resolved = resolve_with(&unreadable, Some(&source));
+        assert_eq!(resolved.changed_from, Some(None));
+        assert_eq!(
+            selection_of(&resolved, "f(Kind::D)"),
+            Some(ArmSelection::Unknown)
+        );
         Ok(())
     }
 
