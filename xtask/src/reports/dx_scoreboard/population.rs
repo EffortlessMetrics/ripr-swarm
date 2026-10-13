@@ -2,7 +2,7 @@
 //! not fresh analyzer or runtime mutation measurements.
 
 use super::super::verdict_corpus::{self, CaseRow};
-use super::{MetricDef, allowed_worsening, round, worsening};
+use super::{MetricDef, allowed_worsening, round};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -297,6 +297,11 @@ pub(super) fn compare(def: &MetricDef, row: &Value, base_row: &Value) -> Value {
     for (id, case) in &before {
         if let Some(current) = now.get(id) {
             if case.definition_sha256 == current.definition_sha256 {
+                if rate != "contradiction_rate" && case.denominator != current.denominator {
+                    return failure(format!(
+                        "eligible denominator changed for unchanged case `{id}`"
+                    ));
+                }
                 common_before.push(*case);
                 common_now.push(*current);
             } else {
@@ -346,6 +351,30 @@ pub(super) fn compare(def: &MetricDef, row: &Value, base_row: &Value) -> Value {
     result["delta"] = json!(round(fraction(&new) - fraction(&old)));
     result["current"] = json!(current);
     result["allowed_worsening"] = json!(round(allowed));
-    result["regressed"] = json!(worsening(def, fraction(&old), fraction(&new)) > allowed);
+    // Cross-multiply integer contributions before applying the existing
+    // margins. Subtracting floating fractions falsely regresses an exactly
+    // allowed change such as 3/50 -> 4/50 with a 0.02 floor.
+    let sum = |cases: &[&Contribution]| -> (u128, u128) {
+        (
+            cases.iter().map(|case| u128::from(case.numerator)).sum(),
+            cases.iter().map(|case| u128::from(case.denominator)).sum(),
+        )
+    };
+    let ((bn, bd), (cn, cd)) = (sum(&common_before), sum(&common_now));
+    let before = bn * cd;
+    let after = cn * bd;
+    let worsening = if def.direction == "higher_is_better" {
+        before.saturating_sub(after)
+    } else {
+        after.saturating_sub(before)
+    };
+    let floor = def.regression_floor * (bd * cd) as f64;
+    let percentage = def.regression_pct * before as f64 / 100.0;
+    let scaled_allowed = if def.regression_additive {
+        floor + percentage
+    } else {
+        floor.max(percentage)
+    };
+    result["regressed"] = json!(worsening as f64 > scaled_allowed);
     result
 }

@@ -266,7 +266,8 @@ agreement. It loads and hashes each corpus once for all selected rates.
 
 The whole-corpus value still determines the absolute target status. Regression
 compares fractions over cases with the same ID and scoring-definition hash in
-both observations, using the existing margin and unrounded fractions. JSON
+both observations, using the existing margins and integer cross-products before scaling the margin,
+so floating subtraction does not turn an exactly allowed change into regression. JSON
 `baseline.common` records both fractions and case count; `new_cases`,
 `removed_cases`, `changed_definitions`, `added` and `removed` report composition
 separately. Markdown names both the common-case comparison and the additions.
@@ -290,12 +291,12 @@ revision
 `0b038c45bb6b2fa25faf8708c57cf41e58522e6d`. Removing the two added sample fields
 reconstructs the original baseline bytes (SHA256
 `2df8bc3f48d6ec1384464d7baacfe8e31a24553dcfc019c6b4f9dfbacf667ea5`). All original
-values, source details, revision and thresholds are preserved. This test witness
-does not replace the operational baseline. A live metadata-only migration must
-verify its exact original observation before enriching it; a rate refresh needs
-its own policy decision and attributable observation provenance. #7555 proposed
-a conflicting refresh while this repair was in progress, so this PR leaves
-`metrics/dx-scoreboard/baseline.json` untouched. The later
+values, source details, revision and thresholds are preserved. The same evidence enriches the five original Rust operational samples; removing
+those added fields likewise restores every original byte. The public-proof
+scoreboard copy receives only that metadata. A rate refresh needs its own policy
+decision and attributable observation provenance. #7555 proposed a conflicting
+refresh, then returned to Draft and held further baseline edits pending that
+decision; this repair accepts no refreshed values. The later
 `3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
 not a replacement. Historical per-case contradiction denominators are absent
 and were not reconstructed. Legacy TypeScript/Python observations still lack

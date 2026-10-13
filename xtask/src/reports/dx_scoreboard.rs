@@ -82,7 +82,7 @@ target/ripr/reports/dx-scoreboard.{json,md}.
   --ingest <file>     merge metrics measured by another harness
   --baseline <file>   compare against an earlier dx-scoreboard.json
   --gate              exit nonzero when a metric regresses past its margin
-                      or an instrument fails";
+                      or an instrument or case comparison fails";
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Config {

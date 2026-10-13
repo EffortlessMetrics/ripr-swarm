@@ -502,3 +502,58 @@ fn corpus_producer_fingerprints_diff_projection_and_truth_but_ignores_annotation
     fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(())
 }
+
+#[test]
+fn exact_margin_passes_and_one_more_retained_case_fails() -> Result<(), String> {
+    assert_eq!(
+        report(cases(50, 3), cases(50, 4))?["gate"]["status"],
+        "pass"
+    );
+    assert_eq!(
+        report(cases(50, 3), cases(50, 5))?["gate"]["status"],
+        "fail"
+    );
+    assert_eq!(
+        report(cases(50, 0), cases(50, 1))?["gate"]["status"],
+        "pass"
+    );
+    assert_eq!(
+        report(cases(50, 0), cases(50, 2))?["gate"]["status"],
+        "fail"
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_eligibility_without_a_changed_definition_is_incomparable() -> Result<(), String> {
+    let mut base = cases(4, 1);
+    base.rate = "false_actionable_rate".to_string();
+    base.cases[3].denominator = 0;
+    let mut current = base.clone();
+    current.cases[3].denominator = 1;
+    let report = report(base, current)?;
+    assert_eq!(report["gate"]["status"], "fail");
+    assert!(
+        gate_failure_message(&report).contains("eligible denominator changed for unchanged case")
+    );
+    Ok(())
+}
+
+#[test]
+fn operational_migration_and_public_copy_preserve_original_values_and_identity()
+-> Result<(), String> {
+    let live: Value = serde_json::from_str(include_str!(
+        "../../../../metrics/dx-scoreboard/baseline.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    let witness: Value = serde_json::from_str(include_str!(
+        "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    assert_eq!(live, witness);
+    assert_eq!(
+        include_str!("../../../../metrics/dx-scoreboard/baseline.json"),
+        include_str!("../../../../metrics/public-proof/dx-scoreboard.json")
+    );
+    Ok(())
+}
