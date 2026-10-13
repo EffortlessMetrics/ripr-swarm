@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-transfer-boundary-pair",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-transfer-boundary-pair.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testexception_throws_and_lives_pair",
+  "hard_case": "The boundary is pinned by a pair: throws_ok one over the balance and lives_ok at the balance. Neither oracle alone is exact.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "if ($from <= $amount) {",
+        "mutated_line": "if ($from <= $amount) {",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: the whole balance may move",
+        "equivalence_review": "not equivalent: moving the whole balance dies"
+      },
+      {
+        "replacement": "if ($from + 1 < $amount) {",
+        "mutated_line": "if ($from + 1 < $amount) {",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: one over the balance dies",
+        "equivalence_review": "not equivalent: one over the balance is allowed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Moving the comparison either way breaks one side of the pair. Spec cells: RIPR-SPEC-0064 throws_ok, lives_ok.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-transfer-boundary-pair.json",
+    "sha256": "1c0ac48a7d7b7c2e9d2c5648c67fdf43de497c77e0072f5102be0a0671be71db",
+    "provenance": "producer"
+  }
+}

@@ -1,0 +1,6 @@
+use spec0229_8a::f;
+
+#[test]
+fn five_is_a_digit() {
+    assert_eq!(f(5), "digit");
+}

@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0229-unselected-wildcard-arm",
+  "subject_id": "authored-spec0229-4",
+  "diff": "cases/spec0229-unselected-wildcard-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_selects_earlier_arm",
+  "hard_case": "Measured gap against RIPR-SPEC-0229 example 4: the class matches (weakly_exposed) but ripr names no missing discriminator `_`, because arm_selection's is_variant_name refuses single-letter variant names such as Kind::A as ambiguous, so the earlier Kind::A arm is not provably matched and selection of `_` is undecided. With CamelCase variants the same crate names `_`.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "_ => 2,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: f(Kind::B) returns 2 instead of 0; the only test calls f(Kind::A), which takes the Kind::A arm"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/it.rs pins f(Kind::A) to 1; Kind::A matches the earlier Kind::A arm, so by first match no test selects the changed _ arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 4. ripr reads weakly_exposed, the example's class, but names no missing discriminator `_`.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#4"
+  ]
+}
