@@ -2388,6 +2388,80 @@ mod tests {
     }
 
     #[test]
+    fn worktree_loader_carries_the_revisions_it_already_resolved() -> std::io::Result<()> {
+        let dir = unique_fixture_root("worktree-loaded-revisions")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // A second commit makes `HEAD~1` a resolvable explicit base.
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+
+        let loaded = load_worktree_diff_with_effective_base_core(&dir, Some("HEAD~1"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+        assert_eq!(loaded.effective_base.as_deref(), Some("HEAD~1"));
+        let expected_base = run_git_checked(
+            &dir,
+            &["rev-parse", "--verify", "--quiet", "HEAD~1^{commit}"],
+        )?;
+        assert_eq!(
+            loaded.resolved_base_commit.as_deref(),
+            Some(expected_base.as_str()),
+            "the loader must keep the commit id its own base verification produced; dropping              it would silently fall back to a second identical probe (#7716)"
+        );
+        // Linear history: the diff origin IS the base tip, and it must be
+        // the carried value, not a fresh derivation.
+        assert_eq!(
+            loaded.merge_base_origin.as_deref(),
+            Some(expected_base.as_str()),
+            "the worktree origin (the merge base the diff actually starts from) must be              carried for the analyzed-revisions naming (#7716)"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_analyzed_revisions_prefers_the_loader_ids_over_fresh_probes() -> std::io::Result<()>
+    {
+        let dir = unique_fixture_root("revisions-prefer-loaded")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        let real_head = run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "HEAD"])?;
+
+        // Fabricated loaded ids must win over what a fresh probe of this
+        // repository would return: the naming names the diff's own inputs,
+        // not a re-derivation that could diverge from them (#7716).
+        let fabricated_base = "000000000000000000000000000000000000000a";
+        let fabricated_merge_base = "000000000000000000000000000000000000000b";
+        let revisions = resolve_analyzed_revisions(
+            &dir,
+            "HEAD~1",
+            true,
+            None,
+            Some(fabricated_base),
+            Some(fabricated_merge_base),
+        );
+        assert_eq!(revisions.base_commit.as_deref(), Some(fabricated_base));
+        assert_eq!(
+            revisions.merge_base_commit.as_deref(),
+            Some(fabricated_merge_base)
+        );
+        // `HEAD` is never carried by the loader, so it always resolves fresh.
+        assert_eq!(revisions.head_commit.as_deref(), Some(real_head.as_str()));
+
+        // An empty loaded value is unusable and falls back to the probe.
+        let fallback = resolve_analyzed_revisions(&dir, "HEAD", true, None, Some(""), None);
+        assert_eq!(fallback.base_commit.as_deref(), Some(real_head.as_str()));
+        // And the naming contract survives the fallback path too: on linear
+        // history the merge base equals the base tip, so the field stays
+        // absent rather than repeating the base commit.
+        assert_eq!(fallback.merge_base_commit, None);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn resolve_effective_base_core_types_an_unresolvable_base_structurally() -> std::io::Result<()>
     {
         use crate::core_error::CheckFailureKind;
