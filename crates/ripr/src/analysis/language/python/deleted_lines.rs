@@ -22,6 +22,9 @@ use std::ops::RangeInclusive;
 pub(super) struct OldSideRanges<'a> {
     pub(super) docstrings: &'a [RangeInclusive<usize>],
     pub(super) imports: &'a [RangeInclusive<usize>],
+    /// The old file, rebuilt from the diff; `None` when the diff and the
+    /// candidate file disagree.
+    pub(super) source: Option<&'a str>,
 }
 
 /// The candidate source of the changed file, when it was read.
@@ -58,7 +61,7 @@ pub(super) fn deleted_line_findings(
     }
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.
-    let continuations = continuation_lines(changed, new_source, |removed| {
+    let continuations = continuation_lines(changed, old_side.source, |removed| {
         !paired.contains(&removed.line)
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
@@ -306,7 +309,7 @@ fn indent_width(text: &str) -> usize {
 /// the deletion's record and the rest of that statement are fragments.
 fn continuation_lines(
     changed: &ChangedFile,
-    new_source: NewSource<'_>,
+    old_source: Option<&str>,
     is_behavior: impl Fn(&ChangedLine) -> bool,
 ) -> BTreeSet<usize> {
     if changed.removed_lines.is_empty() {
@@ -314,7 +317,7 @@ fn continuation_lines(
     }
     let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
     by_old_line.sort_by_key(|line| line.line);
-    let old_states = old_states_before_each_line(changed, new_source);
+    let old_states = states_before_each_line(old_source);
     let mut continuations = BTreeSet::new();
     let mut state = StatementState::default();
     let mut previous_line: Option<usize> = None;
@@ -353,44 +356,17 @@ fn continuation_lines(
 }
 
 /// The statement state at the start of each old-file line, by 0-based
-/// index: entry `i` is the state after old lines `1..=i`. The old file is
-/// rebuilt from the candidate: its kept lines (every candidate line the diff
-/// did not add) fill the old positions the removed lines leave, in order. So
-/// a bracket or string that only the candidate opens never reaches a run.
-fn old_states_before_each_line(
-    changed: &ChangedFile,
-    new_source: NewSource<'_>,
-) -> Vec<StatementState> {
-    let Some(source) = new_source else {
+/// index: entry `i` is the state after old lines `1..=i`. Without the old
+/// file every run starts outside any statement, as a run of its own.
+fn states_before_each_line(old_source: Option<&str>) -> Vec<StatementState> {
+    let Some(source) = old_source else {
         return Vec::new();
     };
-    let added: BTreeSet<usize> = changed.added_lines.iter().map(|line| line.line).collect();
-    let removed: BTreeMap<usize, &str> = changed
-        .removed_lines
-        .iter()
-        .map(|line| (line.line, line.text.as_str()))
-        .collect();
-    let mut kept = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| !added.contains(&(index + 1)))
-        .map(|(_, text)| text);
     let mut states = vec![StatementState::default()];
     let mut state = StatementState::default();
-    let last_removed = removed.keys().next_back().copied().unwrap_or(0);
-    let mut old_line = 1;
-    loop {
-        let text = match removed.get(&old_line) {
-            Some(text) => *text,
-            None => match kept.next() {
-                Some(text) => text,
-                None if old_line <= last_removed => "",
-                None => break,
-            },
-        };
+    for text in source.lines() {
         state = state.after(text);
         states.push(state);
-        old_line += 1;
     }
     states
 }
