@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5f23af7..f3526eb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,7 +21,7 @@
+ }
+ 
+ pub fn total(lines: &[Line]) -> u64 {
+-    lines.iter().map(|l| l.cents).sum::<u64>() + 50
++    lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2
+ }
+ 
+ pub fn discount(cents: u64) -> u64 {

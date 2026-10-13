@@ -1,0 +1,81 @@
+//! Small helpers tested with rstest: `#[case]` tables, a `#[fixture]`
+//! injected account, and a `#[values]` matrix with a range-only assert.
+
+pub fn scale(x: u32) -> u32 {
+    x * 2
+}
+
+pub fn is_adult(age: u32) -> bool {
+    age >= 18
+}
+
+pub fn clamp_pct(v: u32) -> u32 {
+    if v > 100 { 100 } else { v }
+}
+
+pub struct Account {
+    balance: u64,
+}
+
+impl Account {
+    pub fn open(initial: u64) -> Self {
+        Account { balance: initial }
+    }
+
+    pub fn withdraw(&mut self, amount: u64) -> bool {
+        if amount > self.balance {
+            return false;
+        }
+        self.balance -= amount;
+        true
+    }
+
+    pub fn balance(&self) -> u64 {
+        self.balance
+    }
+
+    pub fn monthly_fee(&self) -> u64 {
+        self.balance / 20
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::{fixture, rstest};
+
+    #[rstest]
+    #[case(2, 4)]
+    #[case(5, 10)]
+    fn scale_cases(#[case] input: u32, #[case] expected: u32) {
+        assert_eq!(scale(input), expected);
+    }
+
+    #[rstest]
+    #[case::child(10, false)]
+    #[case::grown(30, true)]
+    fn adult_cases_skip_boundary(#[case] age: u32, #[case] expected: bool) {
+        assert_eq!(is_adult(age), expected);
+    }
+
+    #[fixture]
+    fn account() -> Account {
+        Account::open(100)
+    }
+
+    #[rstest]
+    fn withdraw_from_fixture(mut account: Account) {
+        assert!(account.withdraw(30));
+        assert_eq!(account.balance(), 70);
+    }
+
+    #[rstest]
+    fn fee_from_fixture(account: Account) {
+        assert_eq!(account.monthly_fee(), 5);
+    }
+
+    #[rstest]
+    fn clamp_stays_in_range(#[values(0, 50, 200)] v: u32) {
+        assert!(clamp_pct(v) <= 100);
+    }
+}

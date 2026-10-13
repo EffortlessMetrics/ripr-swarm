@@ -45,6 +45,7 @@ mod fallible_check;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+use super::call_identity::{CallTarget, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
@@ -63,9 +64,10 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
-    attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
-    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    parse_clean_source_file, pattern_pins, returns_leave_the_function, trusted_macro_binding_sites,
+    attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
+    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
+    owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -97,6 +99,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
+    /// Same-named module-level rivals in the owner's package, settled per
+    /// test by the call's spelled path (#6544). `None` when there are none.
+    identity: Option<OwnerCallIdentity>,
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
@@ -429,7 +434,7 @@ impl OwnerPinSyntax {
         !matches!(
             probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) || !is_bare_assert_eq_invocation(&assertion.text)
+        ) || !is_admission_gated_assert_eq(&assertion.text)
             || self.admits(test, assertion, index)
     }
 
@@ -1471,7 +1476,15 @@ impl OwnerReturnPin {
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
         let call = pin_call(owner, index)?;
         let method = matches!(call, PinCall::Method { .. });
-        if other_definition_competes(owner, index, method) {
+        // #6544: a bare call's same-package module-level rivals are settled
+        // per test by the import or path that spells the call; every other
+        // competing definition still refuses the pin here.
+        let identity = if method {
+            None
+        } else {
+            OwnerCallIdentity::new(owner, index.functions().iter(), index)
+        };
+        if other_definition_competes(owner, index, method, identity.as_ref()) {
             return None;
         }
         Some(Self {
@@ -1482,6 +1495,7 @@ impl OwnerReturnPin {
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
+            identity,
         })
     }
 
@@ -1546,7 +1560,7 @@ impl OwnerReturnPin {
             || !field_compares_with_derived_equality(type_name, field, index)
             || derives_clone(type_name, index)
             || workspace_declares_trait(index, "Clone")
-            || other_definition_competes(owner, index, true)
+            || other_definition_competes(owner, index, true, None)
         {
             return None;
         }
@@ -1563,6 +1577,7 @@ impl OwnerReturnPin {
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
+            identity: None,
         })
     }
 
@@ -1634,7 +1649,7 @@ impl OwnerReturnPin {
             })
         });
         let call = pin_call(owner, index)?;
-        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. })) {
+        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. }), None) {
             return None;
         }
         Some(Self {
@@ -1653,6 +1668,7 @@ impl OwnerReturnPin {
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
+            identity: None,
         })
     }
 
@@ -1839,6 +1855,14 @@ impl OwnerReturnPin {
                     .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
                     .is_none_or(|owner| owner.cfg_gated)
                     && !syntax.file_cfg_gated(index, &self.owner_file)
+                    // #6544: among same-named rivals, the asserted bare call
+                    // itself must name the owner, resolved in the test's
+                    // scopes; another call elsewhere in the test that names
+                    // the owner lends this one nothing. A helper's call sits
+                    // in the helper's scopes, which this does not read.
+                    && self.identity.as_ref().is_none_or(|identity| {
+                        helper.is_none() && identity.resolve_call(test, index, &[]) == CallTarget::Owner
+                    })
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
@@ -1858,6 +1882,10 @@ impl OwnerReturnPin {
             // path itself must reach the owner.
             (PinCall::Bare, CallShape::Path(prefix)) => {
                 helper.is_none()
+                    && self.identity.as_ref().is_none_or(|identity| {
+                        identity.resolve_call(test, index, &path_prefix_segments(prefix))
+                            == CallTarget::Owner
+                    })
                     && test_source.is_some_and(|source| {
                         self.path_reaches_owner(prefix, test, source, index, syntax)
                     })
@@ -2546,6 +2574,15 @@ impl ReturnPathGate {
             Self::WholeValueField(gate) => gate.admits(expected),
         }
     }
+}
+
+/// The module segments of a `CallShape::Path` prefix, which
+/// `path_call_prefix` admits only as `::`-separated plain identifiers.
+fn path_prefix_segments(prefix: &str) -> Vec<String> {
+    prefix
+        .split("::")
+        .map(|segment| segment.trim().to_string())
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -4479,7 +4516,13 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
     "zip",
 ];
 
-fn is_bare_assert_eq_invocation(text: &str) -> bool {
+/// Whether `text` is one outer `assert_eq!` invocation that must pass the
+/// owner-return execution admission: bare `assert_eq!`, or the same macro
+/// called through a drop-in assertion crate (`std::assert_eq!`,
+/// `pretty_assertions::assert_eq!`). A qualified drop-in reads as an
+/// assertion, so letting it skip this gate would credit an `assert_eq!` that
+/// the bare spelling refuses (for example one under `if false`).
+fn is_admission_gated_assert_eq(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let mut invocation = masked.trim_start();
     // The parser includes a macro statement's attributes in its fact text.
@@ -4492,11 +4535,12 @@ fn is_bare_assert_eq_invocation(text: &str) -> bool {
         };
         invocation = attribute[close + 1..].trim_start();
     }
-    invocation
-        .strip_prefix("r#")
-        .unwrap_or(invocation)
-        .strip_prefix("assert_eq")
-        .is_some_and(|after_name| after_name.trim_start().starts_with('!'))
+    let Some((path, _)) = invocation.split_once('!') else {
+        return false;
+    };
+    let path: String = path.chars().filter(|c| !c.is_whitespace()).collect();
+    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
@@ -4664,7 +4708,7 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
 ) -> bool {
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
-        || other_definition_competes(owner, index, false)
+        || other_definition_competes(owner, index, false, None)
         || index
             .files()
             .get(&owner.file)
@@ -5304,7 +5348,12 @@ fn resolve_module_path(
 /// dispatches to the same method on the pointee. A definition whose item
 /// container is unknown (lexical fallback) always competes, and so does a
 /// `fn name` the parser never indexed (inside a `macro_rules!` body).
-fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method: bool) -> bool {
+fn other_definition_competes(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    method: bool,
+    settled_per_test: Option<&OwnerCallIdentity>,
+) -> bool {
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
     let indexed_competes = index.functions().iter().any(|function| {
@@ -5314,7 +5363,9 @@ fn other_definition_competes(owner: &FunctionSummary, index: &RustIndex, method:
         match function.item.container {
             FunctionContainer::Unknown => true,
             FunctionContainer::Local => false,
-            FunctionContainer::Free => !method,
+            FunctionContainer::Free => {
+                !method && !settled_per_test.is_some_and(|identity| identity.settles(function))
+            }
             _ => {
                 method
                     && function.item.has_self_param
@@ -5501,7 +5552,15 @@ pub(in crate::analysis) fn pin_scope_needs(
         }
         _ => return needs,
     };
-    needs.competing_definitions = !other_definition_competes(owner, index, method);
+    // Same rivals `establish` settles per test (#6544): once indexed they no
+    // longer refuse, but files that define more of them still widen scope.
+    let identity = if method {
+        None
+    } else {
+        OwnerCallIdentity::new(owner, index.functions().iter(), index)
+    };
+    needs.competing_definitions =
+        !other_definition_competes(owner, index, method, identity.as_ref());
     needs
 }
 

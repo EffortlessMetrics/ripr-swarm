@@ -64,6 +64,9 @@ mod source_unicode;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_check_exit.rs"]
+mod unsupported_check_exit;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -12601,6 +12604,11 @@ fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String>
         "def shout(text):\n    return text.upper()\n",
     )
     .map_err(|error| format!("write python source: {error}"))?;
+    // Bound ancestor Cargo.toml discovery: fixtures live under the ripr
+    // work tree (`target/`), so without a local `.git` the locator would
+    // credit `/workspace/Cargo.toml` (#7506).
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir python-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
@@ -12629,6 +12637,8 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
         "export const price = (n: number) => n * 2;\n",
     )
     .map_err(|error| format!("write ts source: {error}"))?;
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir typescript-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
@@ -12838,6 +12848,81 @@ fn doctor_git_root_with_nested_workspace_passes_cargo_toml() -> Result<(), Strin
         } else {
             Ok(())
         };
+
+    ignore_remove_dir_all(&workspace);
+    json_result.and(human_result)
+}
+
+/// #7506: a TypeScript marker at the git root must not skip `cargo_toml`
+/// when `rust/Cargo.toml` exists. This is the production path: shallow
+/// `detect_languages` plus the cargo-only locator.
+#[test]
+fn doctor_polyglot_git_root_with_typescript_passes_nested_cargo_toml() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-gitroot-polyglot-ts-nested");
+    std::fs::create_dir_all(workspace.join("rust/crates/x/src"))
+        .map_err(|error| format!("create rust crate: {error}"))?;
+    std::fs::write(workspace.join("package.json"), "{\"name\": \"site\"}\n")
+        .map_err(|error| format!("write package.json: {error}"))?;
+    std::fs::write(workspace.join("README.md"), "docs\n")
+        .map_err(|error| format!("write README: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\n",
+    )
+    .map_err(|error| format!("write workspace manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| format!("write package manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/src/lib.rs"),
+        "pub fn f() {}\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    run_git(&workspace, &["init", "-b", "main"])?;
+
+    let json = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &["doctor", "--json"],
+        &[],
+    )
+    .map_err(|error| format!("run doctor --json: {error}"))?;
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    let cargo_toml = report["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == "cargo_toml")
+        .cloned()
+        .ok_or_else(|| format!("missing cargo_toml: {report}"))?;
+    let evidence = cargo_toml["evidence"].as_str().unwrap_or("");
+    let json_result = if cargo_toml["status"] != "pass"
+        || !evidence.contains("via workspace root")
+        || !evidence.contains("rust")
+    {
+        Err(format!(
+            "polyglot git-root nested workspace must pass cargo_toml: {cargo_toml}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let human = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &workspace, &["doctor"], &[])
+        .map_err(|error| format!("run doctor: {error}"))?;
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let human_result = if stdout.contains("Cargo.toml check skipped")
+        || stdout.contains("! no Cargo.toml found")
+        || !stdout.contains("via workspace root")
+    {
+        Err(format!(
+            "human doctor must not skip cargo_toml at a TypeScript polyglot git root:\n{stdout}"
+        ))
+    } else {
+        Ok(())
+    };
 
     ignore_remove_dir_all(&workspace);
     json_result.and(human_result)
@@ -26796,13 +26881,16 @@ fn plus_unknown_arg_fails_clearly() {
 
 /// A minimal unified diff piped through stdin, the documented
 /// `git diff origin/main | ripr check --diff -` shape (#4319).
-const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = "diff --git a/src/lib.rs b/src/lib.rs\n\
-index 1111111..2222222 100644\n\
---- a/src/lib.rs\n\
-+++ b/src/lib.rs\n\
-@@ -1,1 +1,2 @@\n\
-+fn changed() {}\n\
- fn existing() {}\n";
+const UNIFIED_DIFF_FOR_STDIN_PROBE: &str = concat!(
+    "diff --git a/src/lib.rs b/src/lib.rs\n",
+    "index 1111111..2222222 100644\n",
+    "--- a/src/lib.rs\n",
+    "+++ b/src/lib.rs\n",
+    "@@ -1,1 +1,2 @@\n",
+    "+fn changed() {}\n",
+    // A continued string strips this context marker's leading space.
+    " fn existing() {}\n",
+);
 
 struct DeclaredHunkScratch(PathBuf);
 
@@ -26843,7 +26931,7 @@ fn truncated_declared_hunk_is_incomplete_through_file_and_stdin()
             input.as_bytes(),
         )?;
         for (channel, output) in [("file", file_output), ("stdin", stdin_output)] {
-            if !output.status.success() {
+            if output.status.code() != Some(if expected_complete { 0 } else { 2 }) {
                 return Err(format!(
                     "{label}/{channel}: {}",
                     String::from_utf8_lossy(&output.stderr)
@@ -26933,7 +27021,7 @@ fn truncated_unsupported_file_hunk_is_incomplete_through_file_and_stdin()
             input.as_bytes(),
         )?;
         for (channel, output) in [("file", file), ("stdin", stdin)] {
-            if !output.status.success() {
+            if output.status.code() != Some(if complete { 0 } else { 2 }) {
                 return Err(format!(
                     "{label}/{channel}: {}",
                     String::from_utf8_lossy(&output.stderr)
@@ -27022,7 +27110,12 @@ fn check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure()
         output.status.success(),
         "piped diff analysis failed: {stderr}"
     );
-    let _: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
+    assert_eq!(
+        report["analysis_outcome"]["outcome"]["counts"]["changed_file_count"],
+        1
+    );
     assert_eq!(
         stderr.matches(note).count(),
         0,

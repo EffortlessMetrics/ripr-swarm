@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Five small authored Python projects under `subjects/`, our own code under
+Six small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -30,8 +30,12 @@ this repository's license, one per test library or library feature:
 - `authored-py-hypothesis-stats`: Hypothesis `@given` properties, `@example`
   boundaries, `assume`, a reference-implementation oracle and a no-assertion
   property (derandomized in `tests/conftest.py`).
+- `authored-py-pytest-blocks`: multi-line replacement blocks, where the
+  behavior change is the second line of a block that also rewrites the
+  comment above it (#7556).
 
-Each case is a one-line edit under `cases/`, labeled with what the project's
+Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
+cases replace a comment and the line under it), labeled with what the project's
 own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under
 Python 3.11.15, pytest 9.1.1 and Hypothesis 6.168.3.

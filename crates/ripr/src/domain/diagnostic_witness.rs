@@ -89,6 +89,8 @@ impl DiagnosticWitness {
             // A declared repair target cannot borrow another test's oracle
             // when its complete identity is missing or ambiguous.
             python_suggested_related_test(finding)
+        } else if finding.language == Some(LanguageId::Perl) {
+            perl_suggested_related_test(finding)
         } else {
             suggested_related_test(finding)
                 .or_else(|| best_related_test(finding.oracle_related_tests()))
@@ -207,6 +209,33 @@ pub(crate) fn python_suggested_related_test(finding: &Finding) -> Option<&Relate
     });
     let selected = matches.next()?;
     matches.next().is_none().then_some(selected)
+}
+
+/// Resolve the Perl producer's complete declared test identity once for all
+/// consumers. Missing, unknown or ambiguous declarations cannot borrow a
+/// differently ranked test's location or oracle.
+pub(crate) fn perl_suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    if finding.language != Some(LanguageId::Perl) {
+        return None;
+    }
+    let mut declarations = finding.evidence.iter().filter_map(|line| {
+        line.strip_prefix("perl_suggested_test_location: ")
+            .filter(|value| !value.is_empty())
+    });
+    let declaration = declarations.next()?;
+    if declarations.next().is_some() {
+        return None;
+    }
+    let mut matches = finding.oracle_related_tests().filter(|test| {
+        // Normalize only the file. Test descriptions may themselves contain
+        // backslashes, whitespace or `::`; their identity stays exact.
+        let name_suffix = format!("::{}", test.name);
+        declaration
+            .strip_suffix(name_suffix.as_str())
+            .is_some_and(|file| file.replace('\\', "/") == display_path(&test.file))
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
 }
 
 fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
