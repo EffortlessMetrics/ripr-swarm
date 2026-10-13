@@ -26,12 +26,28 @@
       "sha256": "86956cf35088a884feb4e318ba2052aea5c2bf7a6c74de4d3ccd5ecb5bce7587"
     },
     {
+      "path": "src/errorsBroad.ts",
+      "sha256": "479fb2821e6eaf1c044ab39c361086e8c74c085333284e8c0d3765b302299c93"
+    },
+    {
+      "path": "src/errorsLocal.ts",
+      "sha256": "3c290ab245b43519cd21de478b01e937eee36632520c37fa4646dbe41b38db6f"
+    },
+    {
       "path": "src/options.ts",
       "sha256": "2748f8c77ece47de065d064e43d17cc38235bfbc16d2ab2e850847e0bd9fd5ee"
     },
     {
       "path": "src/profile.ts",
       "sha256": "92d22f85247cbf65f6397435b7a958ec066532ad703483f45695bceb8d8bd77a"
+    },
+    {
+      "path": "src/profileLocal.ts",
+      "sha256": "d1c3d7de9cf75649bde33bf35cbd51c0b8d2f6ad3b4d5055f3b4dea57f57eadc"
+    },
+    {
+      "path": "src/profileName.ts",
+      "sha256": "80469f7773eab8394d9dd7c550f177a820bcc34b329b972d7be0836d7b8ffaa0"
     },
     {
       "path": "src/settings.ts",
@@ -58,12 +74,28 @@
       "sha256": "8b0ba4cab01f7ee60b87513062fc7b1b35507bb1d3f2dd18d39aabdc565d01fa"
     },
     {
+      "path": "test/errorsBroad.test.ts",
+      "sha256": "7fe2df911b3fa62c395326925e3ae80444a97f307ad30c8f87843a8be864e42a"
+    },
+    {
+      "path": "test/errorsLocal.test.ts",
+      "sha256": "403a179af1b559ea68bc95f955f84b011de09691ea7bf6e8f473df6b64ee0ae7"
+    },
+    {
       "path": "test/options.test.ts",
       "sha256": "2fb73644d24aae2e4ce06b0e9dbafc916613eb1eccea2ae06149f8fb9ed49f97"
     },
     {
       "path": "test/profile.test.ts",
       "sha256": "feff3033be6e8fd77e4e7e0d444023d78d86cc3f2ea76d0ab41b526687bf1730"
+    },
+    {
+      "path": "test/profileLocal.test.ts",
+      "sha256": "0f8b4618c79bb165a1f70898015010023d94e333efb7e91cda0368c5c9a84f1c"
+    },
+    {
+      "path": "test/profileName.test.ts",
+      "sha256": "9949ce264535ba946628ca93d3b89273e4099918c93add2d19946a597af5d9f7"
     },
     {
       "path": "test/settings.test.ts",

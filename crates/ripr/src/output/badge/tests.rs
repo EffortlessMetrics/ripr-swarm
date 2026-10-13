@@ -221,6 +221,15 @@ fn refusal_badge_summary_applies_the_degraded_state_convention() -> Result<(), S
         serde_json::from_str(&rendered).map_err(|err| format!("parse badge JSON: {err}"))?;
     assert_eq!(value["message"], "refused: base_unresolvable");
     assert_eq!(value["status"], "warn");
+    assert_eq!(value["color"], "lightgrey");
+    assert_eq!(value["analysis_outcome"], serde_json::Value::Null);
+    let object = value
+        .as_object()
+        .ok_or("rendered badge JSON must be an object")?;
+    assert!(
+        !object.contains_key("run_status"),
+        "badge refusal has no run_status field; that key exists only inside public_projection, which refusal never sets: {rendered}"
+    );
     Ok(())
 }
 

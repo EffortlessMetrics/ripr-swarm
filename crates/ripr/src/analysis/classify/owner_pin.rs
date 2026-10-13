@@ -67,7 +67,7 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -1403,7 +1403,9 @@ enum ReceiverType {
 enum ReturnPathGate {
     /// The changed expression is the owner's only exit.
     Any,
-    /// The pinned value must start with this constructor.
+    /// The pinned value must start with this constructor. `Head("Err")`
+    /// comes only from an early `return Err(..)`, and like `EarlyHead` it
+    /// refuses an owner file that binds `Ok` or `Err` as a value.
     Head(&'static str),
     /// #7581: a changed early `return Some(..)` / `return Ok(..)` beside
     /// exits that build only `None` / `Err(..)`. Admits like `Head`; the
@@ -1449,7 +1451,8 @@ struct WholeValueField {
 }
 
 impl OwnerReturnPin {
-    /// The owner-side gates: `None` when the probe is not a return value,
+    /// The owner-side gates: `None` when the probe is not a return value
+    /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
     /// another workspace definition could take a call by the owner's name.
     pub(in crate::analysis) fn establish(
@@ -1473,7 +1476,7 @@ impl OwnerReturnPin {
         // A predicate that is a bool owner's whole tail is the owner's return
         // value, so the same pin observes it.
         match probe.family {
-            ProbeFamily::ReturnValue => {}
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath => {}
             ProbeFamily::Predicate if returns_bool => {}
             _ => return None,
         }
@@ -1487,10 +1490,10 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
-        // The early `Some`/`Ok` gate reads the other exits' `None` and
-        // `Err(..)` as the prelude variants; a `const None` or `fn Err` in
-        // the owner's file can build a second `Some`/`Ok` under that
-        // spelling (#7581 review).
+        // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
+        // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
+        // `fn Ok` in the owner's file can build a second source of the
+        // changed value under that spelling (#7581 and #7712 reviews).
         if path.prelude_names().iter().any(|name| {
             index
                 .files()
@@ -1891,6 +1894,20 @@ impl OwnerReturnPin {
             (ReturnPathGate::CloneReceiver, CallShape::Bare | CallShape::Path(_)) => return false,
             (path, _) => {
                 if !path.admits(expected) {
+                    return false;
+                }
+                // The expected `Err(..)` / `Ok(..)` / `Some(..)` / `None`
+                // resolves in the test's scope: a test-local `fn Err`
+                // returning `Ok` passes the pin without the changed return
+                // (#7712 review). Opaque globs do not count here; see
+                // `source_declares_value_name`.
+                if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                    starts_with_word(expected.trim(), name)
+                        && index
+                            .files()
+                            .get(&test.file)
+                            .is_none_or(|facts| source_declares_value_name(&facts.source, name))
+                }) {
                     return false;
                 }
             }
@@ -2638,7 +2655,7 @@ impl ReturnPathGate {
     fn prelude_names(&self) -> &'static [&'static str] {
         match self {
             Self::EarlyHead("Some") => &["Some", "None"],
-            Self::EarlyHead(_) => &["Ok", "Err"],
+            Self::EarlyHead(_) | Self::Head("Err") => &["Ok", "Err"],
             _ => &[],
         }
     }

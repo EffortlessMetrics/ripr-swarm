@@ -20,12 +20,12 @@ Probe
   canonical gap: gap:rust:src/lib.rs:answer:return_value:return_value:7
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (warning, confidence 0.92)
 
 Evidence
   - reach yes: Related tests appear to reach answer: observes_answer
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation weak: No complete owner-bound propagation witness found for returned value: 7
+  - propagation yes: Complete propagation witness reaches returned value: 7
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: 7 (line 1)
