@@ -27,6 +27,12 @@ Policy impact:
 - Additive fields in the CI failure manifest only. No hosted workflow, required
   gate, profile input, profile retention, or original failure outcome changes.
 
+## Problem
+
+The retained #4978 failure profile has a binary ID without a retained executable
+association. Future failure diagnostics need a bounded association that preserves
+unavailable evidence and ambiguity without attributing a test or cause.
+
 ## Behavior
 
 The adapter may read at most the bounded prefix supplied by its caller and
@@ -77,3 +83,50 @@ coverage failure.
 - Changing instrumentation, profile bytes, coverage thresholds, or CI policy.
 - Scanning outside the four declared build roots or collecting whole binaries.
 
+## Acceptance Examples
+
+- A supported profile with 33 ID entries retains the first 32 and reports
+  partiality; a retained exact match stays visible and an absent ID remains
+  inconclusive under that partial scope.
+- An instrumented wrong-ID executable and a parsed uninstrumented executable
+  produce a definitive negative within the inspected scope, with the latter
+  counted as a noncandidate.
+- Two instrumented candidates with the same matching ID remain ambiguous;
+  a mapping failure preserves the original profile manifest and failed result.
+
+## Test Mapping
+
+The committed controls in
+`tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs` include:
+
+- `profile_id_count_limit_keeps_the_valid_prefix_and_marks_mapping_partial`
+  and `unavailable_profile_id_input_prevents_a_definitive_negative_mapping`:
+  retained prefix and inconclusive negative evidence.
+- `wrong_id_and_same_id_without_instrumentation_do_not_match` and
+  `exact_instrumented_matches_preserve_duplicate_ambiguity`: exact identity,
+  noncandidates and ambiguity.
+- `malformed_and_platform_elf_headers_and_notes_are_bounded`,
+  `every_scan_limit_is_visible_even_without_a_successful_candidate`,
+  `outside_roots_symlinks_and_changed_file_identity_are_refused`,
+  `fifo_replacement_is_nonblocking_and_never_read` and
+  `final_mapping_json_budget_includes_profile_scope_metadata`: unavailable
+  layouts, scan budgets, file custody and serialized-byte limits.
+- `mapping_failure_cannot_abort_the_original_profile_manifest`: preservation
+  of the original failed-profile evidence.
+- `real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata`: native
+  LLVM association; missing matching LLVM tools are a proof failure.
+
+## Implementation Mapping
+
+- `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
+  profile-ID parsing and executable association.
+- `tools/repo-policy/src/coverage_diagnostics.rs` attaches the diagnostic
+  fields and preserves retained profile hashes during manifest compaction.
+- `docs/ci/coverage.md` documents the failure-manifest output and claim limits.
+- `.ripr/traceability.toml` connects this spec's tests, code and outputs.
+
+## Metrics
+
+- `unit_test_pass_rate`, as registered in `.ripr/traceability.toml`.
+- Diagnostic mapping status and truncation fields describe inspected scope;
+  they do not measure coverage success or historical producer attribution.
