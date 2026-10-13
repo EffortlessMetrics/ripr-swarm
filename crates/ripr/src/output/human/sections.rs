@@ -20,6 +20,8 @@ use crate::output::typescript_preview_card::{
     typescript_preview_card,
 };
 use std::path::Path;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
@@ -302,8 +304,10 @@ const CODE_SPAN_SLACK: usize = 60;
 ///   `"a  b"` to `"a b"` renders as two identical lines once whitespace is
 ///   normalized, hiding exactly the behavior that changed.
 ///
-/// So the wrap is positional, not whitespace-aware: every character survives,
-/// including runs of spaces, and a reader sees the whole fragment.
+/// Printable Unicode wraps by display cells without separating an extended
+/// grapheme cluster. An indivisible cluster wider than the budget stays intact.
+/// Every character survives, including runs of spaces. Tabs and control escape
+/// expansion retain their existing policy; this is not a terminal-size bound.
 fn wrapped_fragment(label: &str, value: &str) -> String {
     // The label column is the continuation indent, so wrapped lines line up
     // under the value rather than under the field name.
@@ -317,22 +321,27 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     // over-budget line takes the continuation indent.
     let mut out = String::new();
     for (line_index, line) in value.split('\n').enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        if chars.is_empty() {
-            out.push_str(if line_index == 0 { label } else { "" });
-            out.push('\n');
-            continue;
-        }
-        for (chunk_index, chunk) in chars.chunks(budget).enumerate() {
-            let prefix = match (line_index, chunk_index) {
-                (0, 0) => label,
-                (_, 0) => "",
-                _ => indent.as_str(),
+        out.push_str(if line_index == 0 { label } else { "" });
+        let mut cells: usize = 0;
+        let mut has_grapheme = false;
+        for grapheme in line.graphemes(true) {
+            // Preserve ASCII chunking, including the historical one-character
+            // cost for raw tabs/controls; terminal handling occurs afterward.
+            let width = if grapheme.is_ascii() {
+                grapheme.len()
+            } else {
+                grapheme.width()
             };
-            out.push_str(prefix);
-            out.extend(chunk.iter());
-            out.push('\n');
+            if has_grapheme && cells.saturating_add(width) > budget {
+                out.push('\n');
+                out.push_str(&indent);
+                cells = 0;
+            }
+            out.push_str(grapheme);
+            cells = cells.saturating_add(width);
+            has_grapheme = true;
         }
+        out.push('\n');
     }
     out
 }

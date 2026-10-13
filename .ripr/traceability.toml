@@ -9,6 +9,10 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_wide",
+  "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_combining",
+  "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_emoji",
+  "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_ascii_control",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_added_stays_unknown",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_removed_stays_unknown",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_impl_bound_added_stays_unknown",

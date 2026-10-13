@@ -82,6 +82,70 @@ fn assert_unicode_source(name: &str, payload: &str, expected_after: &str) -> Tes
             reassembled, source_line,
             "{name}: source bytes lost or changed"
         );
+        // Exercise the two other fields through the public finding renderer.
+        // Their expected boundaries come from the same literal test inputs,
+        // never from a production width/segmentation calculation.
+        let analysis = ripr::check_workspace(ripr::CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff.clone()),
+            ..ripr::CheckInput::default()
+        })?;
+        let mut finding = analysis
+            .findings
+            .first()
+            .ok_or("API must analyze the source finding")?
+            .clone();
+        finding.probe.before = Some(source_line.clone());
+        finding.probe.after = None;
+        finding.probe.expression = source_line.clone();
+        let rendered = ripr::output::human::render_finding(&finding);
+        let changed = rendered
+            .split_once("\nChanged\n")
+            .ok_or("API Changed section missing")?
+            .1
+            .split_once("\nProbe\n")
+            .ok_or("API Probe section missing")?
+            .0;
+        let expected_value = expected_after
+            .strip_prefix("  after:  ")
+            .ok_or("literal expectation label missing")?;
+        assert_eq!(
+            changed,
+            format!("  before: {expected_value}  expr:   {expected_value}"),
+            "{name}: before/expr fields must use the same literal boundaries"
+        );
+        let oversized = format!("क{}", "्क".repeat(170));
+        for (value, expected) in [
+            (String::new(), "  after:  \n".to_string()),
+            (
+                "short\n\nlast\n".to_string(),
+                "  after:  short\n\nlast\n\n".to_string(),
+            ),
+            (
+                "x".repeat(171),
+                format!("  after:  {}\n          x\n", "x".repeat(170)),
+            ),
+            (
+                "\t".repeat(171),
+                format!("  after:  {}\n          \t\n", "\t".repeat(170)),
+            ),
+            (
+                format!("{oversized}Z"),
+                format!("  after:  {oversized}\n          Z\n"),
+            ),
+        ] {
+            finding.probe.before = None;
+            finding.probe.after = Some(value);
+            let rendered = ripr::output::human::render_finding(&finding);
+            let changed = rendered
+                .split_once("\nChanged\n")
+                .ok_or("control Changed section missing")?
+                .1
+                .split_once("\nProbe\n")
+                .ok_or("control Probe section missing")?
+                .0;
+            assert_eq!(changed, expected, "{name}: boundary/progress control");
+        }
         Ok(())
     })();
     let cleanup = std::fs::remove_dir_all(&root);
