@@ -1194,6 +1194,7 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn check_adapter_names_scope_without_navigation() -> Result<(), String> {
         let output = test_output(Vec::new());
         let triage = HumanTriage {
