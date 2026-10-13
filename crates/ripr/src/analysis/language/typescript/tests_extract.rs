@@ -705,6 +705,8 @@ pub(crate) fn collect_tests_from_statements(
             && let Some(call) = statement_call(stmt)
             && !scope.admission.registration_is_known(
                 call,
+                call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe),
                 scope
                     .levels
                     .iter()
@@ -2354,10 +2356,13 @@ pub(crate) fn detect_partial_test_extraction(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
             source: &source,
             extracted_starts: &extracted_starts,
+            admission,
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -2406,6 +2411,7 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
+    admission: TypeScriptAdmissionContext,
     gap: Option<(usize, &'static str, String)>,
 }
 
@@ -2533,6 +2539,39 @@ impl UnextractedTestFinder<'_> {
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
             Expression::AwaitExpression(await_expr) => {
+                // A trusted import can disagree with the supported local
+                // spelling (`test as describe`, or the reverse). These
+                // aliases are unindexed, including assertion-only callbacks
+                // with no nested test-shaped call for `visit_call` to find.
+                if statement_position
+                    && let Expression::CallExpression(call) = &await_expr.argument
+                    && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+                        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                        && self
+                            .admission
+                            .registration_is_known(call, true, std::iter::empty())
+                        || (call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                            || call_callee_is_active_each_declaration(
+                                call,
+                                TestDeclarationRoot::Describe,
+                            ))
+                            && self.admission.registration_is_known(
+                                call,
+                                false,
+                                std::iter::empty(),
+                            ))
+                {
+                    self.gap = Some((
+                        self.source.line_for_offset(call.span.start as usize),
+                        "runner registration kind mismatch",
+                        snippet_for_span(
+                            self.source,
+                            call.span.start as usize,
+                            call.span.end as usize,
+                        ),
+                    ));
+                    return;
+                }
                 self.visit_expression(&await_expr.argument, statement_position);
             }
             Expression::UnaryExpression(unary) => {

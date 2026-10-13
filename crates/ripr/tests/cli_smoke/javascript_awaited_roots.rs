@@ -279,6 +279,55 @@ fn awaited_forged_or_mutable_commonjs_bindings_cannot_supply_credit() -> TestRes
 }
 
 #[test]
+fn awaited_mismatched_runner_aliases_remain_unsupported_and_disclosed() -> TestResult {
+    for (binding, registration) in [
+        (
+            "import { describe as test, it } from 'node:test';",
+            "await test('ids', () => { it('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+        ),
+        (
+            "import { test as describe } from 'node:test';",
+            "await describe('id', () => { assert.strictEqual(nanoid().length, 21); });",
+        ),
+    ] {
+        let consumer = Consumer::new(registration)?;
+        let file = consumer.root.join("test/nanoid.test.js");
+        let source = fs::read_to_string(&file)?;
+        fs::write(
+            file,
+            source.replace("import { test, describe } from 'node:test';", binding),
+        )?;
+        let report = consumer.check()?;
+        let finding = &report["findings"][0];
+        assert_eq!(finding["related_tests_total"], 0, "{binding}: {finding}");
+        assert_eq!(finding["oracle_kind"], "unknown");
+        assert_eq!(
+            finding["preview_actionability"]["repair_packet_ready"],
+            false
+        );
+        let outcome = &report["analysis_outcome"]["outcome"];
+        assert_eq!(
+            outcome["kind"], "partial_with_limitations",
+            "{binding}: {outcome}"
+        );
+        assert!(
+            outcome["limitations"]
+                .as_array()
+                .ok_or("missing limitations")?
+                .iter()
+                .any(|limit| {
+                    limit["kind"] == "language_scope_unsupported"
+                        && limit["bounded_detail"].as_str().is_some_and(|detail| {
+                            detail.contains("runner registration kind mismatch")
+                        })
+                }),
+            "{binding}: {outcome}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn nanoid_upstream_bytes_keep_their_independent_provenance() -> TestResult {
     let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
     let provenance: Value = serde_json::from_slice(&fs::read(fixture.join("provenance.json"))?)?;

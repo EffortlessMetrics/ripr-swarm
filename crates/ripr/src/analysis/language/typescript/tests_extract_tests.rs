@@ -30,6 +30,25 @@ fn awaited_unwalked_root_keeps_the_partial_extraction_disclosure() {
 }
 
 #[test]
+fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
+    let file = Path::new("test/nanoid.test.js");
+    for source in [
+        "import assert from 'node:assert/strict';\nimport { describe as test, it } from 'node:test';\nawait test('ids', () => { it('id', () => { assert.strictEqual(nanoid().length, 21); }); });\n",
+        "import assert from 'node:assert/strict';\nimport { test as describe } from 'node:test';\nawait describe('id', () => { assert.strictEqual(nanoid().length, 21); });\n",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.is_some_and(
+                |gap| gap.sample_line == 3 && gap.shape == "runner registration kind mismatch"
+            ),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
     let imports =
         "import assert from 'node:assert/strict'; import { test, suite } from 'node:test';\n";

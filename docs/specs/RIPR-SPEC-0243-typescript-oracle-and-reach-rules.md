@@ -162,6 +162,10 @@ either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
 Runtime module-mode and loader resolution are outside this static claim.
+The resolved test/suite kind must agree with the supported local spelling.
+Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
+test record and retain a typed partial-extraction limitation, including an
+assertion-only callback with no nested test call. This does not expand aliases.
 
 ### Assertion collection
 

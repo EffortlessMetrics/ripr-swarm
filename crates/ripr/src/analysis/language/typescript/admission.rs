@@ -205,6 +205,7 @@ impl TypeScriptAdmissionContext {
     pub(crate) fn registration_is_known(
         &self,
         call: &oxc_ast::ast::CallExpression<'_>,
+        expected_describe: bool,
         bindings: impl Iterator<Item = (String, bool)>,
     ) -> bool {
         let imports: Vec<_> = self
@@ -237,7 +238,13 @@ impl TypeScriptAdmissionContext {
                 .map(|(name, _)| (name, Bound::Local))
                 .collect(),
         );
-        scan.registration(call).is_some()
+        let expected = if expected_describe {
+            RegistrationKind::Describe
+        } else {
+            RegistrationKind::Test
+        };
+        scan.registration(call)
+            .is_some_and(|registration| registration.kind == expected)
     }
 
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
