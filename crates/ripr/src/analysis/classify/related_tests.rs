@@ -595,6 +595,7 @@ fn find_related_tests_with_candidates<'a>(
     // `tokenizer/mod.rs` tests are not related to a `serialize/mod.rs` change
     // through the shared stem `mod` (#5395).
     let file_name = module_stem(&probe.location.file).unwrap_or_default();
+    let probe_path = probe_index_path(&probe.location.file, owner_fn, index);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -942,7 +943,8 @@ fn find_related_tests_with_candidates<'a>(
             });
 
         let test_name = test.name.to_ascii_lowercase();
-        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        let same_test_file =
+            same_test_file(&probe.location.file, probe_path.as_deref(), &test.file);
         // Keep the broad path-token association available to callers, but do
         // not publish it as file identity.  A short source stem such as
         // `config` can occur in unrelated test paths (for example
@@ -1702,27 +1704,21 @@ fn strip_comments_and_strings(source: &str) -> String {
 }
 
 /// Return whether `test_file` is the changed file itself or its canonical
-/// companion test file. Companions compare Rust module identity
+/// companion test file. `probe_path` is the changed file's root-relative
+/// path from [`probe_index_path`]. Companions compare Rust module identity
 /// ([`module_stem`]): the module's own name and its `_test`/`_tests`
 /// variants. The test-grip relation (`test_grip_evidence/related_tests.rs`)
 /// keys `SameTestFile` on the same module identity.
-fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
+fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path) -> bool {
     // Inline tests in the changed file are its own tests, whatever the file is
-    // called. Under `--root` the probe path carries the root prefix while test
-    // paths are root-relative, so the probe path ending with the test path on
-    // a segment boundary is the same file. Only that direction: a root-relative
-    // probe `src/lib.rs` must not claim a member crate's `crates/a/src/lib.rs`.
-    // Non-UTF-8 paths fail closed (#3545): lossy conversion could fake a match.
-    let (Some(probe_text), Some(test_text)) = (probe_file.to_str(), test_file.to_str()) else {
+    // called. Non-UTF-8 paths fail closed (#3545): lossy conversion could fake
+    // a match.
+    let Some(test_text) = test_file.to_str() else {
         return false;
     };
-    let probe_path = normalize_path(Path::new(probe_text));
-    let test_path = normalize_path(Path::new(test_text));
-    if !test_path.is_empty()
-        && probe_path
-            .strip_suffix(test_path.as_str())
-            .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('/'))
-    {
+    if probe_path.is_some_and(|probe_path| {
+        !probe_path.is_empty() && normalize_path(Path::new(test_text)) == probe_path
+    }) {
         return true;
     }
     // Compare module identity (#5395): `mod.rs` takes its directory's name and
@@ -1735,6 +1731,41 @@ fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
+}
+
+/// The changed file's path in the index's root-relative form (#6791).
+///
+/// Probe locations are joined onto the analysis root (`--root`), while index
+/// and test paths are root-relative. The changed file is the longest indexed
+/// path that the probe path ends with on a segment boundary; the owner's file
+/// counts as indexed. A shorter match is a different file that only shares a
+/// tail, such as the root crate's `src/lib.rs` for a member crate's
+/// `crates/a/src/lib.rs`. This relies on the changed file being indexed,
+/// which the diff path guarantees for every file it probes. A probe with no
+/// indexed tail keeps its own path, so it can only match a test path
+/// exactly. Non-UTF-8 paths fail closed (#3545).
+fn probe_index_path(
+    probe_file: &Path,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+) -> Option<String> {
+    let probe_path = normalize_path(Path::new(probe_file.to_str()?));
+    let owner_path = owner_fn
+        .and_then(|owner| owner.file.to_str())
+        .map(|file| normalize_path(Path::new(file)));
+    // Longest first: the whole path, then each tail after a `/`. One map
+    // lookup per path segment, not a scan of every indexed file.
+    let tails = std::iter::once(probe_path.as_str()).chain(
+        probe_path
+            .match_indices('/')
+            .map(|(slash, _)| &probe_path[slash + 1..]),
+    );
+    for tail in tails.filter(|tail| !tail.is_empty()) {
+        if owner_path.as_deref() == Some(tail) || index.files().get(Path::new(tail)).is_some() {
+            return Some(tail.to_string());
+        }
+    }
+    Some(probe_path)
 }
 
 /// The Rust module a source path names: its file stem, except that `mod.rs`
@@ -7727,8 +7758,12 @@ fn crate_c_score_test() {
     fn mod_and_crate_root_stems_carry_module_identity_not_bare_stem() {
         // #5395: `serialize/mod.rs` and `tokenizer/mod.rs` share only the stem
         // `mod`; two crate roots share only `lib`.
-        let same =
-            |probe: &str, test: &str| super::same_test_file(Path::new(probe), Path::new(test));
+        // An empty index: the probe path stands for itself.
+        let index = RustIndex::default();
+        let same = |probe: &str, test: &str| {
+            let probe_path = super::probe_index_path(Path::new(probe), None, &index);
+            super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
+        };
         assert!(!same(
             "html5ever/src/serialize/mod.rs",
             "html5ever/src/tokenizer/mod.rs"
@@ -7751,12 +7786,11 @@ fn crate_c_score_test() {
             "html5ever/src/serialize/mod.rs",
             "html5ever/src/serialize/mod.rs"
         ));
-        // Under `--root` the probe carries the root prefix; test paths do not.
-        // The suffix must end on a path-segment boundary.
-        assert!(same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
-        assert!(!same("fixtures/x/input/src/lib.rs", "b/src/lib.rs"));
-        assert!(!same("fixtures/x/input/xsrc/lib.rs", "src/lib.rs"));
-        assert!(!same("crates/xa/src/lib.rs", "a/src/lib.rs"));
+        // A path tail is not the same file: without an indexed path to
+        // resolve against, only an exact (normalized) path matches.
+        assert!(same("./src/lib.rs", "src/lib.rs"));
+        assert!(!same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
+        assert!(!same("crates/a/src/lib.rs", "src/lib.rs"));
         // A root-relative probe never claims a member crate's crate root.
         assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
         assert!(!same("src/main.rs", "crates/x/src/main.rs"));
@@ -7809,6 +7843,61 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn root_prefixed_probe_resolves_to_its_indexed_path() {
+        // #6791: under `--root` the probe path is joined onto the root while
+        // index paths are root-relative. The changed file is the longest
+        // indexed tail, never a shorter one that a different file shares.
+        let mut index = RustIndex::default();
+        for file in ["src/lib.rs", "crates/a/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let resolve = |probe: &str| super::probe_index_path(Path::new(probe), None, &index);
+        assert_eq!(
+            resolve("ws/crates/a/src/lib.rs").as_deref(),
+            Some("crates/a/src/lib.rs")
+        );
+        assert_eq!(resolve("ws/src/lib.rs").as_deref(), Some("src/lib.rs"));
+        assert_eq!(resolve("./src/lib.rs").as_deref(), Some("src/lib.rs"));
+        // A tail that only shares characters, not a segment, is no match.
+        assert_eq!(resolve("ws/xsrc/lib.rs").as_deref(), Some("ws/xsrc/lib.rs"));
+        // No indexed tail: the probe keeps its own path.
+        assert_eq!(
+            resolve("ws/crates/b/src/main.rs").as_deref(),
+            Some("ws/crates/b/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn member_crate_root_change_does_not_claim_the_root_crates_inline_tests() {
+        // #6791: a change in member crate `crates/a/src/lib.rs`, analysed
+        // under `--root ws`, listed the workspace root crate's `src/lib.rs`
+        // inline tests as `same_test_file` because the probe path ends with
+        // `src/lib.rs`.
+        let owner = function("crates/a/src/lib.rs", "marker_owner");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("crates/a/src/lib.rs", "own_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("ws/crates/a/src/lib.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["own_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
     fn foreign_separator_probe_still_resolves_the_canonical_companion() {
         // The probe path was recorded with Windows separators; the stem
         // extraction must split on both flavors so `config_tests` stays a
@@ -7844,7 +7933,14 @@ fn crate_c_score_test() {
         let test_file = std::path::PathBuf::from(std::ffi::OsString::from_vec(
             b"crates/core/tests/foo\x81_tests.rs".to_vec(),
         ));
-        assert!(!super::same_test_file(&probe_file, &test_file));
+        let index = RustIndex::default();
+        let probe_path = super::probe_index_path(&probe_file, None, &index);
+        assert_eq!(probe_path, None);
+        assert!(!super::same_test_file(
+            &probe_file,
+            probe_path.as_deref(),
+            &test_file
+        ));
     }
 
     #[test]
