@@ -345,8 +345,14 @@ implies but does not spell out:
   a rename, whose module path (`kinds::Kind` after `mod kinds;`,
   `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
   declarations to exactly one workspace file, and that file must meet the
-  same declaration rule. An inline module on the path, a re-export, a
-  rename, an `include!` or an unresolved module edge reads nothing. A
+  same declaration rule. The owner's file must then declare no item of
+  that name and call no item-level macro, glob-import no module inside an
+  inline module (except `super::*`), and its recorded module chain must
+  start at `src/lib.rs` or `src/main.rs`. Each path step must be the one
+  `mod` of that name in its parent file, declared out of line. An inline or
+  `cfg`-duplicated module on the path, a chain below an inline module, a
+  re-export, a rename, an `include!` or an unresolved module edge reads
+  nothing. A
   test's uncased input is read
   only when no related test file outside the owner's file declares an item
   of that name, renames an import to it, or glob-imports a module other
@@ -451,8 +457,11 @@ the diff changes `None => 1` to `None => 0`.
   inputs, matches the call may skip, mutable typed receivers and foreign
   call paths.
 - `crates/ripr/tests/match_arm_uncased_variant.rs`: examples 4 and 6 with
-  single-letter variants; the enum imported from its module file; and a
-  struct with constants, a renamed import or a re-export in its place.
+  single-letter variants; the enum imported from its module file or
+  through `super::`; a struct with constants, a renamed import or a
+  re-export in its place; and an owner item shadowing the import, a
+  `cfg`-alternative inline module and a `crate::` path from below an inline
+  module.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).

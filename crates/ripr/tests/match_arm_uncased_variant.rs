@@ -18,9 +18,9 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    /// `lib` is the new `src/lib.rs`; `diff` changes its line 10 (with the
-    /// enum in `src/lib.rs`) or line 7 (with it in `src/kinds.rs`).
-    fn create(lib: &str, kinds: Option<&str>, test: &str, diff: &str) -> Result<Self, String> {
+    /// `lib` is the new `src/lib.rs` and `files` the other sources by path;
+    /// `diff` changes one line of one of them.
+    fn create(lib: &str, files: &[(&str, &str)], test: &str, diff: &str) -> Result<Self, String> {
         // A process-wide sequence, not the clock: parallel tests share one
         // `SystemTime` on some platforms.
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -37,6 +37,10 @@ impl TempRepo {
         std::fs::create_dir_all(root.join("tests"))
             .map_err(|error| format!("create test directory failed: {error}"))?;
         let write = |path: &str, text: &str| {
+            if let Some(parent) = root.join(path).parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
             std::fs::write(root.join(path), text)
                 .map_err(|error| format!("write {path} failed: {error}"))
         };
@@ -45,8 +49,8 @@ impl TempRepo {
             "[package]\nname = \"uncased-variant\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )?;
         write("src/lib.rs", lib)?;
-        if let Some(kinds) = kinds {
-            write("src/kinds.rs", kinds)?;
+        for (path, text) in files {
+            write(path, text)?;
         }
         write("tests/it.rs", test)?;
         write("diff.patch", diff)?;
@@ -130,7 +134,7 @@ fn a_declared_single_letter_enum_names_the_unselected_wildcard() -> Result<(), S
     let lib = format!("{ENUM}\n{}", body(WILDCARD_ARMS, "i32"));
     let repo = TempRepo::create(
         &lib,
-        None,
+        &[],
         WILDCARD_TEST,
         &diff(
             "src/lib.rs",
@@ -156,7 +160,7 @@ fn a_declared_single_letter_enum_names_the_unselected_variant_arm() -> Result<()
     let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn a_maps_to_b() {\n    assert_eq!(f(Kind::A), Kind::B);\n}\n";
     let repo = TempRepo::create(
         &lib,
-        None,
+        &[],
         test,
         &diff(
             "src/lib.rs",
@@ -180,7 +184,7 @@ fn imported_wildcard(import: &str, kinds: &str) -> Result<Vec<String>, String> {
     let lib = format!("mod kinds;\n{import}\n\n{}", body(WILDCARD_ARMS, "i32"));
     let repo = TempRepo::create(
         &lib,
-        Some(kinds),
+        &[("src/kinds.rs", kinds)],
         WILDCARD_TEST,
         &diff(
             "src/lib.rs",
@@ -218,8 +222,9 @@ fn an_imported_type_that_may_hold_constants_names_no_arm() -> Result<(), String>
         imported_wildcard("pub use kinds::Kind;", constants)?,
         Vec::<String>::new()
     );
-    // A renamed import is not followed: `Kind` there is another name's type.
-    let other = ENUM.replace("enum Kind", "enum Other");
+    // A renamed import is not followed: `Kind` there is `Other`, a struct
+    // with constants, though the same file also declares `enum Kind`.
+    let other = format!("{ENUM}\n{}", CONSTANTS.replace("Kind", "Other"));
     assert_eq!(
         imported_wildcard("pub use kinds::Other as Kind;", &other)?,
         Vec::<String>::new()
@@ -243,7 +248,7 @@ fn a_test_side_constant_named_like_a_variant_names_no_arm() -> Result<(), String
     let test = "use uncased_variant::f;\n\nstruct Kind;\n\nimpl Kind {\n    const A: uncased_variant::Kind = uncased_variant::Kind::B;\n}\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
     let repo = TempRepo::create(
         &lib,
-        None,
+        &[],
         test,
         &diff(
             "src/lib.rs",
@@ -259,6 +264,130 @@ fn a_test_side_constant_named_like_a_variant_names_no_arm() -> Result<(), String
     )?;
     assert_eq!(
         named_discriminators(&repo.check()?, 10)?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+/// A one-line diff of `text` at `path` whose new line is the one equal to
+/// `new` (formerly `old`), with the changed line's number.
+fn diff_at(path: &str, text: &str, new: &str, old: &str) -> Result<(String, usize), String> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut matches = lines.iter().enumerate().filter(|(_, line)| **line == new);
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| format!("{path} has no line {new:?}"))?;
+    if matches.next().is_some() || index < 3 || index + 3 > lines.len() {
+        return Err(format!(
+            "{path} needs one {new:?} with three lines before and two after"
+        ));
+    }
+    let context = |range: std::ops::Range<usize>| {
+        lines[range]
+            .iter()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>()
+    };
+    let start = index - 2;
+    Ok((
+        format!(
+            "diff --git a/{path} b/{path}\nindex 0000000..1111111 100644\n--- a/{path}\n+++ b/{path}\n@@ -{start},6 +{start},6 @@\n{}-{old}\n+{new}\n{}",
+            context(index - 3..index),
+            context(index + 1..index + 3)
+        ),
+        index + 1,
+    ))
+}
+
+/// The missing discriminators of the wildcard arm `_ => 2` (formerly
+/// `_ => 0`) changed in `path`, one of `files` or `src/lib.rs`.
+fn changed_wildcard(
+    lib: &str,
+    files: &[(&str, &str)],
+    test: &str,
+    path: &str,
+) -> Result<Vec<String>, String> {
+    let text = if path == "src/lib.rs" {
+        lib
+    } else {
+        files
+            .iter()
+            .find(|(file, _)| *file == path)
+            .map(|(_, text)| *text)
+            .ok_or_else(|| format!("no fixture file {path}"))?
+    };
+    let changed = text
+        .lines()
+        .find(|line| line.trim() == "_ => 2,")
+        .ok_or_else(|| format!("{path} has no `_ => 2,` arm"))?;
+    let (diff, line) = diff_at(path, text, changed, &changed.replace('2', "0"))?;
+    let repo = TempRepo::create(lib, files, test, &diff)?;
+    named_discriminators(&repo.check()?, line)
+}
+
+const CONSTANTS: &str = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct Kind(u8);\n\nimpl Kind {\n    pub const A: Kind = Kind(0);\n    pub const B: Kind = Kind(1);\n}\n";
+
+#[test]
+fn an_enum_imported_through_super_names_the_unselected_wildcard() -> Result<(), String> {
+    // #7675: `super::kinds` from `src/shapes.rs` is `src/kinds.rs`.
+    let shapes = format!("use super::kinds::Kind;\n\n{}", body(WILDCARD_ARMS, "i32"));
+    let files = [("src/kinds.rs", ENUM), ("src/shapes.rs", shapes.as_str())];
+    let lib = "mod kinds;\nmod shapes;\n\npub use kinds::Kind;\npub use shapes::f;\n";
+    assert_eq!(
+        changed_wildcard(lib, &files, WILDCARD_TEST, "src/shapes.rs")?,
+        vec!["_"]
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_item_that_may_shadow_the_import_names_no_arm() -> Result<(), String> {
+    // #7686 review: the match sits in an inline module whose own `Kind` is
+    // a struct with constants, though the file imports the enum.
+    let lib = format!(
+        "mod kinds;\nuse kinds::Kind;\n\npub mod legacy {{\n{CONSTANTS}\n{}}}\n\npub fn g(k: Kind) -> bool {{\n    matches!(k, Kind::A)\n}}\n",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let test = "use uncased_variant::legacy::{Kind, f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(&lib, &[("src/kinds.rs", ENUM)], test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cfg_alternative_inline_module_names_no_arm() -> Result<(), String> {
+    // #7686 review: the compiled `kinds` is the inline module with
+    // constants; `src/kinds.rs` holds the enum but is compiled out.
+    let lib = format!(
+        "#[cfg(any())]\nmod kinds;\n#[cfg(not(any()))]\nmod kinds {{\n{CONSTANTS}}}\npub use kinds::Kind;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    assert_eq!(
+        changed_wildcard(&lib, &[("src/kinds.rs", ENUM)], WILDCARD_TEST, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_crate_path_from_below_an_inline_module_names_no_arm() -> Result<(), String> {
+    // #7686 review: `mid` is declared inside `mod outer { .. }`, so the
+    // owner's recorded chain starts at `src/outer/mid.rs`, not the crate
+    // root. `crate::kinds` is `src/kinds.rs` (constants), not
+    // `src/outer/mid/kinds.rs` (an enum).
+    let owner = format!("use crate::kinds::Kind;\n\n{}", body(WILDCARD_ARMS, "i32"));
+    let files = [
+        ("src/kinds.rs", CONSTANTS),
+        ("src/outer/mid.rs", "pub mod x;\nmod kinds;\n"),
+        ("src/outer/mid/kinds.rs", ENUM),
+        ("src/outer/mid/x.rs", owner.as_str()),
+    ];
+    let lib = "pub mod kinds;\npub mod outer {\n    pub mod mid;\n}\n";
+    let test = "use uncased_variant::{kinds::Kind, outer::mid::x::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &files, test, "src/outer/mid/x.rs")?,
         Vec::<String>::new()
     );
     Ok(())

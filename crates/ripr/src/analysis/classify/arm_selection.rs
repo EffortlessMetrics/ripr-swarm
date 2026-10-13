@@ -1347,32 +1347,56 @@ fn declared_enum_variants(
 /// module path the recorded `mod` edges place in exactly one workspace file
 /// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
 /// `use self::..`/`use super::..`), and that file declares the enum
-/// (`declared_enum_variants`). An inline module step, a re-export, an
-/// external or package-named root, an `include!` edge, or any unresolved
-/// edge reads nothing, so `Kind::A` stays unreadable.
+/// (`declared_enum_variants`). An owner item or item macro that may define
+/// `Kind`, an inline or `cfg`-duplicated module step, a chain that does not
+/// start at `src/lib.rs` or `src/main.rs`, a re-export, an external or
+/// package-named root, an `include!` edge, or any unresolved edge reads
+/// nothing, so `Kind::A` stays unreadable.
 fn imported_enum_variants(
     index: &crate::analysis::rust_index::RustIndex,
     owner_file: &std::path::Path,
     type_name: &str,
 ) -> Option<std::collections::BTreeSet<String>> {
     use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
-    use ra_ap_syntax::{AstNode, ast};
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let files = index.files();
     let owner = files.get(owner_file)?;
     let parse = crate::analysis::syntax::parse_clean_source_file(&owner.source)?;
+    let named = |item: &dyn HasName| item.name().is_some_and(|name| name.text() == type_name);
     let mut bindings = Vec::new();
-    for item in parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Use::cast)
-    {
+    for node in parse.tree().syntax().descendants() {
+        // The owner's own item of that name (in an inline module or behind
+        // a `cfg` alternative to the import) or an item macro's unread
+        // output may be what `Kind` means at the match (#7686 review).
+        if ast::Struct::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Enum::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+            || (ast::MacroCall::can_cast(node.kind())
+                && node.parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                }))
+        {
+            return None;
+        }
+        let Some(item) = ast::Use::cast(node) else {
+            continue;
+        };
         let top_level = item
             .syntax()
             .parent()
             .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
         for import in flattened_use_paths(&item.syntax().text().to_string()) {
             let last = import.path.rsplit("::").next().unwrap_or_default();
+            // A glob in an inline module may bring another `Kind` into the
+            // module holding the match; `super::*` there brings this file's
+            // items, read above. At the file root the explicit import
+            // shadows any glob.
+            if !top_level && import.alias.is_none() && last == "*" && import.path != "super::*" {
+                return None;
+            }
             if import.alias.as_deref() == Some(type_name)
                 || (import.alias.is_none() && last == type_name)
             {
@@ -1385,33 +1409,41 @@ fn imported_enum_variants(
     };
     let segments = path.split("::").collect::<Vec<_>>();
     let (_, modules) = segments.split_last()?;
-    // Each file's chain of `mod` edges, outermost first; a file with an
-    // unresolved or `include!` edge is not placed.
-    let chain = |file: &std::path::Path| {
-        let facts = files.get(file)?;
-        let provenance = &facts.role_provenance;
-        (provenance.earliest_unresolved_reason.is_none()
-            && provenance
-                .edges
-                .iter()
-                .all(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module))
-        .then(|| provenance.edges.clone())
+    // Whether a file's chain of `mod` edges is all resolved `mod` edges; a
+    // file with an unresolved or `include!` edge is not placed.
+    let placed = |file: &std::path::Path| {
+        files.get(file).is_some_and(|facts| {
+            let provenance = &facts.role_provenance;
+            provenance.earliest_unresolved_reason.is_none()
+                && provenance
+                    .edges
+                    .iter()
+                    .all(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+        })
     };
-    let owner_chain = chain(owner_file)?;
+    if !placed(owner_file) {
+        return None;
+    }
+    let owner_chain = &owner.role_provenance.edges;
+    // An out-of-line `mod` inside an inline module records no edge, so a
+    // chain can start below the crate root; `crate::` and `super::` are
+    // read only when it starts at `src/lib.rs` or `src/main.rs`. A file
+    // shared by several crates (`tests/common/mod.rs`) never does.
+    let root = owner_chain
+        .first()
+        .map_or(owner_file, |edge| edge.parent.as_path());
+    let crate_root = root
+        .file_name()
+        .is_some_and(|name| name == "lib.rs" || name == "main.rs")
+        && root
+            .parent()
+            .and_then(|dir| dir.file_name())
+            .is_some_and(|dir| dir == "src");
+    if !crate_root {
+        return None;
+    }
     let (mut file, steps) = match modules.split_first()? {
-        (&"crate", rest) => {
-            let root = match owner_chain.first() {
-                Some(edge) => edge.parent.clone(),
-                None if owner_file
-                    .file_name()
-                    .is_some_and(|name| name == "lib.rs" || name == "main.rs") =>
-                {
-                    owner_file.to_path_buf()
-                }
-                None => return None,
-            };
-            (root, rest)
-        }
+        (&"crate", rest) => (root.to_path_buf(), rest),
         (&"self", rest) => (owner_file.to_path_buf(), rest),
         (&"super", rest) => (owner_chain.last()?.parent.clone(), rest),
         _ => (owner_file.to_path_buf(), modules),
@@ -1420,8 +1452,22 @@ fn imported_enum_variants(
         if matches!(*step, "crate" | "self" | "super") {
             return None;
         }
-        let mut children = files.iter().filter_map(|(child, _)| {
-            let edge = chain(child)?.pop()?;
+        // The step's one `mod` in this file must be out of line: an inline
+        // module of that name, or a `cfg` alternative to it, records no
+        // edge and may declare a different `Kind` (#7686 review).
+        let parent = crate::analysis::syntax::parse_clean_source_file(&files.get(&file)?.source)?;
+        let mut modules = parent
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Module::cast)
+            .filter(|module| module.name().is_some_and(|name| name.text() == *step));
+        let only = modules.next()?;
+        if only.item_list().is_some() || modules.next().is_some() {
+            return None;
+        }
+        let mut children = files.iter().filter_map(|(child, facts)| {
+            let edge = facts.role_provenance.edges.last()?;
             (edge.parent == file
                 && edge
                     .declaration
@@ -1429,7 +1475,8 @@ fn imported_enum_variants(
                     .skip_while(|word| *word != "mod")
                     .nth(1)
                     .map(|name| name.trim_end_matches(';'))
-                    == Some(*step))
+                    == Some(*step)
+                && placed(child))
             .then(|| child.clone())
         });
         let child = children.next()?;
