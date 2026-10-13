@@ -492,7 +492,7 @@ pub(super) fn classify_sink_alignment_with_old(
         .collect();
     // A changed side effect (`print`, a file write, a call on a passed-in
     // collaborator, a `self` field) may be observed through its channel.
-    let effect = ChangedEffect::of(line_text, owner);
+    let effect = ChangedEffect::of(line_text, old_line_text, owner);
     let mock_tests: Vec<&RelatedTest> = if effect
         .as_ref()
         .is_some_and(ChangedEffect::admits_mock_assertion)

@@ -27,6 +27,8 @@ Linked issues:
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
 - #6733 (a removed term that is zero at every asserted input; rule 20)
+- #7586 (a mock passed for a called parameter, and the wrapped-argument
+  gate; rule 17, example 9)
 
 Linked PRs:
 
@@ -554,7 +556,29 @@ mutant calibrates the rule; ripr reports only the static shape.
       matcher or a starred argument accepts whatever the changed call
       passes, and `assert_called_with` (last call only) or
       `assert_any_call` can be met by another call the owner makes on
-      the same method, so none of them credits.
+      the same method, so none of them credits. A changed `p(...)` that
+      calls the parameter itself is read the same way, through
+      `L.assert_called_once_with(`. When the owner's only `return` is its
+      last statement, `return p`, the owner is undecorated, synchronous
+      and not a generator, `p` is never rebound, and the body has no
+      `lambda`, `for` or `:=` that could rebind it, a local the test binds
+      once to the owner's result is the mock it passed as well, for both
+      `p(...)` and `p.m(...)` (#7586).
+      Either form credits only when the pinned expectation reads the new
+      arguments as a different call. A changed argument count or keyword
+      set does. So does a rewritten argument when neither side keeps the
+      other inside it (`'hi'` to `'welcome'`, two literals of different
+      value; `'hi'` to `"hi"` is the same value), or when one side is the
+      other, a single operand, under literal arithmetic that is not an
+      identity (`n + 1`, `n * 100`, but not `n + 0`, `n * 1` or `n + ''`). Any other rewrite that keeps the old
+      argument inside it (`abs(n)`, `max(n, 0)`, `n or 0`, `(n)`, `n.real`,
+      or `int(n)` to `n`) can return it unchanged at the input the test
+      passes (`abs(1) == 1`), so the pinned expectation may still hold and
+      the change does not credit. A starred argument on either side
+      cannot be aligned and does not credit. An old line that is not one call
+      statement (it carries a comment or assigns the result) cannot be
+      compared and does not credit; a call to another callee, or a line
+      with no old counterpart, does.
     - `self.a = ...` or an augmented assignment in a method owner:
       `L.a`, where `L` is a local bound to the owner's class whose
       method the test calls (rule 9's bound receiver).
@@ -750,6 +774,22 @@ rejected alternative. Any can be reversed later without touching the rest.
     threshold) is common in pricing code. Rejected: general
     interprocedural value evaluation, because one guarded return is the
     largest shape whose value static evidence reads without running code.
+15. **A mock passed for a called parameter.** Adopted (2026-10-13,
+    #7586): rule 17 reads a changed `p(...)` like `p.m(...)`, and reaches
+    the mock through the owner's result when the owner returns `p`. The
+    corpus case `py-spec0233-ex09-mock-arg` fails at runtime on the
+    handed 2 while ripr read it `weakly_exposed`. A rewrite that keeps the
+    old argument inside it, other than literal arithmetic, does not credit
+    on either form: `py-spec0233-ex09-mock-sign` wraps the argument in
+    `abs`, and the test's positive input hands the mock the same value. Rejected: promote `mock_expectation` to strong
+    for exact arguments, because it would credit the `abs` case too.
+    Rejected: require every argument rewrite to change the value at every
+    input, because a scaled argument (`amount * 100`, case
+    `py-unittest-transfer-notify`) differs at every input except 0 and
+    its test fails at runtime. Literal arithmetic is therefore credited,
+    accepting the miss at the one input where it is the identity.
+    Rejected: gate only a single wrapping call, because `max(n, 0)`,
+    `n or 0` and nested wrappers return `n` unchanged just as often.
 
 ## Required Evidence
 
@@ -824,7 +864,14 @@ and the test is `tests/test_subject.py`, which imports each owner from
    2.0)` only, through a project helper: no assertion, `weakly_exposed`
    (unchanged).
 9. `m = parse('1')` then `m.assert_called_once_with(1)`:
-   `mock_expectation` / medium, `weakly_exposed` (unchanged).
+   `mock_expectation` / medium, `weakly_exposed` (unchanged). For an
+   owner `def on_parse(text, handler): handler(int(text) + 1)` then
+   `return handler`, changed from `handler(int(text))`, the test
+   `m = on_parse('1', Mock())` / `m.assert_called_once_with(1)`:
+   `exposed` (today `weakly_exposed`; rule 17, #7586), since `m` is the
+   mock the test passed. With the change `handler(abs(int(text)))`
+   instead: `weakly_exposed` (unchanged), since `abs` hands the mock 1 at
+   that input.
 10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
     helper, `static_unknown`, `opaque_custom_assertion_helper`
     (unchanged).
@@ -1077,8 +1124,20 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `assertRaises ... as cm` or other example 34 form yet, and each needs
   its own case before those parts read as established.
   Example 9 has an argument case (`py-spec0233-ex09-mock-arg`) whose
-  mutant the `assert_called_once_with` expectation kills, and a sign case
-  (`py-spec0233-ex09-mock-sign`) the test cannot see, which scores ideal.
+  mutant the `assert_called_once_with` expectation kills, which scores
+  credited under rule 17's called-parameter form, and a sign case
+  (`py-spec0233-ex09-mock-sign`) the test cannot see, which stays at its
+  ideal gap under the wrapped-argument gate.
+- Rule 17's called-parameter form (#7586): `verdict_corpus_tests.rs` pins
+  the returned and the passed-local mock, the `abs` wrap, an owner that
+  returns another value, rebinds the parameter or has a second `return`,
+  and the argument-free and last-call-only expectations. A second test
+  pins the gate on `p.m(...)`: nested and multi-argument wrappers, `or`,
+  parentheses, an attribute read, an equal numeric literal and an old line
+  with a comment or an assignment, a starred argument, identity
+  arithmetic and a requoted string or respelled number do not credit;
+  literal arithmetic on either side, an added argument, a changed keyword
+  set, different literals and another name do.
 
 ## Implementation Mapping
 
@@ -1103,7 +1162,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
 - `crates/ripr/src/analysis/language/python/term_activation.rs`: the
   changed call term and the guarded-return callee (rule 20).
 - `crates/ripr/src/analysis/language/python/effect_alignment.rs`: effect
-  channels (rule 17) and self-computed expected values (rule 18).
+  channels (rule 17), including the called-parameter form and the
+  argument-rewrite gate, and self-computed expected values (rule 18).
+  `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
 
