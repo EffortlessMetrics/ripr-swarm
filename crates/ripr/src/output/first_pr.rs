@@ -6480,9 +6480,8 @@ mod tests {
             let markdown = render_start_here_markdown(&packet);
             if check_id == "git_diff" {
                 assert!(
-                    markdown.contains(
-                        "pass the commit before the work (for example `--base HEAD~1`"
-                    ),
+                    markdown
+                        .contains("pass the commit before the work (for example `--base HEAD~1`"),
                     "{markdown}"
                 );
                 assert!(markdown.contains("--base HEAD~1"), "{markdown}");

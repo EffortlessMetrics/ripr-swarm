@@ -987,11 +987,8 @@ fn run_pipeline_for_diff_text_with_language_config(
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
-    let preview_advisories = detect_preview_advisories(
-        languages,
-        preview_paths.into_iter(),
-        language_config,
-    );
+    let preview_advisories =
+        detect_preview_advisories(languages, preview_paths.into_iter(), language_config);
     for advisory in &preview_advisories {
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
@@ -1027,11 +1024,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     // handwritten_files` escape hatch, mirroring the Rust generated-corpus
     // wording, instead of a bare "retry" that cannot change the outcome
     // (#7386).
-    for (language, skipped) in detect_preview_skipped_paths(
-        languages,
-        analysis_changed_files.iter(),
-        language_config,
-    ) {
+    for (language, skipped) in
+        detect_preview_skipped_paths(languages, analysis_changed_files.iter(), language_config)
+    {
         let listed = bounded_path_listing(&skipped);
         let name = language.display_name();
         let config_section = match language {
@@ -1795,7 +1790,10 @@ fn is_excluded_from_preview_analysis(
 }
 
 #[cfg(feature = "lang-typescript")]
-fn is_excluded_from_typescript_preview_analysis(path: &std::path::Path, handwritten: &[String]) -> bool {
+fn is_excluded_from_typescript_preview_analysis(
+    path: &std::path::Path,
+    handwritten: &[String],
+) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
         || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))

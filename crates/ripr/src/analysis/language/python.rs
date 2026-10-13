@@ -648,7 +648,9 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
-        let discovered = collect_workspace_python_files_with_handwritten(&options.root, handwritten);        let (workspace_files, refused_files) =
+        let discovered =
+            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
+        let (workspace_files, refused_files) =
             truncate_workspace_files(discovered, walk_limits.max_workspace_files);
         let workspace_read = read_workspace_sources_capped(
             &options.root,

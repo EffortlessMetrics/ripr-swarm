@@ -248,11 +248,7 @@ fn cli_state_label(state: &str) -> &'static str {
     }
 }
 
-fn cli_safe_next_action(
-    state: &str,
-    selected: &Value,
-    preflight_needs_attention: bool,
-) -> String {
+fn cli_safe_next_action(state: &str, selected: &Value, preflight_needs_attention: bool) -> String {
     match state {
         "top_gap" => {
             let identity = string_path(selected, &["canonical_gap_id"])
@@ -735,11 +731,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     }
 }
 
-fn render_no_action_markdown(
-    selected: &Value,
-    preflight_needs_attention: bool,
-    out: &mut String,
-) {
+fn render_no_action_markdown(selected: &Value, preflight_needs_attention: bool, out: &mut String) {
     out.push_str("## Start Here\n\n");
     let state = selected
         .get("state")

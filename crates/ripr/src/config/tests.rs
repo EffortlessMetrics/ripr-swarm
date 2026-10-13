@@ -1842,17 +1842,19 @@ handwritten_files = ['dist/pricing.ts', 'env/config.mjs']
 }
 
 #[test]
-fn python_and_typescript_handwritten_files_reject_wrong_extensions_and_globs()
--> Result<(), String> {
+fn python_and_typescript_handwritten_files_reject_wrong_extensions_and_globs() -> Result<(), String>
+{
     for (section, paths) in [
         ("languages.python", "['build/lib/pipeline.ts']"),
         ("languages.python", "['build/*.py']"),
         ("languages.typescript", "['dist/pricing.py']"),
         ("languages.typescript", "['dist/*.ts']"),
     ] {
-        let result = parse_config(&format!("[{section}]
+        let result = parse_config(&format!(
+            "[{section}]
 handwritten_files = {paths}
-"));
+"
+        ));
         match result {
             Err(_e) => {}
             Ok(_) => {

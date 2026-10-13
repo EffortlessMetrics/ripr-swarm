@@ -42,7 +42,8 @@ pub(crate) use python::{
     detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
     is_detectable_generated_python_path, is_detectable_python_source_name,
     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name, source_dir_contains_detectable_python,
+    python_project_marker_name, python_source_dir_marker_name,
+    source_dir_contains_detectable_python,
 };
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]

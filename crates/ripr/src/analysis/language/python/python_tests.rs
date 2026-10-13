@@ -2275,7 +2275,10 @@ fn declared_handwritten_python_file_under_excluded_dir_is_walked() -> Result<(),
     // conventions. The declared file is walked; sibling files under the
     // same excluded directory are still skipped.
     let root = unique_tempdir("handwritten-python-walk")?;
-    write_file(&root.join("build/lib/pipeline.py"), "def normalize(value):\n    return value\n")?;
+    write_file(
+        &root.join("build/lib/pipeline.py"),
+        "def normalize(value):\n    return value\n",
+    )?;
     write_file(&root.join("build/lib/generated_helper.py"), "x = 1\n")?;
     write_file(&root.join("src/keep.py"), "y = 2\n")?;
     let declared = vec!["build/lib/pipeline.py".to_string()];
@@ -2283,19 +2286,28 @@ fn declared_handwritten_python_file_under_excluded_dir_is_walked() -> Result<(),
     let files = collect_workspace_python_files_with_handwritten(&root, &declared);
     let cleanup = std::fs::remove_dir_all(&root);
 
-    if !files.iter().any(|path| path == &PathBuf::from("build/lib/pipeline.py")) {
+    if !files
+        .iter()
+        .any(|path| path == &PathBuf::from("build/lib/pipeline.py"))
+    {
         let _ = cleanup;
         return Err(format!(
             "declared hand-written file must be walked, got {files:?}"
         ));
     }
-    if files.iter().any(|path| path == &PathBuf::from("build/lib/generated_helper.py")) {
+    if files
+        .iter()
+        .any(|path| path == &PathBuf::from("build/lib/generated_helper.py"))
+    {
         let _ = cleanup;
         return Err(format!(
             "non-declared sibling under the excluded dir must stay skipped, got {files:?}"
         ));
     }
-    if !files.iter().any(|path| path == &PathBuf::from("src/keep.py")) {
+    if !files
+        .iter()
+        .any(|path| path == &PathBuf::from("src/keep.py"))
+    {
         let _ = cleanup;
         return Err(format!("ordinary source must stay walked, got {files:?}"));
     }
