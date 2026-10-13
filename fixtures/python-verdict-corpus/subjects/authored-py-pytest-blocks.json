@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-blocks",
+  "origin": "authored",
+  "version_label": "authored@3eef453",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "ledger/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ledger/account.py",
+      "sha256": "8c0dcd721476cc665b5409995c1313956a44aebf1e0e469bf7bb29a3a05c840a"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "c6e0db7265e0a059cd6f50a454925d73fc4961dbbd2ffdac20daa1b379c807fd"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_account.py",
+      "sha256": "592cd4b42549b6ae2fb47d6df0b5d7820502de612c535eafc45b233e40415c86"
+    }
+  ]
+}
