@@ -828,6 +828,19 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    if matches!(
+        probe.family,
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+    ) && let Some(fact) = missing_guard_entry_discriminator(
+        probe,
+        owner_fn,
+        related_tests,
+        flow_sinks,
+        index,
+        workspace_complete,
+    ) {
+        missing.push(fact);
+    }
     if missing.is_empty()
         && observed_values
             .iter()
@@ -1399,6 +1412,65 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+    })
+}
+
+pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
+
+/// RIPR-SPEC-0260 (#7132): name the `if` around a changed side effect or
+/// call as the missing discriminator when every related test calls the
+/// owner directly and every call's literal input provably leaves the guard
+/// false (`add(&mut v, 4)` against `if x > 10`). The probe then never runs
+/// under the tests, so no assertion over its effect can reveal it. The same
+/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
+/// use of the owner, one computed input, a partial index, a same-named
+/// function, or a related test that may reach the owner through a helper
+/// or macro leaves the guard unnamed.
+fn missing_guard_entry_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<MissingDiscriminatorFact> {
+    let owner = owner_fn?;
+    if related_tests.is_empty()
+        || !workspace_complete
+        || !super::helper_transfer::callee_is_unique(&owner.name, index)
+    {
+        return None;
+    }
+    let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for function in index.functions() {
+        functions_by_name
+            .entry(function.name.as_str())
+            .or_default()
+            .push(function);
+    }
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
+            return None;
+        }
+        inputs.extend(guard.unentered_inputs(test)?);
+    }
+    inputs.sort();
+    inputs.dedup();
+    let condition = format!("if {}", guard.condition());
+    Some(MissingDiscriminatorFact {
+        reason: format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
+            guard.parameter(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        value: condition,
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
     })
 }
 

@@ -38,8 +38,9 @@ pub(crate) fn related_test_miss_reason(
             "ripr could not confirm that this assertion observes the changed behavior".to_string()
         }
         // The analyzer assigns `missing_input` only for a predicate probe
-        // with a boundary fact or a match-arm probe with an unselected-arm
-        // fact, and `missing_exact_assertion` only when neither exists, so
+        // with a boundary fact, a match-arm probe with an unselected-arm
+        // fact, or a side-effect or call-deletion probe with an unentered
+        // guard fact, and `missing_exact_assertion` only when neither exists, so
         // reading the facts as a predicate's picks the fact each miss was
         // assigned from.
         RelatedTestMiss::MissingInput => {
@@ -50,6 +51,10 @@ pub(crate) fn related_test_miss_reason(
                 input_boundary_fact(missing_discriminators, &ProbeFamily::MatchArm)
             {
                 format!("no test input selects arm `{} =>`", one_line(&fact.value))
+            } else if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::SideEffect)
+            {
+                format!("no test input enters `{}`", one_line(&fact.value))
             } else {
                 "no test input reaches the changed boundary".to_string()
             }

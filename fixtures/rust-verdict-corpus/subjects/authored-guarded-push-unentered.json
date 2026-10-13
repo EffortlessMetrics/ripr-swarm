@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-guarded-push-unentered",
+  "origin": "authored",
+  "version_label": "authored 2026-10-13 for #7132 (a guarded push that no related test input enters is not exposed)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "7b23a0a4f5b7796f75e8cf3f26cc4bcc667c70d1de913cc5eb98040c668f6faa"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3946f1185346b404451c823c101fb78d44d6fea3e2d99e9d2e40486f5ae62816"
+    }
+  ]
+}

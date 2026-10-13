@@ -36,6 +36,9 @@ use super::reveal::{
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::Probe;
 
+mod guard_entry;
+pub(in crate::analysis) use guard_entry::GuardEntry;
+
 /// Where the owner's `match` reads its scrutinee from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ScrutineeBinding {
