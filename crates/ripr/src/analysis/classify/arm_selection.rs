@@ -2488,7 +2488,7 @@ mod tests {
         selector
     }
 
-    fn selection_of(selector: &ArmSelector, owner_call: &str) -> Option<ArmSelection> {
+    fn uncased_selection_of(selector: &ArmSelector, owner_call: &str) -> Option<ArmSelection> {
         selector
             .observed_inputs(&test_with(&format!(
                 "fn t() {{\n    assert_eq!({owner_call}, 0);\n}}\n"
@@ -2503,7 +2503,7 @@ mod tests {
         let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
             .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
         let judged = |source: Option<&str>, input: &str| {
-            selection_of(&resolve_with(&selector, source), &format!("f({input})"))
+            uncased_selection_of(&resolve_with(&selector, source), &format!("f({input})"))
         };
         let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
         assert_eq!(
@@ -2588,7 +2588,7 @@ mod tests {
             let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
                 .ok_or_else(|| "premise: the arm reads its scrutinee from m".to_string())?;
             let source = format!("{declared}{body}");
-            Ok(selection_of(
+            Ok(uncased_selection_of(
                 &resolve_with(&selector, Some(&source)),
                 &format!("f({input})"),
             ))
@@ -2627,7 +2627,7 @@ mod tests {
             let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &function)
                 .ok_or_else(|| "premise: the arm reads its scrutinee".to_string())?;
             let source = format!("pub enum Kind {{ A, B }}\nimpl {impl_type} {{\n{body}}}\n");
-            Ok(selection_of(&resolve_with(&selector, Some(&source)), input))
+            Ok(uncased_selection_of(&resolve_with(&selector, Some(&source)), input))
         };
         let on_parameter = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
         // In `impl Router`, `Self::A` is a `Router` constant: it may equal
@@ -2659,7 +2659,7 @@ mod tests {
             .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
         let source = format!("pub enum Kind {{ A, B }}\n{body}");
         assert_eq!(
-            selection_of(&resolve_with(&selector, Some(&source)), "f(Kind::B)"),
+            uncased_selection_of(&resolve_with(&selector, Some(&source)), "f(Kind::B)"),
             Some(ArmSelection::Unknown)
         );
         Ok(())
@@ -2679,15 +2679,15 @@ mod tests {
         let resolved = resolve_with(&selector, Some(&source));
         // Neither pattern takes `Kind::D`; the old one took `Kind::C`.
         assert_eq!(
-            selection_of(&resolved, "f(Kind::D)"),
+            uncased_selection_of(&resolved, "f(Kind::D)"),
             Some(ArmSelection::SelectsOther)
         );
         assert_eq!(
-            selection_of(&resolved, "f(Kind::C)"),
+            uncased_selection_of(&resolved, "f(Kind::C)"),
             Some(ArmSelection::Unknown)
         );
         assert_eq!(
-            selection_of(&resolve_with(&selector, None), "f(Kind::D)"),
+            uncased_selection_of(&resolve_with(&selector, None), "f(Kind::D)"),
             Some(ArmSelection::Unknown)
         );
         // An original pattern that cannot be read stays unreadable.
@@ -2701,7 +2701,7 @@ mod tests {
         let resolved = resolve_with(&unreadable, Some(&source));
         assert_eq!(resolved.changed_from, Some(None));
         assert_eq!(
-            selection_of(&resolved, "f(Kind::D)"),
+            uncased_selection_of(&resolved, "f(Kind::D)"),
             Some(ArmSelection::Unknown)
         );
         Ok(())
