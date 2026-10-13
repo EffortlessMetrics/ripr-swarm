@@ -79,7 +79,7 @@ reads as a `return_value` / value probe when all of these hold:
 - every key stores the name it spells: an identifier, a plain decimal
   integer of at most 15 digits, or a quoted word of ASCII letters, digits, `_`, `$` and `-`
   (`1e3`, `0x10` and `__proto__` are refused); no key repeats;
-- every value is a plain decimal number (`_` separators and a bigint `n`
+- every value is a plain decimal number starting with a digit (`_` separators and a bigint `n`
   allowed), a quoted string with no quote, backtick or escape inside, `true`,
   `false` or `null`;
 - at least one value moved. Two numbers compare by value (`95` to `95.0`
@@ -93,7 +93,7 @@ reads as a `return_value` / value probe when all of these hold:
   declaration, a top-level statement of the body (not inside an inner
   block), and in that `return`;
 - the `return` is `return name[param];` or `return name[param] ??
-  <literal>;`, with the whole fallback one literal, where `param` is an owner parameter the body never rebinds
+  <literal>;`, with the whole fallback one literal (or `undefined`), where `param` is an owner parameter the body never rebinds
   (RIPR-SPEC-0248 stability).
 
 The moved keys are the changed keys.
@@ -169,8 +169,9 @@ documented decisions and proceed"). Recorded on #6654.
    second read of the table, a member read, a computed key argument, a
    rebound key parameter, a computed fallback, and a fallback that only
    starts with a string (`?? "x" ? 1 : 2`, `?? "x", 0`), a move from `95`
-   to `"95"` or from `true` to `1`, an integer key of more than 15 digits,
-   and a table declared inside an inner block. An arrow owner with a block
+   to `"95"` or from `true` to `1`, an identifier value (`_1`), an
+   integer key of more than 15 digits,
+   and a table declared inside an inner block of a function or arrow owner. An arrow owner with a block
    body reads as a function body does.
 5. With an owner `(region, sku)`, `expect(fetchUnitPrice("eu", "pear"))`
    is `exposed` and `expect(fetchUnitPrice("pear", "apple"))` is not;

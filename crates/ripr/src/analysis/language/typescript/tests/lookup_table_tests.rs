@@ -70,7 +70,7 @@ fn lookup_table_change_reads_the_moved_keys_and_the_key_parameter() -> Result<()
 
 #[test]
 fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str); 30] = [
+    let cases: [(&str, &str, &str, &str); 31] = [
         ("no old line", NEW, "", "  return table[sku] ?? 0;"),
         (
             "a key added",
@@ -113,6 +113,12 @@ fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
             NEW,
             OLD,
             "  return table[sku] ?? table.apple;",
+        ),
+        (
+            "an identifier value that looks like a number",
+            "  const table = { apple: 120, pear: 2 };",
+            "  const table = { apple: 120, pear: _1 };",
+            "  return table[sku] ?? 0;",
         ),
         (
             "a number moved to its own numeric string",
@@ -253,6 +259,11 @@ fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
         "const table = {{ apple: 120, pear: 95 }};\nexport function fetchUnitPrice(sku: string): number {{\n  {{\n{NEW}\n  }}\n  return table[sku] ?? 0;\n}}\n"
     );
     let owner = unit_price_owner(&inner_block)?;
+    assert_eq!(ts_lookup_table_change(&owner, NEW, Some(OLD)), None);
+    let arrow_inner_block = format!(
+        "export const fetchUnitPrice = (sku: string): number => {{\n  {{\n{NEW}\n  }}\n  return table[sku] ?? 0;\n}};\n"
+    );
+    let owner = unit_price_owner(&arrow_inner_block)?;
     assert_eq!(ts_lookup_table_change(&owner, NEW, Some(OLD)), None);
     // An arrow owner with a block body reads as a function body does.
     let arrow = format!(

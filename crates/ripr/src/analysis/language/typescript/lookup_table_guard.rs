@@ -113,7 +113,9 @@ fn string_literal_content(value: &str) -> Option<&str> {
 }
 
 fn is_scalar_literal(value: &str) -> bool {
-    numeric_literal_value(value).is_some()
+    // `numeric_literal_value` drops `_` separators first, so `_1` (an
+    // identifier) would read as `1`; a number starts with a digit.
+    (value.starts_with(|c: char| c.is_ascii_digit()) && numeric_literal_value(value).is_some())
         || matches!(value, "true" | "false" | "null")
         || string_literal_content(value).is_some()
 }
