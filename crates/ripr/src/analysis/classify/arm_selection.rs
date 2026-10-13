@@ -15,7 +15,8 @@
 //!   alternatives (or falls inside an integer range alternative), and that
 //!   alternative binds its payload irrefutably; for an arm whose pattern
 //!   the diff changed, the input instead moved between this arm and a
-//!   later one whose results are provably unequal literals;
+//!   later one whose results are provably unequal (literals, or variants
+//!   of literals);
 //! - `SelectsOther`: every alternative names a constructor, literal or
 //!   integer range, and the input's differs from all of them;
 //! - `Unknown`: anything else (a variable input, a wildcard or binding
@@ -72,8 +73,9 @@ pub(in crate::analysis) struct ArmSelector {
     /// The arm's original alternatives when the diff changed its pattern
     /// (`Some(None)` when the original pattern cannot be read). An input
     /// inside both patterns runs the same arm either way, so a changed
-    /// pattern never earns credit from selection, and the arm is named
-    /// unselected only when neither pattern selects any observed input.
+    /// pattern earns credit only from an input that moved to an unequal
+    /// result (`moved_to_unequal_result`), and the arm is named unselected
+    /// only when neither pattern selects any observed input.
     changed_from: Option<Option<Vec<PatternHead>>>,
     /// The changed arm's result as it stands, when it is a literal or a
     /// constructor of literals (RIPR-SPEC-0229 "provably unequal").
@@ -88,6 +90,11 @@ pub(in crate::analysis) struct ArmSelector {
     /// credit reads the original `match` as the current one with this arm's
     /// pattern restored, so it needs the body to be the one that stood.
     original_same_body: bool,
+    /// Whether the enclosing `match` is the owner body's tail expression,
+    /// so the arm's result is the owner's return value. Moved-input credit
+    /// compares arm results as return values; a `let t = match ..;` read
+    /// later may map unequal results to one value.
+    match_is_tail: bool,
     /// First path segments that name this workspace: `crate`, `self`,
     /// `super`, `Self`, the owner's impl type, and (once
     /// `with_workspace_packages` runs) each workspace package. A free
@@ -124,6 +131,9 @@ enum LiteralValue {
 enum ResultValue {
     Literal(LiteralValue),
     Variant {
+        /// The path before the variant (`Kind` in `Kind::Alpha`), empty
+        /// when bare.
+        qualifier: String,
         name: String,
         payload: Vec<LiteralValue>,
     },
@@ -205,9 +215,19 @@ impl ArmSelector {
         // unchanged text around the head, the arm body included, anchors
         // both ends (#7020), so a head cut is this arm with only its
         // pattern changed.
+        // The cut needs unchanged text at the head's start, so an old head
+        // sharing no leading text with the current pattern is not one; an
+        // uncut old head with its body on the next removed line arrives
+        // joined to that body and reads as a whole line.
         let before_head_cut = probe.before.as_deref().is_some_and(|before| {
             let before = before.trim();
-            before.ends_with("=>") && before.matches("=>").count() == 1
+            before.ends_with("=>")
+                && before.matches("=>").count() == 1
+                && before
+                    .chars()
+                    .zip(pattern_text.chars())
+                    .next()
+                    .is_some_and(|(old, new)| old == new)
         });
         let changed_from = match (&probe.before, &probe.after) {
             (Some(before), Some(_)) => match arm_pattern_text(before) {
@@ -247,7 +267,12 @@ impl ArmSelector {
             earlier_patterns,
             reached,
             arms_from_changed,
-        } = enclosing_match(owner, probe.location.line)?;
+            match_is_tail,
+        } = enclosing_match(
+            owner,
+            probe.location.line,
+            matches!(changed_from, Some(Some(_))),
+        )?;
         // The first arm from the changed line on is the changed arm itself;
         // the rest are the arms an input that misses it falls through to.
         let (result, later, current_body) = match arms_from_changed.as_deref() {
@@ -270,13 +295,17 @@ impl ArmSelector {
             _ => (None, None, None),
         };
         let original_same_body = before_head_cut
-            || probe.before.as_deref().is_some_and(|before| {
-                find_fat_arrow(before).is_some_and(|arrow| {
-                    current_body.as_deref().is_some_and(|current| {
-                        arm_body_text(&before[arrow + 2..]) == arm_body_text(current)
+            || probe
+                .before
+                .as_deref()
+                .and_then(without_comments)
+                .is_some_and(|before| {
+                    find_fat_arrow(&before).is_some_and(|arrow| {
+                        current_body.as_deref().is_some_and(|current| {
+                            arm_body_text(&before[arrow + 2..]) == arm_body_text(current)
+                        })
                     })
-                })
-            });
+                });
         let earlier = earlier_patterns
             .iter()
             .map(|pattern| earlier_arm(pattern))
@@ -328,6 +357,7 @@ impl ArmSelector {
             result,
             later,
             original_same_body,
+            match_is_tail,
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
@@ -632,7 +662,7 @@ impl ArmSelector {
             (ArmSelection::Selects, ArmSelection::SelectsOther)
                 | (ArmSelection::SelectsOther, ArmSelection::Selects)
         );
-        if !moved || !self.original_same_body {
+        if !moved || !self.original_same_body || !self.match_is_tail {
             return false;
         }
         let (Some(result), Some(later)) = (&self.result, self.later_result(input)) else {
@@ -919,6 +949,7 @@ fn result_value(body: &str) -> Option<ResultValue> {
         return Some(ResultValue::Literal(literal));
     }
     let (name, payload) = variant_parts(body)?;
+    let qualifier = input_qualifier(body).unwrap_or_default().to_string();
     let payload = match payload {
         None => Vec::new(),
         Some(inner) => split_top_level_arguments(inner)?
@@ -927,6 +958,7 @@ fn result_value(body: &str) -> Option<ResultValue> {
             .collect::<Option<Vec<_>>>()?,
     };
     Some(ResultValue::Variant {
+        qualifier,
         name: name.to_string(),
         payload,
     })
@@ -939,10 +971,10 @@ fn arm_body_text(body: &str) -> &str {
 }
 
 /// Whether two results are different values: literals of one kind with
-/// different values, or variants with different names, or the same
-/// variant with a payload entry of one kind and a different value. A
-/// variant compares by its last path segment, so `Kind::Alpha` and an
-/// imported `Alpha` read as equal, never as unequal.
+/// different values, or variants under the same qualifier with different
+/// names, or the same variant with a payload entry of one kind and a
+/// different value. Differently qualified variants (`Kind::Alpha` and an
+/// imported `Alpha`, or a renamed import) are never read as unequal.
 fn provably_unequal(left: &ResultValue, right: &ResultValue) -> bool {
     let unequal_literals = |left: &LiteralValue, right: &LiteralValue| {
         std::mem::discriminant(left) == std::mem::discriminant(right) && left != right
@@ -951,14 +983,19 @@ fn provably_unequal(left: &ResultValue, right: &ResultValue) -> bool {
         (ResultValue::Literal(left), ResultValue::Literal(right)) => unequal_literals(left, right),
         (
             ResultValue::Variant {
+                qualifier: left_qualifier,
                 name: left_name,
                 payload: left_payload,
             },
             ResultValue::Variant {
+                qualifier: right_qualifier,
                 name: right_name,
                 payload: right_payload,
             },
         ) => {
+            if left_qualifier != right_qualifier {
+                return false;
+            }
             if left_name != right_name {
                 return true;
             }
@@ -1232,11 +1269,20 @@ struct EnclosingMatch {
     earlier_patterns: Vec<String>,
     reached: bool,
     /// `(pattern, body)` of the changed arm and every arm after it, or
-    /// `None` when they cannot be delimited up to the match's closing brace.
+    /// `None` when they cannot be delimited up to the match's closing brace
+    /// or were not asked for.
     arms_from_changed: Option<Vec<(String, String)>>,
+    /// Whether only the owner body's closing `}` follows the match.
+    match_is_tail: bool,
 }
 
-fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<EnclosingMatch> {
+/// `with_later_arms` asks for the changed and later arms' bodies, which only
+/// a changed pattern's moved-input credit reads.
+fn enclosing_match(
+    owner: &FunctionSummary,
+    arm_line: usize,
+    with_later_arms: bool,
+) -> Option<EnclosingMatch> {
     let relative = arm_line.checked_sub(owner.start_line)?;
     let masked = mask_comments_and_strings(&owner.body);
     let source = without_comments(&owner.body)?;
@@ -1275,13 +1321,20 @@ fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<Enclosing
         return None;
     }
     let earlier_patterns = earlier_arm_patterns(&masked, &source, brace + 1, arm_offset)?;
-    let arms_from_changed = matching_close_brace(&masked, brace)
-        .and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
+    let close = with_later_arms
+        .then(|| matching_close_brace(&masked, brace))
+        .flatten();
+    let arms_from_changed =
+        close.and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
+    let match_is_tail = close
+        .and_then(|close| masked.get(close + 1..))
+        .is_some_and(|rest| rest.trim() == "}");
     Some(EnclosingMatch {
         scrutinee: scrutinee.to_string(),
         earlier_patterns,
         reached: match_always_runs(&masked[..keyword]),
         arms_from_changed,
+        match_is_tail,
     })
 }
 
@@ -2179,7 +2232,8 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_pattern_credits_only_a_moved_input_and_names_only_when_both_miss() -> Result<(), String> {
+    fn a_changed_pattern_credits_only_a_moved_input_and_names_only_when_both_miss()
+    -> Result<(), String> {
         let body = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
         let mut probe = arm_probe("Kind::Beta => 2,", 4);
         probe.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
@@ -2294,6 +2348,19 @@ mod tests {
         assert_eq!(selection_of(&selector, "f(9)"), Some(ArmSelection::Selects));
         assert!(selector.assertion_selects("assert_eq!(f(1), \"digit\");"));
         assert!(!selector.assertion_selects("assert_eq!(f(0), \"zero\");"));
+        // The lower bound is read: 4 is below `5..=9`, 5 is inside it.
+        let low = PatternHead::IntRange {
+            start: Some(5),
+            end: Some(9),
+        };
+        assert_eq!(
+            judge_alternative(&low, &PatternHead::Literal(LiteralValue::Int(4))),
+            ArmSelection::SelectsOther
+        );
+        assert_eq!(
+            judge_alternative(&low, &PatternHead::Literal(LiteralValue::Int(5))),
+            ArmSelection::Selects
+        );
         // A non-integer input against a range is not judged.
         assert_eq!(
             selection_of(&selector, "f('a')"),
@@ -2378,9 +2445,35 @@ mod tests {
             .ok_or_else(|| "premise: the equal arm is readable".to_string())?;
         assert!(!selector.assertion_selects("assert_eq!(f(4), 2);"));
         // An old whole line whose body differs is not this arm with only
-        // its pattern changed.
+        // its pattern changed, even when the patterns share an alternative
+        // and the moved input's results are unequal.
         let selector = digit_selector(Some("1..=8 => \"digits\","))?;
         assert!(!selector.assertion_selects("assert_eq!(f(9), \"many\");"));
+        let kinds = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
+        let mut rebodied = arm_probe("Kind::Beta => 2,", 4);
+        rebodied.before = Some("Kind::Beta | Kind::Gamma => 5,".to_string());
+        let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
+            .ok_or_else(|| "premise: the rebodied arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
+        // A comment on the old line does not change its body.
+        rebodied.before = Some("Kind::Beta | Kind::Gamma => 2, // old".to_string());
+        let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
+            .ok_or_else(|| "premise: the commented arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
+        // An old head that shares no leading text with the current pattern
+        // is not an anchored cut of this line (#5992 review: `0 =>` paired
+        // with `1..=9 => 2,` from another arm of the hunk).
+        let selector = digit_selector(Some("0 =>"))?;
+        assert!(!selector.assertion_selects("assert_eq!(f(5), \"many\");"));
+        assert_eq!(selection_of(&selector, "f(5)"), Some(ArmSelection::Unknown));
+        // A `match` whose value is bound and read later is not the return
+        // value: `if t > 0` maps unequal results to one value.
+        let bound = "pub fn f(n: u32) -> u32 {\n    let t = match n {\n        0..=4 => 1,\n        _ => 2,\n    };\n    if t > 0 { 7 } else { 0 }\n}\n";
+        let mut probe = arm_probe("0..=4 => 1,", 3);
+        probe.before = Some("0..=3 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(bound, "f"))
+            .ok_or_else(|| "premise: the bound match is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(4), 7);"));
         // A guarded arm between this one and `_` may take the input.
         let guarded = "pub fn f(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        k if k > 100 => \"huge\",\n        _ => \"many\",\n    }\n}\n";
         let mut probe = arm_probe("1..=9 => \"digit\",", 4);
@@ -2409,6 +2502,16 @@ mod tests {
         assert!(
             !some("Kind::Alpha")
                 .zip(some("Alpha"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            !some("Quiet")
+                .zip(some("Level::Low"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            some("Level::High")
+                .zip(some("Level::Low"))
                 .is_some_and(|(l, r)| provably_unequal(&l, &r))
         );
         assert_eq!(some("Some(x)"), None);

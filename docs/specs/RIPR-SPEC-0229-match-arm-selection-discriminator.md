@@ -229,11 +229,16 @@ Implemented:
   the other is found with no guarded arm in between, and the two arms'
   results are provably unequal values (#5992). The original `match` is
   read as the current one with this arm's old pattern restored, so the
-  credit says the test notices this line reverting; it needs the diff's
-  old text to be this arm with the same body (a head cut anchored on the
-  unchanged body, or a whole old line with an equal body). Results compare
-  as literals of one kind, or variants by last path segment and literal
-  payload, so `Kind::Alpha` and an imported `Alpha` never read as unequal.
+  credit says the test notices this line reverting. That is narrower than
+  the Behavior above when one hunk also changes or removes a later arm:
+  the later arm is read as it stands now. The credit needs the diff's old
+  text to be this arm with the same body (a head cut anchored on the
+  unchanged body, or a whole old line with an equal body; an uncut old
+  head whose body sat on the next removed line arrives joined to it), and
+  the `match` to be the owner body's tail expression, so an arm's result
+  is the return value. Results compare as literals of one kind, or as
+  variants under the same qualifier by name and literal payload, so
+  `Kind::Alpha` and an imported `Alpha` never read as unequal.
   A pattern whose alternatives were only reordered (`"CA" | "MX"` to
   `"MX" | "CA"`) takes the same inputs and reads as unchanged.
   A changed arm's original is the adjacent removed arm with the same
@@ -376,10 +381,13 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
-- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for ranges
-  and moved-input credit (examples 7 to 9): `integer_range_arms_select_by_value`,
+- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for
+  ranges and moved-input credit (examples 7 to 9):
+  `integer_range_arms_select_by_value`,
   `an_input_that_moved_to_an_unequal_result_credits_a_changed_pattern`,
-  `moved_input_credit_needs_provably_unequal_results`.
+  `moved_input_credit_needs_provably_unequal_results`; and
+  `crates/ripr/src/analysis/probes/diff.rs`
+  `an_uncut_old_arm_head_carries_its_removed_body`.
 - Verdict corpus cases `spec0229-unselected-range-arm` (example 7),
   `spec0229-range-widened-inside-input` and
   `spec0229-range-widened-moved-input` (example 8).

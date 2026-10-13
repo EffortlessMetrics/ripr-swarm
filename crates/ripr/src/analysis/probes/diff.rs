@@ -165,7 +165,18 @@ pub(crate) fn probes_for_file_with_relations(
                     if shape.family == ProbeFamily::MatchArm && line.matches("=>").count() > 1 {
                         return line;
                     }
-                    removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
+                    match removed_span_of_shape(text, &canonical_text, &line) {
+                        Some(cut) => cut,
+                        // An uncut old arm head (`0 =>`, its body on the next
+                        // removed line) would read like a head cut, which arm
+                        // selection trusts as this arm with its body
+                        // unchanged (#5992). Joining the removed body keeps
+                        // it reading as the whole old arm it was.
+                        None if shape.family == ProbeFamily::MatchArm => {
+                            with_removed_arm_body(&line, changed)
+                        }
+                        None => line,
+                    }
                 });
                 let probe = build_probe(
                     &build_context,
@@ -1043,6 +1054,29 @@ fn removed_before(
         .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
 }
 
+/// A whole old arm head that ends at `=>` (`0 =>`), joined with the removed
+/// line that follows it in the old file when there is one: the arm's old
+/// body. Any other old line comes back as it was.
+fn with_removed_arm_body(line: &str, changed: &ChangedFile) -> String {
+    if !line.trim_end().ends_with("=>") {
+        return line.to_string();
+    }
+    changed
+        .removed_lines
+        .iter()
+        .filter(|removed| removed.text.trim() == line.trim())
+        .find_map(|head| {
+            changed
+                .removed_lines
+                .iter()
+                .find(|next| next.line == head.line + 1)
+        })
+        .map_or_else(
+            || line.to_string(),
+            |body| format!("{} {}", line.trim_end(), body.text.trim()),
+        )
+}
+
 fn nearby_removed_line(
     added_new_side_line: usize,
     added: &str,
@@ -1281,6 +1315,35 @@ mod tests {
         assert_eq!(probe.family, ProbeFamily::Predicate);
         assert_eq!(probe.after.as_deref(), Some("string.len() >= MAX_LEN"));
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
+    }
+
+    /// #5992 review: an uncut old arm head whose body sat on the next removed
+    /// line is joined with that body, so it never reads as a head cut of the
+    /// current line; other old lines come back unchanged.
+    #[test]
+    fn an_uncut_old_arm_head_carries_its_removed_body() {
+        let removed = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: 3,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: Vec::new(),
+            removed_lines: vec![
+                removed(3, "        0 =>"),
+                removed(4, "            0,"),
+                removed(5, "        1..=8 => 2,"),
+                removed(7, "        9 =>"),
+            ],
+        };
+        assert_eq!(with_removed_arm_body("0 =>", &changed), "0 => 0,");
+        // A head whose next old line was kept has the same body as before.
+        assert_eq!(with_removed_arm_body("9 =>", &changed), "9 =>");
+        assert_eq!(
+            with_removed_arm_body("1..=8 => 2,", &changed),
+            "1..=8 => 2,"
+        );
     }
 
     /// #7020: an edit inside a match arm's head cuts `before` to the old
