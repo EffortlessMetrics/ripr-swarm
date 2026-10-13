@@ -1,4 +1,4 @@
-use super::{ExposureClass, Finding, MissingDiscriminatorFact, RelatedTest};
+use super::{ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest};
 
 /// The bounded, producer-backed witness projected by passive editor diagnostics.
 ///
@@ -76,8 +76,12 @@ impl DiagnosticWitness {
         // Tests listed only as examined misses (#5344) supplied no oracle and
         // are never a fix site: a fix site claims "this test runs the change
         // and has this oracle".
-        let best_test = suggested_related_test(finding)
-            .or_else(|| best_related_test(finding.oracle_related_tests()));
+        let best_test = if finding.language == Some(LanguageId::Perl) {
+            perl_suggested_related_test(finding)
+        } else {
+            suggested_related_test(finding)
+                .or_else(|| best_related_test(finding.oracle_related_tests()))
+        };
         // `observed_values` is finding-wide and does not identify the
         // selected related test.  Do not guess an assertion location by
         // matching text; the test's own line remains the only producer-owned
@@ -154,6 +158,29 @@ impl DiagnosticWitness {
             limitations,
         })
     }
+}
+
+/// Resolve the Perl producer's complete declared test identity once for all
+/// consumers. Missing, unknown or ambiguous declarations cannot borrow a
+/// differently ranked test's location or oracle.
+pub(crate) fn perl_suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    if finding.language != Some(LanguageId::Perl) {
+        return None;
+    }
+    let mut declarations = finding.evidence.iter().filter_map(|line| {
+        line.strip_prefix("perl_suggested_test_location: ")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
+    let declaration = declarations.next()?.replace('\\', "/");
+    if declarations.next().is_some() {
+        return None;
+    }
+    let mut matches = finding
+        .oracle_related_tests()
+        .filter(|test| format!("{}::{}", display_path(&test.file), test.name) == declaration);
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
 }
 
 fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {

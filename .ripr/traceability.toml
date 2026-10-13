@@ -14319,11 +14319,19 @@ tests = [
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_mixed_oracles_keep_canonical_gap_and_probe_stable",
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_shape_requires_selected_test_and_owner_binding",
   "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_real_fixtures_reach_check_and_json",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_witness_preserves_declared_tuple",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_gap_projection_preserves_declared_tuple",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_preview_keeps_declared_current_oracle",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_unresolved_or_ambiguous_tuple_does_not_rank_another_test",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_producer_excludes_other_owner_with_same_name",
 ]
 fixtures = ["fixtures/perl_cpan_alpha/recommendation-controls"]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",
+  "crates/ripr/src/domain/diagnostic_witness.rs",
+  "crates/ripr/src/output/perl_gap_record_projection.rs",
+  "crates/ripr/src/output/perl_preview_card.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md",

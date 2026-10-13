@@ -55,6 +55,12 @@ usable command's evidence reference. Canonical gap and probe shapes come from
 the selected direct row's test/owner-bound oracle, defaulting otherwise.
 Mixed advisory/direct oracle permutations preserve the direct exact gap ID;
 foreign test/owner shapes are refused, while a bound alternate shape is kept.
+Downstream witnesses, gap projections and preview evidence resolve the complete
+declared file/test-name to one retained oracle-related row. They do not rerank
+equal-strength rows; missing, unknown or ambiguous identities yield no target.
+Synthetic composition controls cover these consumers under permutations and
+advisory/direct combinations, without establishing shared-validator
+qualification (their inherited raw references and edit boundaries are separate).
 Complete and partial packet guidance remains advisory; partial packets still
 have no canonical gap. Exposure classes and displayed oracle strengths do not
 rise as a result of selection.

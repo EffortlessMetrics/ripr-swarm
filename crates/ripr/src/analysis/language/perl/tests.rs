@@ -5402,3 +5402,6 @@ fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), Stri
 
 #[path = "recommendation_tests.rs"]
 mod recommendation_tests;
+
+#[path = "composition_tests.rs"]
+mod composition_tests;

@@ -1965,6 +1965,13 @@ JSON fields:
   permutations cannot change the recommendation or its gap identity
   (RIPR-SPEC-0235 rule 13, #6734). This selection grants no additional class,
   oracle strength or execution authority.
+  Perl diagnostic fix sites and complete preview projections resolve the
+  declared normalized `file::test-name` to one retained oracle-related test,
+  preserving its location and current oracle beside the declared assertion
+  and command. They do not rerank equal-strength rows. Missing, unknown or
+  ambiguous identities leave the fix site unavailable and refuse these
+  projections. Diagnostic suggested assertions remain unavailable without a
+  symbol-resolved producer template; sparse packets remain incomplete.
   `verify.command` is copied from fact evidence with
   `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
   `null` even though receipt evidence is required internally, and

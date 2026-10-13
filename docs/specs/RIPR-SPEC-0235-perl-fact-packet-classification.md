@@ -275,6 +275,13 @@ For each change, the first match wins:
       and target-owner identities bind; otherwise use the behavior default.
       An advisory or foreign oracle cannot change that identity. This selection
       changes no exposure class or oracle strength.
+    - Perl diagnostic witnesses, complete gap projections and preview evidence
+      preserve this declared tuple by resolving the full normalized
+      `file::test-name` to exactly one retained oracle-related test. They do
+      not rerank related rows. Missing, unknown or ambiguous declarations
+      leave the witness target unavailable and refuse the projections; this
+      neither supplies a symbol-resolved assertion template nor promotes
+      sparse packets to complete repair authority.
 14. **Fingerprint scope.** The packet fingerprint is a consistency check
     on identity facts, not an authenticity control: it is an unkeyed
     SHA-256 that any writer can recompute. No output, doc or comment may

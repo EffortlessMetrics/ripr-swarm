@@ -1,0 +1,210 @@
+//! Declared Perl tuple composition, not producer extraction or packet readiness.
+
+use super::*;
+use crate::domain::{DiagnosticWitness, Finding, OracleKind, OracleStrength};
+use crate::output::perl_gap_record_projection::perl_gap_record_for;
+use crate::output::perl_preview_card::{perl_preview_card, tests::sample_perl_finding};
+
+const GAP: &str =
+    "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value";
+
+/// Complete synthetic consumer contract; real sparse packets stay separate.
+fn declared_tuple(advisory_a: bool) -> Finding {
+    let mut finding = sample_perl_finding();
+    let row = finding.related_tests[0].clone();
+    let mut a = row.clone();
+    a.file = "t/a.t".into();
+    a.name = "a_exact".to_string();
+    a.line = 11;
+    a.oracle = Some("is($got, 11, 'A exact')".to_string());
+    a.oracle_kind = OracleKind::ExactValue;
+    a.oracle_strength = OracleStrength::Strong;
+    let mut b = row;
+    b.file = "t/b.t".into();
+    b.name = "b_exact".to_string();
+    b.line = 22;
+    b.oracle = Some("is($got, 22, 'B exact')".to_string());
+    b.oracle_kind = OracleKind::ExactValue;
+    b.oracle_strength = OracleStrength::Strong;
+    if advisory_a {
+        a.oracle = Some("ok($got, 'A smoke')".to_string());
+        a.oracle_kind = OracleKind::SmokeOnly;
+        a.oracle_strength = OracleStrength::Weak;
+    }
+    finding.related_tests = vec![a, b];
+    finding.evidence.retain(|line| {
+        !line.starts_with("perl_suggested_test_location: ")
+            && !line.starts_with("perl_suggested_assertion: ")
+            && !line.starts_with("perl_verify_command: ")
+            && !line.starts_with("perl_current_test_evidence: ")
+    });
+    let (file, name, assertion) = if advisory_a {
+        ("t/b.t", "b_exact", "is($got, 22, 'B exact')")
+    } else {
+        ("t/a.t", "a_exact", "is($got, 11, 'A exact')")
+    };
+    finding.evidence.extend([
+        format!("perl_suggested_test_location: {file}::{name}"),
+        format!("perl_suggested_assertion: {assertion}"),
+        format!("perl_verify_command: prove {file}"),
+    ]);
+    finding
+}
+
+#[test]
+fn perl_composition_witness_preserves_declared_tuple() -> Result<(), String> {
+    for advisory_a in [false, true] {
+        for reversed in [false, true] {
+            let mut finding = declared_tuple(advisory_a);
+            if reversed {
+                finding.related_tests.reverse();
+            }
+            let witness = DiagnosticWitness::from_finding(&finding).ok_or("missing witness")?;
+            let site = witness.fix_site.ok_or("missing fix site")?;
+            let expected = if advisory_a {
+                ("t/b.t", "b_exact", 22, "is($got, 22, 'B exact')")
+            } else {
+                ("t/a.t", "a_exact", 11, "is($got, 11, 'A exact')")
+            };
+            assert_eq!(
+                (
+                    site.file.as_str(),
+                    site.test_name.as_str(),
+                    site.line,
+                    site.current_oracle.as_deref()
+                ),
+                (expected.0, expected.1, expected.2, Some(expected.3))
+            );
+            // Current oracle text is not a symbol-resolved new assertion template.
+            assert!(witness.suggested_assertion.is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_composition_gap_projection_preserves_declared_tuple() -> Result<(), String> {
+    for advisory_a in [false, true] {
+        for reversed in [false, true] {
+            let mut finding = declared_tuple(advisory_a);
+            if reversed {
+                finding.related_tests.reverse();
+            }
+            let record =
+                perl_gap_record_for(&finding).ok_or("complete synthetic projection missing")?;
+            assert_eq!(record.canonical_gap_id, GAP);
+            let route = record.repair_route.ok_or("missing projected route")?;
+            let (file, name, line, assertion) = if advisory_a {
+                ("t/b.t", "t/b.t::b_exact", 22, "is($got, 22, 'B exact')")
+            } else {
+                ("t/a.t", "t/a.t::a_exact", 11, "is($got, 11, 'A exact')")
+            };
+            assert_eq!(route.target_file.as_deref(), Some(file));
+            assert_eq!(route.related_test.as_deref(), Some(name));
+            assert_eq!(route.target_line, Some(line));
+            assert_eq!(route.assertion_shape.as_deref(), Some(assertion));
+            assert_eq!(record.verification_commands, [format!("prove {file}")]);
+            assert_eq!(record.authority_boundary, "preview_advisory_only");
+            let mut sparse = finding;
+            sparse
+                .evidence
+                .retain(|line| !line.starts_with("perl_stop_if: "));
+            assert!(perl_gap_record_for(&sparse).is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_composition_preview_keeps_declared_current_oracle() -> Result<(), String> {
+    for reversed in [false, true] {
+        let mut finding = declared_tuple(false);
+        if reversed {
+            finding.related_tests.reverse();
+        }
+        let card = perl_preview_card(&finding).ok_or("missing synthetic preview card")?;
+        assert_eq!(card.suggested_test_location, "t/a.t::a_exact");
+        assert_eq!(card.suggested_assertion, "is($got, 11, 'A exact')");
+        assert_eq!(card.verify_command, "prove t/a.t");
+        assert!(card.current_test_evidence.contains("t/a.t:11 a_exact"));
+        assert!(
+            card.current_test_evidence
+                .contains("is($got, 11, 'A exact')")
+        );
+        assert!(!card.current_test_evidence.contains("B exact"));
+        assert!(!card.repair_packet_ready && !card.agent_packet_ready && !card.gate_candidate);
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_composition_unresolved_or_ambiguous_tuple_does_not_rank_another_test() -> Result<(), String>
+{
+    for mode in ["missing", "unknown", "ambiguous"] {
+        let mut finding = declared_tuple(false);
+        if mode == "missing" {
+            finding
+                .evidence
+                .retain(|line| !line.starts_with("perl_suggested_test_location: "));
+        } else if mode == "unknown" {
+            for line in &mut finding.evidence {
+                if line.starts_with("perl_suggested_test_location: ") {
+                    *line = "perl_suggested_test_location: t/other.t::a_exact".to_string();
+                }
+            }
+        } else {
+            finding.related_tests.push(finding.related_tests[0].clone());
+        }
+        let witness = DiagnosticWitness::from_finding(&finding).ok_or("missing limited witness")?;
+        assert!(witness.fix_site.is_none(), "{mode}");
+        assert!(perl_gap_record_for(&finding).is_none(), "{mode}");
+        assert!(perl_preview_card(&finding).is_none(), "{mode}");
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_composition_producer_excludes_other_owner_with_same_name() -> Result<(), String> {
+    let text = edited_packet(
+        &with_concrete_discriminator(EXACT_RETURN_PACKET.to_string()),
+        |packet| {
+            let mut owner = packet_array(packet, "owners")?[0].clone();
+            owner["owner_id"] = "perl:lib/My/App.pm::Other::discount".into();
+            owner["package"] = "Other".into();
+            packet_array(packet, "owners")?.push(owner);
+            let mut test = packet_array(packet, "tests")?[0].clone();
+            test["test_id"] = "test:t/app.t:other_discount".into();
+            packet_array(packet, "tests")?.push(test);
+            let mut oracle = packet_array(packet, "oracles")?[0].clone();
+            oracle["oracle_id"] = "oracle:other:discount".into();
+            oracle["test_id"] = "test:t/app.t:other_discount".into();
+            oracle["target_owner_id"] = "perl:lib/My/App.pm::Other::discount".into();
+            oracle["expression"] = "is(Other::discount(5), 99)".into();
+            packet_array(packet, "oracles")?.push(oracle);
+            let mut relation = packet_array(packet, "relations")?[0].clone();
+            relation["relation_id"] = "relation:other:discount".into();
+            relation["owner_id"] = "perl:lib/My/App.pm::Other::discount".into();
+            relation["test_id"] = "test:t/app.t:other_discount".into();
+            relation["oracle_id"] = "oracle:other:discount".into();
+            packet_array(packet, "relations")?.push(relation);
+            Ok(())
+        },
+    )?;
+    for text in [text.clone(), reversed_arrays(&text, &all_fact_arrays())?] {
+        let finding = only_finding(&text)?;
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(
+            finding.related_tests[0].oracle.as_deref(),
+            Some("is($got, 10, 'discount threshold')")
+        );
+        assert!(
+            !finding.related_tests[0]
+                .oracle
+                .as_deref()
+                .is_some_and(|text| text.contains("Other::discount"))
+        );
+        // Actual producer lacks the complete projection contract, so no packet is manufactured.
+        assert!(perl_gap_record_for(&finding).is_none());
+    }
+    Ok(())
+}
