@@ -1634,14 +1634,14 @@ fn imported_enum_variants(
 }
 
 /// Whether a file may hold items the index never reads: an item-level
-/// macro call, or an attribute other than a compiler builtin (a proc-macro
-/// attribute or custom derive may emit any item). An unparsable file may.
+/// macro call, an attribute other than a compiler builtin (a proc-macro
+/// attribute or custom derive may emit any item, and `cfg_attr` may apply
+/// one), or an import that may shadow a builtin. An unparsable file may.
 fn may_expand_items(source: &str) -> bool {
     use ra_ap_syntax::{AstNode, ast};
     const BUILTIN_ATTRIBUTES: &[&str] = &[
         "allow",
         "cfg",
-        "cfg_attr",
         "cold",
         "deny",
         "deprecated",
@@ -1671,6 +1671,20 @@ fn may_expand_items(source: &str) -> bool {
         "PartialEq",
         "PartialOrd",
     ];
+    // A glob, or an import named like a builtin, may shadow the prelude's
+    // attribute or derive (`use pm::Clone; #[derive(Clone)]`), and a
+    // `cfg_attr` may apply any attribute, so neither is read as builtin.
+    let shadowed = flattened_use_paths(source).iter().any(|import| {
+        let name = import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or_default());
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
+    });
+    if shadowed {
+        return true;
+    }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
         return true;
     };

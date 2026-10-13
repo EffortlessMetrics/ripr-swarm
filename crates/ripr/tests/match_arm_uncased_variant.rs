@@ -698,6 +698,8 @@ fn a_sibling_root_that_may_expand_unread_items_names_no_arm() -> Result<(), Stri
     for main in [
         "#[dep::entry]\nfn main() {}\n",
         "#[derive(serde::Serialize)]\nstruct S;\nfn main() {}\n",
+        "#[cfg_attr(all(), pm::make)]\nstruct S;\nfn main() {}\n",
+        "use pm::Clone;\n#[derive(Clone)]\nstruct S;\nfn main() {}\n",
     ] {
         assert_eq!(
             imported_wildcard_beside(main)?,

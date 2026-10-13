@@ -362,7 +362,8 @@ implies but does not spell out:
   reaches anywhere; the sibling root (`src/main.rs` beside `src/lib.rs`)
   may not mention the stem at all, call an item macro, or carry an
   attribute other than a compiler builtin (a derive only of the standard
-  derivable traits), since an unread macro or proc macro there may declare
+  derivable traits, and no `cfg_attr`), or import a glob or a name that
+  may shadow a builtin attribute or derive, since an unread macro or proc macro there may declare
   the root a module; and no package file may sit outside
   `src/`, `tests/`, `benches/`, `examples/` and `build.rs`. Each path step
   must be the one `mod` of that name in its parent file, declared out of
