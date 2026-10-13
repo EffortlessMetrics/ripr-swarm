@@ -477,7 +477,8 @@ fn a_path_attribute_spelled_with_spaces_names_no_arm() -> Result<(), String> {
 #[test]
 fn a_shadowed_std_macro_in_statement_position_names_no_arm() -> Result<(), String> {
     // #7686 review: a local `macro_rules! assert` takes precedence over the
-    // standard one, so `assert!();` may declare a local `Kind`.
+    // standard one, so `assert!();` may declare a local `Kind`. Any
+    // statement macro in the owner fails closed, whatever its name.
     let lib = "mod kinds;\npub use kinds::Kind;\n\nmacro_rules! assert {\n    () => {\n        struct Kind;\n        impl Kind {\n            const A: crate::kinds::Kind = crate::kinds::Kind::B;\n        }\n    };\n}\n\npub fn f(k: Kind) -> i32 {\n    assert!();\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
     let kinds = ENUM.replace("PartialEq)", "PartialEq, Eq)");
     let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
@@ -485,10 +486,11 @@ fn a_shadowed_std_macro_in_statement_position_names_no_arm() -> Result<(), Strin
         changed_wildcard(lib, &[("src/kinds.rs", kinds.as_str())], test, "src/lib.rs")?,
         Vec::<String>::new()
     );
-    // The standard `assert!` with nothing rebinding it keeps the read.
+    // The same shadowing call in another function cannot reach the match,
+    // so the read stands.
     let plain = lib
-        .replace("macro_rules! assert", "macro_rules! unused")
-        .replace("assert!();", "assert!(true);");
+        .replace("    assert!();\n", "")
+        .replace("pub fn f(", "pub fn g() {\n    assert!();\n}\n\npub fn f(");
     assert_eq!(
         changed_wildcard(
             &plain,
@@ -497,6 +499,42 @@ fn a_shadowed_std_macro_in_statement_position_names_no_arm() -> Result<(), Strin
             "src/lib.rs"
         )?,
         vec!["_"]
+    );
+    Ok(())
+}
+
+/// A package whose `[lib]` is `lib.rs` at the package root, with the owner
+/// at `src/lib.rs` placed as a module by `root` (#7686 review).
+fn root_level_library(root: &str) -> Result<Vec<String>, String> {
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let manifest = "[package]\nname = \"uncased-variant\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"lib.rs\"\n\n[workspace]\n";
+    let files = [
+        ("Cargo.toml", manifest),
+        ("lib.rs", root),
+        ("kinds.rs", CONSTANTS),
+        ("src/kinds.rs", ENUM),
+        ("src/lib/kinds.rs", ENUM),
+        ("x/kinds.rs", ENUM),
+    ];
+    let test = "use uncased_variant::kinds::Kind;\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(uncased_variant::src::lib::f(Kind::A), 1);\n}\n";
+    changed_wildcard(&owner, &files, test, "src/lib.rs")
+}
+
+#[test]
+fn a_root_named_module_file_below_a_package_root_library_names_no_arm() -> Result<(), String> {
+    // `src/lib.rs` is a module of the root-level `lib.rs`, so `crate::kinds`
+    // is `kinds.rs` (constants), not `src/kinds.rs`.
+    assert_eq!(
+        root_level_library("pub mod kinds;\npub mod src {\n    pub mod lib;\n}\n")?,
+        Vec::<String>::new()
+    );
+    // The same through a raw identifier.
+    assert_eq!(
+        root_level_library("pub mod kinds;\npub mod src {\n    pub mod r#lib;\n}\n")?,
+        Vec::<String>::new()
     );
     Ok(())
 }

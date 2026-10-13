@@ -340,10 +340,10 @@ implies but does not spell out:
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
   module, such as `mod tests`, brings in only that file's items) and call
-  no macro at file or module item level, nor one in statement position
-  (its expansion may declare a local `Kind`) other than a standard
-  assertion, print or expression macro called by its bare name while no
-  workspace file rebinds that name (`macro_rules!`, `as`, `#[macro_use]`). Alternatively, the owner's file
+  no macro at file or module item level, nor any macro in statement
+  position inside a function named like the owner (its expansion may
+  declare a local `Kind` scoped to the match), and no function named like
+  the owner may be nested in a block. Alternatively, the owner's file
   may bind that name through exactly one import, a top-level `use` without
   a rename, whose module path (`kinds::Kind` after `mod kinds;`,
   `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
@@ -352,9 +352,9 @@ implies but does not spell out:
   that name and call no such macro, glob-import no module inside an
   inline module (except `super::*`), and its recorded module chain must
   start at the workspace's `src/lib.rs` or `src/main.rs` or a
-  `crates/<name>/src/` one, with no workspace file using `#[path]`
-  (default module resolution never reaches those paths from another crate;
-  `#[path]` reaches anywhere). Each path step must be the one
+  `crates/<name>/src/` one, with no workspace file declaring a `mod` of
+  that file's stem (a package-root `lib.rs` with `mod src { mod lib; }`)
+  or using `#[path]`, which reaches anywhere. Each path step must be the one
   `mod` of that name in its parent file, declared out of line. An inline or
   `cfg`-duplicated module on the path, a `cfg` or `cfg_attr` on the import
   or a module step, a chain below an inline module, a
@@ -469,8 +469,9 @@ the diff changes `None => 1` to `None => 0`.
   re-export in its place; and an owner item shadowing the import, a
   `cfg`-alternative inline module, a `cfg`-gated import beside a glob, a
   `crate::` path from below an inline module or from a module file named
-  `src/main.rs` below inline modules, and a statement macro that may
-  declare a local `Kind`.
+  `src/main.rs` below inline modules or a package-root library, and a
+  statement macro in the owner, including one shadowing `assert!`, that
+  may declare a local `Kind`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
