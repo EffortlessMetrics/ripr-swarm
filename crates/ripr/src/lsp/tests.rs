@@ -13302,6 +13302,26 @@ fn seam_code_action_request() -> Result<(CodeActionParams, AnalysisSnapshot), St
     Ok((params, snapshot))
 }
 
+/// Public handler fixtures must use an existing root: initialize rejects
+/// synthetic absolute paths on hosts where those directories do not exist.
+fn retained_seam_action_request_at(
+    root: &Path,
+) -> Result<(CodeActionParams, AnalysisSnapshot), String> {
+    let seam = sample_classified_seam();
+    let diagnostic =
+        diagnostic_for_classified_seam(root, &seam).ok_or("expected seam diagnostic")?;
+    let uri = file_uri_for_path(&root.join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
+    Ok((params, snapshot))
+}
+
 fn boundary_gap_fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -16348,11 +16368,14 @@ fn retained_snapshot_during_queued_or_running_refresh_reports_wait_state() -> Re
 #[test]
 fn retained_code_actions_disclose_health_on_the_public_handler() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
+        let temp = unique_lsp_test_root("retained-action-health")?;
+        let root = temp.path().to_path_buf();
+        let root_uri = file_uri_for_path(&root)?;
         let (service, _socket) =
-            LspService::new(|client| Backend::new(client, PathBuf::from("/workspace")));
+            LspService::new(|client| Backend::new(client, root.clone()));
         let backend = service.inner();
         let init: InitializeParams = serde_json::from_value(serde_json::json!({
-            "rootUri": "file:///workspace",
+            "rootUri": root_uri.as_str(),
             "capabilities": {
                 "textDocument": {"codeAction": {"disabledSupport": true}},
                 "experimental": {"riprEditor": {"version": "0.10.0", "commands": vscode_advertised_client_commands()?, "guardedTestEdit": false}}
@@ -16363,7 +16386,8 @@ fn retained_code_actions_disclose_health_on_the_public_handler() -> Result<(), S
             .initialize(init)
             .await
             .map_err(|error| error.to_string())?;
-        let (mut params, snapshot) = seam_code_action_request()?;
+        assert_eq!(backend.analysis_status_payload()["root_state"], "selected_single_root");
+        let (mut params, snapshot) = retained_seam_action_request_at(&root)?;
         let uri = params.text_document.uri.clone();
         backend
             .refresh_plan(WorkspaceDiagnostics {
@@ -16563,11 +16587,15 @@ fn framed_retained_code_actions_survive_changed_config_failure() -> Result<(), S
 fn retained_code_actions_preserve_client_root_and_item_gates() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         for disabled in [false, true] {
-            let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from("/workspace")));
+            let temp = unique_lsp_test_root("retained-action-gates")?;
+            let root = temp.path().to_path_buf();
+            let root_uri = file_uri_for_path(&root)?;
+            let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
             let backend = service.inner();
-            let init = serde_json::from_value(serde_json::json!({"rootUri":"file:///workspace","capabilities":{"textDocument":{"codeAction":{"disabledSupport":disabled}},"experimental":{"riprEditor":{"version":"0.10.0","commands":vscode_advertised_client_commands()?,"guardedTestEdit":false}}}})).map_err(|error| error.to_string())?;
+            let init = serde_json::from_value(serde_json::json!({"rootUri":root_uri.as_str(),"capabilities":{"textDocument":{"codeAction":{"disabledSupport":disabled}},"experimental":{"riprEditor":{"version":"0.10.0","commands":vscode_advertised_client_commands()?,"guardedTestEdit":false}}}})).map_err(|error| error.to_string())?;
             backend.initialize(init).await.map_err(|error| error.to_string())?;
-            let (mut params, snapshot) = seam_code_action_request()?;
+            assert_eq!(backend.analysis_status_payload()["root_state"], "selected_single_root");
+            let (mut params, snapshot) = retained_seam_action_request_at(&root)?;
             let uri = params.text_document.uri.clone();
             backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
             let missing = backend.code_action(params.clone()).await.map_err(|error| error.to_string())?.ok_or("response absent")?;
