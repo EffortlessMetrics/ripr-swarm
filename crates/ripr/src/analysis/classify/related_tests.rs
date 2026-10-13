@@ -1740,10 +1740,12 @@ fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path)
 /// path that the probe path ends with on a segment boundary; the owner's file
 /// counts as indexed. A shorter match is a different file that only shares a
 /// tail, such as the root crate's `src/lib.rs` for a member crate's
-/// `crates/a/src/lib.rs`. This relies on the changed file being indexed,
-/// which the diff path guarantees for every file it probes. A probe with no
-/// indexed tail keeps its own path, so it can only match a test path
-/// exactly. Non-UTF-8 paths fail closed (#3545).
+/// `crates/a/src/lib.rs`. The owner's file is exact; without an owner this
+/// relies on the changed file being indexed. A changed file the workspace
+/// walk skips (an ignored directory such as `fixtures/`) is not indexed, and
+/// an ownerless probe in it can still resolve to a shorter indexed tail. A
+/// probe with no indexed tail keeps its own path, so it can only match a
+/// test path exactly. Non-UTF-8 paths fail closed (#3545).
 fn probe_index_path(
     probe_file: &Path,
     owner_fn: Option<&FunctionSummary>,
@@ -1760,12 +1762,17 @@ fn probe_index_path(
             .match_indices('/')
             .map(|(slash, _)| &probe_path[slash + 1..]),
     );
-    for tail in tails.filter(|tail| !tail.is_empty()) {
-        if owner_path.as_deref() == Some(tail) || index.files().get(Path::new(tail)).is_some() {
-            return Some(tail.to_string());
-        }
+    let mut tails = tails.filter(|tail| !tail.is_empty());
+    // The owner's file is the exact root-relative path, so it wins over an
+    // indexed tail that reaches into the root's own segments (root `app`
+    // holding both `src/main.rs` and a member `app/src/main.rs`).
+    if let Some(owner_path) = owner_path
+        && tails.clone().any(|tail| tail == owner_path)
+    {
+        return Some(owner_path);
     }
-    Some(probe_path)
+    let indexed = tails.find(|tail| index.files().get(Path::new(tail)).is_some());
+    Some(indexed.map_or_else(|| probe_path.clone(), str::to_string))
 }
 
 /// The Rust module a source path names: its file stem, except that `mod.rs`
@@ -7866,6 +7873,29 @@ fn crate_c_score_test() {
         assert_eq!(resolve("./src/lib.rs").as_deref(), Some("src/lib.rs"));
         // A tail that only shares characters, not a segment, is no match.
         assert_eq!(resolve("ws/xsrc/lib.rs").as_deref(), Some("ws/xsrc/lib.rs"));
+        // The owner's file wins over a longer indexed tail that reaches into
+        // the root's own segments: under root `app`, the root package's
+        // `app/src/lib.rs` probe is not the member `app/src/lib.rs`.
+        let mut rooted = RustIndex::default();
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            rooted.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root_owner = function("src/lib.rs", "f");
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), Some(&root_owner), &rooted)
+                .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, &rooted).as_deref(),
+            Some("app/src/lib.rs")
+        );
         // No indexed tail: the probe keeps its own path.
         assert_eq!(
             resolve("ws/crates/b/src/main.rs").as_deref(),
@@ -7875,22 +7905,32 @@ fn crate_c_score_test() {
 
     #[test]
     fn member_crate_root_change_does_not_claim_the_root_crates_inline_tests() {
-        // #6791: a change in member crate `crates/a/src/lib.rs`, analysed
-        // under `--root ws`, listed the workspace root crate's `src/lib.rs`
-        // inline tests as `same_test_file` because the probe path ends with
-        // `src/lib.rs`.
-        let owner = function("crates/a/src/lib.rs", "marker_owner");
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner.clone()],
+        // #6791: a module-level change (no owner function) in member crate
+        // `member/src/lib.rs` under an absolute root, as the editor sidecar
+        // passes, listed the workspace root crate's `src/lib.rs` inline
+        // tests as `same_test_file` because the probe path ends with
+        // `src/lib.rs`. An absolute path outside `crates/` derives no package
+        // prefix, so no package guard filters them.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![
                 test("src/lib.rs", "root_inline", "assert!(true);"),
-                test("crates/a/src/lib.rs", "own_inline", "assert!(true);"),
+                test("member/src/lib.rs", "own_inline", "assert!(true);"),
             ],
             ..Default::default()
         });
-        let probe = probe("ws/crates/a/src/lib.rs", "marker");
+        for file in ["src/lib.rs", "member/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let mut probe = probe("/abs/ws/member/src/lib.rs", "marker");
+        probe.owner = None;
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
 
         let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
         assert_eq!(names, ["own_inline"]);
