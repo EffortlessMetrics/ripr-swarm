@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "scalar_return_value",
   "test_shape": "custom_helper_inequality",
-  "hard_case": "Measured defect at labeling: ripr reported exact_value / strong for the helper call (name ends in 'equal') and also attributed the helper body's assert!(a != b) to the test as a second related_tests entry; the spec adopts relational_check / weak (rules 1 and 6). Since #6670 ripr reports one relational_check / weak entry for the test.",
+  "hard_case": "Measured defect at labeling: ripr reported exact_value / strong for the helper call (name ends in 'equal') and also attributed the helper body's assert!(a != b) to the test as a second related_tests entry; the spec adopts relational_check / weak (rules 1 and 6). Since #6670 the scored oracle for the test is one distinct relational_check / weak reading (the scorer deduplicates by test, kind and strength, so this row does not establish the raw related_tests count).",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
