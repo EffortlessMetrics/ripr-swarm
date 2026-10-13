@@ -13,12 +13,12 @@ pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{
     OracleTextShape, has_oracle_text_shape, is_unwrap_err_bound_error_assertion,
 };
-pub(crate) use scan::unwrap_err_bound_variables;
 pub(crate) use scan::{
     err_return_guard_oracles, err_return_guard_twin, extract_assertions,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
     terminal_err_return_guard_oracle,
 };
+pub(crate) use scan::{uncompared_unwrap_err, unwrap_err_bound_variables};
 
 #[cfg(test)]
 mod tests {

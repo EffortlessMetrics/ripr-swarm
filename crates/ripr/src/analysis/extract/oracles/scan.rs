@@ -57,6 +57,24 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             };
             guard_condition_tail = Some((condition_end_line, tail));
         }
+        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` whose value is never
+        // compared panics only when `r` is `Ok`, so it observes the `Err`
+        // side. `expect_err` lines keep their `expect_` admission below
+        // (#7604 tracks that reading).
+        if trimmed.ends_with("unwrap_err();") && !is_assertion_line(&trimmed) {
+            let rest = body.lines().skip(offset + 1).collect::<Vec<_>>().join("\n");
+            if let Some(text) = uncompared_unwrap_err(&trimmed, &rest) {
+                out.push(OracleFact {
+                    line: start_line + offset,
+                    observed_tokens: extract_identifier_tokens(&text),
+                    text,
+                    kind: OracleKind::BroadError,
+                    strength: OracleStrength::Weak,
+                    ok_value_observed: None,
+                });
+                continue;
+            }
+        }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
             let admitted = is_assertion_line(&trimmed);
             if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
@@ -2368,6 +2386,62 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// RIPR-SPEC-0227 decision 2: a one-line statement whose value is
+/// `<call>.unwrap_err()` and is never compared,
+/// returned as the oracle text (the extraction without `let` or `;`). The
+/// value is uncompared when the statement discards it (`f().unwrap_err();`,
+/// `let _ = ..`, `let _e = ..`) or binds a name that `rest` (the body after
+/// the statement) never mentions. A binding that a later assertion reads is
+/// that assertion's oracle (RIPR-SPEC-0106), not a side check, and an
+/// assignment or any other statement shape is not admitted.
+pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<String> {
+    let statement = statement.trim();
+    let expression = statement.strip_suffix(';')?.trim_end();
+    let (binding, value) = match expression.strip_prefix("let ") {
+        Some(binding) => {
+            let (pattern, value) = binding.split_once('=')?;
+            let pattern = pattern.split(':').next()?.trim();
+            let name = pattern.strip_prefix("mut ").unwrap_or(pattern).trim();
+            if name.is_empty() || !name.bytes().all(is_ident_byte) {
+                return None;
+            }
+            (Some(name), value.trim())
+        }
+        None => (None, expression),
+    };
+    let masked = mask_comments_and_strings(value);
+    if masked.contains('=') || masked.contains(';') || masked.contains('{') {
+        return None;
+    }
+    // The tail line of a multi-line statement (`    .unwrap_err();`,
+    // `y).unwrap_err();`) is not the statement: its binding sits on an
+    // earlier line the line scanner cannot see.
+    if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
+        return None;
+    }
+    if !ends_with_unwrap_err(value) {
+        return None;
+    }
+    let discarded =
+        binding.is_none_or(|name| name.starts_with('_') || !references_whole_word(rest, name));
+    discarded.then(|| value.to_string())
+}
+
+fn delimiters_balance(masked: &str) -> bool {
+    let mut depth = 0_i64;
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {

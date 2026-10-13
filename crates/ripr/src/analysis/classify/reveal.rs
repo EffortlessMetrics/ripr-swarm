@@ -511,6 +511,7 @@ fn analyze_related_assertions(
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
         owner_scoped_tokens: &owner_scoped_tokens,
+        owner_shadowed: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -642,6 +643,9 @@ fn analyze_related_assertions(
             arm_inputs_readable: arm_selector.is_some_and(|selector| {
                 selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
             }),
+            owner_shadowed: match_context
+                .owner_callee
+                .is_some_and(|owner| test_body_shadows_owner(test, owner)),
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
@@ -649,6 +653,26 @@ fn analyze_related_assertions(
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            // RIPR-SPEC-0231 examples 19 and 20: an inequality on the owner
+            // call that excludes only a sibling variant of the changed error
+            // observes the changed result, but only as `relational_check` /
+            // weak (rule 1), whatever the classifier read.
+            let excluded_sibling;
+            let assertion = if excludes_only_sibling_variant(
+                &match_context,
+                assertion,
+                import_defeats_owner,
+                cross_package_defeats_owner,
+            ) {
+                excluded_sibling = OracleFact {
+                    kind: OracleKind::RelationalCheck,
+                    strength: OracleStrength::Weak,
+                    ..assertion.clone()
+                };
+                &excluded_sibling
+            } else {
+                assertion
+            };
             // #4478: whether this `assert_eq!` pins the owner's whole return
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
@@ -904,6 +928,147 @@ fn names_only_sibling_variants(text: &str, qualifier: &str, variant: &str) -> bo
     named_any
 }
 
+/// RIPR-SPEC-0231 examples 19 and 20: `assert_ne!(owner(..), Err(E::Bad))`
+/// or `assert!(!matches!(owner(..), Err(E::Bad)))` against a changed
+/// `Err(E::Big)`. The assertion names the changed error's enum only through
+/// a sibling variant, but it excludes that sibling from the owner's own
+/// result, so a change that returned the sibling would fail it: it observes
+/// the result, weakly. One compared operand (or the whole `matches!`
+/// scrutinee) must be a bare call to the owner, with no foreign import,
+/// nested `fn` or local binding making that call ambiguous, and the negated
+/// `matches!` must be the whole condition with an unguarded pattern. An
+/// inequality on any other value shares only the enum qualifier and stays
+/// refused.
+fn excludes_only_sibling_variant(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    let (Some(variant), Some(qualifier), Some(owner)) = (
+        context.error_construction_variant,
+        context.error_construction_qualifier,
+        context.owner_callee,
+    ) else {
+        return false;
+    };
+    if import_defeats_owner || cross_package_defeats_owner || context.owner_shadowed {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let statement = masked.trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    let excluded = if let Some(rest) = ["assert_ne!", "debug_assert_ne!"]
+        .iter()
+        .find_map(|head| statement.strip_prefix(head))
+    {
+        // The message arguments after the two operands never decide it.
+        let operands = macro_arguments(rest);
+        match operands.as_slice() {
+            [left, right, ..] if is_whole_owner_call(left, owner) => Some(*right),
+            [left, right, ..] if is_whole_owner_call(right, owner) => Some(*left),
+            _ => None,
+        }
+    } else if let Some(rest) = ["assert!", "debug_assert!"]
+        .iter()
+        .find_map(|head| statement.strip_prefix(head))
+    {
+        // The negated `matches!` must be the whole condition (no `||`,
+        // `^` or other operand beside it) with an unguarded pattern.
+        macro_arguments(rest)
+            .first()
+            .and_then(|condition| condition.strip_prefix('!'))
+            .and_then(|negated| negated.trim_start().strip_prefix("matches!"))
+            .and_then(|rest| match macro_arguments(rest).as_slice() {
+                [scrutinee, pattern]
+                    if is_whole_owner_call(scrutinee, owner) && !has_word(pattern, "if") =>
+                {
+                    Some(*pattern)
+                }
+                _ => None,
+            })
+    } else {
+        None
+    };
+    excluded.is_some_and(|excluded| names_only_sibling_variants(excluded, qualifier, variant))
+}
+
+/// The trimmed top-level comma-separated arguments of a macro call whose
+/// parenthesised arguments are all of `rest` (`(a, f(b, c))`), or nothing
+/// when `rest` is not exactly one balanced group.
+fn macro_arguments(rest: &str) -> Vec<&str> {
+    let rest = rest.trim();
+    if !rest.starts_with('(') || group_end(rest) != Some(rest.len() - 1) {
+        return Vec::new();
+    }
+    let inner = &rest[1..rest.len() - 1];
+    let mut parts = Vec::new();
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (at, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(inner[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = inner[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// The byte index of the delimiter closing the group `text` opens with.
+fn group_end(text: &str) -> Option<usize> {
+    let mut depth = 0_usize;
+    for (at, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `operand` is exactly one bare call `owner(..)`: not a path
+/// segment, method, nested argument or larger expression.
+fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
+    operand.strip_prefix(owner).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.starts_with('(') && group_end(rest) == Some(rest.len() - 1)
+    })
+}
+
+fn has_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|part| part == word)
+}
+
+/// Whether the test body defines a nested `fn <owner>` or binds a local
+/// named `owner` anywhere, under either shadow authority. Conservative: a
+/// binding after the assertion also refuses the sibling exclusion.
+fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, owner, usize::MAX)
+        || ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &test.nested_fn_names,
+            let_bindings: &test.let_bindings,
+        }
+        .body_shadows_callee_at_line("", owner, usize::MAX)
+}
+
 /// Whether an assertion observes an error at all: a typed error oracle, a
 /// guarded `Result` match, or an identifier that names an error or a panic
 /// (`Err`, `ParseError`, `unwrap_err`, `is_err`, `err`, `should_panic`).
@@ -980,6 +1145,10 @@ struct RevealMatchContext<'a> {
     /// an assertion that calls the owner; anywhere else the shared name is
     /// coincidence (#5830).
     owner_scoped_tokens: &'a [String],
+    /// Whether the current test's body defines or binds a local under the
+    /// owner's bare name, so a bare call to it may not reach the owner
+    /// (RIPR-SPEC-0231 sibling exclusion).
+    owner_shadowed: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -1858,6 +2027,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_selector,
         arm_inputs_readable,
         owner_scoped_tokens,
+        owner_shadowed: _,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -2034,6 +2204,14 @@ fn assertion_matches_probe_detail_with_literals(
         (error_construction_variant, error_construction_qualifier)
         && names_only_sibling_variants(&assertion.text, qualifier, variant)
     {
+        if excludes_only_sibling_variant(
+            context,
+            assertion,
+            import_defeats_owner,
+            cross_package_defeats_owner,
+        ) {
+            return (true, true);
+        }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
         }
@@ -2111,6 +2289,7 @@ fn assertion_matches_probe_detail(
             arm_selector: None,
             arm_inputs_readable: false,
             owner_scoped_tokens: &[],
+            owner_shadowed: false,
         },
         assertion,
         assertion_count,
@@ -4255,6 +4434,7 @@ mod tests {
                 arm_selector: None,
                 arm_inputs_readable: false,
                 owner_scoped_tokens: &empty,
+                owner_shadowed: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,

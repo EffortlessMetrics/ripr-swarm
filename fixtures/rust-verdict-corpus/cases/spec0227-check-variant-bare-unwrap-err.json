@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_variant",
   "test_shape": "bare_unwrap_err_binding",
-  "hard_case": "Spec expects weakly_exposed (decision 2). ripr reads both findings reachable_unrevealed ('No assertion found on related tests'): it does not read a bare unwrap_err() as an oracle, although the test kills the Ok(0) mutant.",
+  "hard_case": "Spec expects weakly_exposed (decision 2). ripr once read both findings reachable_unrevealed ('No assertion found on related tests') because it did not read a bare unwrap_err() as an oracle; it now reads broad_error / weak. The test kills the Ok(0) mutant.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

@@ -586,4 +586,80 @@ fn ok_literal() {
         }
         Ok(())
     }
+
+    /// RIPR-SPEC-0227 decision 2: an `unwrap_err()` whose value is never
+    /// compared reads `broad_error` / weak on the line scanner and the
+    /// parser path; a binding a later assertion compares adds nothing.
+    #[test]
+    fn spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use OracleKind::{BroadError, ExactErrorVariant};
+        use OracleStrength::{Strong, Weak};
+        let cases = [
+            (
+                "underscore_binding",
+                "let _e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "discarded",
+                "check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unused_binding",
+                "let e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "compared_binding",
+                "let e = check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "method_on_the_error",
+                "let k = check(300).unwrap_err().kind();",
+                vec![],
+            ),
+            (
+                "compared_chain_tail",
+                "let e = check(300)\n        .unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "compared_argument_tail",
+                "let e = check(\n        300,\n    ).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+        ];
+        let mut source = String::new();
+        for (name, body, expected) in &cases {
+            let lexical = crate::analysis::extract::extract_assertions(body, 1)
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &lexical != expected {
+                return Err(format!("{name}: line scanner read {lexical:?}"));
+            }
+            source.push_str(&format!("#[test]\nfn {name}() {{\n    {body}\n}}\n\n"));
+        }
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
+        for (name, _, expected) in &cases {
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == *name)
+                .ok_or_else(|| format!("parser lost test {name}"))?;
+            let parsed = test
+                .assertions
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &parsed != expected {
+                return Err(format!("{name}: parser read {parsed:?}"));
+            }
+        }
+        Ok(())
+    }
 }
