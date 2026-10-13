@@ -286,7 +286,11 @@ fn owner_call_names(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
                     .into_iter()
                     .map(|local| format!("{local}.{}", owner.name)),
             );
-            if owner.owner_kind == Some(OwnerKind::ClassMethod) {
+            if owner
+                .decorators
+                .iter()
+                .any(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"))
+            {
                 names.extend(
                     owner_class_locals(test, owner, class)
                         .into_iter()
@@ -334,12 +338,14 @@ fn owner_call_argument_locals(
     owner: &PythonOwner,
     parameter: &str,
 ) -> Vec<String> {
+    // The implicit receiver is bound by the owner's kind, not its name: a
+    // classmethod's `klass` is skipped, a staticmethod's `cls` is not (#7634).
     let skip = usize::from(
         is_method_owner(owner)
-            && owner
-                .parameters
-                .first()
-                .is_some_and(|first| matches!(first.name.as_str(), "self" | "cls")),
+            && !owner
+                .decorators
+                .iter()
+                .any(|decorator| decorator.ends_with("staticmethod")),
     );
     let position = owner
         .parameters

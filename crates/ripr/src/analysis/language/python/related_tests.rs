@@ -1424,6 +1424,7 @@ pub(super) fn owner_class_locals(
         if import.imported == class
             && !import.alias.is_empty()
             && !locals.contains(&import.alias)
+            && !test_rebinds_import_alias(test, &import.alias)
             && import_module_may_be_owners(import, owner, &test.file)
         {
             locals.push(import.alias.clone());

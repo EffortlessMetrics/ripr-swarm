@@ -1274,47 +1274,120 @@ fn a_mock_passed_to_a_classmethod_owner_pins_its_arguments() -> Result<(), Strin
     // #7634: a classmethod or staticmethod owner is called on its imported
     // class (rule 9), and its binding decorator leaves the returned mock
     // unchanged.
-    let class = |decorator: &str, receiver: &str, test: &str| {
+    const IMPORTS: &str = "from unittest.mock import Mock\n\nfrom src.other import Other\nfrom src.shop import Service";
+    // `decorators` are the owner's decorator lines; the changed line is the
+    // first call in the body.
+    let class = |decorators: &[&str], signature: &str, test: &str| {
+        let head: String = decorators
+            .iter()
+            .map(|decorator| format!("    @{decorator}\n"))
+            .collect();
         classify(
             &format!(
-                "class Service:\n    @{decorator}\n    def run({receiver}handler):\n        handler(2)\n        return handler\n"
+                "class Service:\n{head}    def run({signature}):\n        handler(2)\n        return handler\n"
             ),
-            4,
+            decorators.len() + 3,
             "        handler(1)",
-            &test_module(
-                "from unittest.mock import Mock\n\nfrom src.shop import Service",
-                test,
-            ),
+            &test_module(IMPORTS, test),
         )
     };
     let returned =
         "def test_run():\n    m = Service.run(Mock())\n    m.assert_called_once_with(2)\n";
     let passed =
         "def test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n";
-    for (decorator, receiver) in [("classmethod", "cls, "), ("staticmethod", "")] {
+    for (decorator, signature) in [("classmethod", "cls, handler"), ("staticmethod", "handler")] {
         for test in [returned, passed] {
             assert_eq!(
-                class(decorator, receiver, test)?,
+                class(&[decorator], signature, test)?,
                 ExposureClass::Exposed,
                 "@{decorator}: {test}"
             );
         }
     }
-    // Another decorator may change what the call returns, so the result is
-    // not the mock the test passed; the passed local still reads it.
+    // The class through an import alias, and a staticmethod whose handler is
+    // not its first parameter.
     assert_eq!(
-        class("functools.cache", "", returned)?,
-        ExposureClass::WeaklyExposed
+        classify(
+            "class Service:\n    @classmethod\n    def run(cls, handler):\n        handler(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                "from unittest.mock import Mock\n\nfrom src.shop import Service as S",
+                "def test_run():\n    h = Mock()\n    S.run(h)\n    h.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
     );
-    // A same-named method on another class is not the owner (rule 9).
     assert_eq!(
         class(
-            "classmethod",
-            "cls, ",
-            "def test_run():\n    h = Mock()\n    Other.run(h)\n    h.assert_called_once_with(2)\n"
+            &["staticmethod"],
+            "tag, handler",
+            "def test_run():\n    h = Mock()\n    Service.run(1, h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A classmethod's receiver binds the class whatever it is named, so the
+    // local passed second is the handler, not the first parameter after it.
+    let klass = "klass, handler, audit";
+    assert_eq!(
+        class(
+            &["classmethod"],
+            klass,
+            "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // `audit` gets 2 before and after, so its expectation cannot fail.
+    assert_eq!(
+        classify(
+            "class Service:\n    @classmethod\n    def run(klass, handler, audit):\n        handler(2)\n        audit(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
         )?,
         ExposureClass::WeaklyExposed
     );
+    // Another decorator stacked on the classmethod may change what the call
+    // returns, so the result is not the mock passed; the passed local still
+    // reads it.
+    let cached = ["classmethod", "functools.cache"];
+    assert_eq!(
+        class(&cached, "cls, handler", returned)?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        class(&cached, "cls, handler", passed)?,
+        ExposureClass::Exposed
+    );
+    // Not the owner on that class: an instance method called on the class, a
+    // decorator that only ends in `classmethod`, the same method on another
+    // class, and a class name the test rebinds (rule 9).
+    for (decorators, signature, test) in [
+        (&[][..], "self, handler", passed),
+        (&["lib.fake_classmethod"][..], "cls, handler", passed),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    h = Mock()\n    Other.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    Service = Other\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+    ] {
+        // Either reading fails closed; neither credits the mock.
+        assert!(
+            matches!(
+                class(decorators, signature, test)?,
+                ExposureClass::WeaklyExposed | ExposureClass::StaticUnknown
+            ),
+            "{decorators:?} {signature}: {test}"
+        );
+    }
     Ok(())
 }
 
@@ -1360,7 +1433,7 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
         ("user ** 1", "user", "3"),
         ("0 + user", "user", "3"),
         ("1 * user", "user", "3"),
-        ("user + ''", "user", "3"),
+        ("str(user) + ''", "str(user)", "'3'"),
         ("\"hi\"", "'hi'", "'hi'"),
         ("1_000", "1000", "1000"),
     ] {

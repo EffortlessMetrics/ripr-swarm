@@ -539,7 +539,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     `==`, the channel that line writes. The test must call the owner by a
     module-identified name (a free function), a method owner on a
     local bound to its class, or a `@classmethod` or `@staticmethod` owner
-    on that local or on its imported class (rule 9, #7634). The channels:
+    on that local or on its imported class, by its name or an import alias
+    the test does not rebind (rule 9, #7634). A method's or classmethod's
+    first parameter is its receiver whatever it is named; a staticmethod
+    has none. The channels:
     - `print(...)` or `sys.stdout.write(...)`: `capsys`, `capfd` or their
       binary forms' `readouterr().out`, inline or through a local the
       test binds once to `readouterr()` after an owner call;
@@ -1142,9 +1145,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
   set, different literals and another name do. Each row pins the
   arguments the new call passes (#7719). A third test pins a
   `@classmethod` and a `@staticmethod` owner called on its imported class,
-  through the returned and the passed-local mock, and keeps another
-  decorator's result and a same-named method of another class uncredited
-  (#7634).
+  through the returned and the passed-local mock, an import alias, a
+  staticmethod handler in second position and a classmethod receiver
+  named `klass`. It keeps uncredited the result of a classmethod with a
+  second decorator, an instance method called on the class, a decorator
+  that only ends in `classmethod`, a same-named method of another class
+  and a class name the test rebinds (#7634).
 
 ## Implementation Mapping
 
