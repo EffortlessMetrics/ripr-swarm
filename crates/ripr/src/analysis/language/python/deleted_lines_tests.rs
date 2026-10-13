@@ -554,3 +554,33 @@ fn column_zero_string_close_in_a_deleted_body_keeps_the_def() -> Result<(), Stri
     );
     Ok(())
 }
+
+/// A deleted `try:` inside a live function is a block header: its body lines
+/// belong to the function, not to a deleted nested `def` above the `try:`.
+#[test]
+fn deleted_try_block_after_a_deleted_nested_def_keeps_the_live_owner() -> Result<(), String> {
+    let source = "def outer(total):\n    x = 1\n    return x\n";
+    let findings = analyze(
+        "try-after-nested-def",
+        source,
+        &[],
+        vec![
+            line(3, 3, "    def helper():"),
+            line(4, 3, "        return 1"),
+            line(5, 3, "    try:"),
+            line(6, 3, "        total = run(total)"),
+            line(7, 3, "    finally:"),
+            line(8, 3, "        total = min(total, 100)"),
+        ],
+    )?;
+    let owners: Vec<String> = base_side(&findings)
+        .into_iter()
+        .map(|(_, owner, _)| owner)
+        .collect();
+    assert_eq!(
+        owners,
+        vec!["outer".to_string(), "outer".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}

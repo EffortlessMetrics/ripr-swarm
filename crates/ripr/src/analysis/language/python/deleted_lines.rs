@@ -221,11 +221,11 @@ fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
     false
 }
 
-/// A line that closes or continues a statement begun above it, so its indent
-/// says nothing about nesting: the `):` closing a multi-line `def` signature,
-/// or a line opening with a closing bracket.
+/// A line that closes a bracket opened above it, so its indent says nothing
+/// about nesting: the `):` closing a multi-line `def` signature. A bare
+/// `try:`, `else:` or `finally:` is a block header and still counts.
 fn continues_a_statement(text: &str) -> bool {
-    is_python_structural_line(text) || text.trim_start().starts_with([')', ']', '}'])
+    text.trim_start().starts_with([')', ']', '}'])
 }
 
 const MODULE_OWNER: &str = "<module>";
