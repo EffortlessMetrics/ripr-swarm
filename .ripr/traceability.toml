@@ -14452,6 +14452,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0257"
+name = "TypeScript committed snapshot entry"
+spec = "docs/specs/RIPR-SPEC-0257-typescript-committed-snapshot.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_jest_snapshot_entry_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_snapshot_keys_join_describe_titles_per_runner",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_without_its_committed_entry_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_whose_counter_cannot_be_named_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_location_or_update_override_stays_medium",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0257-typescript-committed-snapshot.md",
+]
+metrics = [
+  "typescript_committed_snapshot_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0254"
 name = "TypeScript lookup-table entry"
 spec = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"

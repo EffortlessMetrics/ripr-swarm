@@ -8,7 +8,7 @@
 # analyzer verdict, oracle, probe or test-shape behavior that a corpus case
 # (a TypeScript diff plus runtime mutant truth from the subject's own tests)
 # can label: RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-# RIPR-SPEC-0252, RIPR-SPEC-0254 and RIPR-SPEC-0256. An in-scope example a case cannot label is waived with a
+# RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256 and RIPR-SPEC-0257. An in-scope example a case cannot label is waived with a
 # reason; waived examples are accounted for, never covered. No example is
 # waived today: every uncovered one could be labeled by a new case, so each
 # stays visible as uncovered. RIPR-SPEC-0243 example 33 (two test files, one
@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 47
+floor = 48
 
 # LSP Repair Packet Command
 [[spec]]
@@ -500,6 +500,11 @@ scope = "in"
 # TypeScript mock passed in an object argument
 [[spec]]
 id = "RIPR-SPEC-0256"
+scope = "in"
+
+# TypeScript committed snapshot entry
+[[spec]]
+id = "RIPR-SPEC-0257"
 scope = "in"
 
 # TypeScript Preview Static Facts

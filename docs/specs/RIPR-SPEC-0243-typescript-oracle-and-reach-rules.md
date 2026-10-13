@@ -682,6 +682,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
+   Amended by RIPR-SPEC-0257: with a committed
+   `tests/__snapshots__/lib.test.ts.snap` holding the entry `price 1`, it
+   reads `snapshot` / strong and `exposed`.
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,

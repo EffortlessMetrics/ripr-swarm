@@ -61,6 +61,7 @@ mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
+mod committed_snapshot;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
@@ -114,6 +115,7 @@ pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
+pub(crate) use committed_snapshot::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
@@ -305,7 +307,9 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let tests = extract_tests(relative, source);
+                let mut tests = extract_tests(relative, source);
+                // RIPR-SPEC-0257: a committed snapshot entry pins the value.
+                promote_committed_snapshots(&options.root, relative, source, &mut tests);
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
