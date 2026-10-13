@@ -300,6 +300,20 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
             &err,
         ),
         ("ensure!(ready && /* fallback */ (a == b || c));", &weak),
+        // A leading comment cannot hide the group from the rest step.
+        ("assert!(matches!(r, Ok(3)) && /* c */ (a || b));", &exact),
+        // A deciding group drops out before the negated-pattern and
+        // compared-pattern caps, so a pinning sibling still decides.
+        (
+            "assert!(matches!(r, Ok(3)) && (!matches!(r, Err(E::X)) || y));",
+            &exact,
+        ),
+        ("ensure!(c == d && (!matches!(r, Err(E::X)) || y));", &exact),
+        // An `assert_eq!` inside an `||` arm lends no whole-object kind.
+        (
+            "assert!(flag || helper(|| assert_eq!(x, Foo { a: 1 })));",
+            &weak,
+        ),
         // The rest keeps its own reading and is never lifted to weak.
         (
             "assert!(opt.is_some() && (a == b || c));",
@@ -316,6 +330,28 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
                 expected.0, expected.1, classification.kind, classification.strength
             ));
         }
+    }
+    // A trailing line comment on a kept conjunct must not swallow the rest
+    // or the closing `);` of the rewritten assertion.
+    for (text, expected) in [
+        (
+            "assert!(\n    (a || b) &&\n    matches!(r, Ok(_)) // must succeed\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+        (
+            "assert!(\n    matches!(r, Ok(_)) // must succeed\n    && (a || b)\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+        (
+            "assert!(\n    !matches!(r, Err(E::X)) &&\n    matches!(r, Ok(_)) // ok\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+    ] {
+        let facts = extract_assertions(text, 7558);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        require_kind(fact, expected.0, expected.1)?;
     }
     let facts = extract_assertions("ensure!(a != b || c == d);", 7558);
     let Some(fact) = facts.first() else {

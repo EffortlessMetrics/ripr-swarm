@@ -19,14 +19,14 @@ use super::patterns::{
     pattern_comparison_polarity, tests_both_sides,
 };
 
-/// RIPR-SPEC-0231 rule 1: an inequality shows only that the value is not one
-/// alternative, so it never earns an exact kind or strong strength.
 /// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
 const RELATION: OracleClassification = OracleClassification {
     kind: OracleKind::RelationalCheck,
     strength: OracleStrength::Weak,
 };
 
+/// RIPR-SPEC-0231 rule 1: an inequality shows only that the value is not one
+/// alternative, so it never earns an exact kind or strong strength.
 const INEQUALITY: OracleClassification = OracleClassification {
     kind: OracleKind::RelationalCheck,
     strength: OracleStrength::Weak,
@@ -214,7 +214,7 @@ fn classify_non_negated_assertion(
         } else {
             INEQUALITY
         }
-    } else if is_whole_object_equality_assertion(line) {
+    } else if is_whole_object_equality_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::WholeObjectEquality,
             strength: OracleStrength::Strong,

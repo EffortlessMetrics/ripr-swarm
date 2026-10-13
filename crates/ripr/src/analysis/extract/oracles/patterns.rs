@@ -559,7 +559,9 @@ pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     if rest.is_empty() {
         return Some(String::new());
     }
-    Some(format!("{macro_name}({});", rest.join(" && ")))
+    // Each conjunct ends its own line, so a trailing `//` comment on one
+    // cannot swallow the next conjunct or the closing `);`.
+    Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
 
 /// RIPR-SPEC-0231 rule 1 (#7558): the boolean assertion with every
@@ -593,7 +595,9 @@ pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
     if rest.is_empty() {
         return Some(String::new());
     }
-    Some(format!("{macro_name}({});", rest.join(" && ")))
+    // Each conjunct ends its own line, so a trailing `//` comment on one
+    // cannot swallow the next conjunct or the closing `);`.
+    Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
 
 /// Splits on `&&` outside any delimiter, string or comment.
