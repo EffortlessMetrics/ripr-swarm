@@ -47,6 +47,9 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_check_exit.rs"]
+mod unsupported_check_exit;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -26751,7 +26754,7 @@ fn truncated_declared_hunk_is_incomplete_through_file_and_stdin()
             input.as_bytes(),
         )?;
         for (channel, output) in [("file", file_output), ("stdin", stdin_output)] {
-            if !output.status.success() {
+            if output.status.code() != Some(if expected_complete { 0 } else { 2 }) {
                 return Err(format!(
                     "{label}/{channel}: {}",
                     String::from_utf8_lossy(&output.stderr)
@@ -26841,7 +26844,7 @@ fn truncated_unsupported_file_hunk_is_incomplete_through_file_and_stdin()
             input.as_bytes(),
         )?;
         for (channel, output) in [("file", file), ("stdin", stdin)] {
-            if !output.status.success() {
+            if output.status.code() != Some(if complete { 0 } else { 2 }) {
                 return Err(format!(
                     "{label}/{channel}: {}",
                     String::from_utf8_lossy(&output.stderr)
