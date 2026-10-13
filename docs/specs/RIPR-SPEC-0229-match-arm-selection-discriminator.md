@@ -317,8 +317,13 @@ implies but does not spell out:
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
   module, such as `mod tests`, brings in only that file's items) and call
-  no macro at file or module item level. Otherwise, and for a bare uncased
-  name (`A`), the pattern or input is not provable;
+  no macro at file or module item level. A test's uncased input is read
+  only when no related test file outside the owner's file declares an item
+  of that name, renames an import to it, or glob-imports a module other
+  than `super`, a workspace root or the type's own variants, since a
+  test-side `struct Kind` with `const A` makes `Kind::A` a constant.
+  Otherwise, and for a bare uncased name (`A`), the pattern or input is not
+  provable;
 - a bare lowercase pattern (`target =>`) is a binding only when the owner's
   file declares no `const` or `static` of that name, imports no item by
   that name, and has no glob import of a module, since Rust compares a

@@ -98,6 +98,11 @@ pub(in crate::analysis) struct ArmSelector {
     /// declaration in the owner's file (`declared_enum_variants`). `None`
     /// leaves every uncased name unreadable.
     declared_variants: Option<std::collections::BTreeSet<String>>,
+    /// Whether a test's uncased input (`Kind::A`) names the owner's
+    /// `Kind`. `in_workspace` clears it when a related test file declares
+    /// its own item of that name or glob-imports a module, since that
+    /// `Kind::A` may be a test-side constant (#7620 review).
+    uncased_inputs_trusted: bool,
     /// RIPR-SPEC-0229 (#6616): the value operand of each related test's admitted
     /// exact pattern pin, keyed by test file, test start line, test name,
     /// assertion line and assertion text.
@@ -284,6 +289,7 @@ impl ArmSelector {
             bare_scrutinee_type,
             self_is_scrutinee_type,
             declared_variants: None,
+            uncased_inputs_trusted: true,
             binding,
             owner: owner.name.clone(),
             method,
@@ -319,6 +325,12 @@ impl ArmSelector {
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
+                if file != self.owner_file
+                    && let Some(type_name) = &self.bare_scrutinee_type
+                    && test_file_may_rebind(&facts.source, type_name, &self.local_roots)
+                {
+                    self.uncased_inputs_trusted = false;
+                }
                 imports
                     .entry(file.to_path_buf())
                     .or_insert_with(|| flattened_use_paths(&facts.source));
@@ -661,7 +673,12 @@ impl ArmSelector {
         {
             return ArmSelection::Unknown;
         }
-        let input = self.resolve_head(input_head(input));
+        let input = match input_head(input) {
+            PatternHead::UncasedVariant { .. } if !self.uncased_inputs_trusted => {
+                PatternHead::Opaque
+            }
+            head => self.resolve_head(head),
+        };
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
         }
@@ -1025,6 +1042,42 @@ fn declared_enum_variants(
         }
     }
     found
+}
+
+/// Whether a related test file outside the owner's file may bind
+/// `type_name` to something other than the owner's enum: it declares an
+/// item of that name, renames an import to it, or glob-imports a module
+/// other than `super`, a workspace root (`my_crate::*`) or the type's own
+/// variants. A test-side `struct Kind` with `const A` makes `Kind::A` a
+/// constant, which a pattern compares by value.
+fn test_file_may_rebind(source: &str, type_name: &str, local_roots: &[String]) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declares = whole_word_offsets(&masked, type_name)
+        .into_iter()
+        .any(|offset| {
+            let before = masked[..offset].trim_end();
+            [
+                "struct", "enum", "union", "trait", "type", "mod", "const", "static", "fn",
+            ]
+            .iter()
+            .any(|keyword| {
+                before.ends_with(keyword)
+                    && !before[..before.len() - keyword.len()]
+                        .ends_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+        });
+    declares
+        || flattened_use_paths(source).iter().any(|import| {
+            let segments = import.path.split("::").collect::<Vec<_>>();
+            match (&import.alias, segments.as_slice()) {
+                (Some(alias), _) => alias == type_name,
+                (None, [.., parent, "*"]) => {
+                    *parent != type_name
+                        && !(segments.len() == 2 && local_roots.iter().any(|root| root == parent))
+                }
+                _ => false,
+            }
+        })
 }
 
 /// Whether `node` is a file-root `use super::*`, which brings in another
@@ -2287,6 +2340,31 @@ mod tests {
             Some(ArmSelection::Unknown)
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_test_file_that_may_rebind_the_type_is_refused() {
+        let roots = ["crate", "self", "super", "Self", "my_crate"].map(str::to_string);
+        let rebinds = |source: &str| test_file_may_rebind(source, "Kind", &roots);
+        for source in [
+            "struct Kind;\nimpl Kind { const A: u8 = 1; }\n",
+            "pub(crate) enum Kind { A }\n",
+            "type Kind = my_crate::Other;\n",
+            "use my_crate::Other as Kind;\n",
+            "use my_crate::presets::*;\n",
+            "use other::*;\n",
+        ] {
+            assert!(rebinds(source), "{source}");
+        }
+        for source in [
+            "use my_crate::{Kind, f};\nfn t() { f(Kind::A); }\n",
+            "use my_crate::*;\n",
+            "use super::*;\n",
+            "use my_crate::Kind::*;\n",
+            "struct KindHolder;\nfn kind() {}\n// struct Kind\n",
+        ] {
+            assert!(!rebinds(source), "{source}");
+        }
     }
 
     #[test]

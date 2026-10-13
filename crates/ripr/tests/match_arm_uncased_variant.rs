@@ -202,3 +202,33 @@ fn an_imported_single_letter_type_names_no_arm() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_test_side_constant_named_like_a_variant_names_no_arm() -> Result<(), String> {
+    // The test's own `Kind::A` is a constant holding the owner's `Kind::B`,
+    // so `f(Kind::A)` takes the changed wildcard arm. The test file declares
+    // its own `Kind`, so its uncased inputs are not read (#7620 review).
+    let lib = format!("{ENUM}\n{}", body(WILDCARD_ARMS, "i32"));
+    let test = "use uncased_variant::f;\n\nstruct Kind;\n\nimpl Kind {\n    const A: uncased_variant::Kind = uncased_variant::Kind::B;\n}\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
+    let repo = TempRepo::create(
+        &lib,
+        None,
+        test,
+        &diff(
+            "src/lib.rs",
+            10,
+            &[
+                "pub fn f(k: Kind) -> i32 {",
+                "    match k {",
+                "        Kind::A => 1,",
+            ],
+            "        _ => 0,",
+            "        _ => 2,",
+        ),
+    )?;
+    assert_eq!(
+        named_discriminators(&repo.check()?, 10)?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
