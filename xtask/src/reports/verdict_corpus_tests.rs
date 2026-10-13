@@ -2159,23 +2159,26 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 }
 
 #[test]
-fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
--> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: a non-Rust
-    // language validates structurally with no coverage attached, while the
-    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
-    // deleting that ledger fails instead of dropping the coverage floor.
-    // (The gated half needs the repo-relative specs tree, so the `validate`
-    // and `check-all` CLI runs prove it, not a unit test.) The Perl corpus
-    // is the ledgerless non-Rust example; TypeScript and Python carry
-    // ledgers.
-    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
-    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
-    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
-    let err = validated_corpus_declared(&rust)
-        .err()
-        .ok_or("a Rust corpus without its spec-example ledger validated")?;
-    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: the Perl
+    // corpus validates structurally with no coverage attached, while every
+    // other corpus keeps its spec-example ledger mandatory (#6686 review for
+    // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
+    // instead of dropping the coverage floor from `check-all`. (The gated
+    // half needs the repo-relative specs tree, so the `validate` and
+    // `check-all` CLI runs prove it, not a unit test.)
+    for (name, source) in [
+        ("verdict-declared-rust-ledger", repo_corpus_dir()),
+        ("verdict-declared-ts-ledger", typescript_corpus_dir()),
+    ] {
+        let copy = crate::tests::temp_dir(name);
+        crate::tests::copy_dir_recursive(&source, &copy)?;
+        fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+        let err = validated_corpus_declared(&copy)
+            .err()
+            .ok_or_else(|| format!("{name}: a corpus without its spec-example ledger validated"))?;
+        assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
+    }
 
     let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
     assert!(coverage.is_none());

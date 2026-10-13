@@ -116,6 +116,7 @@ The TypeScript corpus carries the same kind of ledger,
 its amendments RIPR-SPEC-0246 to RIPR-SPEC-0252 are in scope, and cases cite
 the examples they label in `spec_examples`. Examples a case could label but
 none does yet stay uncovered rather than waived. A deleted ledger fails
+`check-all` and
 `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`.
 
 ### Perl corpus
@@ -171,9 +172,10 @@ of scope, RIPR-SPEC-0238 is in scope, and cases cite the examples they label
 in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
 Example 10 of RIPR-SPEC-0238 has no case yet (the corpus `SPEC.md` says
 why), but a case could label it, so it counts as uncovered rather than
-waived. A deleted ledger fails
-`committed_python_corpus_is_valid_and_covers_each_test_library`, since a
-ledgerless non-Rust corpus (today only Perl) scores rows without the coverage gate.
+waived. A deleted ledger fails `verdict-corpus check-all` and
+`committed_python_corpus_is_valid_and_covers_each_test_library`: every
+corpus but Perl must carry its ledger, and only the Perl corpus scores rows
+without the coverage gate.
 
 ## Required Evidence
 
