@@ -1,7 +1,7 @@
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -15,7 +15,7 @@
+@@ -15,6 +15,6 @@
  
  pub mod celsius {
      pub fn snap(v: u32) -> u32 {
@@ -9,4 +9,3 @@ diff --git a/src/lib.rs b/src/lib.rs
 +        (5 + v) / 10 * 10
      }
  }
- 

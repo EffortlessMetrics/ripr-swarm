@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — same_name_use_imported_owner (3)
+
+Reason:
+RIPR-SPEC-0172: diff.patch drops its trailing blank context line (git diff --check); only the input identity digest changes
+
+Command:
+`cargo xtask goldens bless same_name_use_imported_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

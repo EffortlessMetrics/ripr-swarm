@@ -641,7 +641,7 @@ fn same_crate_rival(owner: &FunctionSummary, function: &FunctionSummary) -> bool
 fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
-        && (normalized.contains("/tests/") || normalized.starts_with("tests/"))
+        && super::super::rust_index::is_test_file(file)
 }
 
 /// Module segments of a file below its crate root: `src/lib.rs` and
