@@ -277,6 +277,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             config.oracles(),
             &languages,
             &config.languages().rust,
+            config.languages(),
         )?,
         AnalysisProgressScope::Worktree => {
             run_worktree_analysis_with_oracle_policy_and_rust_config(
@@ -284,6 +285,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 config.oracles(),
                 &languages,
                 &config.languages().rust,
+                config.languages(),
             )?
         }
         AnalysisProgressScope::Repo => run_repo_analysis_with_oracle_policy_and_rust_config(

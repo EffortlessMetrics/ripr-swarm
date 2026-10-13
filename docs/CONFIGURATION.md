@@ -1013,6 +1013,25 @@ The selected source corpus participates in cache identity, and this setting is
 finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
+`[languages.python]` and `[languages.typescript]` configure the preview
+adapters. Each admits one override:
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+
+For example, a project that keeps hand-written Python source under a `build/`
+package can admit it:
+
+```toml
+[languages.python]
+handwritten_files = ["build/lib/pipeline.py"]
+```
+
+When a changed file is still skipped by these conventions, the run's
+`language_scope_unsupported` limitation names this opt-in instead of advising a
+bare retry that cannot change the outcome (#7386).
+
 For example:
 
 ```toml

@@ -48,6 +48,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
         oracle_policy,
         languages,
         &crate::config::RustLanguageConfig::default(),
+        &crate::config::LanguagesConfig::default(),
     )
 }
 
@@ -56,6 +57,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
@@ -96,11 +98,12 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             ..options.clone()
         };
         cancellation::checkpoint()?;
-        let mut result = run_pipeline_for_diff_text(
+        let mut result = run_pipeline_for_diff_text_with_language_config(
             &candidate_options,
             oracle_policy,
             languages,
             rust_config,
+            language_config,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -152,7 +155,14 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             })
         });
         let result = committed_source::with_overlay(overlay.clone(), || {
-            run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
+            run_pipeline_for_diff_text_with_language_config(
+                options,
+                oracle_policy,
+                languages,
+                rust_config,
+                language_config,
+                &loaded.text,
+            )
         });
         let analyzed_revisions = match probes {
             Some(handle) => handle.join().ok(),
@@ -226,6 +236,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff"
@@ -283,11 +294,12 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         });
         #[cfg(test)]
         wait_for_probe_worker_for_test();
-        let result = run_pipeline_for_diff_text(
+        let result = run_pipeline_for_diff_text_with_language_config(
             options,
             oracle_policy,
             languages,
             rust_config,
+            language_config,
             &loaded.text,
         );
         let (untracked, analyzed) = match probes.join() {
@@ -710,6 +722,28 @@ fn run_pipeline_for_diff_text(
     rust_config: &crate::config::RustLanguageConfig,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
+    run_pipeline_for_diff_text_with_language_config(
+        options,
+        oracle_policy,
+        languages,
+        rust_config,
+        &crate::config::LanguagesConfig::default(),
+        diff_text,
+    )
+}
+
+/// [`run_pipeline_for_diff_text`] with the parsed `[languages]` repository
+/// configuration: the preview adapters read the `handwritten_files`
+/// declarations so exact hand-written paths under built-in excluded
+/// directories are analyzed instead of silently dropped (#7386).
+fn run_pipeline_for_diff_text_with_language_config(
+    options: &AnalysisOptions,
+    oracle_policy: &OraclePolicy,
+    languages: &[LanguageId],
+    rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
+    diff_text: &str,
+) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
     let changed_files = parsed_diff.changed_files;
     let mut limitations = parsed_diff
@@ -861,12 +895,18 @@ fn run_pipeline_for_diff_text(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => {
-                analyze_typescript_diff(options, oracle_policy, preview_changed_files)
-            }
-            LanguageId::Python => {
-                analyze_python_diff(options, oracle_policy, preview_changed_files)
-            }
+            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_diff(
+                options,
+                oracle_policy,
+                preview_changed_files,
+                &language_config.typescript.handwritten_files,
+            ),
+            LanguageId::Python => analyze_python_diff(
+                options,
+                oracle_policy,
+                preview_changed_files,
+                &language_config.python.handwritten_files,
+            ),
             LanguageId::Perl => analyze_perl_diff(options, oracle_policy, preview_changed_files),
             LanguageId::Rust => {
                 continue;
@@ -947,7 +987,11 @@ fn run_pipeline_for_diff_text(
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
-    let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
+    let preview_advisories = detect_preview_advisories(
+        languages,
+        preview_paths.into_iter(),
+        language_config,
+    );
     for advisory in &preview_advisories {
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
@@ -979,23 +1023,33 @@ fn run_pipeline_for_diff_text(
     // them as analyzed (#4372). They are still changed files in scope: record
     // a typed skipped-scope limitation, as the Rust adapter does for generated
     // Rust files, so an excluded-only diff is never a silently complete result
-    // (RIPR-SPEC-0082).
-    for (language, skipped) in
-        detect_preview_skipped_paths(languages, analysis_changed_files.iter())
-    {
+    // (RIPR-SPEC-0082). The recovery names the `[languages.<lang>]
+    // handwritten_files` escape hatch, mirroring the Rust generated-corpus
+    // wording, instead of a bare "retry" that cannot change the outcome
+    // (#7386).
+    for (language, skipped) in detect_preview_skipped_paths(
+        languages,
+        analysis_changed_files.iter(),
+        language_config,
+    ) {
         let listed = bounded_path_listing(&skipped);
         let name = language.display_name();
+        let config_section = match language {
+            LanguageId::Python => "languages.python",
+            _ => "languages.typescript",
+        };
         limitations.push(
             AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
                 AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
                     format!(
                         "Not analyzed by the {name} preview adapter: {listed}. It skips \
                          generated files and vendored, dependency, build-output and cache \
-                         directories; if one of these is hand-written, its changes stay \
-                         outside this analysis."
+                         directories; if one of these is hand-written, declare its exact \
+                         repository-relative path in `[{config_section}] handwritten_files` \
+                         and re-run the analysis."
                     ),
                 )?,
             )
@@ -1451,7 +1505,11 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
-    let preview_advisories = detect_repo_preview_advisories(&options.root, languages);
+    let preview_advisories = detect_repo_preview_advisories(
+        &options.root,
+        languages,
+        &crate::config::LanguagesConfig::default(),
+    );
 
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
@@ -1484,6 +1542,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
 fn detect_repo_preview_advisories(
     root: &std::path::Path,
     enabled: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
 ) -> Vec<PreviewLanguageAdvisory> {
     let discovered = super::workspace::discover_preview_language_files(root);
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
@@ -1499,7 +1558,8 @@ fn detect_repo_preview_advisories(
             .iter()
             .filter(|(lang, path)| {
                 lang == language
-                    && !(analyzed_only && is_excluded_from_preview_analysis(*lang, path))
+                    && !(analyzed_only
+                        && is_excluded_from_preview_analysis(*lang, path, language_config))
             })
             .map(|(_, path)| path.to_string_lossy().replace('\\', "/"))
             .collect();
@@ -1559,6 +1619,7 @@ const PREVIEW_LANGUAGE_ORDER: &[LanguageId] = &[
 fn detect_preview_advisories<'a, I>(
     enabled: &[LanguageId],
     paths: I,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Vec<PreviewLanguageAdvisory>
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
@@ -1580,7 +1641,7 @@ where
         // the raw count.
         if enabled.contains(&language)
             && language.is_available()
-            && is_excluded_from_preview_analysis(language, &changed.path)
+            && is_excluded_from_preview_analysis(language, &changed.path, language_config)
         {
             continue;
         }
@@ -1620,6 +1681,7 @@ where
 fn detect_preview_skipped_paths<'a, I>(
     enabled: &[LanguageId],
     paths: I,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Vec<(LanguageId, Vec<String>)>
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
@@ -1632,7 +1694,7 @@ where
         if !is_preview_language(language)
             || !language.is_available()
             || !enabled.contains(&language)
-            || !is_excluded_from_preview_analysis(language, &changed.path)
+            || !is_excluded_from_preview_analysis(language, &changed.path, language_config)
         {
             continue;
         }
@@ -1704,29 +1766,46 @@ fn bounded_path_listing(paths: &[String]) -> String {
 ///
 /// This consults the same predicates the adapters apply ahead of
 /// `changed_count += 1` (TypeScript/JavaScript #3743, Python #3672), so the
-/// enabled advisory cannot present a file the adapter never analyzed. Perl has
-/// no excluded-path authority and is never filtered.
-fn is_excluded_from_preview_analysis(language: LanguageId, path: &std::path::Path) -> bool {
+/// enabled advisory cannot present a file the adapter never analyzed. A path
+/// declared in that language's `[languages.<lang>] handwritten_files` is not
+/// refused: the adapter admits it past the excluded-directory conventions
+/// (#7386). Perl has no excluded-path authority and is never filtered.
+fn is_excluded_from_preview_analysis(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {
-            is_excluded_from_typescript_preview_analysis(path)
+            is_excluded_from_typescript_preview_analysis(
+                path,
+                &language_config.typescript.handwritten_files,
+            )
         }
         LanguageId::Python => {
             crate::config::is_detectable_generated_python_path(path)
-                || crate::config::is_detectable_excluded_python_path(path)
+                || (crate::config::is_detectable_excluded_python_path(path)
+                    && !crate::config::is_declared_handwritten_python_path(
+                        &language_config.python.handwritten_files,
+                        path,
+                    ))
         }
         LanguageId::Rust | LanguageId::Perl => false,
     }
 }
 
 #[cfg(feature = "lang-typescript")]
-fn is_excluded_from_typescript_preview_analysis(path: &std::path::Path) -> bool {
+fn is_excluded_from_typescript_preview_analysis(path: &std::path::Path, handwritten: &[String]) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
-        || crate::config::is_detectable_excluded_typescript_path(path)
+        || (crate::config::is_detectable_excluded_typescript_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
 #[cfg(not(feature = "lang-typescript"))]
-fn is_excluded_from_typescript_preview_analysis(_path: &std::path::Path) -> bool {
+fn is_excluded_from_typescript_preview_analysis(
+    _path: &std::path::Path,
+    _handwritten: &[String],
+) -> bool {
     false
 }
 
@@ -1735,8 +1814,10 @@ fn analyze_typescript_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
+    handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
-    TypeScriptAdapter.analyze_diff(options, oracle_policy, changed_files)
+    let _ = oracle_policy;
+    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -1744,6 +1825,7 @@ fn analyze_typescript_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
+    _handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -1753,8 +1835,10 @@ fn analyze_python_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
+    handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
-    PythonAdapter.analyze_diff(options, oracle_policy, changed_files)
+    let _ = oracle_policy;
+    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
 }
 
 #[cfg(not(feature = "lang-python"))]
@@ -1762,6 +1846,7 @@ fn analyze_python_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
+    _handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Python)
 }
@@ -4887,7 +4972,7 @@ index 0000000..1111111 100644
             write(&root.join(path), "export const limit = 1;\n")?;
         }
         let counts = |enabled: &[LanguageId]| -> Vec<(String, usize, Vec<String>, bool)> {
-            detect_repo_preview_advisories(&root, enabled)
+            detect_repo_preview_advisories(&root, enabled, &Default::default())
                 .into_iter()
                 .map(|advisory| {
                     (
@@ -4931,7 +5016,7 @@ index 0000000..1111111 100644
             write(&root.join(path), "export const limit = 1;\n")?;
         }
         let counts = |enabled: &[LanguageId]| -> Vec<(usize, usize)> {
-            detect_repo_preview_advisories(&root, enabled)
+            detect_repo_preview_advisories(&root, enabled, &Default::default())
                 .into_iter()
                 .map(|advisory| (advisory.file_count, advisory.javascript_file_count))
                 .collect()
@@ -5682,6 +5767,7 @@ index 0000000..1111111 100644
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
+                &crate::config::LanguagesConfig::default(),
             );
             let elapsed = started.elapsed();
 
