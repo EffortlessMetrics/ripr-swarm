@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-freeze-class",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-freeze-class.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 44
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_class",
+  "test_shape": "testexception_throws_ok_class",
+  "hard_case": "throws_ok with a class name pins the exception class, which the producer maps to a weak broad exception observer.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"frozen\\n\" if defined($reason);",
+        "mutated_line": "die \"frozen\\n\" if defined($reason);",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: freezing raises an account error",
+        "equivalence_review": "not equivalent: a plain string is not an Account::Error"
+      },
+      {
+        "replacement": "die Account::Error->new(message => $reason) if !defined($reason);",
+        "mutated_line": "die Account::Error->new(message => $reason) if !defined($reason);",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: freezing raises an account error",
+        "equivalence_review": "not equivalent: a reason no longer freezes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "throws_ok { freeze('fraud') } 'Account::Error' fails for a plain string die and for a freeze that no longer dies. Spec cells: RIPR-SPEC-0064 Test::Exception throws_ok class.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-freeze-class.json",
+    "sha256": "9114a2641e2394696f045bc15fbd46a5ca3d69e166b122245c5bd4467b55a056",
+    "provenance": "producer"
+  }
+}

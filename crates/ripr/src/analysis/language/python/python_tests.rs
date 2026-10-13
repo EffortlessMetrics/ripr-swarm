@@ -1776,6 +1776,7 @@ fn same_stem_related_handles_missing_stems() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3250,6 +3251,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3268,6 +3270,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3286,6 +3289,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3722,9 +3726,10 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         &[]
     ));
 
-    // Strong oracle that names the owner class -> aligned.
+    // Strong oracle that only names the owner class -> not identity alone
+    // (RIPR-SPEC-0238 rule 9): the method may run on another receiver.
     let aligned_name = [strong("assert stop_after_attempt(3) is not None")];
-    assert!(strong_oracle_observes_owner(
+    assert!(!strong_oracle_observes_owner(
         &owner,
         line,
         &aligned_name,
@@ -3794,6 +3799,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3864,6 +3870,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,
@@ -3909,6 +3916,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        generated_inputs: Vec::new(),
         framework: "pytest",
         assertions: Vec::new(),
         assertion_admission: super::admission::PythonAssertionAdmission::NoAssertionLike,

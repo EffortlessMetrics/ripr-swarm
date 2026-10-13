@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -146,7 +146,7 @@ def label_getattr(x):
+ 
+ 
+ def parse_with_patch_call(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ class Settings:

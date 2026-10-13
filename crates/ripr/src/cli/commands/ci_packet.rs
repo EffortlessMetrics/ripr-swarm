@@ -973,6 +973,27 @@ impl PacketRun {
                 } else {
                     run.settings.base_ref.clone()
                 };
+                // Fail closed before composing (#7368): when neither
+                // base_ref nor default_branch is present in the event
+                // payload, `origin/{base}` would be the literal `origin/`,
+                // and the start-here recovery command would carry an invalid
+                // refspec (`+refs/heads/:refs/remotes/origin/`) that git
+                // rejects outright. Skip with an explicit note instead of
+                // writing a start-here whose next action cannot succeed.
+                if base.is_empty() {
+                    // A reused target/ripr/reports can still hold a
+                    // start-here packet from an earlier run whose base was
+                    // derivable; leaving it in place would let the index and
+                    // CI summary present the earlier packet as this run's
+                    // guidance. Remove both outputs with the skip.
+                    for stale in ["start-here.json", "start-here.md"] {
+                        let _ = fs::remove_file(run.root.join(REPORTS).join(stale));
+                    }
+                    println!(
+                        "RIPR step \"Render RIPR first-pr start-here\" skipped: no base derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch."
+                    );
+                    return Ok(());
+                }
                 run.ripr(&args(&[
                     "first-pr",
                     "--root",
@@ -2130,6 +2151,84 @@ mod tests {
         assert!(
             !commands.iter().any(|line| line.starts_with("ripr pilot")),
             "{commands:?}"
+        );
+        Ok(())
+    }
+
+    /// #7368: with neither `base_ref` nor `default_branch` in the event
+    /// payload, the first-pr stage must not compose the literal base
+    /// `origin/` (its recovery refspec is invalid); it skips and says why.
+    /// With a base available, the stage passes `origin/{base}` as before.
+    #[test]
+    fn first_pr_stage_fails_closed_when_no_base_is_derivable() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-first-pr-base-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        // Seed stale start-here outputs from an earlier run so the skip must
+        // clear them instead of leaving the earlier packet behind.
+        fs::create_dir_all(root.join(REPORTS)).map_err(|err| err.to_string())?;
+        for stale in ["start-here.json", "start-here.md"] {
+            fs::write(root.join(REPORTS).join(stale), "stale").map_err(|err| err.to_string())?;
+        }
+        let mut empty_run = PacketRun {
+            root: root.clone(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings::default(),
+            only: args(&["Render RIPR first-pr start-here"]),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: Some(std::cell::RefCell::new(Vec::new())),
+        };
+        empty_run.all_stages();
+        for stale in ["start-here.json", "start-here.md"] {
+            assert!(
+                !root.join(REPORTS).join(stale).exists(),
+                "stale {stale} must be removed by the skip"
+            );
+        }
+        let empty_commands = empty_run
+            .recorded
+            .take()
+            .map(std::cell::RefCell::into_inner)
+            .unwrap_or_default();
+        assert!(
+            !empty_commands.iter().any(|line| line.contains("first-pr")),
+            "no first-pr command may run without a derivable base: {empty_commands:?}"
+        );
+        assert!(
+            !empty_commands.iter().any(|line| line.contains("origin/")),
+            "the literal origin/ base must never be composed: {empty_commands:?}"
+        );
+
+        let mut based_run = PacketRun {
+            root: root.clone(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings {
+                base_ref: "trunk".to_string(),
+                ..CiSettings::default()
+            },
+            only: args(&["Render RIPR first-pr start-here"]),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: Some(std::cell::RefCell::new(Vec::new())),
+        };
+        based_run.all_stages();
+        let _ = fs::remove_dir_all(&root);
+        let based_commands = based_run
+            .recorded
+            .take()
+            .map(std::cell::RefCell::into_inner)
+            .unwrap_or_default();
+        assert!(
+            based_commands
+                .iter()
+                .any(|line| line.contains("first-pr") && line.contains("--base origin/trunk")),
+            "a derivable base must keep producing the origin/<base> command: {based_commands:?}"
         );
         Ok(())
     }

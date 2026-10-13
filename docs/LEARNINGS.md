@@ -11,6 +11,31 @@ which is the call that just failed. That recovery stays on `ripr_list_gaps`
 only as a page-smaller instruction. A too-large item names `ripr check
 --format json` outside MCP and says `ripr_get_gap` cannot return it. Other
 tools name their own next read, or say there is no narrower MCP read.
+## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
+
+`ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
+cannot tell a same-repo mutant from a foreign record that happens to share
+a path and line. `ripr outcome` already discloses missing or differing heads
+on the same snapshot family. Calibrate must print the same class of caveat
+on stderr and in `--help`. Do not treat a file+line match as proof the
+artifacts share a subject, and do not refuse that join in the provenance
+fix. Do not fold producer-help (#7450), `matched_total` meaning (#7451), or
+the xtask duplicate renderer (#6691) into this disclosure.
+## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
+
+Config discovery walks ancestors of the *selected analysis root*, not of the
+invocation cwd. Implicit `ripr check` rebinds that root to the enclosing
+workspace, so a member `ripr.toml` is never a candidate. `doctor` and `pilot`
+keep `--root` (default cwd) and load that closer file. Do not retarget which
+file `check` loads — that is per-crate config (#2671) — and do not fold
+doctor/pilot into `resolve_project_root` just to make the three commands agree.
+Name the skipped directory entry and the file that governed on stderr.
+Recovery is `--root .` (cwd is still the invocation directory; that spelling
+is shell-neutral). A member symlink to the workspace file is the same
+config, not a skip; a symlink to a *different* file still names the member
+entry, not the canonical target. Human-header `config:` and JSON
+`config_path` remain a follow-up: they churn every golden and need
+`docs/OUTPUT_SCHEMA.md`.
 
 ## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
 

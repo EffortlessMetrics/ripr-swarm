@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hypothesis-label-no-crash",
+  "subject_id": "authored-py-hypothesis-stats",
+  "diff": "cases/py-hypothesis-label-no-crash.diff",
+  "anchor": {
+    "file": "stats/__init__.py",
+    "line": 26
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "hypothesis_no_assertion",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"passed\" if is_passing(score) else \"fail\"",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: grade_label(60) returns \"passed\" instead of \"pass\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_label_never_crashes calls grade_label with no assertion, so changing \"pass\" to \"passed\" passes. ripr reports static_unknown with property_based_test, an acceptable limit; the ideal is a gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

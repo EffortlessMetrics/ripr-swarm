@@ -2555,12 +2555,10 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         seen += 1;
         let report = super::super::verdict_corpus::expected_report(&root.join(dir))?;
         let expected = serde_json::to_value(&report).map_err(|err| err.to_string())?;
-        let numerator = expected[rate]["numerator"]
-            .as_f64()
-            .ok_or(rate.to_string())?;
-        let denominator = expected[rate]["denominator"]
-            .as_f64()
-            .ok_or(rate.to_string())?;
+        // Perl rates sit under `by_packet_provenance.producer`.
+        let ratio = rate.split('.').fold(&expected, |value, part| &value[part]);
+        let numerator = ratio["numerator"].as_f64().ok_or(rate.to_string())?;
+        let denominator = ratio["denominator"].as_f64().ok_or(rate.to_string())?;
         let mut absolute = metric.clone();
         absolute.source = format!("verdict-corpus:{}#{rate}", root.join(dir).display());
         let sample = verdict_corpus_sample(
@@ -2576,8 +2574,8 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         );
     }
     assert_eq!(
-        seen, 8,
-        "the five Rust and three TypeScript trust rates read the corpus rows"
+        seen, 16,
+        "the five Rust, three TypeScript, three Python and five Perl trust rates read the corpus rows"
     );
 
     // A corpus that cannot be read is not measured, never a perfect rate.

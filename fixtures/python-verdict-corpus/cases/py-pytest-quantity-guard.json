@@ -1,0 +1,51 @@
+{
+  "case_id": "py-pytest-quantity-guard",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-quantity-guard.diff",
+  "anchor": {
+    "file": "pricing/core.py",
+    "line": 45
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "pytest_raises_one_side",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if value < 0:",
+        "mutated_line": "if value < 0:",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pricing.py::test_zero_quantity_is_rejected",
+        "equivalence_review": "not equivalent: quantity 0 is accepted instead of raising"
+      },
+      {
+        "replacement": "if value < 2:",
+        "mutated_line": "if value < 2:",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: quantity 1 raises instead of being accepted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_zero_quantity_is_rejected feeds only \"0\" to pytest.raises(ValueError): `value < 0` accepts 0 and fails the test, while `value < 2` also rejects 1 and passes. The truth is partially_discriminated and ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

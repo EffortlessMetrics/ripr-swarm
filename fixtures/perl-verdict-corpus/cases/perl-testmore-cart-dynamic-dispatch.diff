@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Cart.pm b/lib/Shop/Cart.pm
+index 7330a50..ab22b3f 100644
+--- a/lib/Shop/Cart.pm
++++ b/lib/Shop/Cart.pm
+@@ -23,7 +23,7 @@ sub total {
+ 
+ sub item_count {
+     my ($self) = @_;
+-    return scalar @{ $self->{items} };
++    return 0 + @{ $self->{items} };
+ }
+ 
+ sub run {

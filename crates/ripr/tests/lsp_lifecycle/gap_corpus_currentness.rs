@@ -618,7 +618,7 @@ fn captured_corpus(captured: &Value) -> ProofResult<&Value> {
         .ok_or("analysis producer omitted source_subject.corpus")?;
     require(
         corpus["scope"] == "rust_workspace"
-            && corpus["cache_schema_version"] == "1.62"
+            && corpus["cache_schema_version"] == "1.63"
             && corpus["files_content_hash"].as_str().is_some_and(|hash| {
                 hash.len() == 16
                     && hash
@@ -760,10 +760,7 @@ impl InvalidCorpus {
                         corpus.insert("scope".into(), json!("unrecognized_workspace"));
                     }
                     Self::UnsupportedSchema => {
-                        corpus.insert(
-                            "cache_schema_version".into(),
-                            json!("unsupported-cache-schema"),
-                        );
+                        corpus.insert("cache_schema_version".into(), json!("1.62"));
                     }
                     Self::Missing | Self::Malformed => {
                         return Err("unreachable corpus corruption variant".into());
@@ -2103,4 +2100,252 @@ fn gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after
     let closed = shutdown_exit_and_wait(&mut session);
     outcome?;
     closed
+}
+
+#[cfg(feature = "lang-python")]
+fn genuine_python_operator_ledger(
+    label: &str,
+    before_operator: &str,
+    current_operator: &str,
+) -> ProofResult<(CorpusFixture, Value)> {
+    let fixture = CorpusFixture::new(label)?;
+    let root = fixture.root();
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled=[\"rust\",\"python\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname=\"python-admission-proof\"\nversion=\"0.0.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/__init__.py"), "").map_err(|error| error.to_string())?;
+    let source = include_str!("../../../../fixtures/python_boundary_gap/input/src/discount.py");
+    std::fs::write(
+        root.join("src/discount.py"),
+        source.replace(">=", before_operator),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/test_discount.py"),
+        include_str!("../../../../fixtures/python_boundary_gap/input/tests/test_discount.py"),
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git::fixture_git_ok(
+        root,
+        &[
+            "add",
+            "ripr.toml",
+            "pyproject.toml",
+            "src/__init__.py",
+            "src/discount.py",
+            "tests/test_discount.py",
+        ],
+    )?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "Python comparison base"])?;
+    let before = head(root)?;
+    std::fs::write(
+        root.join("src/discount.py"),
+        source.replace(">=", current_operator),
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git::fixture_git_ok(root, &["add", "src/discount.py"])?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "Python comparison current"])?;
+    let inputs = root.join("target/corpus-proof");
+    std::fs::create_dir_all(&inputs).map_err(|error| error.to_string())?;
+    let diff_path = inputs.join("python-admission.diff");
+    let diff =
+        fixture_git::fixture_git_output(root, &["diff", &before, "HEAD", "--", "src/discount.py"])?;
+    std::fs::write(&diff_path, diff).map_err(|error| error.to_string())?;
+    let captured = cli_json(
+        root,
+        &[
+            "check",
+            "--diff",
+            diff_path.to_str().ok_or("diff path is not UTF-8")?,
+            "--json",
+        ],
+    )?;
+    let id = format!(
+        "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount{current_operator}threshold"
+    );
+    require(
+        captured["findings"].as_array().is_some_and(|findings| {
+            findings.len() == 1
+                && findings[0]["canonical_gap_id"] == id
+                && findings[0]["language"] == "python"
+                && findings[0]["language_status"] == "preview"
+        }),
+        || {
+            format!(
+                "actual Python check must establish exact nonempty producer subject before consumer proof: {captured}"
+            )
+        },
+    )?;
+    let ledger = derive_check_scope_ledger(root, &captured, "python-admission")?;
+    require(
+        ledger["records"].as_array().is_some_and(|records| {
+            records.len() == 1
+                && records[0]["canonical_gap_id"] == id
+                && records[0]["language"] == "python"
+                && records[0]["language_status"] == "preview"
+        }),
+        || format!("actual ledger must preserve exact typed producer identity: {ledger}"),
+    )?;
+    install(root, &ledger)?;
+    Ok((fixture, ledger))
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn genuine_python_quoted_comparison_ledger_reaches_passive_and_live_action_admission() -> ProofResult
+{
+    let (fixture, ledger) = genuine_python_operator_ledger("python-quoted-identity", ">", ">=")?;
+    let root = fixture.root();
+    let record = &ledger["records"][0];
+    let id =
+        "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold";
+    let verify = "python -m pytest tests/test_discount.py::test_apply_discount_smoke";
+    require(
+        record["canonical_gap_id"] == id
+            && record["kind"] == "MissingBoundaryAssertion"
+            && record["gap_state"] == "actionable"
+            && record["repairability"] == "repairable"
+            && record["static_limit_kind"] == "python_preview"
+            && record["verification_commands"] == json!([verify])
+            && record["projection_eligibility"]["agent_packet"]["eligible"] == true
+            && record["receipt_command"].as_str().is_some_and(|command| {
+                command.starts_with(&format!("ripr receipt write --gap '{id}'"))
+            }),
+        || {
+            format!(
+                "genuine comparison producer must retain native card/quote/operational marker, never rewrite them for admission: {ledger}"
+            )
+        },
+    )?;
+    let installed = root.join("target/ripr/reports/gap-decision-ledger.json");
+    let original = std::fs::read(&installed).map_err(|error| error.to_string())?;
+    let mut session = refreshed_command_session(root)?;
+    let outcome: ProofResult = (|| {
+        let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_preview_corpus_unavailable(&status)?;
+        require(
+            status["diagnostics"]["actionable_gap_artifacts"] == 1
+                && status["top_actionable_packet"]["canonical_gap_id"] == id,
+            || format!("real quoted comparison must remain meaningful and actionable: {status}"),
+        )?;
+        for command in ["ripr.collectContext", "ripr.collectRepairPacket"] {
+            let response = session.request_with_timeout(
+                "workspace/executeCommand",
+                json!({"command": command, "arguments": [{"gap_id": id}]}),
+                ANALYSIS_TIMEOUT,
+            )?;
+            let actual = expect_result(&response, command)?;
+            if command == "ripr.collectContext" {
+                require(
+                    actual["source"] == "gap_decision_ledger"
+                        && actual["packets"]
+                            .as_array()
+                            .is_some_and(|packets| packets.len() == 1)
+                        && actual["packets"][0]["canonical_gap_id"] == id
+                        && actual["packets"][0]["verification_commands"]
+                            == record["verification_commands"],
+                    || {
+                        format!(
+                            "live context must carry the exact real Python producer packet: {actual}"
+                        )
+                    },
+                )?;
+            } else {
+                require(
+                    actual["kind"] == "repair_packet"
+                        && actual["canonical_gap_id"] == id
+                        && actual["verify_command"] == verify
+                        && actual["receipt_command"] == record["receipt_command"]
+                        && actual["raw_evidence_refs"] == record["evidence_ids"]
+                        && actual["allowed_edit_surface"]
+                            .as_array()
+                            .is_some_and(|paths| !paths.is_empty()),
+                    || format!("live repair must preserve native commands and subject: {actual}"),
+                )?;
+            }
+        }
+        require(
+            std::fs::read(&installed).map_err(|error| error.to_string())? == original,
+            || "consumer must replay unchanged genuine producer ledger bytes".into(),
+        )
+    })();
+    let shutdown = shutdown_exit_and_wait(&mut session);
+    outcome?;
+    shutdown
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn genuine_python_unavailable_repair_card_remains_admitted_advisory_without_actions() -> ProofResult
+{
+    let (fixture, ledger) = genuine_python_operator_ledger("python-operational-limit", "!=", "==")?;
+    let root = fixture.root();
+    let record = &ledger["records"][0];
+    let id =
+        "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount==threshold";
+    require(
+        record["canonical_gap_id"] == id
+            && record["kind"] == "StaticLimitation"
+            && record["gap_state"] == "static_limitation"
+            && record["repairability"] == "analyzer_limitation"
+            && record["static_limit_kind"] == "python_repair_card_unavailable"
+            && record["static_limit_detail"]
+                .as_str()
+                .is_some_and(|detail| {
+                    detail.contains("no repair card")
+                        && detail.contains("no concrete missing discriminator")
+                })
+            && record["verification_commands"] == json!([])
+            && record["receipt_command"].is_null()
+            && record["repair_route"].is_null()
+            && record["projection_eligibility"]["agent_packet"]["eligible"] == false,
+        || {
+            format!(
+                "real unavailable-card record must remain nonempty/advisory and preserve detail, not gain a repair route: {ledger}"
+            )
+        },
+    )?;
+    let mut session = refreshed_command_session(root)?;
+    let outcome: ProofResult = (|| {
+        let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_preview_corpus_unavailable(&status)?;
+        require(
+            status["diagnostics"]["actionable_gap_artifacts"] == 0
+                && status["top_actionable_packet"].is_null(),
+            || format!("operational preview limitation must never become actionable: {status}"),
+        )?;
+        // Ineligible collectContext has an existing InvalidParams contract;
+        // admission does not authorize that unsupported context projection.
+        let response = session.request_with_timeout(
+            "workspace/executeCommand",
+            json!({"command": "ripr.collectRepairPacket", "arguments": [{"gap_id": id}]}),
+            ANALYSIS_TIMEOUT,
+        )?;
+        let repair = expect_result(&response, "ripr.collectRepairPacket")?;
+        require(
+            repair["kind"] == "repair_packet"
+                && repair["status"] == "not_actionable_or_incomplete"
+                && repair["reason"].as_str().is_some_and(|reason| {
+                    reason.contains("not agent-packet eligible")
+                        && reason.contains("not_repairable")
+                })
+                && repair.get("verify_command").is_none()
+                && repair.get("receipt_command").is_none(),
+            || {
+                format!(
+                    "live read must preserve actual advisory exclusion, not unsupported-kind refusal or repair commands: {repair}"
+                )
+            },
+        )
+    })();
+    let shutdown = shutdown_exit_and_wait(&mut session);
+    outcome?;
+    shutdown
 }

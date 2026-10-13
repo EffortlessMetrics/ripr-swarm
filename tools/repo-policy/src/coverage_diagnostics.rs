@@ -171,13 +171,18 @@ fn tool_with_deadline(args: &[String], deadline_after: Duration) -> Result<Value
 }
 
 fn display_bytes(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|byte| match byte {
-            b'\n' | b'\r' | b'\t' | 0x20..=0x7e => char::from(*byte),
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => character,
+            _ if !character.is_control() => character,
             _ => '?',
         })
         .collect()
+}
+
+fn is_valid_utf8(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok()
 }
 
 fn tool_result(
@@ -189,13 +194,35 @@ fn tool_result(
     descendants_terminated: bool,
 ) -> Value {
     json!({"exit": status, "stdout": display_bytes(stdout), "stderr": display_bytes(stderr),
+        "stdout_retained_prefix_utf8_valid": is_valid_utf8(stdout), "stderr_retained_prefix_utf8_valid": is_valid_utf8(stderr),
         "stdout_hex": hex(stdout), "stderr_hex": hex(stderr), "truncated": truncated,
         "timed_out": timed_out, "descendants_terminated": descendants_terminated})
 }
 
+// Decode only the bounded prefix retained by drain; display text is never a
+// machine path source. The unread suffix has no UTF-8 validity claim.
+fn retained_text(value: &Value, stream: &str) -> Result<String> {
+    let encoded = field(value, &format!("{stream}_hex"));
+    if encoded.len() > STREAM_BYTES * 2 || !encoded.len().is_multiple_of(2) {
+        return Err("invalid retained stream encoding".to_owned());
+    }
+    let bytes = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+            u8::from_str_radix(pair, 16).map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
 fn invoke(run: &impl Fn(&[String]) -> Result<Value>, args: &[&str]) -> Value {
     let args = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    run(&args).unwrap_or_else(|e| json!({"exit": null, "stdout": "", "stderr": e}))
+    run(&args).unwrap_or_else(|e| {
+        json!({"exit": null, "stdout": "", "stderr": e,
+        "stdout_retained_prefix_utf8_valid": true, "stderr_retained_prefix_utf8_valid": true})
+    })
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -223,8 +250,8 @@ fn read_prefix(path: &Path, limit: usize) -> Result<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        // Linux O_NOFOLLOW | O_NONBLOCK: reject link/FIFO replacement races.
-        options.custom_flags(0x20000 | 0x800);
+        // Use the target libc values; Linux open flag numbers vary by ABI.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     let file = options.open(path).map_err(|e| e.to_string())?;
     if !file.metadata().map_err(|e| e.to_string())?.is_file() {
@@ -235,6 +262,17 @@ fn read_prefix(path: &Path, limit: usize) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     Ok(bytes)
+}
+
+fn profile_list_source_recheck(listing: &Path, original: Option<&[u8]>) -> Value {
+    let Some(original) = original else {
+        return json!({"status": "not_attempted"});
+    };
+    match read_prefix(listing, LIST_BYTES + 1) {
+        Ok(current) if current == original => json!({"status": "unchanged"}),
+        Ok(_) => json!({"status": "changed"}),
+        Err(error) => json!({"status": "unavailable", "error": short_error(error)}),
+    }
 }
 
 struct Budget {
@@ -644,7 +682,8 @@ fn capture(
     let host = field(&version, "stdout")
         .lines()
         .find_map(|line| line.strip_prefix("host: "));
-    let mut replay = json!({"exit": null, "stdout": "", "stderr": "validated profile snapshot or matching LLVM tool unavailable"});
+    let mut replay = json!({"exit": null, "stdout": "", "stderr": "validated profile snapshot or matching LLVM tool unavailable",
+        "stdout_retained_prefix_utf8_valid": true, "stderr_retained_prefix_utf8_valid": true});
     if let Some(snapshot) = replay_snapshot.as_ref()
         && version["exit"] == 0
         && sysroot["exit"] == 0
@@ -682,34 +721,43 @@ fn capture(
         json!(replay_snapshot.as_ref().is_some_and(replay_inputs_stable));
     report["profile_source_paths_stable"] =
         json!(replay_snapshot.as_ref().is_some_and(replay_sources_stable));
-    report["profile_list_source_changed"] =
-        json!(original_list_bytes.as_ref().is_some_and(|before| {
-            read_prefix(listing, LIST_BYTES + 1).is_ok_and(|after| after != *before)
-        }));
+    report["profile_list_source_recheck"] =
+        profile_list_source_recheck(listing, original_list_bytes.as_deref());
     let mut candidates: Vec<(usize, &'static str)> = Vec::new();
     let mut unclassified_profile_warnings = 0usize;
-    for line in field(&replay, "stderr").lines() {
-        if !line.starts_with("warning: ") {
-            continue;
-        }
-        let Some((path, family)) = profile_warning(line) else {
-            unclassified_profile_warnings += 1;
-            continue;
-        };
-        let Some(snapshot) = replay_snapshot.as_ref() else {
-            unclassified_profile_warnings += 1;
-            continue;
-        };
-        let Some(index) = snapshot
-            .entries
-            .iter()
-            .position(|entry| entry.pinned == path)
-        else {
-            unclassified_profile_warnings += 1;
-            continue;
-        };
-        if !candidates.iter().any(|(candidate, _)| *candidate == index) {
-            candidates.push((index, family));
+    let exact_stderr = retained_text(&replay, "stderr");
+    if exact_stderr.is_err() {
+        report["profile_warning_parse_refusal"] = json!(
+            "retained replay stderr prefix is not valid UTF-8; exact warning path matching refused"
+        );
+        unclassified_profile_warnings = field(&replay, "stderr")
+            .lines()
+            .filter(|line| line.starts_with("warning: "))
+            .count();
+    } else {
+        for line in exact_stderr.as_deref().unwrap_or_default().split('\n') {
+            if !line.starts_with("warning: ") {
+                continue;
+            }
+            let Some((path, family)) = profile_warning(line) else {
+                unclassified_profile_warnings += 1;
+                continue;
+            };
+            let Some(snapshot) = replay_snapshot.as_ref() else {
+                unclassified_profile_warnings += 1;
+                continue;
+            };
+            let Some(index) = snapshot
+                .entries
+                .iter()
+                .position(|entry| entry.pinned == path)
+            else {
+                unclassified_profile_warnings += 1;
+                continue;
+            };
+            if !candidates.iter().any(|(candidate, _)| *candidate == index) {
+                candidates.push((index, family));
+            }
         }
     }
     report["unclassified_profile_warnings"] = json!(unclassified_profile_warnings);
@@ -733,13 +781,15 @@ fn capture(
             }
         }
         for entry in &snapshot.entries {
-            let pinned = entry.pinned.to_string_lossy();
+            let Some(pinned) = entry.pinned.to_str() else {
+                continue;
+            };
             let original = entry
                 .source
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "<unknown profile>".into());
-            let stderr = field(&replay, "stderr").replace(pinned.as_ref(), &original);
+            let stderr = field(&replay, "stderr").replace(pinned, &original);
             replay["stderr"] = json!(stderr);
         }
     }
@@ -791,7 +841,14 @@ fn capture(
     Ok(report)
 }
 
+fn supported_profile_platform(platform: &str) -> bool {
+    platform == "linux"
+}
+
 pub fn command() -> Result<()> {
+    if !supported_profile_platform(std::env::consts::OS) {
+        return Err("coverage diagnostic capture is a Linux workflow adapter".into());
+    }
     #[cfg(not(target_os = "linux"))]
     return Err("coverage diagnostic capture is a Linux workflow adapter".into());
     #[cfg(target_os = "linux")]
@@ -853,10 +910,17 @@ mod tests {
                 .next()
                 .map(PathBuf::from)
                 .ok_or("merge list empty")?;
-            return Ok(
-                json!({"exit": if bad.is_some() { 1 } else { 0 }, "stdout": "", "stderr":
-                bad.map(|_| format!("warning: {}: invalid instrumentation profile data (file header is corrupt)\nerror: no profile can be merged\n", pinned.display())).unwrap_or_default()}),
-            );
+            let stderr = bad
+                .map(|_| format!("warning: {}: invalid instrumentation profile data (file header is corrupt)\nerror: no profile can be merged\n", pinned.display()))
+                .unwrap_or_default();
+            return Ok(tool_result(
+                if bad.is_some() { Some(1) } else { Some(0) },
+                b"",
+                stderr.as_bytes(),
+                false,
+                false,
+                false,
+            ));
         }
         Ok(json!({"exit": 0, "stdout": stdout, "stderr": ""}))
     }
@@ -876,7 +940,248 @@ mod tests {
         let report = capture(&dir, &list, &t.0.join("evidence"), |a| runner(a, None))?;
         assert_eq!(report["original_coverage_outcome"], "failure");
         assert_eq!(report["merge_replay"]["exit"], 0);
+        assert_eq!(report["profile_list_source_recheck"]["status"], "unchanged");
         assert_eq!(fs::read(file).map_err(|e| e.to_string())?, b"profile");
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_profile_open_uses_target_abi_constants() {
+        assert_ne!(libc::O_NOFOLLOW, 0);
+        assert_ne!(libc::O_NONBLOCK, 0);
+    }
+    #[test]
+    fn profile_capture_platform_policy_has_linux_positive_and_negative_controls() {
+        assert!(supported_profile_platform("linux"));
+        for platform in ["windows", "macos", "freebsd"] {
+            assert!(!supported_profile_platform(platform));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn unsupported_platform_is_refused() {
+        assert_eq!(
+            command().unwrap_err(),
+            "coverage diagnostic capture is a Linux workflow adapter"
+        );
+    }
+    #[test]
+    fn malformed_profile_under_unicode_root_is_retained() -> Result<()> {
+        let t = temp()?;
+        let root = t.0.join("zoë");
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let (dir, file, list) = seed(&root, b"malformed profile bytes")?;
+        let out = root.join("evidence");
+        let report = capture(&dir, &list, &out, |args| runner(args, Some(&file)))?;
+
+        assert_eq!(report["merge_replay"]["exit"], 1);
+        assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
+        assert!(report["captured"][0]["complete"].as_bool().unwrap_or(false));
+        assert_eq!(
+            fs::read(out.join("profile-00.prefix.profraw")).map_err(|error| error.to_string())?,
+            b"malformed profile bytes"
+        );
+        assert_eq!(
+            fs::read(file).map_err(|error| error.to_string())?,
+            b"malformed profile bytes"
+        );
+        Ok(())
+    }
+    // Linux owns the actual LLVM proof; unsupported OSes compile the explicit
+    // adapter refusal control instead. Missing Linux prerequisites are failures.
+    #[cfg(target_os = "linux")]
+    fn required_llvm_tool(run: &impl Fn(&[String]) -> Result<Value>) -> Result<PathBuf> {
+        let sysroot = invoke(run, &["rustc", "--print", "sysroot"]);
+        if sysroot["exit"] != 0 {
+            return Err("required LLVM proof: rustc sysroot discovery failed".to_owned());
+        }
+        let version = invoke(run, &["rustc", "-vV"]);
+        if version["exit"] != 0 {
+            return Err("required LLVM proof: rustc host discovery failed".to_owned());
+        }
+        let host = field(&version, "stdout")
+            .lines()
+            .find_map(|line| line.strip_prefix("host: "))
+            .ok_or("required LLVM proof: rustc host triple missing")?;
+        let path = Path::new(field(&sysroot, "stdout").trim())
+            .join("lib/rustlib")
+            .join(host)
+            .join("bin/llvm-profdata");
+        let path_text = path
+            .to_str()
+            .ok_or("required LLVM proof: non-UTF-8 tool path")?;
+        if invoke(run, &[path_text, "--version"])["exit"] != 0 {
+            return Err("required LLVM proof: matching llvm-profdata unavailable".to_owned());
+        }
+        Ok(path)
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn required_llvm_discovery_failure_is_an_error() {
+        for failing_command in ["sysroot", "-vV", "--version"] {
+            let result = required_llvm_tool(&|args| {
+                if args.iter().any(|arg| arg == failing_command) {
+                    return Err("forced discovery failure".to_owned());
+                }
+                runner(args, None)
+            });
+            assert!(matches!(result, Err(error) if error.starts_with("required LLVM proof:")));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_llvm_malformed_profile_under_unicode_root_is_retained() -> Result<()> {
+        required_llvm_tool(&tool)?;
+        for root_name in ["zoë", "zoë\u{0085}"] {
+            let t = temp()?;
+            let root = t.0.join(root_name);
+            let profiles = root.join("profiles");
+            fs::create_dir_all(&profiles).map_err(|error| error.to_string())?;
+            let profile = profiles.join("worker-123456_0.profraw");
+            let malformed = vec![0; 512];
+            fs::write(&profile, &malformed).map_err(|error| error.to_string())?;
+            let listing = profiles.join("ripr-swarm-profraw-list");
+            fs::write(&listing, format!("{}\n", profile.display()))
+                .map_err(|error| error.to_string())?;
+            let output = root.join("coverage-diagnostics");
+
+            let report = capture(&profiles, &listing, &output, tool)?;
+
+            assert_eq!(report["merge_replay"]["exit"], 1);
+            assert!(
+                report["merge_replay"]["stderr_retained_prefix_utf8_valid"]
+                    .as_bool()
+                    .unwrap_or(false)
+            );
+            assert_eq!(report["profile_list_source_recheck"]["status"], "unchanged");
+            assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
+            assert_eq!(
+                report["captured"][0]["error_family"],
+                "unrecognized_instrumentation_profile_encoding_format"
+            );
+            assert_eq!(report["captured"][0]["retained_bytes"], 512);
+            assert_eq!(
+                fs::read(output.join("profile-00.prefix.profraw"))
+                    .map_err(|error| error.to_string())?,
+                malformed
+            );
+            assert_eq!(
+                fs::read(profile).map_err(|error| error.to_string())?,
+                malformed
+            );
+            assert!(output.join("manifest.json").is_file());
+        }
+        Ok(())
+    }
+    #[test]
+    fn invalid_utf8_warning_is_lossless_and_refused_for_path_matching() -> Result<()> {
+        let text = "warning: profile at zoë";
+        let result = tool_result(Some(1), text.as_bytes(), &[0xff], false, false, false);
+        assert_eq!(result["stdout"], text);
+        assert_eq!(result["stdout_retained_prefix_utf8_valid"], true);
+        assert_eq!(result["stderr_retained_prefix_utf8_valid"], false);
+        assert_eq!(result["stderr_hex"], "ff");
+
+        let t = temp()?;
+        let (dir, file, list) = seed(&t.0, b"malformed profile bytes")?;
+        let report = capture(&dir, &list, &t.0.join("evidence"), |args| {
+            if args.iter().any(|arg| arg == "merge") {
+                let listing = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-f")
+                    .map(|pair| PathBuf::from(&pair[1]))
+                    .ok_or("merge list missing")?;
+                let pinned = fs::read_to_string(listing)
+                    .map_err(|error| error.to_string())?
+                    .lines()
+                    .next()
+                    .ok_or("merge input missing")?
+                    .as_bytes()
+                    .to_vec();
+                let mut stderr = b"warning: ".to_vec();
+                let split = pinned.len() / 2;
+                stderr.extend_from_slice(&pinned[..split]);
+                stderr.push(0xff);
+                stderr.extend_from_slice(&pinned[split..]);
+                stderr.extend_from_slice(b": invalid instrumentation profile data\n");
+                return Ok(tool_result(Some(1), b"", &stderr, false, false, false));
+            }
+            runner(args, Some(&file))
+        })?;
+
+        assert_eq!(report["unclassified_profile_warnings"], 1);
+        assert_eq!(report["captured"].as_array().map(Vec::len), Some(0));
+        assert_eq!(
+            report["profile_warning_parse_refusal"],
+            "retained replay stderr prefix is not valid UTF-8; exact warning path matching refused"
+        );
+        assert!(field(&report["merge_replay"], "stderr_hex").contains("ff"));
+        Ok(())
+    }
+    #[test]
+    fn invalid_byte_after_retained_stderr_prefix_does_not_refuse_complete_warning() -> Result<()> {
+        let t = temp()?;
+        let (dir, file, list) = seed(&t.0, b"malformed profile bytes")?;
+        let out = t.0.join("evidence");
+        let report = capture(&dir, &list, &out, |args| {
+            let result = runner(args, Some(&file))?;
+            if !args.iter().any(|arg| arg == "merge") {
+                return Ok(result);
+            }
+            let mut bytes = retained_text(&result, "stderr")?.into_bytes();
+            assert!(bytes.len() < STREAM_BYTES);
+            bytes.resize(STREAM_BYTES, b' ');
+            bytes.push(0xff);
+            let (prefix, truncated) = drain(std::io::Cursor::new(bytes))?;
+            assert_eq!(prefix.len(), STREAM_BYTES);
+            assert!(truncated);
+            Ok(tool_result(Some(1), b"", &prefix, truncated, false, false))
+        })?;
+        assert_eq!(
+            report["merge_replay"]["stderr_retained_prefix_utf8_valid"],
+            true
+        );
+        assert_eq!(report["merge_replay"]["truncated"], true);
+        assert_eq!(
+            field(&report["merge_replay"], "stderr_hex").len(),
+            STREAM_BYTES * 2
+        );
+        assert_eq!(report["unclassified_profile_warnings"], 0);
+        assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["original_coverage_outcome"], "failure");
+        assert_eq!(
+            fs::read(out.join("profile-00.prefix.profraw")).map_err(|e| e.to_string())?,
+            b"malformed profile bytes"
+        );
+        Ok(())
+    }
+    #[test]
+    fn unavailable_source_list_recheck_is_distinct_and_manifest_survives() -> Result<()> {
+        for replace_with_directory in [false, true] {
+            let t = temp()?;
+            let (dir, file, list) = seed(&t.0, b"malformed profile bytes")?;
+            let out = t.0.join("evidence");
+            let report = capture(&dir, &list, &out, |args| {
+                if args.iter().any(|arg| arg == "merge") {
+                    let result = runner(args, Some(&file))?;
+                    fs::remove_file(&list).map_err(|error| error.to_string())?;
+                    if replace_with_directory {
+                        fs::create_dir(&list).map_err(|error| error.to_string())?;
+                    }
+                    return Ok(result);
+                }
+                runner(args, Some(&file))
+            })?;
+
+            assert_eq!(
+                report["profile_list_source_recheck"]["status"],
+                "unavailable"
+            );
+            assert!(report["profile_list_source_recheck"]["error"].is_string());
+            assert_eq!(report["profile_list_replay_safe"], true);
+            assert_eq!(report["captured"][0]["complete"], true);
+            assert!(out.join("manifest.json").is_file());
+        }
         Ok(())
     }
     #[test]
@@ -939,8 +1244,12 @@ mod tests {
             runner(args, Some(&source))
         })?;
         assert!(swapped.get());
-        assert_eq!(report["profile_list_replay_safe"], true);
-        assert_eq!(report["profile_list_source_changed"], true);
+        assert!(
+            report["profile_list_replay_safe"]
+                .as_bool()
+                .unwrap_or(false)
+        );
+        assert_eq!(report["profile_list_source_recheck"]["status"], "changed");
         assert_eq!(report["profile_source_paths_stable"], false);
         assert_eq!(report["profile_inputs_identity_stable"], true);
         assert_eq!(report["captured"][0]["complete"], true);
@@ -981,9 +1290,19 @@ mod tests {
                 fs::remove_file(&pinned[0]).map_err(|error| error.to_string())?;
                 fs::remove_file(&pinned[1]).map_err(|error| error.to_string())?;
                 fs::create_dir(&pinned[1]).map_err(|error| error.to_string())?;
-                return Ok(json!({"exit": 1, "stdout": "", "stderr": format!(
+                let stderr = format!(
                     "warning: {}: invalid instrumentation profile data\nwarning: {}: invalid instrumentation profile data\nerror: no profile can be merged\n",
-                    pinned[0].display(), pinned[1].display())}));
+                    pinned[0].display(),
+                    pinned[1].display()
+                );
+                return Ok(tool_result(
+                    Some(1),
+                    b"",
+                    stderr.as_bytes(),
+                    false,
+                    false,
+                    false,
+                ));
             }
             runner(args, None)
         })?;
@@ -1249,9 +1568,21 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn process_is_running(pid: u32) -> Result<bool> {
-        let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        process_stat_is_running(fs::read_to_string(format!("/proc/{pid}/stat")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_stat_is_running(stat: std::io::Result<String>) -> Result<bool> {
+        let stat = match stat {
             Ok(stat) => stat,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            // A process can exit after its proc descriptor is opened but before
+            // the stat read; Linux reports ESRCH for that vanished task.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                return Ok(false);
+            }
             Err(error) => return Err(error.to_string()),
         };
         let state = stat
@@ -1259,6 +1590,44 @@ mod tests {
             .and_then(|(_, tail)| tail.split_whitespace().next())
             .ok_or("process state unavailable")?;
         Ok(!matches!(state, "Z" | "X"))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_accepts_only_missing_process_errors() {
+        for errno in [libc::ENOENT, libc::ESRCH] {
+            assert_eq!(
+                process_stat_is_running(Err(std::io::Error::from_raw_os_error(errno))),
+                Ok(false),
+                "exited process observation errno {errno}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_preserves_unrelated_errors_and_malformed_stat() {
+        for errno in [libc::EACCES, libc::EIO] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let expected = error.to_string();
+            assert_eq!(process_stat_is_running(Err(error)), Err(expected));
+        }
+        assert_eq!(
+            process_stat_is_running(Ok("malformed stat".to_string())),
+            Err("process state unavailable".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_distinguishes_live_and_terminal_states() {
+        for (state, running) in [("R", true), ("S", true), ("Z", false), ("X", false)] {
+            assert_eq!(
+                process_stat_is_running(Ok(format!("123 (child (name)) {state} 1 2 3"))),
+                Ok(running),
+                "process state {state}"
+            );
+        }
     }
 
     #[cfg(target_os = "linux")]
