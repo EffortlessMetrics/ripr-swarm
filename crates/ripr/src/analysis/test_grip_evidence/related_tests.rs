@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::classify::{
-    call_text_may_call_free_function, impl_self_type_name, method_call_resolves_to_impl,
-    module_stem, owner_dispatch_trait, test_calls_free_function,
+    CallTarget, OwnerCallIdentity, call_text_may_call_free_function, impl_self_type_name,
+    method_call_resolves_to_impl, module_stem, owner_dispatch_trait, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -45,6 +45,18 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
 
+    // #6292: a test whose every call of the owner's name settles on a
+    // same-named module-level rival relates through no signal of its own:
+    // the same rule diff-mode related tests apply.
+    if let Some(identity) = owner.identity.as_ref() {
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    identity.resolve_test(indexed.test, context.index) != CallTarget::Other
+                })
+        });
+    }
+
     dedupe_related_candidates(candidates, context)
 }
 
@@ -67,6 +79,7 @@ pub(super) struct OwnerContext {
     free_function: bool,
     impl_trait: Option<String>,
     same_name_count: usize,
+    identity: Option<OwnerCallIdentity>,
 }
 
 impl OwnerContext {
@@ -93,6 +106,17 @@ impl OwnerContext {
             owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
         let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
+        let identity = owner_fn.filter(|_| same_name_count > 1).and_then(|owner| {
+            OwnerCallIdentity::new(
+                owner,
+                context
+                    .index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == name),
+                context.index,
+            )
+        });
         Self {
             name,
             name_lower,
@@ -105,6 +129,7 @@ impl OwnerContext {
             free_function,
             impl_trait,
             same_name_count,
+            identity,
         }
     }
 }

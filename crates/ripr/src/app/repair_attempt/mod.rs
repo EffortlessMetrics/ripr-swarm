@@ -1213,6 +1213,8 @@ pub(crate) enum RepairAttemptInventoryEntry {
 /// after phase would refuse. Ordering is by identity, not creation time:
 /// consumers must not read "newest" into it (docs/REPAIR_ATTEMPT.md).
 /// A missing attempts directory is an empty inventory.
+/// Manifest-free reservations are excluded; a manifest-bearing directory whose
+/// name is not UTF-8 refuses the inventory rather than aliasing another entry.
 pub(crate) fn inventory_repair_attempts(
     root: &Path,
 ) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
@@ -1243,7 +1245,12 @@ fn inventory_repair_attempts_in(
         if !path.is_file() {
             continue;
         }
-        let directory = entry.file_name().to_string_lossy().into_owned();
+        // Lossy names can alias distinct filesystem entries, so inventory
+        // consumers cannot safely identify or bind a continuation to them.
+        let directory = entry.file_name().into_string().map_err(|_invalid_name| {
+            "repair attempt directory name is not UTF-8; inventory cannot preserve its identity"
+                .to_string()
+        })?;
         entries.push(match read_repair_attempt_manifest_at(store, &path) {
             Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
             Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },
@@ -2434,7 +2441,7 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
         if current.after.is_some() {
             return Err(format!(
-                "repair attempt {} already has an after verdict; a refusal is recorded only while the attempt is resumable",
+                "repair attempt {} {AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL}; a refusal is recorded only while the attempt is resumable",
                 attempt_id.as_str()
             ));
         }
@@ -2442,6 +2449,14 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     })?;
     read_repair_attempt_manifest_at(&store, &manifest_path).map(|_| ())
 }
+
+/// Refusal tail the resumable authority raises once an attempt carries a
+/// committed after verdict. The after-phase refusal recorder matches it to
+/// route the narration to the terminal authority instead of dropping it
+/// (#7378): a terminal cage or incomparable failure commits the verdict
+/// before the refusal records, so this tail is the expected shape there,
+/// not a second failure.
+pub(crate) const AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL: &str = "already has an after verdict";
 
 /// Records why the receipt of an already finished attempt refused, beside the
 /// committed after verdict (#5262). The after phase's trusted-surface refusal
@@ -2457,6 +2472,47 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
 /// this refusal describes). Only `last_after_refusal` moves; state, verdict,
 /// and bindings are re-validated and byte-preserved.
 pub(crate) fn record_repair_attempt_terminal_receipt_refusal_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    record_terminal_after_refusal_beside_verdict(root, store, attempt_id, reason)
+}
+
+/// Records why the after phase of an already finished attempt refused, beside
+/// the committed after verdict (#7378). A terminal failure — the edit cage
+/// refusing the delta, or an incomparable finish — commits the after verdict
+/// before the refusal narration records, so the resumable authority refuses
+/// the write with [`AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL`] by design; without
+/// this sibling record the refusal reason (the refused paths, the rule, the
+/// recovery) lived only in the original run's stderr and `agent status`
+/// could not say why the attempt ended, even though its own rerun refusal
+/// message promises that it does. The guard contract is the receipt
+/// authority's: the write is refused when the attempt carries no after
+/// verdict and when the verdict moved between the read and the locked
+/// commit. Only `last_after_refusal` moves; state, verdict, and bindings
+/// are re-validated and byte-preserved.
+pub(crate) fn record_repair_attempt_terminal_after_refusal_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    reason: &str,
+) -> Result<(), String> {
+    record_terminal_after_refusal_beside_verdict(root, store, attempt_id, reason)
+}
+
+/// Shared locked write behind both terminal authorities: record
+/// `last_after_refusal` beside an existing, unchanged after verdict. The
+/// caller asserts the refusal was observed after this attempt's durable
+/// finish, and the locked commit keeps that assertion honest: the write is
+/// refused when the attempt carries no after verdict (that observation
+/// belongs to the resumable authority) and when the after verdict moved
+/// between the read and the locked commit (a concurrent finish would
+/// supersede the observation this refusal describes). Only
+/// `last_after_refusal` moves; state, verdict, and bindings are re-validated
+/// and byte-preserved.
+fn record_terminal_after_refusal_beside_verdict(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &RepairAttemptId,
@@ -2488,7 +2544,7 @@ pub(crate) fn record_repair_attempt_terminal_receipt_refusal_from(
     commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
         if current.after.as_ref() != Some(&after) {
             return Err(format!(
-                "repair attempt {} moved while its receipt refusal was recorded",
+                "repair attempt {} moved while its terminal after-phase refusal was recorded",
                 attempt_id.as_str()
             ));
         }
@@ -4788,6 +4844,57 @@ mod tests {
             // its observation belongs to the resumable authority.
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_receipt_refusal_from(
+                &root,
+                None,
+                &awaiting.manifest.repair_attempt_id,
+                reason,
+            ) {
+                Err(error) if error.contains("no after verdict") => {}
+                other => {
+                    return Err(format!(
+                        "terminal authority must refuse an attempt without a verdict: {other:?}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// The terminal after-phase authority (#7378) shares the receipt
+    /// authority's locked write: a cage-violation narration recorded after
+    /// the durable finish lands beside the verdict, keeps state and verdict
+    /// byte-preserved, and refuses an attempt that never finished.
+    #[test]
+    fn terminal_after_refusal_records_beside_the_verdict() -> Result<(), String> {
+        let root = test_repo_root("terminal-after-refusal")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "a")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let attempt_id = &finished.repair_attempt_id;
+            let reason = "edit-cage verdict for the attempt: Violated; the edit cage refused 1 path(s): src/lib.rs (ForbiddenPath). To recover: undo the refused changes, then start a new attempt.";
+
+            record_repair_attempt_terminal_after_refusal_from(&root, None, attempt_id, reason)?;
+            let manifest = load_repair_attempt_manifest(&root, attempt_id)?;
+            let refusal = manifest.last_after_refusal.as_ref().ok_or_else(|| {
+                "the terminal after-phase refusal was not recorded on the manifest".to_string()
+            })?;
+            if !refusal.reason.contains("ForbiddenPath") {
+                return Err(format!("recorded refusal lost the cage cause: {refusal:?}"));
+            }
+            if manifest.after.is_none() || manifest.state != RepairAttemptState::ReadyToFinish {
+                return Err(format!(
+                    "the terminal record moved the attempt's finish: state {:?}, after present {}",
+                    manifest.state,
+                    manifest.after.is_some()
+                ));
+            }
+
+            // The terminal authority refuses an attempt that never finished:
+            // its observation belongs to the resumable authority.
+            let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
+            match record_repair_attempt_terminal_after_refusal_from(
                 &root,
                 None,
                 &awaiting.manifest.repair_attempt_id,

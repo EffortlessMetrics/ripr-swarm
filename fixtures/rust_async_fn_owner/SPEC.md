@@ -16,8 +16,10 @@ The analyzer reads the fixture's exact production diff.
 Owner and test discovery are retained. The bounded equality-execution query
 (RIPR-SPEC-0197, #5027) cannot establish the external test macro binding and
 async polling path, so the assertion supplies no static oracle credit.
-Observe/Discriminate are No/No and strength is None. Classification remains
-`propagation_unknown`; advisory confidence changes from 0.66 to 0.43.
+Observe/Discriminate are No/No and strength is None. The tail `if`/`else`
+propagation sink is resolved (#6781), so classification is `static_unknown`
+on the unestablished assertion provenance rather than
+`propagation_unknown`; no gap is claimed.
 
 This is an explicit conservative usefulness regression, not evidence that the
 actual test is ineffective. #5040 owns typed async-harness execution provenance
@@ -26,8 +28,7 @@ An attribute-name allowlist is not a substitute for that producer fact.
 
 Two independent limitations remain separate:
 
-- The one-line owner lacks a resolved propagation sink; a synchronous version
-  of this source has the same propagation limitation
+- The async assertion's execution provenance is unestablished (above)
 - Input 100/50 is not equality, so it cannot discriminate `>` from `>=`
 
 ## Executed runtime and removal controls

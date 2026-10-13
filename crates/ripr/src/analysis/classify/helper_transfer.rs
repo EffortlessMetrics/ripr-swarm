@@ -1034,24 +1034,406 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
     hops_forward_owner_result(owner_name, &chain.hops)
 }
 
-/// Whether the observed hops of `chain` include a local-macro argument hop
-/// (#6614) and no related caller-calling test holds an exact oracle. Such
-/// reach is the macro-argument edge alone; when every oracle is weak on its
-/// own terms the weakness is established without expanding the macro, so
-/// the not-forwarded abstention does not apply and the existing evidence
-/// (a weak oracle's gap) stands.
-pub(crate) fn macro_hop_reach_without_exact_pin(
+/// Whether reach through a non-forwarding hop keeps the existing evidence
+/// instead of the not-forwarded abstention (#6614, #7549).
+///
+/// The abstention exists because an oracle on a caller's result cannot be
+/// paired with the owner's result: it might or might not discriminate the
+/// owner's change. When every oracle the caller-calling tests hold is weak
+/// on its own terms, that question does not arise: the oracle cannot
+/// discriminate the caller's result exactly, so it cannot discriminate the
+/// owner's either, and the weak oracle's gap is established without
+/// pairing. Value families take this for any hop; side-effect and
+/// call-deletion families keep their target-passing rule unless every
+/// observed hop is a local-macro argument hop, which never passes a target
+/// either way.
+pub(crate) fn hop_reach_keeps_weak_oracle_gap(
+    owner: &FunctionSummary,
     chain: &HelperChain,
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
     )],
+    effect_family: bool,
 ) -> bool {
     let hops = observed_hops(chain, related_tests);
-    if !hops.iter().any(|hop| hop.through_macro) {
+    if !caller_oracles_are_all_weak(owner, hops, related_tests) {
         return false;
     }
-    !macro_argument::exactly_pins_a_caller(related_tests)
+    // An effect family takes the exception only when every observed hop is
+    // a local-macro argument hop (#7622 review): a plain fn hop keeps the
+    // target-passing rule.
+    !effect_family || hops.iter().all(|hop| hop.through_macro)
+}
+
+/// Whether the related tests that call a caller hold at least one oracle
+/// and every one is weak on its own terms, against the owner as well as
+/// the caller. Fail closed: any doubt answers `false` and the abstention
+/// stands.
+///
+/// - Every observed hop's caller is production code. A test-local helper
+///   (`fn reads_back(v: u32) -> bool { read_u32(&v.to_be_bytes()) == v }`)
+///   is part of the oracle, so `assert!(reads_back(v))` is exact however
+///   the assertion itself reads.
+/// - Every observed hop that is a call carries the callee's value as data
+///   ([`caller_carries_callee_as_data`]). A caller that branches on it
+///   (`if title() == "ripr" { Ok(()) } else { Err(()) }`) turns the
+///   owner's exact value into exactly the shape a loose check reads, so
+///   `assert!(parse().is_ok())` would pin the owner.
+/// - Every assertion is a plain `assert!` whose condition, under any `!`
+///   or parentheses, is an ordering or `!=` comparison without a `bool`
+///   literal or a cast (`assert!(doubled_rate() > 0)`) or one of the broad
+///   projections `is_empty`, `is_some`, `is_none`, `is_ok`, `is_err`.
+///   Exact, snapshot, mock or unknown oracles, a bare caller call
+///   (`assert!(caller(..))`, an exact pin of its `bool`), and projections
+///   such as `assert_eq!(banner().len(), 6)` might pin the owner through
+///   the caller.
+/// - No such test unwraps or propagates with `?`, `unwrap` or `expect`,
+///   which are implicit oracles on the caller's shape.
+fn caller_oracles_are_all_weak(
+    owner: &FunctionSummary,
+    hops: &[HelperHop],
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use crate::analysis::facts::FunctionSourceRole;
+    use crate::domain::{OracleKind, RelationReason};
+    if hops.is_empty()
+        || hops.iter().enumerate().any(|(step, hop)| {
+            let callee = match step.checked_sub(1) {
+                None => Some(owner),
+                Some(below) => hops.get(below).map(|lower| &lower.caller),
+            };
+            hop.caller.source_role != FunctionSourceRole::Production
+                || (!hop.through_macro
+                    && !callee.is_some_and(|callee| {
+                        returns_std_scalar_or_string(&callee.body)
+                            && caller_carries_callee_as_data(&hop.caller.body, &callee.name)
+                    }))
+        })
+    {
+        return false;
+    }
+    let caller_tests = || {
+        related_tests
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+    };
+    if caller_tests().any(|(test, _)| {
+        let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+        masked.contains('?') || contains_word(&masked, "unwrap") || contains_word(&masked, "expect")
+    }) {
+        return false;
+    }
+    let mut assertions = caller_tests()
+        .flat_map(|(test, _)| test.assertions.iter())
+        .peekable();
+    assertions.peek().is_some()
+        && assertions.all(|assertion| {
+            matches!(
+                assertion.kind,
+                OracleKind::RelationalCheck | OracleKind::BroadError | OracleKind::SmokeOnly
+            ) && crate::analysis::extract::outer_assertion_condition(&assertion.text)
+                .is_some_and(|condition| condition_is_weak(&condition))
+        })
+}
+
+/// See [`caller_oracles_are_all_weak`]: the condition of a plain `assert!`.
+fn condition_is_weak(condition: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, BinaryOp, CmpOp, HasArgList};
+    let source = format!("fn __condition() {{ {} }}", condition.trim());
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let tail = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list())
+        .filter(|list| list.statements().next().is_none())
+        .and_then(|list| list.tail_expr());
+    let mut expr = tail;
+    while let Some(current) = expr.clone() {
+        expr = match current {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                prefix.expr()
+            }
+            _ => break,
+        };
+    }
+    match expr {
+        Some(ast::Expr::BinExpr(bin)) => {
+            matches!(
+                bin.op_kind(),
+                Some(BinaryOp::CmpOp(
+                    CmpOp::Ord { .. } | CmpOp::Eq { negated: true }
+                ))
+            ) && [bin.lhs(), bin.rhs()]
+                .into_iter()
+                .all(|side| side.is_some_and(|side| plain_operand(&side)))
+        }
+        Some(ast::Expr::MethodCallExpr(call)) => {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| plain_call(&receiver))
+                && call.name_ref().is_some_and(|name| {
+                    matches!(
+                        name.text(),
+                        "is_empty" | "is_some" | "is_none" | "is_ok" | "is_err"
+                    )
+                })
+        }
+        _ => false,
+    }
+}
+
+/// An operand of a weak comparison (#7549 Devin review): a non-`bool`
+/// literal, a plain call [`plain_call`], or `<plain call>.len()`. Anything
+/// else, such as `banner().strip_prefix("ripr!").map(..)`, a cast or a
+/// local binding, may already hold an exact decision on the caller's value.
+fn plain_operand(expr: &ra_ap_syntax::ast::Expr) -> bool {
+    use ra_ap_syntax::ast::{self, HasArgList};
+    match expr {
+        ast::Expr::Literal(literal) => !matches!(literal.kind(), ast::LiteralKind::Bool(_)),
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| plain_operand(&inner)),
+        ast::Expr::MethodCallExpr(call) => {
+            call.name_ref().is_some_and(|name| name.text() == "len")
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| plain_call(&receiver))
+        }
+        _ => plain_call(expr),
+    }
+}
+
+/// A call through a path (`banner()`, `titled("!")`, `a::b(c)`) whose
+/// arguments are non-`bool` literals, paths or references to them: the
+/// value the caller returns, with nothing applied to it.
+fn plain_call(expr: &ra_ap_syntax::ast::Expr) -> bool {
+    use ra_ap_syntax::ast::{self, HasArgList};
+    fn plain_argument(argument: &ast::Expr) -> bool {
+        match argument {
+            ast::Expr::Literal(literal) => !matches!(literal.kind(), ast::LiteralKind::Bool(_)),
+            ast::Expr::PathExpr(_) => true,
+            ast::Expr::RefExpr(reference) => {
+                reference.expr().is_some_and(|inner| plain_argument(&inner))
+            }
+            _ => false,
+        }
+    }
+    match expr {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| plain_call(&inner)),
+        ast::Expr::CallExpr(call) => {
+            matches!(call.expr(), Some(ast::Expr::PathExpr(_)))
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().all(|argument| plain_argument(&argument)))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `body`'s declared return type is a std string or scalar
+/// (`&str`, `&'static str`, `String`, `char`, an integer or a float), so
+/// `format!`, `to_string`, `clone` and `+ "lit"` on the value run std code
+/// that carries data (#7549 review B3). A user type may carry a `Display`,
+/// `Clone`, `From` or `Add` impl that decides on the value, so it fails
+/// closed.
+fn returns_std_scalar_or_string(body: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast;
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let Some(ty) = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.ret_type())
+        .and_then(|ret| ret.ty())
+    else {
+        return false;
+    };
+    let text: String = ty
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    matches!(
+        text.as_str(),
+        "&str"
+            | "&'staticstr"
+            | "String"
+            | "char"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    )
+}
+
+/// Whether a hop caller hands its callee's value on as data, never as a
+/// decision (#7549 review). Allowlist, fail closed: the caller parses
+/// cleanly and does not return `bool`; its body calls only the callee, the
+/// wrappers `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
+/// argument-free methods `to_string`/`to_owned`/`clone`; its only
+/// operator is `+` with a string literal operand; its only macros are
+/// `format!` and `concat!`, whose tokens name only the callee, the caller's
+/// parameters and those methods; its body is one tail expression naming
+/// the callee, so the call is never evaluated and discarded; and it holds
+/// no branch, loop, early exit,
+/// `?`, cast, closure, index or other operator. `format!("[{}]", title())`
+/// and `title().to_string() + "!"` carry data. A decision on the value,
+/// in the caller (`if title() == "ripr" {..}`) or in anything it calls
+/// (`check(title())`, `port_str().parse()`, `TABLE.get(key())`,
+/// `100 / d()`), can make a loose check pin the owner, so it does not.
+fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
+    use ra_ap_syntax::ast::{self, ArithOp, BinaryOp, HasArgList, HasName};
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    const METHODS: [&str; 3] = ["to_string", "to_owned", "clone"];
+    const WRAPPERS: [&str; 5] = ["Some", "Ok", "Err", "String::from", "Box::new"];
+    if callee.is_empty() {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    if function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .is_some_and(|ty| ty.syntax().text() == "bool")
+    {
+        return false;
+    }
+    let parameters: Vec<String> = function
+        .param_list()
+        .into_iter()
+        .flat_map(|list| list.params())
+        .filter_map(|param| match param.pat()? {
+            ast::Pat::IdentPat(ident) => ident.name().map(|name| name.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    let Some(block) = function.body() else {
+        return false;
+    };
+    // #7549 Devin review: the callee's value must reach the return. A body
+    // of one tail expression that names the callee leaves no statement in
+    // which the call could be evaluated and discarded.
+    let Some(statements) = block.stmt_list() else {
+        return false;
+    };
+    let tail_names_callee = statements.tail_expr().is_some_and(|tail| {
+        tail.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == callee)
+    });
+    if statements.statements().next().is_some() || !tail_names_callee {
+        return false;
+    }
+    let string_literal = |expr: Option<ast::Expr>| {
+        matches!(
+            expr,
+            Some(ast::Expr::Literal(literal))
+                if matches!(literal.kind(), ast::LiteralKind::String(_))
+        )
+    };
+    block.syntax().descendants().all(|node| match node.kind() {
+        SyntaxKind::STMT_LIST
+        | SyntaxKind::BLOCK_EXPR
+        | SyntaxKind::EXPR_STMT
+        | SyntaxKind::LET_STMT
+        | SyntaxKind::IDENT_PAT
+        | SyntaxKind::NAME
+        | SyntaxKind::NAME_REF
+        | SyntaxKind::PATH
+        | SyntaxKind::PATH_SEGMENT
+        | SyntaxKind::PATH_EXPR
+        | SyntaxKind::LITERAL
+        | SyntaxKind::ARG_LIST
+        | SyntaxKind::PAREN_EXPR
+        | SyntaxKind::REF_EXPR
+        | SyntaxKind::TUPLE_EXPR
+        | SyntaxKind::MACRO_EXPR
+        | SyntaxKind::TOKEN_TREE => true,
+        SyntaxKind::CALL_EXPR => ast::CallExpr::cast(node).is_some_and(|call| {
+            matches!(call.expr(), Some(ast::Expr::PathExpr(path))
+            if path.path().is_some_and(|path| {
+                let text = path.syntax().text().to_string();
+                text == callee || WRAPPERS.contains(&text.as_str())
+            }))
+        }),
+        SyntaxKind::METHOD_CALL_EXPR => ast::MethodCallExpr::cast(node).is_some_and(|call| {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .name_ref()
+                    .is_some_and(|name| METHODS.contains(&name.text()))
+        }),
+        SyntaxKind::BIN_EXPR => ast::BinExpr::cast(node).is_some_and(|bin| {
+            bin.op_kind() == Some(BinaryOp::ArithOp(ArithOp::Add))
+                && (string_literal(bin.lhs()) || string_literal(bin.rhs()))
+        }),
+        SyntaxKind::MACRO_CALL => ast::MacroCall::cast(node).is_some_and(|call| {
+            let named = call
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| matches!(name.text(), "format" | "concat"));
+            named
+                && call.token_tree().is_some_and(|tree| {
+                    tree.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .all(|token| match token.kind() {
+                            SyntaxKind::IDENT => {
+                                let text = token.text();
+                                text == callee
+                                    || parameters.iter().any(|parameter| parameter == text)
+                                    || METHODS.contains(&text)
+                            }
+                            SyntaxKind::STRING
+                            | SyntaxKind::INT_NUMBER
+                            | SyntaxKind::COMMA
+                            | SyntaxKind::DOT
+                            | SyntaxKind::AMP
+                            | SyntaxKind::L_PAREN
+                            | SyntaxKind::R_PAREN
+                            | SyntaxKind::WHITESPACE => true,
+                            _ => false,
+                        })
+                })
+        }),
+        _ => false,
+    })
 }
 
 /// [`chain_forwards_owner_result`] over only the hops the related tests

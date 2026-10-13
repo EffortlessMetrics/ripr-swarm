@@ -2070,7 +2070,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["explain", "context", "repair"],
         stop_states: &["explicit refusal when no diff can be resolved"],
         exit: EXIT_ADVISORY_FINDINGS,
-        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact. Findings, including exposed, do not fail the process.",
+        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact. Findings, including exposed, and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
         not_applicable_reason: None,
     },
     CommandMetadata {

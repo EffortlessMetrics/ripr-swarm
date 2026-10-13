@@ -17,7 +17,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 38
+floor = 39
 
 # LSP Repair Packet Command
 [[spec]]
@@ -491,6 +491,12 @@ reason = "TypeScript analyzer rules; a Python case cannot label them"
 id = "RIPR-SPEC-0253"
 scope = "out"
 reason = "local repository scan/report command contract, not an analyzer verdict"
+
+# TypeScript lookup-table entry
+[[spec]]
+id = "RIPR-SPEC-0254"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
 
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]

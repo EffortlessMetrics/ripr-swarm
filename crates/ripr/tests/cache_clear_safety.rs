@@ -71,13 +71,227 @@ fn cache_dir_line_matcher_rejects_same_leaf_wrong_parent() -> Result<(), String>
 
 /// The one spawn site for the exact `ripr` binary in this file.
 fn run_ripr(base: &Path, cache_dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+    run_ripr_with_home_environment(base, cache_dir, args, None)
+}
+
+fn run_ripr_with_home_environment(
+    base: &Path,
+    cache_dir: &Path,
+    args: &[&str],
+    home: Option<HomeEnvironment>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
         .args(args)
         .current_dir(base)
         .env(CACHE_DIR_ENV, cache_dir)
-        .env("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")
+        .env("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1");
+    if let Some(home) = home {
+        configure_home_environment(&mut command, home)?;
+    }
+    command
         .output()
         .map_err(|error| format!("run exact ripr binary {args:?}: {error}"))
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HomeEnvironment {
+    Absent,
+    EmptyHome,
+    EmptyCargoHome,
+    RelativeHome,
+    RelativeCargoHome,
+}
+
+fn configure_home_environment(command: &mut Command, case: HomeEnvironment) -> Result<(), String> {
+    // Keep the already selected toolchain available while changing only the
+    // child process's Cargo-home inputs. Never change the test process's home.
+    let rustup_home = home::rustup_home().map_err(|error| error.to_string())?;
+    let rustup_home = if rustup_home.is_absolute() {
+        rustup_home
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(rustup_home)
+    };
+    command
+        .env("RUSTUP_HOME", rustup_home)
+        .env_remove("CARGO_HOME")
+        .env_remove("HOME")
+        .env_remove("USERPROFILE");
+    match case {
+        HomeEnvironment::Absent => {}
+        HomeEnvironment::EmptyHome => {
+            command.env("HOME", "").env("USERPROFILE", "");
+        }
+        HomeEnvironment::EmptyCargoHome => {
+            command.env("CARGO_HOME", "");
+        }
+        HomeEnvironment::RelativeHome => {
+            command.env(
+                if cfg!(windows) { "USERPROFILE" } else { "HOME" },
+                "relative-home",
+            );
+        }
+        HomeEnvironment::RelativeCargoHome => {
+            command.env("CARGO_HOME", "relative-cargo");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn classified_cache_cargo_home_fallback_and_relative_home_match_cold() -> Result<(), String> {
+    let root = temp_dir("cargo-home-currentness");
+    for dir in ["src", "relative-home/.cargo", "relative-cargo"] {
+        fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+    }
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='cache_home_fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(root.join("src/lib.rs"),
+        "pub fn shipping(kilos: i32) -> i32 { kilos * 4 }\n#[cfg(test)] mod tests { #[test] fn shipping_is_four_per_kilo() { assert_eq!(super::shipping(3), 12); } }\n")
+        .map_err(|error| error.to_string())?;
+    for path in [
+        "relative-home/.cargo/config.toml",
+        "relative-cargo/config.toml",
+    ] {
+        fs::write(root.join(path), "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+    }
+    common::fixture_git::fixture_git_ok(&root, &["init", "--quiet"])?;
+    common::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+    common::fixture_git::fixture_git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=Cache fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Owned Cargo home fixture",
+        ],
+    )?;
+    let head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let caller = root.parent().ok_or("fixture parent")?;
+    let root_arg = root.to_str().ok_or("fixture root must be UTF-8")?;
+    for case in [
+        HomeEnvironment::Absent,
+        HomeEnvironment::EmptyHome,
+        HomeEnvironment::EmptyCargoHome,
+        HomeEnvironment::RelativeHome,
+        HomeEnvironment::RelativeCargoHome,
+    ] {
+        let mut cargo = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        cargo
+            .current_dir(&root)
+            .args([
+                "metadata",
+                "--offline",
+                "--no-deps",
+                "--format-version",
+                "1",
+            ])
+            .env("CARGO_TARGET_DIR", root.join("target/cargo-home-oracle"));
+        configure_home_environment(&mut cargo, case)?;
+        let metadata = cargo.output().map_err(|error| error.to_string())?;
+        if !metadata.status.success() {
+            return Err(format!(
+                "independent Cargo metadata must work for {case:?}: {}",
+                String::from_utf8_lossy(&metadata.stderr)
+            ));
+        }
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&metadata.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(metadata["packages"][0]["name"], "cache_home_fixture");
+        let cache = root.join(format!("target/home-{case:?}"));
+        let run = |cache: &Path| -> Result<(serde_json::Value, String), String> {
+            let output = run_ripr_with_home_environment(
+                caller,
+                cache,
+                &[
+                    "check",
+                    "--root",
+                    root_arg,
+                    "--format",
+                    "repo-exposure-json",
+                    "--quiet",
+                ],
+                Some(case),
+            )?;
+            if !output.status.success() {
+                return Err(format!(
+                    "home fallback CLI {case:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Ok((
+                serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?,
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ))
+        };
+        let (initial, _) = run(&cache)?;
+        let seam = shipping_seam(&initial)?;
+        assert_eq!(seam["seam_id"], "23276a9e23c0dce5");
+        assert_eq!(seam["grip_class"], "strongly_gripped");
+        assert_eq!(seam["related_tests_total"], 1);
+        assert_eq!(
+            seam["related_tests"][0]["name"],
+            "shipping_is_four_per_kilo"
+        );
+        let corpus = initial
+            .pointer("/source_subject/corpus")
+            .ok_or("usable Cargo home must publish the actual corpus provenance field")?;
+        let digest = corpus["files_content_hash"]
+            .as_str()
+            .ok_or("nonempty Rust corpus digest")?;
+        assert!(
+            !digest.is_empty(),
+            "nonempty comparable corpus for {case:?}"
+        );
+        let (warm, trace) = run(&cache)?;
+        assert!(
+            trace.contains("phase=total status=cache_hit"),
+            "usable fallback must reuse classified facts for {case:?}: {trace}"
+        );
+        let (cold, _) = run(&root.join(format!("target/cold-{case:?}")))?;
+        assert_eq!(warm["seams"], initial["seams"]);
+        assert_eq!(warm["seams"], cold["seams"]);
+        assert_eq!(warm.pointer("/source_subject/corpus"), Some(corpus));
+        assert_eq!(cold.pointer("/source_subject/corpus"), Some(corpus));
+        let config = match case {
+            HomeEnvironment::RelativeHome => Some(root.join("relative-home/.cargo/config.toml")),
+            HomeEnvironment::RelativeCargoHome => Some(root.join("relative-cargo/config.toml")),
+            _ => None,
+        };
+        if let Some(config) = config {
+            fs::write(&config, "[build\n").map_err(|error| error.to_string())?;
+            let (edited, edited_trace) = run(&cache)?;
+            let (edited_cold, _) = run(&root.join(format!("target/edited-cold-{case:?}")))?;
+            assert!(
+                !edited_trace.contains("phase=total status=cache_hit"),
+                "relative home edit must miss the old classified key despite different caller cwd"
+            );
+            assert_eq!(edited["seams"], edited_cold["seams"]);
+            assert_eq!(edited.pointer("/source_subject/corpus"), Some(corpus));
+            assert_eq!(edited_cold.pointer("/source_subject/corpus"), Some(corpus));
+            fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let (restored, trace) = run(&cache)?;
+            assert_eq!(restored.pointer("/source_subject/corpus"), Some(corpus));
+            assert!(
+                trace.contains("phase=total status=cache_hit"),
+                "relative home revert must reuse preserved facts: {trace}"
+            );
+        }
+    }
+    assert_eq!(
+        common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?,
+        head
+    );
+    remove_base(&root)
 }
 
 const HARNESS_SOURCE: &str = r#"use libtest_mimic::{Arguments, Failed, Trial};

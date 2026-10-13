@@ -7,7 +7,9 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
+mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 
 use super::parse_clean_source_file;
 use super::ra::{LineIndex, slice_macro_call_text, slice_text};
@@ -1137,7 +1139,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             Some(refusal)
         } else if let Some(attr) = function
             .attrs()
-            .find(|attr| attr.simple_name().as_deref() != Some("test"))
+            .find(|attr| !runs_body_unchanged(attr, function.syntax()))
         {
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
@@ -1710,6 +1712,369 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
         source_file |= ast::SourceFile::can_cast(node.kind());
     }
     (!source_file).then_some(AssertionContextRefusal::NestedItem)
+}
+
+/// Attributes a pinned test may carry: `#[test]` itself, and the
+/// `serial_test` locks, which run the unchanged body while holding a mutex or
+/// file lock. Lock arguments are admitted only as bare key names
+/// (`#[serial(env, db)]`): `inner_attrs = [..]` hands the body to other
+/// attribute macros and `crate = ..` swaps the runtime that runs it, so any
+/// other argument refuses. Every other attribute (`ignore`, `should_panic`,
+/// an async runtime or a parameterizing macro) may skip, invert or rewrite
+/// the body, so it keeps the test out of the pin.
+fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.simple_name().as_deref() == Some("test") {
+        return true;
+    }
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    let admitted = if path.contains("::") {
+        serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
+    } else {
+        bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
+    };
+    admitted && lock_arguments_are_bare_keys(attr)
+}
+
+const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
+
+/// The lock of a crate-qualified `serial_test::<lock>` attribute path,
+/// rooted (`::serial_test::serial`) or not. A rooted path still names the
+/// same crate, so it earns the same admission as the unrooted one.
+fn serial_test_lock_leaf(path: &str) -> Option<&str> {
+    let path = path.strip_prefix("::").unwrap_or(path);
+    match path.split_once("::") {
+        Some(("serial_test", leaf)) if SERIAL_TEST_LOCKS.contains(&leaf) => Some(leaf),
+        _ => None,
+    }
+}
+
+/// Whether a bare lock attribute `name` resolves to a serial_test lock in the
+/// test's own module (`module` is its item list or source file). Only an
+/// explicit `use serial_test::<lock>` (optionally renamed) that is a direct
+/// item of that module counts: an explicit import shadows globs and the
+/// `#[macro_use]` prelude, and a second explicit binding of the name there
+/// would not compile, so another one refuses. Imports in function bodies,
+/// sibling modules or macro token trees bind nothing for this attribute. The
+/// caller still checks that `serial_test` in that path is the crate.
+fn bare_lock_bound_in_module(name: &str, module: &SyntaxNode) -> bool {
+    let name = unraw(name);
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != name {
+            continue;
+        }
+        let is_lock = leaf.path.len() == 2
+            && leaf.path[0] == "serial_test"
+            && SERIAL_TEST_LOCKS.contains(&leaf.path[1].as_str());
+        if !is_lock || bound {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+/// Whether `serial_test::..` in the test's module resolves to the extern
+/// crate: the module binds no item named `serial_test` (`mod`, `use .. as`,
+/// `extern crate .. as`), has no item-position macro call or other
+/// attribute or derive macro on a direct item that could emit one, and
+/// imports no glob except `super::*` into an enclosing module of this file
+/// that satisfies the same rule. Any other glob may bring a `serial_test`
+/// that shadows the extern prelude, so it refuses.
+fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
+    for item in module.children().filter_map(ast::Item::cast) {
+        if item
+            .attrs()
+            .any(|attr| !attribute_emits_no_items(&attr, module))
+        {
+            return false;
+        }
+        match &item {
+            ast::Item::MacroCall(_) => return false,
+            ast::Item::Module(inner)
+                if inner
+                    .name()
+                    .is_some_and(|name| unraw(name.text()) == "serial_test") =>
+            {
+                return false;
+            }
+            ast::Item::ExternCrate(krate) => {
+                let binding = match krate.rename() {
+                    Some(rename) => rename.name().map(|name| name.text().to_string()),
+                    None => krate.name_ref().map(|name| name.text().to_string()),
+                };
+                let Some(binding) = binding else {
+                    return false;
+                };
+                let real = krate
+                    .name_ref()
+                    .is_some_and(|name| unraw(name.text()) == "serial_test");
+                if (unraw(&binding) == "serial_test" && !real)
+                    || PRELUDE_MACROS.contains(&unraw(&binding))
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    for leaf in module_use_leaves(module) {
+        match &leaf.binding {
+            UseBinding::Name(binding) => {
+                let real = leaf.path.len() == 1 && leaf.path[0] == "serial_test";
+                if unraw(binding) == "serial_test" && !real {
+                    return false;
+                }
+                // `derive`, the std derives and `test` are prelude macros an
+                // import can rebind, which voids the allowlist below.
+                if PRELUDE_MACROS.contains(&unraw(binding)) {
+                    return false;
+                }
+            }
+            UseBinding::Glob => {
+                let into_parent = leaf.path.len() == 1 && leaf.path[0] == "super";
+                let parent = module
+                    .parent()
+                    .filter(|owner| ast::Module::can_cast(owner.kind()))
+                    .and_then(|owner| owner.parent());
+                match parent {
+                    Some(parent) if into_parent => {
+                        if !serial_test_path_is_the_crate(&parent) {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Built-in attributes and std derives expand to no new items, provided the
+/// caller has refused any import rebinding a `PRELUDE_MACROS` name. A
+/// `serial_test` lock is trusted here because it is the crate's only when the
+/// surrounding check passes; a bare name must be bound to a lock (renames
+/// included).
+/// Anything else (`cfg_attr` included) may emit a `serial_test` module.
+fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    const BUILTIN: &[&str] = &[
+        "test",
+        "cfg",
+        "allow",
+        "warn",
+        "deny",
+        "forbid",
+        "expect",
+        "doc",
+        "inline",
+        "cold",
+        "must_use",
+        "non_exhaustive",
+        "repr",
+        "path",
+        "ignore",
+        "should_panic",
+        "track_caller",
+        "deprecated",
+        "macro_use",
+        "macro_export",
+    ];
+    let Some(path) = attr.path() else {
+        // `cfg(..)` parses as its own meta kind with no path.
+        return attr.simple_name().as_deref() == Some("cfg");
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    let unrooted = path.strip_prefix("::").unwrap_or(&path);
+    if unrooted.starts_with("serial_test::") {
+        return serial_test_lock_leaf(&path).is_some();
+    }
+    if path == "derive" {
+        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+            return false;
+        };
+        return meta.token_tree().is_some_and(|tree| {
+            let text = tree.syntax().text().to_string();
+            text.trim_start_matches('(')
+                .trim_end_matches(')')
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .all(|name| STD_DERIVES.contains(&name))
+        });
+    }
+    BUILTIN.contains(&path.as_str())
+        || (!path.contains("::") && bare_lock_bound_in_module(&path, module))
+}
+
+const STD_DERIVES: &[&str] = &[
+    "Debug",
+    "Clone",
+    "Copy",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Default",
+];
+
+/// Prelude macro names `attribute_emits_no_items` trusts that an import can
+/// rebind. Built-in attributes (`cfg`, `inline`, ..) cannot be rebound: an
+/// import of one is an ambiguity error. A `#[macro_use]` extern crate can
+/// also rebind these names with no import; `macro_binding_scan` refuses any
+/// `macro_use` in the scanned files, which this check relies on.
+const PRELUDE_MACROS: &[&str] = &[
+    "derive",
+    "test",
+    "Debug",
+    "Clone",
+    "Copy",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Default",
+];
+
+fn unraw(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
+}
+
+/// The use leaves of the module's own direct `use` items.
+/// Whether any `use` item anywhere under `file` binds `name` to something
+/// other than the crate `name` itself (`use name;`, `use ::name;`,
+/// `use {name}` and `use name::{self}` bind the crate). Renames, `self`
+/// leaves and nested trees resolve through `flatten_use_tree`, the same
+/// reading the serial_test lock check uses.
+pub(crate) fn use_rebinds_crate_name(file: &SyntaxNode, name: &str) -> bool {
+    let mut leaves = Vec::new();
+    for item in file.descendants().filter_map(ast::Use::cast) {
+        if let Some(tree) = item.use_tree() {
+            flatten_use_tree(&tree, &[], &mut leaves);
+        }
+    }
+    leaves.iter().any(|leaf| {
+        let UseBinding::Name(bound) = &leaf.binding else {
+            return false;
+        };
+        let target = match leaf.path.split_last() {
+            Some((last, parent)) if last == "self" => parent,
+            _ => leaf.path.as_slice(),
+        };
+        unraw(bound) == name && target != [name]
+    })
+}
+
+fn module_use_leaves(module: &SyntaxNode) -> Vec<UseLeaf> {
+    let mut leaves = Vec::new();
+    for item in module.children().filter_map(ast::Use::cast) {
+        if let Some(tree) = item.use_tree() {
+            flatten_use_tree(&tree, &[], &mut leaves);
+        }
+    }
+    leaves
+}
+
+/// No argument list, or one holding only identifiers and commas.
+fn lock_arguments_are_bare_keys(attr: &ast::Attr) -> bool {
+    let tree = match attr.meta() {
+        Some(ast::Meta::PathMeta(_)) => return true,
+        Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
+            Some(tree) => tree,
+            None => return false,
+        },
+        _ => return false,
+    };
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let Some((first, rest)) = tokens.split_first() else {
+        return false;
+    };
+    let Some((last, inner)) = rest.split_last() else {
+        return false;
+    };
+    first.text() == "("
+        && last.text() == ")"
+        && inner.iter().all(|token| {
+            token.text() == ","
+                || (token.kind() == ra_ap_syntax::SyntaxKind::IDENT
+                    && !matches!(token.text(), "inner_attrs" | "crate" | "path"))
+        })
+}
+
+struct UseLeaf {
+    path: Vec<String>,
+    binding: UseBinding,
+}
+
+enum UseBinding {
+    Glob,
+    Name(String),
+}
+
+/// Expand one use tree into its leaves with their full paths and the name
+/// each binds (`as` rename, or the last segment). `as _` binds nothing.
+fn flatten_use_tree(tree: &ast::UseTree, prefix: &[String], out: &mut Vec<UseLeaf>) {
+    let mut path = prefix.to_vec();
+    if let Some(own) = tree.path() {
+        path.extend(
+            own.syntax()
+                .text()
+                .to_string()
+                .split("::")
+                .map(|segment| unraw(segment.trim()).to_string())
+                .filter(|segment| !segment.is_empty()),
+        );
+    }
+    if let Some(list) = tree.use_tree_list() {
+        for child in list.use_trees() {
+            flatten_use_tree(&child, &path, out);
+        }
+        return;
+    }
+    if tree.star_token().is_some() {
+        out.push(UseLeaf {
+            path,
+            binding: UseBinding::Glob,
+        });
+        return;
+    }
+    let name = match tree.rename() {
+        Some(rename) => match rename.name() {
+            Some(name) => name.text().to_string(),
+            None => return,
+        },
+        None => match path.last() {
+            Some(last) if last != "self" => last.clone(),
+            Some(_) => match path.iter().rev().nth(1) {
+                Some(parent) => parent.clone(),
+                None => return,
+            },
+            None => return,
+        },
+    };
+    out.push(UseLeaf {
+        path,
+        binding: UseBinding::Name(name),
+    });
 }
 
 fn has_escape(

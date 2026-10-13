@@ -9,7 +9,10 @@
 //! `<base>...HEAD`); this module only maps its changed new-side lines onto
 //! seams.
 
-use crate::analysis::{ClassifiedSeam, DiffOnlySource, RepoSeam, SeamLimitInfo};
+use crate::analysis::{
+    ClassifiedChangeReport, ClassifiedSeam, DiffOnlySource, RepoSeam, SeamLimitInfo,
+};
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::output::path::display_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,6 +38,9 @@ pub(crate) enum PilotCurrentChange {
         /// out by design (build scripts, `xtask/`, roots outside `src`),
         /// root-relative and slash separated (#6944).
         diff_only: Vec<(String, DiffOnlySource)>,
+        /// Coverage recorded by a successful changed-file supplement; absent
+        /// when classification failed or did not run.
+        absent_file_limitations: Option<Vec<AnalysisLimitation>>,
     },
     /// The default diff loaded and is empty: there is no current change.
     NoChange { base: Option<String> },
@@ -86,6 +92,7 @@ impl PilotCurrentChange {
             working_tree: false,
             seams: ChangeSeams::default(),
             diff_only: Vec::new(),
+            absent_file_limitations: None,
         }
     }
 
@@ -135,19 +142,20 @@ impl PilotCurrentChange {
     /// limit fired on a change with Rust files) into the ranked population:
     /// the cut seams on changed lines join `classified` and count as
     /// analyzed in `limit`. Returns how many were added and the limit the
-    /// change's seam-limit caveat should cite: none once the change's files
-    /// were classified, or when the change has no Rust file the limit could
+    /// change's seam-limit caveat should cite: none after successful scoped
+    /// classification (named absence replaces it for missing files), or when
+    /// the change has no Rust file the limit could
     /// hide; the inventory's limit when the classification failed or never
     /// ran.
     pub(crate) fn fold_classified_change<'a>(
         &self,
         classified: &mut Vec<ClassifiedSeam>,
         limit: &'a mut Option<SeamLimitInfo>,
-        change: Option<Result<Vec<ClassifiedSeam>, String>>,
+        change: Option<Result<ClassifiedChangeReport, String>>,
     ) -> ChangeClassification<'a> {
         match change {
             Some(Ok(scoped)) => {
-                let added = self.add_cut_seams(classified, scoped);
+                let added = self.add_cut_seams(classified, scoped.classified);
                 if let Some(info) = limit.as_mut() {
                     info.analyzed = info.analyzed.saturating_add(added);
                     // Every seam the limit cut was on the change: nothing
@@ -159,12 +167,14 @@ impl PilotCurrentChange {
                 ChangeClassification {
                     added,
                     caveat_limit: None,
+                    absent_file_limitations: Some(scoped.absent_file_limitations),
                     error: None,
                 }
             }
             Some(Err(error)) => ChangeClassification {
                 added: 0,
                 caveat_limit: limit.as_ref(),
+                absent_file_limitations: None,
                 error: Some(error),
             },
             None => ChangeClassification {
@@ -172,6 +182,7 @@ impl PilotCurrentChange {
                 caveat_limit: limit
                     .as_ref()
                     .filter(|_| !self.is_changed() || !self.changed_rust_files().is_empty()),
+                absent_file_limitations: None,
                 error: None,
             },
         }
@@ -224,6 +235,32 @@ impl PilotCurrentChange {
                 .collect();
         }
         self
+    }
+
+    /// Replace the supplement's recorded coverage, including an empty recovery.
+    pub(crate) fn with_absent_file_limitations(
+        mut self,
+        limitations: Option<Vec<AnalysisLimitation>>,
+    ) -> Self {
+        if let Self::Changed {
+            absent_file_limitations,
+            ..
+        } = &mut self
+        {
+            *absent_file_limitations = limitations;
+        }
+        self
+    }
+
+    /// Canonical absent-file disclosures, or no successful supplement record.
+    pub(crate) fn absent_file_limitations(&self) -> Option<&[AnalysisLimitation]> {
+        match self {
+            Self::Changed {
+                absent_file_limitations,
+                ..
+            } => absent_file_limitations.as_deref(),
+            Self::NoChange { .. } | Self::Unavailable { .. } => None,
+        }
     }
 
     /// The changed files only diff analysis covers; empty without a change.
@@ -301,6 +338,8 @@ pub(crate) struct ChangeClassification<'a> {
     pub(crate) added: usize,
     /// The seam limit the change's caveat cites, if it still applies.
     pub(crate) caveat_limit: Option<&'a SeamLimitInfo>,
+    /// Recorded coverage only after a successful supplement, empty on recovery.
+    pub(crate) absent_file_limitations: Option<Vec<AnalysisLimitation>>,
     /// Why the change could not be classified, when it could not.
     pub(crate) error: Option<String>,
 }

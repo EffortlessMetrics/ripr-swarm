@@ -805,6 +805,49 @@ fn validator_requires_both_truth_directions() -> Result<(), String> {
 }
 
 #[test]
+fn checkout_module_path_oracle_is_described_as_same_file() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.case_id == "checkout-daily-limit-imported-const")
+        .ok_or("missing checkout module-path boundary case")?;
+    let source = read(&dir.join("subjects/authored-checkout/src/limits.rs.txt"))?;
+    assert!(source.contains(
+        "pub mod config {\n    pub const DAILY_LIMIT: u32 = 10;\n}\n\nuse config::DAILY_LIMIT;"
+    ));
+    assert!(source.contains("assert!(over_daily_limit(DAILY_LIMIT));"));
+    assert!(source.contains("assert!(!over_daily_limit(DAILY_LIMIT - 1));"));
+
+    // The descriptive contract is independent of the analyzer verdict.
+    // Pin the rendered value literally: case and golden agreeing on the old
+    // cross-file-looking label must not make this regression pass.
+    let row = case_row(
+        case,
+        SubjectOrigin::Authored,
+        &json!({"findings": []}),
+        None,
+    )?;
+    let rendered: Value =
+        serde_json::from_str(&render_row_json(&row)?).map_err(|err| err.to_string())?;
+    assert_eq!(
+        rendered["test_shape"],
+        json!("boundary_via_module_path_const")
+    );
+    let expected = parse_json(&dir.join("expected/rows/checkout-daily-limit-imported-const.json"))?;
+    assert_eq!(
+        expected["test_shape"],
+        json!("boundary_via_module_path_const")
+    );
+    assert_eq!(expected["truth"], json!("discriminated"));
+    assert_eq!(expected["observed_verdict"], json!("credited"));
+    assert_eq!(case.subject_id, "authored-checkout");
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    Ok(())
+}
+
+#[test]
 fn expected_report_rows_agree_with_corpus_labels() -> Result<(), String> {
     let dir = repo_corpus_dir();
     let corpus = load_corpus(&dir)?;
@@ -1556,8 +1599,33 @@ fn typescript_corpus_dir() -> PathBuf {
 
 #[test]
 fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> Result<(), String> {
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // TypeScript corpus in `check-all`.
     let dir = typescript_corpus_dir();
-    let corpus = validated_corpus_without_coverage(&dir)?;
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/typescript-verdict-corpus/spec-coverage.toml"
+    );
+    assert!(
+        coverage.floor >= 45 && coverage.floor <= coverage.covered_examples,
+        "typescript ledger floor {} against {} covered",
+        coverage.floor,
+        coverage.covered_examples
+    );
+    // RIPR-SPEC-0243 example 33 (#7099) has no case, and 30, 34 and 35 have
+    // cases that label only part of the example; the ledger keeps all four
+    // visible as uncovered rather than waived.
+    let spec = coverage
+        .by_spec
+        .iter()
+        .find(|row| row.spec == "RIPR-SPEC-0243")
+        .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
+    assert_eq!(spec.in_scope_examples, 35);
+    assert_eq!(spec.uncovered, vec![30, 33, 34, 35]);
+    assert_eq!(spec.waived, 0);
+    let corpus = load_corpus(&dir)?;
     assert!(
         corpus.cases.len() >= 40,
         "typescript corpus shrank to {}",
@@ -1629,18 +1697,18 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // Every RIPR-SPEC-0238 acceptance example but 10 keeps a case citing
     // it; the ledger leaves 10 visible as uncovered rather than waived.
     // Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
-    // spec's draft number, RIPR-SPEC-0233); 35 to 39 were written from the
+    // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
     // library cases that cite them.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 39);
+    assert_eq!(spec.in_scope_examples, 40);
     assert_eq!(spec.uncovered, vec![10]);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 38 && coverage.floor <= coverage.covered_examples,
+        coverage.floor >= 39 && coverage.floor <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
         coverage.floor,
         coverage.covered_examples
@@ -2091,23 +2159,32 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 }
 
 #[test]
-fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
--> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: a non-Rust
-    // language validates structurally with no coverage attached, while the
-    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
-    // deleting that ledger fails instead of dropping the coverage floor.
-    // (The gated half needs the repo-relative specs tree, so the `validate`
-    // and `check-all` CLI runs prove it, not a unit test.)
-    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
-    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
-    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
-    let err = validated_corpus_declared(&rust)
-        .err()
-        .ok_or("a Rust corpus without its spec-example ledger validated")?;
-    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: the Perl
+    // corpus validates structurally with no coverage attached, while every
+    // other corpus keeps its spec-example ledger mandatory (#6686 review for
+    // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
+    // instead of dropping the coverage floor from `check-all`. (The gated
+    // half needs the repo-relative specs tree, so the `validate` and
+    // `check-all` CLI runs prove it, not a unit test.)
+    for (name, source) in [
+        ("verdict-declared-rust-ledger", repo_corpus_dir()),
+        ("verdict-declared-ts-ledger", typescript_corpus_dir()),
+        ("verdict-declared-py-ledger", python_corpus_dir()),
+    ] {
+        // Keep the source directory name: the coverage mode is keyed on it,
+        // so a copy named anything else would read as the Rust corpus.
+        let leaf = source.file_name().ok_or("corpus dir has no name")?;
+        let copy = crate::tests::temp_dir(name).join(leaf);
+        crate::tests::copy_dir_recursive(&source, &copy)?;
+        fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+        let err = validated_corpus_declared(&copy)
+            .err()
+            .ok_or_else(|| format!("{name}: a corpus without its spec-example ledger validated"))?;
+        assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
+    }
 
-    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
+    let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())
@@ -2368,7 +2445,7 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
     let Err(err) = refuse_unavailable_perl(&unavailable, "c", "ripr-lang-perl") else {
         return Err("an unavailable Perl run must be refused".to_string());
     };
-    assert!(err.contains("has no Perl adapter"), "{err}");
+    assert!(err.contains("`unavailable`: not compiled"), "{err}");
     for ok in [
         json!({"findings": [], "language_runs": [{"language": "perl", "status": "ok"}]}),
         json!({"findings": [], "language_runs": [{"language": "rust", "status": "unavailable"}]}),
@@ -2379,6 +2456,37 @@ fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), Strin
             "{ok}"
         );
     }
+    Ok(())
+}
+
+/// #7566: the refusal is bound where a case's output is read, not only in the
+/// helper. A packet case whose packet ripr refused names the run's reason; the
+/// same output for a case without a packet is not refused.
+#[test]
+fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result<(), String> {
+    let dir = perl_corpus_dir();
+    let corpus: Corpus =
+        serde_json::from_value(corpus_value(&dir)?).map_err(|err| err.to_string())?;
+    let packet_case = corpus
+        .cases
+        .iter()
+        .find(|case| case.perl_facts.is_some())
+        .ok_or("the Perl corpus has no packet case")?;
+    let stdout = json!({"findings": [], "language_runs": [
+        {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
+    ]})
+    .to_string();
+    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl") else {
+        return Err("a packet case with an unavailable Perl run must be refused".to_string());
+    };
+    assert!(
+        err.contains(&packet_case.case_id) && err.contains("packet is not valid JSON"),
+        "{err}"
+    );
+    let mut plain_case = packet_case.clone();
+    plain_case.perl_facts = None;
+    let check = case_check_output(&stdout, &plain_case, "ripr")?;
+    assert_eq!(check["language_runs"][0]["status"], json!("unavailable"));
     Ok(())
 }
 

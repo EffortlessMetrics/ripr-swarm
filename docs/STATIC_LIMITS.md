@@ -97,6 +97,22 @@ that your tests use reads `opaque` even when no test runs that impl (`Debug`,
 `Hash` and `Drop` impls are typical). `opaque` is a prompt to look, not
 evidence that a test exists. RIPR-SPEC-0230 lists the limits.
 
+## Rust Documentation and Example Assertions
+
+Rust doctests are not indexed as related tests. An exact assertion in a runnable
+doc example may already distinguish a change that RIPR reports as weakly
+exposed. Inspect that example before adding a duplicate test or replacing an
+assertion. In an ordinary Cargo library, run `cargo test --doc` from its package
+directory to check rustdoc examples; `cargo test --lib` and
+`cargo test --all-targets` leave those examples out.
+
+A passing `no_run` or `compile_fail` doctest checks compilation, while `ignore`
+and `text` fences do not execute the example's assertion. Check the executed
+subjects and the fence before treating a green result as behavior evidence.
+Assertions in an example program's `main` run with
+`cargo run --example <example-name>`. `cargo test --examples` uses the test
+harness by default and does not run that `main`.
+
 ## External-Language Related-Test Inventory
 
 Which related-test files count as external-language evidence is read from the

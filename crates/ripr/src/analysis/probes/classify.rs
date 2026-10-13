@@ -28,10 +28,25 @@ pub(super) struct RemovedTypeBounds {
     pub old_index: Option<RustIndex>,
 }
 
+/// The changed file's old source, rebuilt from the indexed new source and
+/// the diff. Rebuilding copies the whole file, so a caller builds it once
+/// per file and shares it (#7637). `None` when nothing was removed or the
+/// file is not indexed.
+pub(super) fn old_source(
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) -> Option<String> {
+    if changed.removed_lines.is_empty() {
+        return None;
+    }
+    file_facts(index, &changed.path)
+        .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed))
+}
+
 pub(super) fn removed_type_bounds(
     root: &Path,
     registrations: &[crate::config::TestHarnessRegistration],
-    index: &RustIndex,
+    old_source: Option<&str>,
     changed: &crate::analysis::diff::ChangedFile,
 ) -> RemovedTypeBounds {
     let unavailable = || RemovedTypeBounds {
@@ -41,16 +56,14 @@ pub(super) fn removed_type_bounds(
     if changed.removed_lines.is_empty() {
         return unavailable();
     }
-    let Some(source) = file_facts(index, &changed.path)
-        .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed))
-    else {
+    let Some(source) = old_source else {
         return unavailable();
     };
-    let lines = declarations::type_bound_lines(&source, &changed.removed_lines);
+    let lines = declarations::type_bound_lines(source, &changed.removed_lines);
     if !lines.iter().any(|bound| *bound) {
         return unavailable();
     }
-    let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, &source) else {
+    let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, source) else {
         return unavailable();
     };
     let mut old_index = RustIndex::default();

@@ -1,0 +1,53 @@
+{
+  "case_id": "lib-claims-assert-some-eq-pinned",
+  "subject_id": "authored-lib-claims",
+  "diff": "cases/lib-claims-assert-some-eq-pinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "claims_assert_some_eq",
+  "hard_case": "claims::assert_some_eq! is not resolved (rust_macro_wrapped_assertion_unresolved), so an exact Option value oracle is a gap.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x % 2 == 1",
+        "mutated_line": "xs.iter().copied().find(|x| x % 2 == 1)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::first_even_found",
+        "equivalence_review": "not equivalent: first_even(&[1,4,6]) = Some(1)"
+      },
+      {
+        "replacement": "x % 3 == 0",
+        "mutated_line": "xs.iter().copied().find(|x| x % 3 == 0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::first_even_found",
+        "equivalence_review": "not equivalent: first_even(&[1,4,6]) = Some(6)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_some_eq!(first_even(&[1,4,6]), 4) pins the found value, killing both predicate mutants.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1163,7 +1163,7 @@ impl RepoSeamCacheKey {
             Ok(())
         } else {
             Err(format!(
-                "{CARGO_INPUT_IDENTITY_UNAVAILABLE}: restore readable regular Cargo/toolchain configuration within the 1 MiB per-file and 16 MiB total identity limits, and use a nonempty Cargo home, then retry"
+                "{CARGO_INPUT_IDENTITY_UNAVAILABLE}: restore readable regular Cargo/toolchain configuration within the 1 MiB per-file and 16 MiB total identity limits, and ensure Cargo home can be discovered, then retry"
             ))
         }
     }
