@@ -108,19 +108,43 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
             "{owner}"
         );
     }
-    // A function on the changed line itself.
-    let line = "  notifier.send(owner, lines.map((l) => l.sku).join());";
-    let owner = format!("function checkout(owner, lines, notifier) {{\n{line}\n}}");
-    let facts = MockCallFacts::read(
+    // A function on the changed line itself: an arrow, a `function`, or a
+    // one-line method whose statement sits at the top level.
+    for line in [
+        "  notifier.send(owner, lines.map((l) => l.sku).join());",
+        "  notifier.send(owner, lines.map(function (l) { return l.sku; }).join());",
+        "  const h = { run(total) { notifier.send(owner, `charged ${total} cents`); } }; h.run(1); h.run(2);",
+    ] {
+        let owner = format!("function checkout(owner, lines, notifier) {{\n{line}\n}}");
+        assert!(
+            !line_facts(line, &owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{line}"
+        );
+    }
+    // A `{` after a `}` or a string literal opens a typed method body
+    // (`run(): { n: number } {`, `run(): "a" {`), so it counts as a nested
+    // function even with no arrow or `function` in the owner.
+    for owner in [
+        "function checkout(owner, lines, notifier) {\n  const h = { run(total): { n: number } {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
+        "function checkout(owner, lines, notifier) {\n  const h = { run(total): \"a\" {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
+    ] {
+        assert!(
+            !checkout_facts(owner).credits(&charged_payload(), CHECKOUT_TEST),
+            "{owner}"
+        );
+    }
+}
+
+fn line_facts(line: &str, owner: &str) -> MockCallFacts {
+    MockCallFacts::read(
         line,
-        Some(&owner),
+        Some(owner),
         "checkout",
         &["owner", "lines", "notifier"]
             .iter()
             .map(|name| (*name).to_string())
             .collect::<Vec<_>>(),
-    );
-    assert!(!facts.credits(&called_with("send", "\"ann\", \"a\""), CHECKOUT_TEST));
+    )
 }
 
 /// Rule 2 negatives: the object must be an inline flat literal at the
@@ -147,11 +171,26 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         "const send = vi.fn(); checkout(\"ann\", [apple], { send }); send(\"ann\", \"charged 360\");",
         "const send = vi.fn(); checkout(\"ann\", [apple], { send }); checkout(\"bo\", [], { send });",
         "if (ready) { const send = vi.fn(); } checkout(\"ann\", [apple], { send });",
+        // A spread before the position shifts which parameter gets it.
+        "const send = vi.fn(); checkout(...pre, [apple], { send });",
     ] {
         let test = format!(
             "it(\"t\", () => {{\n    {body}\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"
         );
         assert!(!facts.credits(&charged_payload(), &test), "{test}");
+    }
+    // A duplicate `send` key, whichever side names the mock, may replace it.
+    for body in [
+        "const notify = vi.fn(); checkout(\"ann\", [apple], { send: notify, send: other });",
+        "const notify = vi.fn(); checkout(\"ann\", [apple], { send: other, send: notify });",
+    ] {
+        let test = format!(
+            "it(\"t\", () => {{\n    {body}\n    expect(notify).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"
+        );
+        assert!(
+            !facts.credits(&called_with("notify", "\"ann\", \"charged 360\""), &test),
+            "{test}"
+        );
     }
     // The same harness credits the plain inline shape, so each refusal
     // above is the shape's own.

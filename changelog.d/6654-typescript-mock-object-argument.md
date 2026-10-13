@@ -7,3 +7,8 @@
   `expect(send).toHaveBeenCalledWith("ann", "charged 360")` reads `exposed`
   instead of `weakly_exposed`. On the TypeScript verdict corpus false
   verdicts drop by one (#6654).
+- TypeScript (RIPR-SPEC-0255 tightens RIPR-SPEC-0247): a changed
+  `p.m(...)` call inside a method shorthand or class member
+  (`const h = { run(x) { p.m(x) } }`) no longer counts as an owner with no
+  nested function, so a literal mock payload stops crediting a call such a
+  method may run twice (#6654).

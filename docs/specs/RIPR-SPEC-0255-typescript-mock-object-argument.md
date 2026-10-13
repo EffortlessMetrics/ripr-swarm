@@ -87,17 +87,25 @@ once.
 **Rule 1. A nested function away from the changed line does not refuse.**
 The owner body still has no loop and no call back into the owner. A
 nested function is an `=>`, a `function`, or any `{` that could open a
-method body: one after `name(...)` that is not `if`, `for`, `while`,
-`switch`, `catch` or `with`, or after a word, `>` or `]` (a typed method or
-a class body) other than `else`, `try`, `finally`, `do` or `return`. This
+method body. Only an allowlist of `{` shapes reads as a plain block or
+object literal: one at the start of the body; one after `=`, `(`, `,`,
+`[`, `:`, `?`, `&`, `|`, `!`, `;` or `{`; one after `if (...)`,
+`for (...)`, `while (...)`, `switch (...)`, `catch (...)` or `with (...)`;
+one after `else`, `try`, `finally`, `do` or `return`; and a template
+literal's `${`. Every other `{` counts, among them one after `name(...)`,
+after any other word, after `>`, `]`, `}` or a string literal (a typed
+method such as `run(): { n: number } {` or `run(): "a" {`, or a class
+body), and one after a `)` with no matching `(`. This
 also closes a RIPR-SPEC-0247 gap, where method shorthand
 (`const h = { run(x) { p.m(x) } }`) counted as no nested function. When the
 body holds a nested function, the changed line is accepted only when it is
 a whole top-level statement of the body:
 
 - its masked text occurs exactly once in the masked body;
-- it holds no `=>` and no `function`;
-- it sits outside every brace, parenthesis and bracket of the body;
+- it holds no `=>`, no `function` and no `{` that counts as a method
+  body, so a one-line method shorthand on the changed line refuses;
+- it sits outside every brace, parenthesis and bracket of the body, and
+  no closer before it lacks its opener;
 - the text before it ends at the start of the body, a `;` or a `}`.
 
 So the line cannot be a callback body, the body of an expression-bodied
@@ -166,13 +174,17 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
 4. Rule 1 refuses the changed line inside a callback block, after
    `() =>` on the line before, under a braceless `if` or `else`, with a
    `for` loop or a recursive call elsewhere in the owner, when it appears
-   twice, when it holds a callback itself, or inside a method shorthand,
-   typed method or class member that runs it twice. A line inside an `if`
+   twice, when it holds an arrow, a `function` or a one-line method
+   itself, or inside a method shorthand, typed method (including a return
+   type ending in `}` or a string literal) or class member that runs it
+   twice. A line inside an `if`
    block of an owner with only control blocks and object literals is
    still credited.
 5. Rule 2 refuses a spread, a second `send` key, a quoted key, a method
-   entry, the mock under `post`, an object built earlier, the object at
-   another position, a member of the literal, a spread argument, a mock
+   entry, the mock under `post`, a duplicate `send` key on either side of
+   a renamed mock, an object built earlier, the object at another
+   position, a member of the literal, a spread argument or a spread before
+   the position, a mock
    from a factory, a direct call to the mock, a second owner call, and a
    mock declared inside a nested block.
 6. An object payload or `toHaveBeenCalledTimes` is not credited.

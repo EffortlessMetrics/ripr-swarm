@@ -38,9 +38,12 @@ impl MockCallFacts {
     /// changed call must be the only way the owner reaches the parameter:
     /// the parameter appears exactly twice in the owner (its declaration and
     /// this call). A second call, `p.call(...)`, an alias, passing `p` on, or
-    /// an inner parameter shadowing it all add a mention and refuse. A loop,
-    /// a nested function or recursion could run the changed call more than
-    /// once (or never), so an owner body with any of them credits nothing.
+    /// an inner parameter shadowing it all add a mention and refuse. A loop or
+    /// recursion could run the changed call more than once (or never), so
+    /// an owner body with either credits nothing. A nested function (arrow,
+    /// `function`, method shorthand or class member) refuses too, unless
+    /// the changed line is a whole top-level statement of the body
+    /// (RIPR-SPEC-0255 rule 1), where no nested function can run it.
     pub(crate) fn read(
         line_text: &str,
         owner_body: Option<&str>,
@@ -544,12 +547,12 @@ fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str)
 
 /// `true` when some `{` in the masked `body` may open a function body that
 /// is not an arrow or `function`: method shorthand or a class member
-/// (`run(x) {`, `get total() {`), a typed method (`run(): string {`) or a
-/// class body. A `{` after a control keyword's `(...)`, after `else`,
-/// `try`, `finally`, `do` or `return`, after an operator or opening
-/// punctuation (an object literal or a bare block), or opening a template
-/// literal's `${` does not count; any
-/// other `{` does, so an unfamiliar shape refuses.
+/// (`run(x) {`, `get total() {`), a typed method (`run(): string {`,
+/// `run(): { n: number } {`) or a class body. Only an allowlist of shapes
+/// reads as a plain block or object literal: a `{` at the start of the body,
+/// after `= ( , [ : ? & | ! ; {`, after a control keyword's `(...)`, after
+/// `else`, `try`, `finally`, `do` or `return`, or opening a template
+/// literal's `${`. Any other `{` counts, so an unfamiliar shape refuses.
 fn has_method_like_block(body: &str) -> bool {
     const CONTROL: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
     const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
@@ -574,7 +577,10 @@ fn has_method_like_block(body: &str) -> bool {
             if is_identifier_part(last) {
                 return !BLOCK_WORDS.contains(&trailing_identifier(before));
             }
-            matches!(last, '>' | ']')
+            !matches!(
+                last,
+                '=' | '(' | ',' | '[' | ':' | '?' | '&' | '|' | '!' | ';' | '{'
+            )
         })
 }
 
@@ -609,7 +615,8 @@ fn trailing_identifier(text: &str) -> &str {
 
 /// RIPR-SPEC-0255 rule 1: the masked changed line occurs once in the masked
 /// owner `body`, outside every brace, parenthesis and bracket, right after
-/// the start of the body, a `;` or a `}`, and holds no `=>` or `function`.
+/// the start of the body, a `;` or a `}`, and holds no `=>`, `function` or
+/// method-like block (see [`has_method_like_block`]).
 /// A line after `=>` (an expression-bodied arrow), after `if (...)` or
 /// `else` without a block, or inside a callback refuses.
 fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
@@ -618,6 +625,7 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
     if statement.is_empty()
         || statement.contains("=>")
         || !identifier_offsets(statement, "function").is_empty()
+        || has_method_like_block(statement)
     {
         return false;
     }
@@ -629,7 +637,12 @@ fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
     for c in body[..at].chars() {
         match c {
             '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            // An unmatched closer means the masking or the body boundary
+            // is off; refuse rather than guess the statement's depth.
+            '}' | ')' | ']' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
             _ => {}
         }
     }
