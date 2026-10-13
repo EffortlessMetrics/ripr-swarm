@@ -713,7 +713,7 @@ pub(crate) fn contains_jsx_like_return(slice: &str) -> bool {
 }
 
 pub(crate) fn extract_imports_from_statements(
-    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    statements: &[Statement<'_>],
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
     for stmt in statements {
