@@ -114,8 +114,12 @@ fn string_literal_content(value: &str) -> Option<&str> {
 
 fn is_scalar_literal(value: &str) -> bool {
     // `numeric_literal_value` drops `_` separators first, so `_1` (an
-    // identifier) would read as `1`; a number starts with a digit.
-    (value.starts_with(|c: char| c.is_ascii_digit()) && numeric_literal_value(value).is_some())
+    // identifier) would read as `1`; a number starts with a digit. It also
+    // drops a BigInt's `n`, so `95` and `95n` (a different type) would read
+    // as one value; a BigInt is not a scalar here.
+    (value.starts_with(|c: char| c.is_ascii_digit())
+        && !value.ends_with('n')
+        && numeric_literal_value(value).is_some())
         || matches!(value, "true" | "false" | "null")
         || string_literal_content(value).is_some()
 }
@@ -178,13 +182,13 @@ pub(crate) fn ts_lookup_table_change(
     {
         return None;
     }
-    // Each moved key, and whether `null` is on either side of the move.
-    let moved: Vec<(String, bool)> = new_entries
+    // Each moved key with its old and new values.
+    let moved: Vec<(String, String, String)> = new_entries
         .iter()
         .zip(&old_entries)
         .filter(|((_, new_value), (_, old_value))| values_differ(old_value, new_value))
         .map(|((key, new_value), (_, old_value))| {
-            (key.clone(), new_value == "null" || old_value == "null")
+            (key.clone(), old_value.clone(), new_value.clone())
         })
         .collect();
     if moved.is_empty() {
@@ -231,10 +235,19 @@ pub(crate) fn ts_lookup_table_change(
         .trim_end()
         .strip_suffix(';')?
         .trim();
-    let has_fallback = read.contains("??");
+    // The value `?? fallback` returns for a `null` entry, when the masked
+    // text spells it: a number, `true`, `false` or `null` (a string's
+    // contents are masked, and `undefined` is not a table value).
+    let mut fallback_value: Option<Option<String>> = None;
     let read = match read.split_once("??") {
         Some((read, fallback)) => {
             let fallback = fallback.trim();
+            // `fallback` is masked, so a string's contents are blank here and
+            // must not be compared.
+            fallback_value = Some(
+                (is_scalar_literal(fallback) && string_literal_content(fallback).is_none())
+                    .then(|| fallback.to_string()),
+            );
             // The masked fallback blanks a string's contents but keeps its
             // quotes, so a whole string literal is one quote pair with no
             // quote inside; `"x" ? a : b` or `"x", 0` is an expression.
@@ -256,11 +269,27 @@ pub(crate) fn ts_lookup_table_change(
         .trim();
     let param_index = owner.params.iter().position(|param| param == key_param)?;
     // `?? fallback` turns a `null` entry into the fallback, so a move to or
-    // from `null` may return the same value on both versions.
+    // from `null` counts only when the values the owner returns still
+    // differ with the fallback in its place (`95` to `null` under `?? 0`
+    // returns 95, then 0); an unread fallback refuses the move.
     let changed_keys: Vec<String> = moved
         .into_iter()
-        .filter(|(_, involves_null)| !(has_fallback && *involves_null))
-        .map(|(key, _)| key)
+        .filter(|(_, old_value, new_value)| match &fallback_value {
+            Some(_) if old_value != "null" && new_value != "null" => true,
+            None => true,
+            Some(None) => false,
+            Some(Some(fallback)) => {
+                let returned = |value: &str| {
+                    if value == "null" {
+                        fallback.clone()
+                    } else {
+                        value.to_string()
+                    }
+                };
+                values_differ(&returned(old_value), &returned(new_value))
+            }
+        })
+        .map(|(key, _, _)| key)
         .collect();
     if changed_keys.is_empty() {
         return None;

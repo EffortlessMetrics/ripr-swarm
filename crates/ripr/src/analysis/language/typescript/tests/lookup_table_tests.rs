@@ -53,6 +53,48 @@ fn lookup_table_change_reads_the_moved_keys_and_the_key_parameter() -> Result<()
             changed_keys: vec!["10".to_string()],
         })
     );
+    // Comments and strings are masked before the guard counts `return`,
+    // `function` and the table name.
+    let owner = unit_price_owner(&cart_source(
+        NEW,
+        "  // return table, a function of sku\n  /* return */\n  log(\"table function return\");\n  return table[sku] ?? 0;",
+    ))?;
+    assert_eq!(
+        ts_lookup_table_change(&owner, NEW, Some(OLD)),
+        Some(LookupTableChange {
+            param_index: 0,
+            changed_keys: vec!["pear".to_string()],
+        })
+    );
+    // A move to or from `null` under a literal fallback counts when the
+    // returned values still differ: `95` then the fallback `0` or `null`.
+    for (new, old, ret) in [
+        (
+            "  const table = { apple: 120, pear: null };",
+            OLD,
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "  const table = { apple: 120, pear: null };",
+            OLD,
+            "  return table[sku] ?? null;",
+        ),
+        (
+            OLD,
+            "  const table = { apple: 120, pear: null };",
+            "  return table[sku] ?? 0;",
+        ),
+    ] {
+        let owner = unit_price_owner(&cart_source(new, ret))?;
+        assert_eq!(
+            ts_lookup_table_change(&owner, new, Some(old)),
+            Some(LookupTableChange {
+                param_index: 0,
+                changed_keys: vec!["pear".to_string()],
+            }),
+            "{new} / {old} / {ret}"
+        );
+    }
     // The key parameter need not be the first.
     let source = format!(
         "export function fetchUnitPrice(region: string, sku: string): number {{\n{NEW}\n  return table[sku] ?? 0;\n}}\n"
@@ -70,7 +112,7 @@ fn lookup_table_change_reads_the_moved_keys_and_the_key_parameter() -> Result<()
 
 #[test]
 fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str); 31] = [
+    let cases: [(&str, &str, &str, &str); 35] = [
         ("no old line", NEW, "", "  return table[sku] ?? 0;"),
         (
             "a key added",
@@ -208,6 +250,30 @@ fn lookup_table_change_refuses_other_shapes() -> Result<(), String> {
             "a move to `null` under a fallback",
             "  const table = { apple: 120, pear: null };",
             "  const table = { apple: 120, pear: 0 };",
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "a move to `null` under a string fallback that may equal it",
+            "  const table = { apple: \"a\", pear: null };",
+            "  const table = { apple: \"a\", pear: \"b\" };",
+            "  return table[sku] ?? \"b\";",
+        ),
+        (
+            "a move to `null` under an `undefined` fallback",
+            "  const table = { apple: 120, pear: null };",
+            "  const table = { apple: 120, pear: 95 };",
+            "  return table[sku] ?? undefined;",
+        ),
+        (
+            "a number moved to a BigInt",
+            "  const table = { apple: 120, pear: 95n };",
+            "  const table = { apple: 120, pear: 95 };",
+            "  return table[sku] ?? 0;",
+        ),
+        (
+            "a BigInt value moved",
+            "  const table = { apple: 120, pear: 96n };",
+            "  const table = { apple: 120, pear: 95n };",
             "  return table[sku] ?? 0;",
         ),
         (

@@ -79,15 +79,20 @@ reads as a `return_value` / value probe when all of these hold:
 - every key stores the name it spells: an identifier, a plain decimal
   integer of at most 15 digits, or a quoted word of ASCII letters, digits, `_`, `$` and `-`
   (`1e3`, `0x10` and `__proto__` are refused); no key repeats;
-- every value is a plain decimal number starting with a digit (`_` separators and a bigint `n`
-  allowed), a quoted string with no quote, backtick or escape inside, `true`,
+- every value is a plain decimal number starting with a digit (`_` separators
+  allowed; a BigInt such as `95n` is refused, since `95` to `95n` changes the
+  type and BigInts above 2^53 lose precision as numbers), a quoted string with no quote, backtick or escape inside, `true`,
   `false` or `null`;
 - at least one value moved. Two numbers compare by value (`95` to `95.0`
   does not move), two strings by contents (`'x'` to `"x"` does not move).
   A move between a number, a string and a boolean does not count, since
   loose equality (`assert.equal`) can read `95` and `"95"`, or `1` and
-  `true`, as the same value. Under a `??` fallback, a move to or from `null` does not count, since
-  `null` reads as the fallback;
+  `true`, as the same value. Under a `??` fallback, a move to or from `null`
+  counts only when the fallback is a number, `true`, `false` or `null` and
+  the returned values still differ with the fallback in place of `null`
+  (`95` to `null` under `?? 0` returns 95, then 0, and counts; `0` to
+  `null` under `?? 0` does not). A string or `undefined` fallback refuses
+  every move to or from `null`;
 - the changed line appears once in the owner, whose body has one `return`,
   no nested function, and names the table exactly twice: at the
   declaration, a top-level statement of the body (not inside an inner
@@ -164,10 +169,12 @@ documented decisions and proceed"). Recorded on #6654.
    `toEqual(expect.any(Number))` on `"pear"`.
    Every case with a strong assertion names `pear` in the missing evidence
    and the discriminate summary.
-4. Rule 1 refuses: no old line, an added key, reordered keys, no moved
+4. Rule 1 reads `pear` as moved from `95` to `null` (either way) under
+   `?? 0` or `?? null`. Rule 1 refuses: no old line, an added key, reordered keys, no moved
    value (`95` to `95.0`, `'y'` to `"y"`), a nested, computed or
    concatenated value, a duplicate key, an exponent, hexadecimal or
-   `__proto__` key, a key with a space, a move to `null` under `?? 0`, a
+   `__proto__` key, a key with a space, a move from `0` to `null` under `?? 0`, a
+   move to `null` under a string or `undefined` fallback, a BigInt value, a
    renamed table, a nested arrow or `function`, a second `return`, a
    second read of the table, a member read, a computed key argument, a
    rebound key parameter, a computed fallback, and a fallback that only
@@ -189,7 +196,9 @@ documented decisions and proceed"). Recorded on #6654.
   examples 1, 2 and 5; `lookup_table_entry_stays_weak_without_a_changed_key_lookup`
   pins example 3.
 - `fixtures/typescript-verdict-corpus` pins example 1:
-  `ts-vitest-unit-price-table` reads `credited`.
+  `ts-vitest-unit-price-table` reads `credited`; its negative control
+  `ts-vitest-unit-price-table-other-key` (apple moves, only pear is looked
+  up) reads `gap`, as example 3 requires.
 
 ## Implementation Mapping
 
