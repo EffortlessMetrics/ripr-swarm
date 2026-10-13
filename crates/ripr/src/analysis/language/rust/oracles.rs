@@ -547,7 +547,9 @@ fn unresolved_assertion_macro_invocations(
 /// (`Bar::new(`, `x.len(`) may name a different item with the same last
 /// segment, so it does not count; neither does an argument list that runs
 /// past a `;` or holds a `'`: char literals are not masked, so `'('` can
-/// unbalance the delimiters. Arguments holding a nested macro invocation
+/// unbalance the delimiters. The `'` refusal deliberately covers lifetimes
+/// and labels too (`bulk::<'static>(1)`); the delimiter walk cannot tell
+/// them apart, so narrowing it to char literals would need a real lexer. Arguments holding a nested macro invocation
 /// (`stringify!(owner(1))`) do not count either, since that macro may never
 /// evaluate the call.
 fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
