@@ -2397,12 +2397,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_projects_checkout_cwd_prefix_in_config_path() {
+    fn normalize_json_projects_checkout_cwd_prefix_in_config_path() -> Result<(), String> {
         // RIPR-SPEC-0255 (#7536): the check JSON names the loaded config by
         // its absolute stable spelling, so checked-in goldens must hold the
         // machine-independent `<cwd>/` placeholder, including the Windows
         // verbatim `//?/` form the lossless encoder preserves.
-        let cwd = std::env::current_dir().expect("readable working directory");
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("readable working directory: {error}"))?;
         let prefix = format!("{}/", normalize_path(&cwd));
         let plain = format!(
             "{{\"root\":\"fixtures/x/input\",\"config_path\":\"{prefix}fixtures/x/input/ripr.toml\"}}"
@@ -2416,6 +2417,7 @@ mod tests {
             normalize_fixture_json_output(&verbatim),
             "{\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
         );
+        Ok(())
     }
 
     #[test]
