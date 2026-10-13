@@ -1122,6 +1122,52 @@ fn an_inactive_term_names_the_missing_discriminator_and_its_inputs() -> Result<(
     Ok(())
 }
 
+const BONUS: &str = "def bonus(points):\n    if points < 100:\n        return 0\n    return 5\n\n\ndef eligible(points):\n    return points > 10\n";
+
+#[test]
+fn an_inactive_term_on_a_predicate_line_shows_the_term_inputs() -> Result<(), String> {
+    // `points = 10` sits on the `points > 10` boundary, so the boundary rule
+    // observes `points == 10` too. The finding names `bonus(points) != 0`,
+    // so it shows only the inputs that make the term 0.
+    let owners = extract_owners(Path::new(OWNER_FILE), BONUS);
+    let tests = extract_tests(
+        Path::new(TEST_FILE),
+        &test_module(
+            "from src.shop import eligible",
+            "def test_eligible():\n    assert eligible(10) == False\n",
+        ),
+    );
+    let finding = classify_change_with_old(
+        Path::new(OWNER_FILE),
+        8,
+        "    return points > 10",
+        Some("    return points > 10 + bonus(points)"),
+        &owners,
+        &tests,
+    )
+    .ok_or("changed line should classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["bonus(points) != 0"]
+    );
+    assert_eq!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["points = 10"]
+    );
+    Ok(())
+}
+
 const BIG_DEFAULT: &str =
     "def check(code, n=15):\n    if n > 15:\n        raise KeyError(\"big\")\n    return code\n";
 const BIG_DEFAULT_OLD: &str = "    if n >= 15:";

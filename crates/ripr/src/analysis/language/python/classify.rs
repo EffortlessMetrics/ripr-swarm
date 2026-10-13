@@ -823,14 +823,17 @@ pub(super) fn classify_change_with_context(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation: crate::domain::ActivationEvidence {
-            observed_values: boundary
-                .map(|evidence| evidence.observed_values)
-                .or_else(|| {
-                    term_downgraded
-                        .then(|| inactive_term.map(|term| term.observed_values))
-                        .flatten()
-                })
-                .unwrap_or_default(),
+            // A term downgrade names `f(...) != 0`; show the values that
+            // support it even when a predicate line also has boundary values.
+            observed_values: if term_downgraded {
+                inactive_term
+                    .map(|term| term.observed_values)
+                    .unwrap_or_default()
+            } else {
+                boundary
+                    .map(|evidence| evidence.observed_values)
+                    .unwrap_or_default()
+            },
             missing_discriminators,
         },
         stop_reasons: static_limit
