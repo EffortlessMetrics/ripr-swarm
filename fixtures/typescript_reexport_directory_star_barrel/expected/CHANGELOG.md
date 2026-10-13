@@ -105,3 +105,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (10)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (11)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -61,6 +61,9 @@ mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
+mod deleted_lines;
+#[cfg(test)]
+mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
@@ -68,6 +71,7 @@ mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
+mod lookup_table_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -86,6 +90,8 @@ mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
+#[cfg(test)]
+mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
@@ -116,6 +122,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
+pub(crate) use lookup_table_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
@@ -586,6 +593,36 @@ impl TypeScriptAdapter {
                     }
                     findings.push(finding);
                 }
+            }
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+                &all_owners,
+                &findings,
+                |line, text, owner| {
+                    // Only the resolved owner is offered, so the classifier's
+                    // owner lookup cannot land on a different one.
+                    classify_change_with_alias_state(
+                        &changed.path,
+                        line,
+                        text,
+                        None,
+                        std::slice::from_ref(owner),
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                },
+            );
+            for mut finding in deleted {
+                test_index_consumed = true;
+                finding.evidence.extend(discovery_evidence.clone());
+                findings.push(finding);
             }
         }
         let mut changed_files_by_language = Vec::new();

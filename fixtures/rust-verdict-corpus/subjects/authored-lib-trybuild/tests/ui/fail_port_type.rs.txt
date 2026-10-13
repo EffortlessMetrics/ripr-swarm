@@ -1,0 +1,4 @@
+fn main() {
+    let port: &str = lib_trybuild::default_port("https");
+    println!("{port}");
+}

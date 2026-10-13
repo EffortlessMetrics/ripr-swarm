@@ -339,9 +339,10 @@ fn select_output_format(
 /// for SARIF, GitHub annotations, badge JSON, repo-exposure JSON, and
 /// agent-seam-packets JSON (#7332) — then the unchanged prose error returns
 /// for stderr. Human formats and formats without an honest refusal shape
-/// return the prose untouched. Every `?` and `return Err` in [`check`] below
-/// the argv parser routes through here; argv usage errors return before the
-/// envelope snapshot exists and stay prose-only.
+/// return the prose untouched. Failures before a result is rendered route
+/// through here; a rendered `unsupported_input` result keeps its original
+/// report instead of appending a refusal. Argv usage errors return before
+/// the envelope snapshot exists and stay prose-only.
 fn refuse_check(
     envelope_input: &CheckInput,
     format: OutputFormat,
@@ -1290,6 +1291,20 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
     )
     .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+    // The producer's unsupported result is already on stdout. Keep that
+    // report, including retained findings and coverage identity; appending a
+    // refusal here would corrupt machine output. Genuine partial reports
+    // remain advisory, so completeness or zero findings cannot own this exit.
+    if !format.is_repo_scope()
+        && output.analysis_outcome.as_ref().is_some_and(|outcome| {
+            outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
+        })
+    {
+        return Err(
+            "check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes"
+                .to_string(),
+        );
+    }
     if let Some(sink) = &progress {
         sink.commit_success();
     }

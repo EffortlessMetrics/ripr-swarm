@@ -73,6 +73,11 @@ impl<'a> OwnerCall<'a> {
         })
     }
 
+    /// The owner's bare name (`ship` for `impl Inventory::ship`).
+    pub(super) fn name(&self) -> &'a str {
+        self.name
+    }
+
     /// The owner type, when the owner is an associated function.
     pub(super) fn impl_type(&self) -> Option<&'a str> {
         self.impl_type
@@ -588,6 +593,86 @@ pub(in crate::analysis) fn setter_plainly_writes(
     stores
 }
 
+/// The body of the one non-test inherent method `name` on `impl_type`,
+/// shared by getter credit and the pushed-literal callee-write check. Two
+/// exclusions keep the body the one the call site runs: functions in an
+/// evidence role (tests, fixtures) are skipped, and so are trait impls
+/// (`impl Trait for Type`), since a trait method may dispatch to another
+/// impl's body. `None` when no candidate remains, or several do.
+pub(in crate::analysis) fn inherent_method_body<'a>(
+    index: &'a RustIndex,
+    impl_type: &str,
+    name: &str,
+) -> Option<&'a str> {
+    let mut candidates = index.functions().iter().filter(|function| {
+        function.name == name
+            && !function.source_role.is_evidence_role()
+            && !function.id.0.contains(" for ")
+            && OwnerCall::from_symbol(&function.id.0)
+                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+    });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+        return None;
+    };
+    Some(function.body.as_str())
+}
+
+/// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
+/// takes only `&self` and its body is one tail expression returning the field
+/// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
+/// or `self.f.as_slice()`, in an inherent impl of `impl_type` resolved by
+/// [`inherent_method_body`]. A body that reads another field, computes a value
+/// from the field (`self.f.get(k).copied()`), or does anything else first,
+/// and an ambiguous or missing method, give `false`: a method named after the
+/// field is not evidence that it returns that field.
+pub(in crate::analysis) fn getter_plainly_reads(
+    index: &RustIndex,
+    impl_type: &str,
+    getter: &str,
+    field: &str,
+) -> bool {
+    let Some(body) = inherent_method_body(index, impl_type, getter) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(body) else {
+        return false;
+    };
+    let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let takes_only_self_ref = method.param_list().is_some_and(|parameters| {
+        parameters.params().next().is_none()
+            && parameters.self_param().is_some_and(|receiver| {
+                receiver.amp_token().is_some() && receiver.mut_token().is_none()
+            })
+    });
+    let Some(body) = method.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if !takes_only_self_ref || body.statements().next().is_some() {
+        return false;
+    }
+    let Some(tail) = body.tail_expr() else {
+        return false;
+    };
+    let text: String = tail
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let read = format!("self.{field}");
+    [
+        read.clone(),
+        format!("&{read}"),
+        format!("&{read}[..]"),
+        format!("{read}.clone()"),
+        format!("{read}.as_slice()"),
+    ]
+    .contains(&text)
+}
+
 fn is_path_named(expression: &ast::Expr, name: &str) -> bool {
     matches!(expression, ast::Expr::PathExpr(path)
         if single_identifier(path).as_deref() == Some(name))
@@ -776,6 +861,72 @@ mod tests {
             settings_index("pub fn attempts(mut self, n: u32) -> Self { self.attempts = n; self }");
         assert!(!setter_plainly_writes(
             &index, "Retry", "attempts", "attempts"
+        ));
+    }
+
+    /// RIPR-SPEC-0228 examples 12 and 13: a getter reads a field only when
+    /// its body returns that field itself.
+    #[test]
+    fn getter_counts_only_when_its_body_returns_the_field() {
+        for getter in [
+            "pub fn entries(&self) -> &[u32] { &self.attempts }",
+            "pub fn entries(&self) -> u32 { self.attempts }",
+            "pub fn entries(&self) -> &[u32] { &self.attempts[..] }",
+            "pub fn entries(&self) -> Vec<u32> { self.attempts.clone() }",
+            "pub fn entries(&self) -> &[u32] { self.attempts.as_slice() }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                getter_plainly_reads(&index, "RetryBuilder", "entries", "attempts"),
+                "{getter}"
+            );
+        }
+        for getter in [
+            // Another field, a value computed from the field, a statement
+            // first, an argument, or a `&mut self` receiver.
+            "pub fn entries(&self) -> u64 { self.delay_ms }",
+            "pub fn entries(&self) -> u32 { self.attempts + 1 }",
+            "pub fn entries(&self) -> Option<u32> { self.attempts.checked_sub(1) }",
+            "pub fn entries(&self) -> u32 { let n = self.attempts; n }",
+            "pub fn entries(&self, n: u32) -> u32 { self.attempts }",
+            "pub fn entries(&mut self) -> u32 { self.attempts }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                !getter_plainly_reads(&index, "RetryBuilder", "entries", "attempts"),
+                "{getter}"
+            );
+        }
+        // A method named after the field that returns another field.
+        let index = settings_index("pub fn attempts(&self) -> u64 { self.delay_ms }");
+        assert!(!getter_plainly_reads(
+            &index,
+            "RetryBuilder",
+            "attempts",
+            "attempts"
+        ));
+        // Another type's method of the same name proves nothing.
+        let index = settings_index("pub fn entries(&self) -> u32 { self.attempts }");
+        assert!(!getter_plainly_reads(
+            &index, "Retry", "entries", "attempts"
+        ));
+        // A trait method is not an inherent getter.
+        let path = PathBuf::from("src/settings.rs");
+        let facts = crate::analysis::rust_index::summarize_file(
+            path.clone(),
+            "pub struct RetryBuilder { attempts: u32 }\n\
+             pub trait Entries { fn entries(&self) -> u32; }\n\
+             impl Entries for RetryBuilder { fn entries(&self) -> u32 { self.attempts } }\n"
+                .to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        assert!(!getter_plainly_reads(
+            &index,
+            "RetryBuilder",
+            "entries",
+            "attempts"
         ));
     }
 

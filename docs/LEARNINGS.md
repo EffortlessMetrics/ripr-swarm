@@ -3,6 +3,27 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
+
+`ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
+If it leaves `repo-exposure.{json,md}` and `agent-seam-packets.json` from the last
+complete run, a human or `ripr agent status --root` can read last run's seams as
+this run. Remove those unwritten siblings on timeout; do not mark them stale
+in-place. `outputs` stays the packet path map so schema `0.3` is unchanged;
+`outputs_written` remains the authority for what this run produced.
+
+## 2026-10-13: Nested Cargo.toml keeps doctor Rust checks in scope (#7506)
+
+`detect_languages` is a shallow root scan. A `package.json` at a polyglot
+git root therefore omitted Rust, and `rust_toolchain_scope` skipped
+`cargo_toml` before the cargo-only locator could name `rust/Cargo.toml`.
+Keep that locator cargo-only; do not fold nested-manifest discovery into
+language detection, rebind `--root`, or change which `ripr.toml` applies.
+When the locator finds a nested or ancestor Cargo.toml and Rust is still
+enabled, the toolchain checks stay required. A TypeScript-only root with no
+such manifest still skips. `enabled = ["typescript"]` still puts Rust out of
+scope even when a nested Cargo.toml exists.
+
 ## 2026-10-12: An oversized `ripr_get_gap` must not recover by calling itself (#7462)
 
 The MCP response bound is 128 KiB. One canonical item can exceed it. The
@@ -17,6 +38,7 @@ large findings array can omit findings). Recovery advice must be reachable:
 so its overflow guard says there is no narrower read instead of promising a
 smaller-limit page no caller can need. Other tools name their own next read,
 or say there is no narrower MCP read.
+
 ## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
 
 `ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
@@ -56,8 +78,9 @@ ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
 fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
 is which `ripr.toml` applies). Empty roots and Rust sources with no
 manifest must still fail.
-A TypeScript marker at the git root can still skip `cargo_toml` before the
-locator runs (`detect_languages` is shallow); that is a separate claim.
+A TypeScript marker at the git root used to skip `cargo_toml` before the
+locator ran (`detect_languages` is shallow); #7506 keeps the locator
+cargo-only and teaches `rust_toolchain_scope` about its result.
 
 ## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
 

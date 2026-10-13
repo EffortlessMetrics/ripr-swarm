@@ -138,10 +138,15 @@ struct ReachGraph<'a> {
     /// test's body for every reaching callee of every owner, and masking it
     /// each time made rust-analyzer's cold pilot 3.5x slower (#6009).
     masked_test_bodies: Vec<OnceLock<String>>,
-    /// Per test: `(method, impl type)` to whether the test calls the method
-    /// on that type. The answer depends only on the test, and every owner
-    /// whose reaching set holds the method asks again.
-    receiver_checks: Vec<Mutex<HashMap<(String, String), bool>>>,
+    /// Per test, aligned with `all_tests`: the identifier runs of its masked
+    /// body and of its call texts, filled on first use. See
+    /// [`ReceiverTypes`].
+    test_identifiers: Vec<OnceLock<HashSet<String>>>,
+    /// Per test: method, then impl type, to whether the test calls the
+    /// method on that type. The answer depends only on the test, and every
+    /// owner whose reaching set holds the method asks again. Nested so a
+    /// lookup borrows both names instead of allocating a key.
+    receiver_checks: Vec<Mutex<HashMap<String, HashMap<String, bool>>>>,
     /// Every production function with a given name. Name-only facts cannot
     /// tell `StringDecoder::decode` from `StringDecoderRange::decode`, so the
     /// walk follows all of them rather than whichever one was indexed first.
@@ -153,6 +158,17 @@ struct ReachGraph<'a> {
     /// needs a definition whose body names the owner, so an owner no body
     /// names cannot have one.
     macro_bodies: Vec<&'a str>,
+    /// Every identifier [`Self::macro_definition_mentions_owner`] can find:
+    /// the identifier runs of each macro name's only definition that also
+    /// survive comment and string masking. Every macro edge passes that
+    /// check, so an owner name made of identifier bytes and missing here has
+    /// no macro witness, and the per-owner test is a lookup instead of a
+    /// sweep of every test. Each identifier maps to the macros it names, so
+    /// those are exactly the macros that check accepts for that owner.
+    unique_macro_identifiers: HashMap<&'a str, Vec<&'a str>>,
+    /// Call name to the indexes of the tests that call it, ascending; built
+    /// on first use. See [`Self::tests_calling_any`].
+    tests_by_call: OnceLock<HashMap<&'a str, Vec<usize>>>,
     /// Built on the first macro sweep; see [`Self::macro_invocations`].
     macro_invocations: OnceLock<MacroInvocations<'a>>,
     /// Per macro name: one entry per `macro_rules!` definition of that name,
@@ -172,6 +188,54 @@ struct ReachGraph<'a> {
     /// Per test file: the derive names its attributes apply, filled on first
     /// use.
     file_derives: Mutex<HashMap<&'a Path, std::sync::Arc<Vec<String>>>>,
+    /// `by_name`'s call edges over interned names, built on first use. See
+    /// [`NameGraph`].
+    name_graph: OnceLock<NameGraph<'a>>,
+}
+
+/// The forward walk's edges with each production function name interned.
+/// Trait-dispatch reach walks from hundreds of trait methods, and each walk
+/// visits most of a large workspace; hashing every call name of every
+/// function on each visit made that walk most of the dispatch index's build.
+struct NameGraph<'a> {
+    /// Every name in `by_name`, sorted, so ids order as their names do.
+    names: Vec<&'a str>,
+    ids: HashMap<&'a str, u32>,
+    /// Per name id: the distinct non-macro callees, over every function with
+    /// that name, that have a production function themselves.
+    callees: Vec<Vec<u32>>,
+}
+
+impl<'a> NameGraph<'a> {
+    fn build(by_name: &HashMap<&'a str, Vec<&'a FunctionSummary>>) -> Self {
+        let mut names: Vec<&'a str> = by_name.keys().copied().collect();
+        names.sort_unstable();
+        let ids: HashMap<&'a str, u32> = names
+            .iter()
+            .zip(0u32..)
+            .map(|(&name, id)| (name, id))
+            .collect();
+        let callees = names
+            .iter()
+            .map(|name| {
+                let mut seen = HashSet::new();
+                by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|function| calls_of(function))
+                    .filter(|call| !is_macro_call(&call.name))
+                    .filter_map(|call| ids.get(call.name.as_str()).copied())
+                    .filter(|&id| seen.insert(id))
+                    .collect()
+            })
+            .collect();
+        Self {
+            names,
+            ids,
+            callees,
+        }
+    }
 }
 
 /// One invocation of a test-generating `macro_rules!` in its own file.
@@ -185,11 +249,55 @@ struct GeneratedTestSite<'a> {
     test_name: String,
 }
 
+/// One test's transitive witness as it sorts: rank (0 corroborated call, 1
+/// uncorroborated call, 2 derive), test file, line and name, entry symbol,
+/// and the derive name for a derive entry.
+type TransitiveCandidate<'t> = (u8, &'t Path, usize, &'t str, &'t str, Option<String>);
+
+/// An entry's receiver types, split for [`ReachGraph::test_calls_on_any_type`].
+/// `method_call_resolves_to_impl_type_in` accepts an identifier-shaped type
+/// only where the type is an identifier run of the test's masked body or of
+/// a call text, except a numeric primitive, which a literal suffix such as
+/// `5u8` names inside a longer run. So the identifier-shaped, non-numeric
+/// types are looked up from the test's identifiers instead of each being
+/// checked against every test.
+struct ReceiverTypes {
+    /// Types to check one by one: numeric primitives and types that are not
+    /// one identifier.
+    unindexed: Vec<String>,
+    /// The other types, found through the test's identifiers.
+    by_identifier: HashSet<String>,
+}
+
+impl ReceiverTypes {
+    fn new(types: Vec<String>) -> Self {
+        let (by_identifier, unindexed): (Vec<String>, Vec<String>) =
+            types.into_iter().partition(|impl_type| {
+                !impl_type.is_empty()
+                    && impl_type.bytes().all(is_ascii_ident_byte)
+                    && !NUMERIC_PRIMITIVES.contains(&impl_type.as_str())
+            });
+        Self {
+            unindexed,
+            by_identifier: by_identifier.into_iter().collect(),
+        }
+    }
+}
+
+/// Every type a suffixed numeric literal can name.
+const NUMERIC_PRIMITIVES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32",
+    "f64",
+];
+
 struct MacroInvocations<'a> {
     /// Per test, in `ReachGraph::all_tests` order.
     tests: Vec<Vec<MacroInvocation>>,
     /// Per production function, aligned with `ReachGraph::by_name`.
     by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>>,
+    /// Macro name to the production function names whose bodies invoke it:
+    /// `by_name` inverted.
+    invokers: HashMap<String, Vec<&'a str>>,
 }
 
 impl<'a> ReachGraph<'a> {
@@ -228,12 +336,31 @@ impl<'a> ReachGraph<'a> {
                 &mut macro_definitions,
             );
         }
+        let mut unique_macro_identifiers: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
+        for (&macro_name, definitions) in &macro_definitions {
+            let [Some(body)] = definitions.as_slice() else {
+                continue;
+            };
+            let masked = crate::analysis::extract::mask_comments_and_strings(body);
+            let masked: HashSet<&str> = identifier_runs(&masked).collect();
+            for run in identifier_runs(body).filter(|run| masked.contains(run)) {
+                unique_macro_identifiers
+                    .entry(run)
+                    .or_default()
+                    .push(macro_name);
+            }
+        }
+        for macros in unique_macro_identifiers.values_mut() {
+            macros.sort_unstable();
+            macros.dedup();
+        }
         let generated_tests = index
             .files()
             .iter()
             .flat_map(|(path, file)| generated_test_sites(path, &file.data().source))
             .collect();
         let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
+        let test_identifiers = all_tests.iter().map(|_| OnceLock::new()).collect();
         let receiver_checks = all_tests.iter().map(|_| Mutex::default()).collect();
         let mut derive_entries: HashMap<String, Vec<&'a FunctionSummary>> = HashMap::new();
         for file in index.files().values() {
@@ -265,10 +392,14 @@ impl<'a> ReachGraph<'a> {
         Self {
             all_tests,
             masked_test_bodies,
+            test_identifiers,
             receiver_checks,
             by_name,
             callers,
             macro_bodies,
+            unique_macro_identifiers,
+            tests_by_call: OnceLock::new(),
+            name_graph: OnceLock::new(),
             macro_invocations: OnceLock::new(),
             macro_definitions,
             generated_tests,
@@ -318,9 +449,8 @@ impl<'a> ReachGraph<'a> {
         let mut best: Option<(String, &'a str)> = None;
         for derive in derives.iter() {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
-                let reaches = calls_of(function).iter().any(|call| {
+                let reaches = calls_of(function).any(|call| {
                     !is_macro_call(&call.name)
-                        && !is_own_declaration(call, function)
                         && (call.name == owner_name || reaching.contains(call.name.as_str()))
                 });
                 let candidate = (derive.clone(), function.name.as_str());
@@ -337,13 +467,8 @@ impl<'a> ReachGraph<'a> {
     /// built once, on the first sweep; a run that never reaches the macro
     /// fallback does not pay for them.
     fn macro_invocations(&self) -> &MacroInvocations<'a> {
-        self.macro_invocations.get_or_init(|| MacroInvocations {
-            tests: self
-                .all_tests
-                .iter()
-                .map(|test| macro_invocations_in_text(&test.body, test.start_line))
-                .collect(),
-            by_name: self
+        self.macro_invocations.get_or_init(|| {
+            let by_name: HashMap<&'a str, Vec<Vec<MacroInvocation>>> = self
                 .by_name
                 .iter()
                 .map(|(&name, functions)| {
@@ -355,8 +480,41 @@ impl<'a> ReachGraph<'a> {
                         .collect();
                     (name, invocations)
                 })
-                .collect(),
+                .collect();
+            let mut invokers: HashMap<String, Vec<&'a str>> = HashMap::new();
+            for (&name, invocations) in &by_name {
+                for invocation in invocations.iter().flatten() {
+                    invokers
+                        .entry(invocation.name.clone())
+                        .or_default()
+                        .push(name);
+                }
+            }
+            for names in invokers.values_mut() {
+                names.sort_unstable();
+                names.dedup();
+            }
+            MacroInvocations {
+                tests: self
+                    .all_tests
+                    .iter()
+                    .map(|test| macro_invocations_in_text(&test.body, test.start_line))
+                    .collect(),
+                by_name,
+                invokers,
+            }
         })
+    }
+
+    /// Whether a macro edge to `owner_name` is possible: false only when no
+    /// macro passes [`Self::macro_definition_mentions_owner`] for it.
+    fn macro_may_mention(&self, owner_name: &str) -> bool {
+        if owner_name.bytes().all(is_ascii_ident_byte) {
+            return self.unique_macro_identifiers.contains_key(owner_name);
+        }
+        self.macro_bodies
+            .iter()
+            .any(|body| contains_identifier(body, owner_name))
     }
 
     /// Whether `macro_name` has exactly one `macro_rules!` definition in the
@@ -372,6 +530,33 @@ impl<'a> ReachGraph<'a> {
                         owner_name,
                     )
         )
+    }
+
+    /// Indexes into `all_tests`, ascending, of every test with a call named
+    /// in `names`. Scanning these instead of every test's calls makes the
+    /// per-owner cost follow the owner's reaching set, not the test count.
+    fn tests_calling_any(&self, names: &HashSet<&str>) -> Vec<usize> {
+        let by_call = self.tests_by_call.get_or_init(|| {
+            let mut by_call: HashMap<&'a str, Vec<usize>> = HashMap::new();
+            for (test_index, test) in self.all_tests.iter().enumerate() {
+                for call in &test.calls {
+                    let tests = by_call.entry(call.name.as_str()).or_default();
+                    if tests.last() != Some(&test_index) {
+                        tests.push(test_index);
+                    }
+                }
+            }
+            by_call
+        });
+        let mut tests: Vec<usize> = names
+            .iter()
+            .filter_map(|name| by_call.get(name))
+            .flatten()
+            .copied()
+            .collect();
+        tests.sort_unstable();
+        tests.dedup();
+        tests
     }
 
     /// Names from which the forward walk reaches `owner_name`: every name
@@ -428,12 +613,11 @@ impl<'a> ReachGraph<'a> {
         entry: &str,
         reaching: &HashSet<&str>,
         owner_name: &str,
-    ) -> Option<Vec<String>> {
+    ) -> Option<ReceiverTypes> {
         let mut self_types = Vec::new();
         for function in self.by_name.get(entry).into_iter().flatten() {
-            let reaches = calls_of(function).iter().any(|call| {
+            let reaches = calls_of(function).any(|call| {
                 !is_macro_call(&call.name)
-                    && !is_own_declaration(call, function)
                     && (call.name == owner_name || reaching.contains(call.name.as_str()))
             });
             if !reaches {
@@ -444,8 +628,55 @@ impl<'a> ReachGraph<'a> {
         if self_types.is_empty() {
             None
         } else {
-            Some(self_types)
+            Some(ReceiverTypes::new(self_types))
         }
+    }
+
+    /// The identifier runs of test `test_index`'s masked body and call texts.
+    fn test_identifiers(&self, test_index: usize) -> Option<&HashSet<String>> {
+        let test = self.all_tests.get(test_index)?;
+        let masked = self.masked_test_bodies.get(test_index)?;
+        let identifiers = self.test_identifiers.get(test_index)?;
+        Some(identifiers.get_or_init(|| {
+            let masked_body = masked
+                .get_or_init(|| crate::analysis::extract::mask_comments_and_strings(&test.body));
+            identifier_runs(masked_body)
+                .chain(
+                    test.calls
+                        .iter()
+                        .flat_map(|call| identifier_runs(&call.text)),
+                )
+                .map(str::to_string)
+                .collect()
+        }))
+    }
+
+    /// Whether test `test_index` calls `method` on a receiver resolved to
+    /// any of `types`: [`Self::test_calls_on_type`] for each, asked only for
+    /// the types it can accept.
+    fn test_calls_on_any_type(
+        &self,
+        test_index: usize,
+        method: &str,
+        types: &ReceiverTypes,
+    ) -> bool {
+        if types
+            .unindexed
+            .iter()
+            .any(|impl_type| self.test_calls_on_type(test_index, method, impl_type))
+        {
+            return true;
+        }
+        if types.by_identifier.is_empty() {
+            return false;
+        }
+        self.test_identifiers(test_index)
+            .is_some_and(|identifiers| {
+                identifiers.iter().any(|identifier| {
+                    types.by_identifier.contains(identifier.as_str())
+                        && self.test_calls_on_type(test_index, method, identifier)
+                })
+            })
     }
 
     /// Whether test `test_index` calls `method` on a receiver resolved to
@@ -458,9 +689,11 @@ impl<'a> ReachGraph<'a> {
         ) else {
             return false;
         };
-        let key = (method.to_string(), impl_type.to_string());
         let lock = || checks.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(&known) = lock().get(&key) {
+        if let Some(&known) = lock()
+            .get(method)
+            .and_then(|by_type| by_type.get(impl_type))
+        {
             return known;
         }
         let masked_body =
@@ -471,7 +704,10 @@ impl<'a> ReachGraph<'a> {
             method,
             impl_type,
         );
-        lock().insert(key, calls);
+        lock()
+            .entry(method.to_string())
+            .or_default()
+            .insert(impl_type.to_string(), calls);
         calls
     }
 }
@@ -612,13 +848,37 @@ impl<'a> TransitiveReachIndex<'a> {
         // (goldens depend on this determinism).
         // Rank 0 is a corroborated call entry, 1 an uncorroborated one and 2 a
         // derive entry, which no call fact backs, so any call witness wins.
-        let mut witnesses: Vec<(u8, PathBuf, usize, String, String, Option<String>)> = Vec::new();
+        // Only the best witness is kept; the others are counted.
+        let mut best: Option<TransitiveCandidate<'_>> = None;
+        let mut witness_count = 0usize;
         // The receiver types depend only on the entry and this owner, so
         // they are resolved once per entry rather than once per test.
-        let mut receiver_types: HashMap<&str, Option<Vec<String>>> = HashMap::new();
-        for (test_index, test) in graph.all_tests.iter().enumerate() {
+        let mut receiver_types: HashMap<&str, Option<ReceiverTypes>> = HashMap::new();
+        // A derive entry depends only on the test's file, so it is found once
+        // per file. A test with no call to a reaching name and no derive
+        // entry in its file has no witness, so only the others are visited.
+        let mut derive_by_file: HashMap<&Path, Option<(String, &str)>> = HashMap::new();
+        let mut candidates = graph.tests_calling_any(&reaching);
+        if !graph.derive_entries.is_empty() {
+            for (test_index, test) in graph.all_tests.iter().enumerate() {
+                let derive = derive_by_file
+                    .entry(test.file.as_path())
+                    .or_insert_with(|| {
+                        graph.derive_entry(self.index, &test.file, &reaching, owner_name)
+                    });
+                if derive.is_some() {
+                    candidates.push(test_index);
+                }
+            }
+            candidates.sort_unstable();
+            candidates.dedup();
+        }
+        for test_index in candidates {
+            let Some(&test) = graph.all_tests.get(test_index) else {
+                continue;
+            };
             let mut entry: Option<(bool, &str)> = None;
-            for callee in &test.calls {
+            for callee in test_calls(test) {
                 // Skip macro invocations.
                 if is_macro_call(&callee.name) {
                     continue;
@@ -634,9 +894,7 @@ impl<'a> TransitiveReachIndex<'a> {
                         .entry(name)
                         .or_insert_with(|| graph.entry_receiver_types(name, &reaching, owner_name));
                     let uncorroborated = self_types.as_ref().is_some_and(|self_types| {
-                        !self_types
-                            .iter()
-                            .any(|self_type| graph.test_calls_on_type(test_index, name, self_type))
+                        !graph.test_calls_on_any_type(test_index, name, self_types)
                     });
                     let candidate = (uncorroborated, callee.name.as_str());
                     match entry {
@@ -645,44 +903,42 @@ impl<'a> TransitiveReachIndex<'a> {
                     }
                 }
             }
-            if let Some((uncorroborated, symbol)) = entry {
-                witnesses.push((
+            let witness = if let Some((uncorroborated, symbol)) = entry {
+                (
                     u8::from(uncorroborated),
-                    test.file.clone(),
+                    test.file.as_path(),
                     test.start_line,
-                    test.name.clone(),
-                    symbol.to_string(),
+                    test.name.as_str(),
+                    symbol,
                     None,
-                ));
-            } else if let Some((derive, function)) =
-                graph.derive_entry(self.index, &test.file, &reaching, owner_name)
-            {
+                )
+            } else if let Some(Some((derive, function))) = derive_by_file.get(test.file.as_path()) {
                 // `#[derive(Name)]` runs the proc-macro function when the
                 // test target compiles; no call fact records that (#6924).
-                witnesses.push((
+                (
                     2,
-                    test.file.clone(),
+                    test.file.as_path(),
                     test.start_line,
-                    test.name.clone(),
-                    function.to_string(),
-                    Some(derive),
-                ));
+                    test.name.as_str(),
+                    *function,
+                    Some(derive.clone()),
+                )
+            } else {
+                continue;
+            };
+            witness_count += 1;
+            if best.as_ref().is_none_or(|current| witness < *current) {
+                best = Some(witness);
             }
         }
 
-        if witnesses.is_empty() {
-            return None;
-        }
-        witnesses.sort();
-        let other_test_count = witnesses.len() - 1;
-        let (_, test_file, test_line, test_name, entry_symbol, via_derive) =
-            witnesses.into_iter().next()?;
+        let (_, test_file, test_line, test_name, entry_symbol, via_derive) = best?;
         Some(TransitiveWitness {
-            test_name,
-            test_file,
+            test_name: test_name.to_string(),
+            test_file: test_file.to_path_buf(),
             test_line,
-            entry_symbol,
-            other_test_count,
+            entry_symbol: entry_symbol.to_string(),
+            other_test_count: witness_count - 1,
             via_derive,
         })
     }
@@ -696,7 +952,7 @@ impl<'a> TransitiveReachIndex<'a> {
     /// (#5411) reads it to ask whether any test-reached code names a type.
     pub(in crate::analysis) fn test_reached_functions(&self) -> Vec<&'a FunctionSummary> {
         let graph = self.graph();
-        let calls = graph.all_tests.iter().flat_map(|test| test.calls.iter());
+        let calls = graph.all_tests.iter().flat_map(|test| test_calls(test));
         self.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
     }
 
@@ -704,6 +960,59 @@ impl<'a> TransitiveReachIndex<'a> {
     /// name, sorted by name. Macro invocations and names with no in-crate
     /// function stop their branch, as in the transitive walk.
     pub(in crate::analysis) fn functions_reached_from<'c>(
+        &self,
+        calls: impl IntoIterator<Item = &'c CallFact>,
+        depth: usize,
+    ) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let names = graph
+            .name_graph
+            .get_or_init(|| NameGraph::build(&graph.by_name));
+        let mut seen = vec![false; names.names.len()];
+        let mut frontier: Vec<u32> = Vec::new();
+        for call in calls {
+            if is_macro_call(&call.name) {
+                continue;
+            }
+            if let Some(&id) = names.ids.get(call.name.as_str())
+                && let Some(slot) = seen.get_mut(id as usize)
+                && !*slot
+            {
+                *slot = true;
+                frontier.push(id);
+            }
+        }
+        let mut reached: Vec<u32> = frontier.clone();
+        for _ in 1..depth {
+            let mut next = Vec::new();
+            for id in frontier {
+                for &callee in names.callees.get(id as usize).into_iter().flatten() {
+                    if let Some(slot) = seen.get_mut(callee as usize)
+                        && !*slot
+                    {
+                        *slot = true;
+                        next.push(callee);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            reached.extend(next.iter().copied());
+            frontier = next;
+        }
+        reached.sort_unstable();
+        reached
+            .into_iter()
+            .filter_map(|id| names.names.get(id as usize))
+            .flat_map(|name| graph.by_name.get(name).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// The walk [`Self::functions_reached_from`] replaced, over names
+    /// instead of interned ids; tests pin the two together.
+    #[cfg(test)]
+    fn functions_reached_from_by_name<'c>(
         &self,
         calls: impl IntoIterator<Item = &'c CallFact>,
         depth: usize,
@@ -816,11 +1125,7 @@ impl TransitiveReachIndex<'_> {
             return None;
         }
         let graph = self.graph();
-        if !graph
-            .macro_bodies
-            .iter()
-            .any(|body| contains_identifier(body, owner_name))
-        {
+        if !graph.macro_may_mention(owner_name) {
             return None;
         }
         let mut sweep = ReachSweep::new(graph, owner_name);
@@ -833,8 +1138,25 @@ fn macro_reach_witness_with(
     sweep: &mut ReachSweep<'_, '_>,
     owner_name: &str,
 ) -> Option<MacroReachWitness> {
+    // Witnesses sort by test first, and each test yields at most one, so
+    // only the earliest test with a macro edge needs its witness built; the
+    // rest are only counted.
+    let tests = || graph.all_tests.iter().zip(&graph.macro_invocations().tests);
+    let mut edge_tests = 0usize;
+    let mut first: Option<&TestFact> = None;
+    for (test, invocations) in tests() {
+        if test_has_macro_edge(graph, sweep, test, invocations, owner_name) {
+            edge_tests += 1;
+            if first.is_none_or(|best| test_key(test) < test_key(best)) {
+                first = Some(test);
+            }
+        }
+    }
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
-    for (test, invocations) in graph.all_tests.iter().zip(&graph.macro_invocations().tests) {
+    for (test, invocations) in tests() {
+        if first.is_none_or(|best| test_key(test) != test_key(best)) {
+            continue;
+        }
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
         for macro_invocation in invocations {
@@ -850,7 +1172,7 @@ fn macro_reach_witness_with(
             }
         }
 
-        for callee in &test.calls {
+        for callee in test_calls(test) {
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
@@ -902,7 +1224,7 @@ fn macro_reach_witness_with(
         return None;
     }
     witnesses.sort();
-    let other_test_count = witnesses.len() - 1;
+    let other_test_count = edge_tests.max(witnesses.len()) - 1;
     let candidate = witnesses.into_iter().next()?;
 
     Some(MacroReachWitness {
@@ -915,6 +1237,34 @@ fn macro_reach_witness_with(
         macro_line: candidate.macro_line,
         macro_host: candidate.macro_host,
         other_test_count,
+    })
+}
+
+/// The leading fields of a test's [`MacroWitnessCandidate`], which order it.
+fn test_key(test: &TestFact) -> (&Path, usize, &str) {
+    (test.file.as_path(), test.start_line, test.name.as_str())
+}
+
+/// Whether `test` has the macro edge [`macro_reach_witness_with`] would
+/// record for it, without building the edge.
+fn test_has_macro_edge(
+    graph: &ReachGraph<'_>,
+    sweep: &mut ReachSweep<'_, '_>,
+    test: &TestFact,
+    invocations: &[MacroInvocation],
+    owner_name: &str,
+) -> bool {
+    invocations.iter().any(|invocation| {
+        ReachSweep::invocation_mentions_owner(
+            &mut sweep.macro_mention_memo,
+            invocation,
+            owner_name,
+            graph,
+        )
+    }) || test.calls.iter().any(|callee| {
+        !is_macro_call(&callee.name)
+            && callee.name != owner_name
+            && sweep.reaches_owner_macro(&callee.name)
     })
 }
 
@@ -1248,6 +1598,9 @@ struct ReachSweep<'g, 'a> {
     owner_name: String,
     macro_edge_memo: HashMap<String, Option<MacroReachEdge>>,
     macro_mention_memo: HashMap<String, bool>,
+    /// For an identifier owner, every name from which [`Self::macro_edge`]
+    /// finds an edge; built on first use. See [`Self::macro_reachers`].
+    macro_reachers: Option<HashSet<&'a str>>,
 }
 
 impl<'g, 'a> ReachSweep<'g, 'a> {
@@ -1257,6 +1610,7 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
             owner_name: owner_name.to_string(),
             macro_edge_memo: HashMap::new(),
             macro_mention_memo: HashMap::new(),
+            macro_reachers: None,
         }
     }
 
@@ -1272,6 +1626,65 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
         self.macro_edge_memo
             .insert(start_name.to_string(), edge.clone());
         edge
+    }
+
+    /// Whether [`Self::macro_edge`] finds an edge from `start_name`. For an
+    /// owner made of identifier bytes this is a lookup in one reverse walk
+    /// for the owner, instead of one forward walk per start name.
+    fn reaches_owner_macro(&mut self, start_name: &str) -> bool {
+        if !self.owner_name.bytes().all(is_ascii_ident_byte) {
+            return self.has_macro_edge(start_name);
+        }
+        self.macro_reachers().contains(start_name)
+    }
+
+    /// The names the forward walk in [`Self::bfs_hits_owner_macro_uncached`]
+    /// succeeds from, found by walking backwards. That walk starts at depth 1,
+    /// never enters the owner, follows non-macro calls and succeeds at a name
+    /// of depth at most `MAX_TRANSITIVE_DEPTH` that has a function invoking a
+    /// macro whose only definition names the owner. So a start succeeds
+    /// exactly when such a name is at most `MAX_TRANSITIVE_DEPTH - 1` call
+    /// hops away through names other than the owner: the names found here by
+    /// following callers back from those invokers, never through the owner.
+    fn macro_reachers(&mut self) -> &HashSet<&'a str> {
+        let graph = self.graph;
+        let owner_name = self.owner_name.as_str();
+        self.macro_reachers.get_or_insert_with(|| {
+            let invokers = &graph.macro_invocations().invokers;
+            let mut reached: HashSet<&'a str> = HashSet::new();
+            let mut frontier: Vec<&'a str> = Vec::new();
+            for &macro_name in graph
+                .unique_macro_identifiers
+                .get(owner_name)
+                .map_or(&[][..], Vec::as_slice)
+            {
+                for &name in invokers.get(macro_name).map_or(&[][..], Vec::as_slice) {
+                    if name != owner_name && reached.insert(name) {
+                        frontier.push(name);
+                    }
+                }
+            }
+            for _ in 1..MAX_TRANSITIVE_DEPTH {
+                let mut next = Vec::new();
+                for name in frontier {
+                    for &caller in graph.callers.get(name).map_or(&[][..], Vec::as_slice) {
+                        if caller != owner_name && reached.insert(caller) {
+                            next.push(caller);
+                        }
+                    }
+                }
+                frontier = next;
+            }
+            reached
+        })
+    }
+
+    /// Whether [`Self::macro_edge`] finds an edge, without cloning it.
+    fn has_macro_edge(&mut self, start_name: &str) -> bool {
+        if let Some(cached) = self.macro_edge_memo.get(start_name) {
+            return cached.is_some();
+        }
+        self.macro_edge(start_name).is_some()
     }
 
     fn bfs_hits_owner_macro_uncached(&mut self, start_name: &str) -> Option<MacroReachEdge> {
@@ -1318,6 +1731,22 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
         None
     }
 
+    /// Whether the invoked macro's definition names the owner, memoized per
+    /// macro name for this owner.
+    fn invocation_mentions_owner(
+        memo: &mut HashMap<String, bool>,
+        invocation: &MacroInvocation,
+        owner_name: &str,
+        graph: &ReachGraph<'_>,
+    ) -> bool {
+        if let Some(cached) = memo.get(invocation.name.as_str()) {
+            return *cached;
+        }
+        let mentions = graph.macro_definition_mentions_owner(&invocation.name, owner_name);
+        memo.insert(invocation.name.clone(), mentions);
+        mentions
+    }
+
     fn macro_edge_for_invocation(
         memo: &mut HashMap<String, bool>,
         invocation: &MacroInvocation,
@@ -1326,16 +1755,8 @@ impl<'g, 'a> ReachSweep<'g, 'a> {
         owner_name: &str,
         graph: &ReachGraph<'_>,
     ) -> Option<MacroReachEdge> {
-        if let Some(cached) = memo.get(invocation.name.as_str()) {
-            if !*cached {
-                return None;
-            }
-        } else {
-            let mentions = graph.macro_definition_mentions_owner(&invocation.name, owner_name);
-            memo.insert(invocation.name.clone(), mentions);
-            if !mentions {
-                return None;
-            }
+        if !Self::invocation_mentions_owner(memo, invocation, owner_name, graph) {
+            return None;
         }
         Some(MacroReachEdge {
             macro_name: invocation.name.clone(),
@@ -2092,23 +2513,82 @@ fn contains_identifier(text: &str, needle: &str) -> bool {
     })
 }
 
+/// The maximal runs of ASCII identifier bytes in `text`. For a non-empty
+/// `needle` made only of such bytes, `contains_identifier(text, needle)` holds
+/// exactly when `needle` is one of these runs.
+fn identifier_runs(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|run| !run.is_empty())
+}
+
 fn is_ascii_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn calls_of(f: &FunctionSummary) -> &[CallFact] {
-    &f.calls
+fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&f.name, &f.calls)
 }
 
-/// Whether `call` is the function's own declaration line (`fn build(&self)`),
-/// which call facts record under the function's own name. It is no evidence
-/// that the function leads anywhere: without this, `Cache::build` would
-/// "reach" through the name `build` (#5481). A real call to a same-named
-/// function on another type (`self.queue.build()`) still counts.
-fn is_own_declaration(call: &CallFact, function: &FunctionSummary) -> bool {
-    call.name == function.name
-        && contains_identifier(&call.text, "fn")
-        && call.text.contains(&format!("fn {}", function.name))
+fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&test.name, &test.calls)
+}
+
+/// `calls` without the function's own declaration (`fn build(&self)`), which
+/// call facts record under the function's own name. It is no evidence that
+/// the function leads anywhere. Left in, `Cache::build` "reaches" through the
+/// name `build` (#5481), a test named `test` calls every same-named helper,
+/// and a trait method's walk reaches every method sharing its name, so
+/// `Display::fmt` reached each `Debug::fmt` (#5577). A real call to a
+/// same-named function on another type (`self.queue.build()`) still counts.
+///
+/// Call facts keep one fact per name and line, so on a one-line function
+/// (`fn parse() { assert!(parse("1").is_ok()) }`) the fact stands for both
+/// the declaration and the call; it is dropped only when every `name(` on
+/// its line is a declaration. The line is not matched against the
+/// function's start line: that line can be an attribute (`#[derive(..)]`
+/// above a derive entry), so the declaration fact sits on a later line.
+pub(in crate::analysis) fn calls_after_definition<'c>(
+    name: &'c str,
+    calls: &'c [CallFact],
+) -> impl Iterator<Item = &'c CallFact> + 'c {
+    calls
+        .iter()
+        .filter(move |call| !(call.name == name && only_declares(&call.text, name)))
+}
+
+/// Whether every call-shaped `name(` in `line` follows `fn`.
+fn only_declares(line: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let bytes = line.as_bytes();
+    let mut declarations = 0usize;
+    let mut calls = 0usize;
+    for (start, _) in line.match_indices(name) {
+        let end = start + name.len();
+        if (start > 0 && is_ident(bytes[start - 1])) || bytes.get(end).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let after = line[end..].trim_start();
+        if !(after.starts_with('(') || after.starts_with('<') || after.starts_with("::<")) {
+            continue;
+        }
+        if line[..start].trim_end().ends_with("fn")
+            && line[..start]
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|before| {
+                    before
+                        .chars()
+                        .last()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+                })
+        {
+            declarations += 1;
+        } else {
+            calls += 1;
+        }
+    }
+    declarations > 0 && calls == 0
 }
 
 /// Returns true when the callee name looks like a macro invocation - i.e. it
@@ -2154,6 +2634,49 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      stops at a macro invocation it does not expand. \
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    fn call(line: usize, name: &str, text: &str) -> CallFact {
+        CallFact {
+            line,
+            name: name.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_not_a_call_but_a_one_line_self_call_is() {
+        let calls = [
+            call(1, "parse", "fn parse() -> u32 {"),
+            call(2, "parse", "parse(1)"),
+        ];
+        let kept: Vec<_> = calls_after_definition("parse", &calls)
+            .map(|c| c.line)
+            .collect();
+        assert_eq!(kept, vec![2]);
+        let one_line = [call(
+            1,
+            "parse",
+            "#[test] fn parse() { assert!(parse(\"1\").is_ok()); }",
+        )];
+        assert_eq!(calls_after_definition("parse", &one_line).count(), 1);
+        let delegating = [call(
+            1,
+            "build",
+            "fn build(&self) -> X { self.inner.build() }",
+        )];
+        assert_eq!(calls_after_definition("build", &delegating).count(), 1);
+        // `fn build_all(` is not `fn build(`.
+        let other = [call(1, "build", "fn build_all() { build() }")];
+        assert_eq!(calls_after_definition("build", &other).count(), 1);
+        // The declaration fact can sit below an attribute line.
+        let attributed = [call(2, "build", "fn build(&self) -> X {")];
+        assert_eq!(calls_after_definition("build", &attributed).count(), 0);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2753,6 +3276,244 @@ mod tests {
         assert!(find_macro_reach_witness("", &index).is_none());
     }
 
+    // Looking receiver types up from a test's identifiers must answer as
+    // checking each type does, including a type a literal suffix names
+    // inside a longer run (`5u8`) and one that is not an identifier.
+    #[test]
+    fn receiver_type_lookup_agrees_with_checking_each_type() {
+        let bodies = [
+            "let s = Site::new();\n    s.render();",
+            "Site { x: 1 }.render();",
+            "let n = 5u8;\n    5u8.render();\n    (-0.5f64).render();",
+            "<Site as Render>::render(&x);\n    Render::render(&Cache(1));",
+            "// Site\n    let s = \"Site\";\n    s.render();",
+            "let s: Cache = make();\n    s.render();\n    Other::render(&s);",
+            "let s = \"Site::render(x)\";\n    s.len();",
+        ];
+        let tests: Vec<TestFact> = bodies
+            .iter()
+            .enumerate()
+            .map(|(index, body)| {
+                let mut test =
+                    make_test_at(&format!("t{index}"), "tests/it.rs", index * 10, vec![]);
+                test.body = format!("fn t{index}() {{\n    {body}\n}}").into();
+                // The last test's call text names `Site` only where its masked
+                // body does not: in a string.
+                let text = if index == bodies.len() - 1 {
+                    "Site::render(x)".to_string()
+                } else {
+                    body.lines().last().unwrap_or_default().trim().to_string()
+                };
+                test.calls = vec![CallFact {
+                    line: index * 10 + 2,
+                    name: "render".to_string(),
+                    text,
+                }];
+                test
+            })
+            .collect();
+        let index = index_with(Vec::new(), tests);
+        let reach = TransitiveReachIndex::new(&index);
+        let graph = reach.graph();
+        let type_sets: [&[&str]; 5] = [
+            &["Site"],
+            &["Cache", "Other"],
+            &["u8", "f64"],
+            &["Missing", "[u8]", "Site"],
+            &["Render"],
+        ];
+        let mut agreed_true = 0;
+        for test_index in 0..graph.all_tests.len() {
+            for types in type_sets {
+                let receiver_types =
+                    ReceiverTypes::new(types.iter().map(ToString::to_string).collect());
+                let expected = types
+                    .iter()
+                    .any(|impl_type| graph.test_calls_on_type(test_index, "render", impl_type));
+                assert_eq!(
+                    graph.test_calls_on_any_type(test_index, "render", &receiver_types),
+                    expected,
+                    "test {test_index} types {types:?}"
+                );
+                agreed_true += usize::from(expected);
+            }
+        }
+        assert!(
+            agreed_true >= 5,
+            "fixture must resolve some receivers: {agreed_true}"
+        );
+        // The cases the lookup could get wrong must really resolve.
+        assert!(
+            graph.test_calls_on_type(2, "render", "u8"),
+            "`5u8.render()`"
+        );
+        assert!(
+            graph.test_calls_on_type(2, "render", "f64"),
+            "`(-0.5f64).render()`"
+        );
+        assert!(
+            graph.test_calls_on_type(6, "render", "Site"),
+            "call text only"
+        );
+    }
+
+    // Only the earliest test by path, line and name gets its witness built;
+    // the other tests with a macro edge are counted. The index lists the
+    // tests out of that order.
+    #[test]
+    fn macro_witness_names_the_path_first_test_and_counts_the_rest() {
+        let outer = make_fn_with_body(
+            "outer",
+            vec![],
+            "pub fn outer() {\n    call_inner!()\n}".to_string(),
+        );
+        let source = "macro_rules! call_inner {\n    () => { inner() };\n}".to_string();
+        let index = index_with_source(
+            vec![outer],
+            vec![
+                make_test_at("z_last", "tests/b.rs", 1, vec!["outer"]),
+                make_test_at("no_edge", "tests/a.rs", 1, vec!["unrelated"]),
+                make_test_at("a_later", "tests/a.rs", 9, vec!["outer"]),
+                make_test_at("b_first", "tests/a.rs", 3, vec!["outer"]),
+            ],
+            source,
+        );
+
+        let witness = find_macro_reach_witness("inner", &index);
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.test_name.as_str(), w.test_line, w.other_test_count)),
+            Some(("b_first", 3, 2))
+        );
+    }
+
+    // The reverse walk must accept exactly the start names the forward walk
+    // finds an edge from: at the depth limit, around the owner, and past
+    // macros whose mention is only in a comment or has two definitions.
+    #[test]
+    fn macro_reachers_agree_with_the_forward_walk() {
+        let invoking = |name: &str, invoked: &str| {
+            make_fn_with_body(
+                name,
+                vec![],
+                format!("fn {name}() {{\n    {invoked}!();\n}}"),
+            )
+        };
+        let fns = vec![
+            make_fn("f1", vec!["f2"]),
+            make_fn("f2", vec!["f3"]),
+            make_fn("f3", vec!["f4"]),
+            make_fn("f4", vec!["f5"]),
+            make_fn("f5", vec!["f6"]),
+            make_fn("f6", vec!["f7"]),
+            invoking("f7", "call_inner"),
+            make_fn("g1", vec!["inner"]),
+            invoking("inner", "call_inner"),
+            make_fn("g2", vec!["h"]),
+            make_fn("h", vec!["inner", "quiet_caller"]),
+            invoking("quiet_caller", "quiet"),
+            invoking("twice_caller", "twice"),
+            make_fn("tw", vec!["twice_caller"]),
+        ];
+        let source = "macro_rules! call_inner { () => { inner() }; }\n\
+                      macro_rules! quiet { () => { /* inner */ }; }\n\
+                      macro_rules! twice { () => { inner() }; }\n\
+                      macro_rules! twice { () => { inner() }; }\n"
+            .to_string();
+        let index = index_with_source(fns, Vec::new(), source);
+        let reach = TransitiveReachIndex::new(&index);
+        let graph = reach.graph();
+        let mut names: Vec<&str> = graph.by_name.keys().copied().collect();
+        names.extend(["missing", "call_inner"]);
+        // Callers never start at the owner: a test's call to it is skipped.
+        names.retain(|name| *name != "inner");
+        names.sort_unstable();
+        let mut reverse = ReachSweep::new(graph, "inner");
+        let mut reached = Vec::new();
+        for name in names {
+            let forward = ReachSweep::new(graph, "inner").has_macro_edge(name);
+            assert_eq!(reverse.reaches_owner_macro(name), forward, "{name}");
+            if forward {
+                reached.push(name);
+            }
+        }
+        assert_eq!(reached, ["f3", "f4", "f5", "f6", "f7"]);
+    }
+
+    #[test]
+    fn interned_walk_agrees_with_the_walk_over_names() {
+        let mut decode_a = make_fn("decode", vec!["left"]);
+        decode_a.id = SymbolId("src/lib.rs::A::decode".to_string());
+        let mut decode_b = make_fn("decode", vec!["right", "expand!"]);
+        decode_b.id = SymbolId("src/lib.rs::B::decode".to_string());
+        let fns = vec![
+            make_fn("a1", vec!["a2", "missing"]),
+            make_fn("a2", vec!["a3", "a1"]),
+            make_fn("a3", vec!["a4"]),
+            make_fn("a4", vec!["a5", "decode"]),
+            make_fn("a5", vec!["a6"]),
+            make_fn("a6", vec![]),
+            decode_a,
+            decode_b,
+            make_fn("left", vec!["decode"]),
+            make_fn("right", vec![]),
+            make_fn("expand", vec!["a6"]),
+        ];
+        let index = index_with(fns, Vec::new());
+        let reach = TransitiveReachIndex::new(&index);
+        let ids = |functions: Vec<&FunctionSummary>| -> Vec<String> {
+            functions.iter().map(|f| f.id.0.clone()).collect()
+        };
+        let mut starts: Vec<&str> = reach.graph().by_name.keys().copied().collect();
+        starts.extend(["missing", "expand!"]);
+        starts.sort_unstable();
+        for start in starts {
+            let calls = vec![CallFact {
+                line: 1,
+                name: start.to_string(),
+                text: format!("{start}()"),
+            }];
+            for depth in 0..=7 {
+                assert_eq!(
+                    ids(reach.functions_reached_from(&calls, depth)),
+                    ids(reach.functions_reached_from_by_name(&calls, depth)),
+                    "{start} at depth {depth}"
+                );
+            }
+        }
+        // A start named twice is walked once.
+        let call = |name: &str| CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: format!("{name}()"),
+        };
+        let repeated = vec![call("a1"), call("a1"), call("decode")];
+        assert_eq!(
+            ids(reach.functions_reached_from(&repeated, 2)),
+            ids(reach.functions_reached_from_by_name(&repeated, 2)),
+        );
+        // Both `decode`s are followed, the macro call `expand!` names no
+        // function, and the walk stops at the depth bound before `a6`.
+        let a1 = vec![CallFact {
+            line: 1,
+            name: "a1".to_string(),
+            text: "a1()".to_string(),
+        }];
+        assert_eq!(
+            ids(reach.functions_reached_from(&a1, 5)),
+            [
+                "src/lib.rs::a1",
+                "src/lib.rs::a2",
+                "src/lib.rs::a3",
+                "src/lib.rs::a4",
+                "src/lib.rs::a5",
+                "src/lib.rs::A::decode",
+                "src/lib.rs::B::decode",
+            ]
+        );
+    }
+
     #[test]
     fn given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured() {
         let outer = make_fn_with_body(
@@ -3061,6 +3822,31 @@ mod tests {
             "call_inner",
             "inner",
         ));
+    }
+
+    #[test]
+    fn identifier_runs_agree_with_contains_identifier_for_identifier_needles() {
+        let texts = [
+            "",
+            "inner",
+            "outer innerish",
+            "($x:expr) => { inner($x) }",
+            "r#inner + _inner + inner_ + inner2",
+            "é_inner·inner\u{0}inner::Inner",
+            "aaa aa a",
+        ];
+        let needles = [
+            "inner", "Inner", "_inner", "inner2", "aa", "a", "x", "expr", "u", "0",
+        ];
+        for text in texts {
+            for needle in needles {
+                assert_eq!(
+                    identifier_runs(text).any(|run| run == needle),
+                    contains_identifier(text, needle),
+                    "{needle:?} in {text:?}"
+                );
+            }
+        }
     }
 
     #[test]

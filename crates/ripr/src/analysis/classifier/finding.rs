@@ -2,12 +2,13 @@ use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons,
+    stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
+const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
@@ -39,6 +40,20 @@ pub(in crate::analysis) fn build_finding(
     let recommended_next_step =
         if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
             None
+        } else if class == ExposureClass::WeaklyExposed
+            && evidence.reach.state == StageState::Weak
+            && !context.owner_assertion_shaped
+            && !context.related_tests.is_empty()
+            && context
+                .related_tests
+                .iter()
+                .all(|(_, reason)| reason.is_proximity_only())
+            && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
+        {
+            // Proximity is an inspection pointer, not a finding that an
+            // existing assertion is broad or missing. Unindexed doctests
+            // and examples may already constrain this owner (#7593).
+            Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
         } else if class == ExposureClass::StaticUnknown
             && evidence.reach.state == StageState::No
             && !context.owner_assertion_shaped

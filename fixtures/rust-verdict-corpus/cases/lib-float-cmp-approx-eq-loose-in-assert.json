@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-float-cmp-approx-eq-loose-in-assert",
+  "subject_id": "authored-lib-float",
+  "diff": "cases/lib-float-cmp-approx-eq-loose-in-assert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "float_cmp_approx_eq_in_assert_loose",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v / 3.5",
+        "mutated_line": "v / 3.5",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: kmh_to_ms(36.0) = 10.29 (within 0.5) instead of 10.0"
+      },
+      {
+        "replacement": "v / 3.0",
+        "mutated_line": "v / 3.0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::highway_speed",
+        "equivalence_review": "not equivalent: kmh_to_ms(36.0) = 12.0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert!(approx_eq!(f64, .., epsilon = 0.5)) tolerates the 3.5 divisor (10.29) but not 3.0 (12).",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

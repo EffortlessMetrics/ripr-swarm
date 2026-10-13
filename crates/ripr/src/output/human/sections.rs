@@ -520,7 +520,13 @@ pub(super) fn render_finding_with_shared_sections(
         // the post-Phase-B PR.
     } else if let Some(card) = perl_preview_card(finding) {
         push_perl_preview_card(&mut out, &card);
-    } else if let Some(placement) = repair_placement_from_evidence(finding) {
+    } else if let Some(placement) = finding
+        .is_candidate_actionable()
+        .then(|| repair_placement_from_evidence(finding))
+        .flatten()
+    {
+        // Base-side evidence names no candidate edit target (#3281), so it
+        // gets no repair placement, as JSON omits one.
         out.push_str("\nRepair placement\n");
         out.push_str(&format!("  suggested file: {}\n", placement.test_file));
         out.push_str(&format!("  suggested test: {}\n", placement.test_name));
@@ -904,7 +910,8 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
     if !matches!(
         finding.language,
         Some(LanguageId::TypeScript | LanguageId::JavaScript)
-    ) {
+    ) || !finding.is_candidate_actionable()
+    {
         return;
     }
 

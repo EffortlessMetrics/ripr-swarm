@@ -44,6 +44,7 @@ fn failure_vocabulary() -> Vec<&'static str> {
         "result_too_large",
         CODE_ATTEMPT_NOT_FOUND,
         CODE_ATTEMPT_INVALID,
+        super::attempt_inventory::CODE_STALE_INVENTORY,
     ];
     codes.extend(RESERVED_FAILURE_CODES.iter().copied());
     codes.extend([
@@ -61,7 +62,7 @@ fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session. Call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. Use `ripr check --committed` for committed input, or `ripr check --worktree --format json` for staged and unstaged tracked edits outside MCP. Continue with `ripr_list_gaps` for the deterministically bounded working set of canonical items; then call `ripr_get_gap` (or read `ripr://gap/{canonical_id}`) for one item's complete bounded evidence. When one item's producer repair-readiness facts are established, call `ripr_prepare_repair` to create (or replay) one bounded in-memory repair transaction bound to that snapshot and item, then read it back with `ripr_get_repair_attempt` or `ripr://repair-attempt/{attempt_id}` and inspect its receipt state with `ripr_get_receipt_status` or `ripr://receipt/{receipt_id}`; durable CLI attempts of this workspace are readable through the same routes. For one canonical item's bounded repair card — the same repair_card.v1 document `ripr agent card` and the standard language server project — call `ripr_get_repair_card` or read `ripr://repair-card/{canonical_id}`; the card binds the analyzed repository head and currentness of its committed snapshot and names the same typed next action the CLI would. The server never edits source, runs tests or mutation, executes verification commands, launches processes, or loads project-local provider configuration, and no evidence document is ever a repair authorization: the external client's approval and sandbox policy remains authoritative for every command a returned route names. To analyze outside this session, run the ripr CLI in the repository: `ripr check --format json` names each changed-behavior gap and its missing test input.";
+pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session. Call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. Use `ripr check --committed` for committed input, or `ripr check --worktree --format json` for staged and unstaged tracked edits outside MCP. Continue with `ripr_list_gaps` for the deterministically bounded working set of canonical items; then call `ripr_get_gap` (or read `ripr://gap/{canonical_id}`) for one item's complete bounded evidence. When one item's producer repair-readiness facts are established, call `ripr_prepare_repair` to create (or replay) one bounded in-memory repair transaction bound to that snapshot and item, then read it back with `ripr_get_repair_attempt` or `ripr://repair-attempt/{attempt_id}` and inspect its receipt state with `ripr_get_receipt_status` or `ripr://receipt/{receipt_id}`; durable CLI attempts of this workspace are readable through the same routes. Discover their ids before or after refresh with `ripr_list_repair_attempts`; follow its inventory-bound continuation to page every valid or invalid row without leaving MCP. For one canonical item's bounded repair card — the same repair_card.v1 document `ripr agent card` and the standard language server project — call `ripr_get_repair_card` or read `ripr://repair-card/{canonical_id}`; the card binds the analyzed repository head and currentness of its committed snapshot and names the same typed next action the CLI would. The server never edits source, runs tests or mutation, executes verification commands, launches processes, or loads project-local provider configuration, and no evidence document is ever a repair authorization: the external client's approval and sandbox policy remains authoritative for every command a returned route names. To analyze outside this session, run the ripr CLI in the repository: `ripr check --format json` names each changed-behavior gap and its missing test input.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state. The document contains repository-root discovery state (validated or unavailable, with repository markers and any root error code), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: current desired input (workspace diff against the default branch, draft mode), current attempt state (no_snapshot, in_flight, completed, or failed), the last completed snapshot identity, last-known-good state, freshness as of the last refresh, the typed AnalysisOutcome of the committed snapshot, and the analysis profile and support facts: the workspace's own ripr.toml is honored when it loads (project_config: loaded, with its config_identity and enabled languages), built-in defaults apply when none resolves, and a config that cannot be read or parsed is detected_not_loaded. `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
@@ -101,6 +102,7 @@ pub(super) fn tools_list_result() -> Value {
         get_repair_attempt_tool_descriptor(),
         get_receipt_status_tool_descriptor(),
         get_repair_card_tool_descriptor(),
+        super::attempt_inventory::tool_descriptor(),
     ]})
 }
 
@@ -159,7 +161,7 @@ struct McpStatusDocument<'a> {
 #[derive(Serialize)]
 struct McpSurfaceStatus {
     transport: &'static str,
-    tools: [&'static str; 8],
+    tools: [&'static str; 9],
     resources: [&'static str; 1],
     resource_templates: [&'static str; 5],
     bounds: McpBoundsStatus,
@@ -194,6 +196,7 @@ pub(super) fn status_document(
                 GET_REPAIR_ATTEMPT_TOOL_NAME,
                 GET_RECEIPT_STATUS_TOOL_NAME,
                 GET_REPAIR_CARD_TOOL_NAME,
+                super::attempt_inventory::TOOL_NAME,
             ],
             resources: [STATUS_RESOURCE_URI],
             resource_templates: [
@@ -314,6 +317,12 @@ fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
 /// their page until this is `false`, so a tool that advertises an
 /// `outputSchema` always returns a structured result (#6021 review).
 pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, String> {
+    structured_envelope_bytes(document).map(|bytes| bytes > super::MAX_RESPONSE_BYTES)
+}
+
+/// Measure the shared full tool envelope. Paging adapters also reserve the
+/// actual request ID and SDK/JSON-RPC wrapper before comparing these bytes.
+pub(super) fn structured_envelope_bytes(document: &Value) -> Result<usize, String> {
     let text = serde_json::to_string(document)
         .map_err(|error| format!("render tool document: {error}"))?;
     let structured = json!({
@@ -321,7 +330,7 @@ pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, St
         "structuredContent": document,
         "isError": false,
     });
-    Ok(envelope_bytes(&structured)? > super::MAX_RESPONSE_BYTES)
+    envelope_bytes(&structured)
 }
 
 /// A typed tool failure envelope: standard `isError` semantics with the
@@ -653,7 +662,7 @@ fn failure_schema() -> Value {
     })
 }
 
-fn typed_failure_document_schema(schema_version: &str) -> Value {
+pub(super) fn typed_failure_document_schema(schema_version: &str) -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -913,8 +922,8 @@ fn status_success_schema() -> Value {
                     "tools": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "minItems": 8,
-                        "maxItems": 8
+                        "minItems": 9,
+                        "maxItems": 9
                     },
                     "resources": {
                         "type": "array",
@@ -1388,9 +1397,9 @@ mod tests {
             .and_then(Value::as_array)
             .map(|tools| tools.len())
             .ok_or_else(|| "tools/list payload drifted".to_string())?;
-        if names != 8 {
+        if names != 9 {
             return Err(format!(
-                "expected the eight-tool slice surface, got {names} tools"
+                "expected the nine-tool slice surface, got {names} tools"
             ));
         }
         let description = json_str(&tools, "/tools/0/description")?;

@@ -12,11 +12,15 @@
 //! passes at the match scrutinee's position, and judges the pair:
 //!
 //! - `Selects`: the input's constructor or literal equals one of the arm's
-//!   alternatives, and that alternative binds its payload irrefutably;
-//! - `SelectsOther`: every alternative names a constructor or literal, and
-//!   the input's differs from all of them;
+//!   alternatives (or falls inside an integer range alternative), and that
+//!   alternative binds its payload irrefutably; for an arm whose pattern
+//!   the diff changed, the input instead moved between this arm and a
+//!   later one whose results are provably unequal (literals, or variants
+//!   of literals);
+//! - `SelectsOther`: every alternative names a constructor, literal or
+//!   integer range, and the input's differs from all of them;
 //! - `Unknown`: anything else (a variable input, a wildcard or binding
-//!   alternative, a range, a guard, a const-looking name, mixed kinds).
+//!   alternative, a guard, a const-looking name, mixed kinds).
 //!
 //! The scrutinee must be the owner's `self` receiver or one of its named
 //! parameters, read from the enclosing `match <scrutinee> {` with no
@@ -57,6 +61,15 @@ pub(in crate::analysis) struct ArmSelector {
     /// type for `self`), when the signature or impl names one. A qualified
     /// input must be qualified by it.
     scrutinee_type: Option<String>,
+    /// The scrutinee type when it is written as a bare name (`k: Kind`, not
+    /// `k: other::Kind`), so an enum the owner's file declares under that
+    /// name is the scrutinee's type. `in_workspace` reads that enum's
+    /// variants for uncased names (#7543).
+    bare_scrutinee_type: Option<String>,
+    /// Whether the owner's impl type is `bare_scrutinee_type`, so `Self::A`
+    /// names the scrutinee's type. In `impl Router`, a match on `m: Method`
+    /// may compare `Self::GET`, a `Router` constant, by value.
+    self_is_scrutinee_type: bool,
     binding: ScrutineeBinding,
     owner: String,
     method: bool,
@@ -69,9 +82,28 @@ pub(in crate::analysis) struct ArmSelector {
     /// The arm's original alternatives when the diff changed its pattern
     /// (`Some(None)` when the original pattern cannot be read). An input
     /// inside both patterns runs the same arm either way, so a changed
-    /// pattern never earns credit from selection, and the arm is named
-    /// unselected only when neither pattern selects any observed input.
+    /// pattern earns credit only from an input that moved to an unequal
+    /// result (`moved_to_unequal_result`), and the arm is named unselected
+    /// only when neither pattern selects any observed input.
     changed_from: Option<Option<Vec<PatternHead>>>,
+    /// The changed arm's result as it stands, when it is a literal or a
+    /// constructor of literals (RIPR-SPEC-0229 "provably unequal").
+    result: Option<ResultValue>,
+    /// The arms after the changed one, in source order: alternatives
+    /// (`None` for a guarded arm) and result. `None` when the arms after the
+    /// changed one cannot be delimited.
+    later: Option<Vec<LaterArm>>,
+    /// Whether the diff's old text for this line is the same arm with only
+    /// its pattern different: a head cut anchored on the unchanged body, or
+    /// a whole old line whose body equals the current one. Moved-input
+    /// credit reads the original `match` as the current one with this arm's
+    /// pattern restored, so it needs the body to be the one that stood.
+    original_same_body: bool,
+    /// Whether the enclosing `match` is the owner body's tail expression,
+    /// so the arm's result is the owner's return value. Moved-input credit
+    /// compares arm results as return values; a `let t = match ..;` read
+    /// later may map unequal results to one value.
+    match_is_tail: bool,
     /// First path segments that name this workspace: `crate`, `self`,
     /// `super`, `Self`, the owner's impl type, and (once
     /// `with_workspace_packages` runs) each workspace package. A free
@@ -85,6 +117,15 @@ pub(in crate::analysis) struct ArmSelector {
     /// names the scrutinee's variant only when no import in the test's
     /// file binds that name from another enum.
     test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
+    /// The variants of the scrutinee's enum, once `in_workspace` finds its
+    /// declaration in the owner's file (`declared_enum_variants`). `None`
+    /// leaves every uncased name unreadable.
+    declared_variants: Option<std::collections::BTreeSet<String>>,
+    /// Whether a test's uncased input (`Kind::A`) names the owner's
+    /// `Kind`. `in_workspace` clears it when a related test file declares
+    /// its own item of that name or glob-imports a module, since that
+    /// `Kind::A` may be a test-side constant (#7620 review).
+    uncased_inputs_trusted: bool,
     /// RIPR-SPEC-0229 (#6616): the value operand of each related test's admitted
     /// exact pattern pin, keyed by test file, test start line, test name,
     /// assertion line and assertion text.
@@ -108,9 +149,37 @@ enum LiteralValue {
     Bool(bool),
 }
 
+/// An arm result that is provably one value: a literal, or a variant path
+/// or constructor whose payload is all literals (`None`, `Some(1)`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ResultValue {
+    Literal(LiteralValue),
+    Variant {
+        /// The path before the variant (`Kind` in `Kind::Alpha`), empty
+        /// when bare.
+        qualifier: String,
+        name: String,
+        payload: Vec<LiteralValue>,
+    },
+}
+
+/// One arm after the changed one: its alternatives (`None` when guarded)
+/// and its result, when that is provably one value.
+#[derive(Clone, Debug)]
+struct LaterArm {
+    alternatives: Option<Vec<PatternHead>>,
+    result: Option<ResultValue>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PatternHead {
     Literal(LiteralValue),
+    /// An integer range with literal bounds, both inclusive (`a..b` is
+    /// stored as `a..=b-1`); an open side is `None`.
+    IntRange {
+        start: Option<i128>,
+        end: Option<i128>,
+    },
     /// A tuple/struct/unit variant. `irrefutable` is true when the payload
     /// (if any) is made only of `_`, `..` and plain bindings, so the
     /// variant name alone decides selection.
@@ -124,6 +193,17 @@ enum PatternHead {
     /// every input, unless the name resolves to a constant, which
     /// `in_workspace` checks against the owner's file.
     Binding(String),
+    /// A qualified name with no lowercase letter (`Kind::A`, `Method::GET`),
+    /// optionally with a payload. Rust allows such a variant, but the same
+    /// path can name an associated constant, which a pattern compares by
+    /// value. It reads as a `Variant` only once the owner's file declares
+    /// it as a variant of the scrutinee's enum, and as `Opaque` otherwise
+    /// (#7543).
+    UncasedVariant {
+        qualifier: String,
+        name: String,
+        irrefutable: bool,
+    },
     Opaque,
 }
 
@@ -166,6 +246,24 @@ impl ArmSelector {
                 return None;
             }
         }
+        // The diff cuts `before` to the old head (`1..=8 =>`) only when the
+        // unchanged text around the head, the arm body included, anchors
+        // both ends (#7020), so a head cut is this arm with only its
+        // pattern changed.
+        // The cut needs unchanged text at the head's start, so an old head
+        // sharing no leading text with the current pattern is not one; an
+        // uncut old head with its body on the next removed line arrives
+        // joined to that body and reads as a whole line.
+        let before_head_cut = probe.before.as_deref().is_some_and(|before| {
+            let before = before.trim();
+            before.ends_with("=>")
+                && before.matches("=>").count() == 1
+                && before
+                    .chars()
+                    .zip(pattern_text.chars())
+                    .next()
+                    .is_some_and(|(old, new)| old == new)
+        });
         let changed_from = match (&probe.before, &probe.after) {
             (Some(before), Some(_)) => match arm_pattern_text(before) {
                 Some(original) if same_pattern(&original, &pattern_text) => None,
@@ -178,14 +276,17 @@ impl ArmSelector {
                 // removed line that shares any token, and a qualified enum
                 // name is shared by every arm in a multi-line hunk. The
                 // pairing is trusted only when the two patterns share an
-                // alternative; otherwise the original is unreadable.
+                // alternative, or the old text is a head cut anchored on
+                // this line's unchanged body; otherwise the original is
+                // unreadable.
                 Some(original) => Some(
                     top_level_alternatives(&original)
                         .map(|original| original.into_iter().map(pattern_head).collect::<Vec<_>>())
                         .filter(|original| {
-                            original.iter().any(|head| {
-                                *head != PatternHead::Opaque && alternatives.contains(head)
-                            })
+                            before_head_cut
+                                || original.iter().any(|head| {
+                                    *head != PatternHead::Opaque && alternatives.contains(head)
+                                })
                         }),
                 ),
                 None => Some(None),
@@ -200,33 +301,77 @@ impl ArmSelector {
             scrutinee,
             earlier_patterns,
             reached,
-        } = enclosing_match(owner, probe.location.line)?;
+            arms_from_changed,
+            match_is_tail,
+        } = enclosing_match(
+            owner,
+            probe.location.line,
+            matches!(changed_from, Some(Some(_))),
+        )?;
+        // The first arm from the changed line on is the changed arm itself;
+        // the rest are the arms an input that misses it falls through to.
+        let (result, later) = match arms_from_changed.as_deref() {
+            Some([(changed_pattern, changed_body), rest @ ..])
+                if same_pattern(changed_pattern, &pattern_text) =>
+            {
+                (
+                    result_value(changed_body),
+                    Some(
+                        rest.iter()
+                            .map(|(pattern, body)| LaterArm {
+                                alternatives: earlier_arm(pattern),
+                                result: result_value(body),
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+            }
+            _ => (None, None),
+        };
+        // Only a head cut says the old text is this arm with its body
+        // unchanged and nothing else in the hunk: the diff keeps the whole
+        // old line when another arm of the owner changed too, so a whole
+        // old line, even with an equal body, never reads as one.
+        let original_same_body = before_head_cut;
         let earlier = earlier_patterns
             .iter()
             .map(|pattern| earlier_arm(pattern))
             .collect::<Vec<_>>();
-        let (binding, scrutinee_type) = if method && matches!(scrutinee.as_str(), "self" | "*self")
-        {
-            if receiver_may_change(owner) {
-                return None;
-            }
-            let self_type = match &owner.impl_context {
-                crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
-                    Some(self_type.clone())
+        let (binding, scrutinee_type, bare_scrutinee_type) =
+            if method && matches!(scrutinee.as_str(), "self" | "*self") {
+                if receiver_may_change(owner) {
+                    return None;
                 }
-                _ => None,
+                let self_type = match &owner.impl_context {
+                    crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
+                        Some(self_type.clone())
+                    }
+                    _ => None,
+                };
+                let bare = self_type
+                    .as_deref()
+                    .map(|self_type| self_type.split('<').next().unwrap_or(self_type).trim())
+                    .filter(|name| is_identifier(name))
+                    .map(str::to_string);
+                (ScrutineeBinding::Receiver, self_type, bare)
+            } else {
+                let parameters = function_parameters(owner);
+                let index = parameters
+                    .iter()
+                    .position(|parameter| parameter_name(parameter) == scrutinee)?;
+                let declared = parameter_declaration(owner, &scrutinee)?;
+                if parameter_may_change(owner, &scrutinee, declared.mutable) {
+                    return None;
+                }
+                let bare = declared.type_name.clone().filter(|_| !declared.qualified);
+                (ScrutineeBinding::Parameter(index), declared.type_name, bare)
             };
-            (ScrutineeBinding::Receiver, self_type)
-        } else {
-            let parameters = function_parameters(owner);
-            let index = parameters
-                .iter()
-                .position(|parameter| parameter_name(parameter) == scrutinee)?;
-            let declared = parameter_declaration(owner, &scrutinee)?;
-            if parameter_may_change(owner, &scrutinee, declared.mutable) {
-                return None;
+        let self_is_scrutinee_type = match &owner.impl_context {
+            crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
+                let impl_type = self_type.split('<').next().unwrap_or(self_type).trim();
+                is_identifier(impl_type) && bare_scrutinee_type.as_deref() == Some(impl_type)
             }
-            (ScrutineeBinding::Parameter(index), declared.type_name)
+            _ => false,
         };
         if let crate::analysis::facts::FunctionImplContext::Impl { self_type } = &owner.impl_context
             && let Some(type_name) = self_type
@@ -244,11 +389,19 @@ impl ArmSelector {
             pattern_text,
             scrutinee,
             scrutinee_type,
+            bare_scrutinee_type,
+            self_is_scrutinee_type,
+            declared_variants: None,
+            uncased_inputs_trusted: true,
             binding,
             owner: owner.name.clone(),
             method,
             reached,
             changed_from,
+            result,
+            later,
+            original_same_body,
+            match_is_tail,
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
@@ -275,9 +428,16 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
+        self.resolve_uncased_variants(owner_source.as_deref());
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
+                if file != self.owner_file
+                    && let Some(type_name) = &self.bare_scrutinee_type
+                    && test_file_may_rebind(&facts.source, type_name, &self.local_roots)
+                {
+                    self.uncased_inputs_trusted = false;
+                }
                 imports
                     .entry(file.to_path_buf())
                     .or_insert_with(|| flattened_use_paths(&facts.source));
@@ -315,6 +475,68 @@ impl ArmSelector {
         if let Some(Some(original)) = &mut self.changed_from {
             demote(original);
         }
+        for arm in self.later.iter_mut().flatten() {
+            if let Some(alternatives) = &mut arm.alternatives {
+                demote(alternatives);
+            }
+        }
+    }
+
+    /// Reads each uncased name (`Kind::A`) as a variant or as unreadable,
+    /// from the enum the owner's file declares (#7543).
+    fn resolve_uncased_variants(&mut self, owner_source: Option<&str>) {
+        self.declared_variants = owner_source.and_then(|source| {
+            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
+        });
+        let resolve = |heads: &mut Vec<PatternHead>, selector: &Self| {
+            for head in heads.iter_mut() {
+                *head = selector.resolve_head(std::mem::replace(head, PatternHead::Opaque));
+            }
+        };
+        let mut alternatives = std::mem::take(&mut self.alternatives);
+        resolve(&mut alternatives, self);
+        self.alternatives = alternatives;
+        let mut earlier = std::mem::take(&mut self.earlier);
+        earlier
+            .iter_mut()
+            .flatten()
+            .for_each(|arm| resolve(arm, self));
+        self.earlier = earlier;
+        let mut changed_from = self.changed_from.take();
+        if let Some(Some(original)) = &mut changed_from {
+            resolve(original, self);
+        }
+        self.changed_from = changed_from;
+    }
+
+    /// An uncased pattern name becomes a `Variant` when its qualifier names
+    /// the scrutinee's type (by name, or `Self` in that type's own impl) and
+    /// the owner's file declares that enum with the name, and `Opaque`
+    /// otherwise. Every other head passes through unchanged.
+    fn resolve_head(&self, head: PatternHead) -> PatternHead {
+        let PatternHead::UncasedVariant {
+            qualifier,
+            name,
+            irrefutable,
+        } = head
+        else {
+            return head;
+        };
+        let names_scrutinee_type = if qualifier == "Self" {
+            self.self_is_scrutinee_type
+        } else {
+            self.bare_scrutinee_type.as_deref() == Some(qualifier.as_str())
+        };
+        if names_scrutinee_type
+            && self
+                .declared_variants
+                .as_ref()
+                .is_some_and(|variants| variants.contains(&name))
+        {
+            PatternHead::Variant { name, irrefutable }
+        } else {
+            PatternHead::Opaque
+        }
     }
 
     /// Whether an input's leading name may resolve outside the scrutinee's
@@ -329,7 +551,9 @@ impl ArmSelector {
         let Some(test_imports) = &self.test_imports else {
             return false;
         };
-        let PatternHead::Variant { name, .. } = input_head(input) else {
+        let (PatternHead::Variant { name, .. } | PatternHead::UncasedVariant { name, .. }) =
+            input_head(input)
+        else {
             return false;
         };
         let lead = match input_qualifier(input) {
@@ -543,8 +767,10 @@ impl ArmSelector {
     }
 
     /// RIPR-SPEC-0229 first-match selection. When the diff changed the
-    /// arm's pattern, only "selects another arm under both patterns" is
-    /// kept; everything else is `Unknown`.
+    /// arm's pattern, "selects another arm under both patterns" stays
+    /// `SelectsOther`, an input that moved between this arm and a later one
+    /// with a provably unequal result is `Selects` (it discriminates the
+    /// change), and everything else is `Unknown`.
     fn judge(&self, input: &str) -> ArmSelection {
         // `Priority::Low` is not `Level::Low`: a qualifier other than the
         // scrutinee's type (or `Self`) names another enum's variant.
@@ -562,21 +788,75 @@ impl ArmSelector {
         {
             return ArmSelection::Unknown;
         }
-        let input = input_head(input);
+        let input = match input_head(input) {
+            PatternHead::UncasedVariant { .. } if !self.uncased_inputs_trusted => {
+                PatternHead::Opaque
+            }
+            // A test's `Self` is the test-side impl's type, not the owner's,
+            // so the owner's impl context cannot resolve it.
+            PatternHead::UncasedVariant { qualifier, .. } if qualifier == "Self" => {
+                PatternHead::Opaque
+            }
+            head => self.resolve_head(head),
+        };
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
         }
         let current = self.first_match(&self.alternatives, &input);
         match &self.changed_from {
             None => current,
-            Some(Some(original))
-                if current == ArmSelection::SelectsOther
-                    && self.first_match(original, &input) == ArmSelection::SelectsOther =>
-            {
-                ArmSelection::SelectsOther
+            Some(Some(original)) => {
+                let before = self.first_match(original, &input);
+                if current == ArmSelection::SelectsOther && before == ArmSelection::SelectsOther {
+                    ArmSelection::SelectsOther
+                } else if self.moved_to_unequal_result(current, before, &input) {
+                    ArmSelection::Selects
+                } else {
+                    ArmSelection::Unknown
+                }
             }
-            Some(_) => ArmSelection::Unknown,
+            Some(None) => ArmSelection::Unknown,
         }
+    }
+
+    /// RIPR-SPEC-0229 "Crediting the selected arm" for a changed pattern:
+    /// the input runs this arm under exactly one of the two patterns, the
+    /// first later arm that takes it under the other is provably found, and
+    /// the two arms' results are provably unequal values. The original
+    /// `match` is read as the current one with this arm's old pattern
+    /// restored, so the credit says the test notices this line reverting;
+    /// it needs the old text to be this arm with the same body.
+    fn moved_to_unequal_result(
+        &self,
+        current: ArmSelection,
+        before: ArmSelection,
+        input: &PatternHead,
+    ) -> bool {
+        let moved = matches!(
+            (current, before),
+            (ArmSelection::Selects, ArmSelection::SelectsOther)
+                | (ArmSelection::SelectsOther, ArmSelection::Selects)
+        );
+        if !moved || !self.original_same_body || !self.match_is_tail {
+            return false;
+        }
+        let (Some(result), Some(later)) = (&self.result, self.later_result(input)) else {
+            return false;
+        };
+        provably_unequal(result, &later)
+    }
+
+    /// The result of the first arm after the changed one that provably
+    /// takes the input, when every arm between provably does not.
+    fn later_result(&self, input: &PatternHead) -> Option<ResultValue> {
+        for arm in self.later.as_ref()? {
+            match judge_alternatives(arm.alternatives.as_ref()?, input) {
+                ArmSelection::Selects => return arm.result.clone(),
+                ArmSelection::SelectsOther => {}
+                ArmSelection::Unknown => return None,
+            }
+        }
+        None
     }
 
     /// Whether `alternatives`, standing at the changed arm's position, take
@@ -671,6 +951,13 @@ fn judge_alternative(alternative: &PatternHead, input: &PatternHead) -> ArmSelec
                 ArmSelection::Selects
             } else {
                 ArmSelection::Unknown
+            }
+        }
+        (PatternHead::IntRange { start, end }, PatternHead::Literal(LiteralValue::Int(value))) => {
+            if start.is_none_or(|start| *value >= start) && end.is_none_or(|end| *value <= end) {
+                ArmSelection::Selects
+            } else {
+                ArmSelection::SelectsOther
             }
         }
         (
@@ -781,6 +1068,9 @@ fn pattern_head(alternative: &str) -> PatternHead {
     if let Some(literal) = literal_value(alternative) {
         return PatternHead::Literal(literal);
     }
+    if let Some(range) = integer_range(alternative) {
+        return range;
+    }
     if let Some(binding) = catch_all_binding(alternative) {
         return if binding == "_" {
             PatternHead::CatchAll
@@ -789,11 +1079,146 @@ fn pattern_head(alternative: &str) -> PatternHead {
         };
     }
     match variant_parts(alternative) {
-        Some((name, payload)) => PatternHead::Variant {
-            name: name.to_string(),
-            irrefutable: payload.is_none_or(payload_is_irrefutable),
-        },
+        Some(VariantParts {
+            qualifier,
+            name,
+            payload,
+        }) => variant_head(qualifier, name, payload.is_none_or(payload_is_irrefutable)),
         None => PatternHead::Opaque,
+    }
+}
+
+/// A CamelCase name is a variant by its case alone; an uncased one waits
+/// for `ArmSelector::resolve_head`. "CamelCase" is `is_variant_name`.
+fn variant_head(qualifier: Option<&str>, name: &str, irrefutable: bool) -> PatternHead {
+    match qualifier {
+        Some(qualifier) if !is_variant_name(name) => PatternHead::UncasedVariant {
+            qualifier: qualifier.to_string(),
+            name: name.to_string(),
+            irrefutable,
+        },
+        _ => PatternHead::Variant {
+            name: name.to_string(),
+            irrefutable,
+        },
+    }
+}
+
+/// An integer range pattern with literal bounds (`1..=9`, `0..10`,
+/// `..=9`, `10..`). A char range, a path bound (`MIN..=MAX`) or a bare
+/// `..` is not one.
+fn integer_range(alternative: &str) -> Option<PatternHead> {
+    let text = alternative.trim();
+    let (start, end, inclusive) = match text.split_once("..=") {
+        Some((start, end)) => (start, end, true),
+        None => {
+            let (start, end) = text.split_once("..")?;
+            (start, end, false)
+        }
+    };
+    let (start, end) = (start.trim(), end.trim());
+    let start = match start {
+        "" => None,
+        start => Some(integer_value(start)?),
+    };
+    let end = match end {
+        "" if inclusive => return None,
+        "" => None,
+        end => {
+            let end = integer_value(end)?;
+            Some(if inclusive { end } else { end.checked_sub(1)? })
+        }
+    };
+    (start.is_some() || end.is_some()).then_some(PatternHead::IntRange { start, end })
+}
+
+/// An arm result that is provably one value: a literal, or a variant path
+/// or constructor whose every payload entry is a literal. Any other
+/// expression (`1 + 1`, a call, a binding, a block) may compute any value.
+fn result_value(body: &str) -> Option<ResultValue> {
+    let body = arm_body_text(body);
+    if let Some(literal) = literal_value(body) {
+        return Some(ResultValue::Literal(literal));
+    }
+    let VariantParts { name, payload, .. } = variant_parts(body)?;
+    // An uncased name (`Kind::A`) may be an associated constant, and two
+    // constants may hold one value, so only a CamelCase name is a variant
+    // here.
+    if !is_variant_name(name) {
+        return None;
+    }
+    let qualifier = input_qualifier(body).unwrap_or_default().to_string();
+    let payload = match payload {
+        None => Vec::new(),
+        // A CamelCase path with arguments may be a function call (`Make(1)`)
+        // whose value need not keep its arguments, so only the prelude's
+        // `Some`, `Ok` and `Err` constructors read as payload variants.
+        Some(_)
+            if !(matches!(name, "Some" | "Ok" | "Err")
+                && matches!(
+                    qualifier.rsplit("::").next().unwrap_or_default(),
+                    "" | "Option" | "Result"
+                )) =>
+        {
+            return None;
+        }
+        Some(inner) => split_top_level_arguments(inner)?
+            .into_iter()
+            .map(literal_value)
+            .collect::<Option<Vec<_>>>()?,
+    };
+    Some(ResultValue::Variant {
+        qualifier,
+        name: name.to_string(),
+        payload,
+    })
+}
+
+/// An arm body without surrounding whitespace or its trailing `,`.
+fn arm_body_text(body: &str) -> &str {
+    let body = body.trim();
+    body.strip_suffix(',').unwrap_or(body).trim_end()
+}
+
+/// Whether two results are different values: literals of one kind with
+/// different values, or variants under the same qualifier with different
+/// names, or the same variant with a payload entry of one kind and a
+/// different value. Differently qualified variants (`Kind::Alpha` and an
+/// imported `Alpha`, or a renamed import) are never read as unequal.
+fn provably_unequal(left: &ResultValue, right: &ResultValue) -> bool {
+    let unequal_literals = |left: &LiteralValue, right: &LiteralValue| {
+        std::mem::discriminant(left) == std::mem::discriminant(right) && left != right
+    };
+    match (left, right) {
+        (ResultValue::Literal(left), ResultValue::Literal(right)) => unequal_literals(left, right),
+        (
+            ResultValue::Variant {
+                qualifier: left_qualifier,
+                name: left_name,
+                payload: left_payload,
+            },
+            ResultValue::Variant {
+                qualifier: right_qualifier,
+                name: right_name,
+                payload: right_payload,
+            },
+        ) => {
+            if left_qualifier != right_qualifier {
+                return false;
+            }
+            if left_name != right_name {
+                return true;
+            }
+            left_payload.len() == right_payload.len()
+                && left_payload.iter().zip(right_payload).all(|(left, right)| {
+                    std::mem::discriminant(left) == std::mem::discriminant(right)
+                })
+                && left_payload
+                    .iter()
+                    .zip(right_payload)
+                    .any(|(left, right)| unequal_literals(left, right))
+        }
+        _ => false,
     }
 }
 
@@ -837,6 +1262,132 @@ fn may_name_constant(source: &str, name: &str) -> bool {
         })
 }
 
+/// The variant names of the one enum named `type_name` that `source`
+/// declares (#7543). `None` when the file may bind that name to anything
+/// else: it declares no such enum or more than one, declares another item
+/// of that name, imports the name, glob-imports a module (which may bring
+/// a same-named struct with constants), or calls an item macro (whose
+/// output is not read). So an uncased `Kind::A` stays unreadable unless the
+/// file itself shows `A` is a variant of `Kind`.
+fn declared_enum_variants(
+    source: &str,
+    type_name: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    // Cheap text test before the parse: most owner files declare no enum
+    // of the scrutinee's type at all.
+    let masked = mask_comments_and_strings(source);
+    let declares_enum = whole_word_offsets(&masked, type_name)
+        .into_iter()
+        .any(|offset| masked[..offset].trim_end().ends_with("enum"));
+    if !declares_enum {
+        return None;
+    }
+    let may_rebind = flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let mut last = segments.next().unwrap_or("");
+        if last == "self" {
+            last = segments.next().unwrap_or("");
+        }
+        match &import.alias {
+            Some(alias) => alias == type_name,
+            // `super::*` is judged on the parse below.
+            None if last == "*" => {
+                import.path != "super::*" && !segments.next().is_some_and(is_variant_name)
+            }
+            None => last == type_name,
+        }
+    });
+    if may_rebind {
+        return None;
+    }
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    let named = |item: &dyn HasName| item.name().is_some_and(|name| name.text() == type_name);
+    let mut found = None;
+    for node in parse.tree().syntax().descendants() {
+        if let Some(item) = ast::Enum::cast(node.clone()) {
+            if !named(&item) {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some(
+                item.variant_list()
+                    .into_iter()
+                    .flat_map(|list| list.variants())
+                    .filter_map(|variant| variant.name().map(|name| name.text().to_string()))
+                    .collect(),
+            );
+        } else if ast::Struct::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+            || parent_glob_outside_this_file(&node)
+            || (ast::MacroCall::can_cast(node.kind())
+                && node.parent().is_some_and(|parent| {
+                    ast::SourceFile::can_cast(parent.kind())
+                        || ast::ItemList::can_cast(parent.kind())
+                }))
+        {
+            return None;
+        }
+    }
+    found
+}
+
+/// Whether a related test file outside the owner's file may bind
+/// `type_name` to something other than the owner's enum: it declares an
+/// item of that name, renames an import to it, or glob-imports a module
+/// other than `super`, a workspace root (`my_crate::*`) or the type's own
+/// variants. A test-side `struct Kind` with `const A` makes `Kind::A` a
+/// constant, which a pattern compares by value.
+fn test_file_may_rebind(source: &str, type_name: &str, local_roots: &[String]) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declares = whole_word_offsets(&masked, type_name)
+        .into_iter()
+        .any(|offset| {
+            let before = masked[..offset].trim_end();
+            [
+                "struct", "enum", "union", "trait", "type", "mod", "const", "static", "fn",
+            ]
+            .iter()
+            .any(|keyword| {
+                before.ends_with(keyword)
+                    && !before[..before.len() - keyword.len()]
+                        .ends_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+        });
+    declares
+        || flattened_use_paths(source).iter().any(|import| {
+            let segments = import.path.split("::").collect::<Vec<_>>();
+            match (&import.alias, segments.as_slice()) {
+                (Some(alias), _) => alias == type_name,
+                (None, [.., parent, "*"]) => {
+                    *parent != type_name
+                        && !(segments.len() == 2 && local_roots.iter().any(|root| root == parent))
+                }
+                _ => false,
+            }
+        })
+}
+
+/// Whether `node` is a file-root `use super::*`, which brings in another
+/// file's items. In an inline module (`mod tests { use super::*; }`) it
+/// brings in only this file's items and imports, which are read already.
+fn parent_glob_outside_this_file(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    ast::Use::cast(node.clone()).is_some_and(|item| {
+        !item
+            .syntax()
+            .ancestors()
+            .any(|ancestor| ast::Module::can_cast(ancestor.kind()))
+            && flattened_use_paths(&item.syntax().text().to_string())
+                .iter()
+                .any(|import| import.path == "super::*")
+    })
+}
+
 /// The same reading applied to a call's input expression. A variant input
 /// selects by name whatever its payload is.
 fn input_head(input: &str) -> PatternHead {
@@ -845,18 +1396,28 @@ fn input_head(input: &str) -> PatternHead {
         return PatternHead::Literal(literal);
     }
     match variant_parts(input) {
-        Some((name, _)) => PatternHead::Variant {
-            name: name.to_string(),
-            irrefutable: true,
-        },
+        Some(VariantParts {
+            qualifier, name, ..
+        }) => variant_head(qualifier, name, true),
         None => PatternHead::Opaque,
     }
 }
 
+struct VariantParts<'a> {
+    /// The whole path before the name (`a::Kind` in `a::Kind::A`), if
+    /// any, so only a one-segment qualifier can equal the scrutinee's bare
+    /// type: `presets::Kind` may be another type than the owner's `Kind`.
+    qualifier: Option<&'a str>,
+    name: &'a str,
+    /// The payload text without its delimiters.
+    payload: Option<&'a str>,
+}
+
 /// A path whose last segment reads as a variant (`Some`, `LowerCase`,
 /// `Mode::Frozen`), optionally followed by one `(..)` or `{..}` payload.
-/// The payload text is returned without its delimiters.
-fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
+/// A qualified uncased name (`Kind::A`) is returned too; `variant_head`
+/// keeps it apart until the owner's file shows it is a variant.
+fn variant_parts(text: &str) -> Option<VariantParts<'_>> {
     let text = text.trim();
     let path_end = text
         .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
@@ -867,12 +1428,23 @@ fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
     if segments.iter().any(|segment| !is_identifier(segment)) {
         return None;
     }
-    let name = segments.last()?;
-    if !is_variant_name(name) {
+    let (name, qualifier) = match segments.as_slice() {
+        [.., _, name] => (*name, path.rsplit_once("::").map(|(prefix, _)| prefix)),
+        [name] => (*name, None),
+        [] => return None,
+    };
+    let uncased = qualifier.is_some()
+        && name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && !name.chars().any(|ch| ch.is_ascii_lowercase());
+    if !is_variant_name(name) && !uncased {
         return None;
     }
     if rest.is_empty() {
-        return Some((name, None));
+        return Some(VariantParts {
+            qualifier,
+            name,
+            payload: None,
+        });
     }
     let (open, close) = match rest.as_bytes().first() {
         Some(b'(') => ('(', ')'),
@@ -894,7 +1466,11 @@ fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
             return None;
         }
     }
-    (depth == 0).then_some((name, Some(inner)))
+    (depth == 0).then_some(VariantParts {
+        qualifier,
+        name,
+        payload: Some(inner),
+    })
 }
 
 /// `_`, `..`, plain bindings (`v`, `ref v`, `mut v`) and struct shorthand
@@ -934,9 +1510,12 @@ fn is_identifier(text: &str) -> bool {
 }
 
 /// CamelCase only: an uppercase first letter and at least one lowercase
-/// letter. `SCREAMING` names are constants (which a pattern compares by
-/// value, not by name), single letters are ambiguous, and lowercase names
-/// are bindings or functions.
+/// letter. `SCREAMING` names and single letters may be constants (which a
+/// pattern compares by value, not by name), so a qualified one is a
+/// variant only when the owner's file declares it (`UncasedVariant`), and
+/// lowercase names are bindings or functions. `variant_parts`,
+/// `variant_head` and `result_value` all branch on this rule, so a change
+/// to it moves them together.
 fn is_variant_name(name: &str) -> bool {
     name.starts_with(|ch: char| ch.is_ascii_uppercase())
         && name.chars().any(|ch| ch.is_ascii_lowercase())
@@ -1053,9 +1632,21 @@ struct EnclosingMatch {
     scrutinee: String,
     earlier_patterns: Vec<String>,
     reached: bool,
+    /// `(pattern, body)` of the changed arm and every arm after it, or
+    /// `None` when they cannot be delimited up to the match's closing brace
+    /// or were not asked for.
+    arms_from_changed: Option<Vec<(String, String)>>,
+    /// Whether only the owner body's closing `}` follows the match.
+    match_is_tail: bool,
 }
 
-fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<EnclosingMatch> {
+/// `with_later_arms` asks for the changed and later arms' bodies, which only
+/// a changed pattern's moved-input credit reads.
+fn enclosing_match(
+    owner: &FunctionSummary,
+    arm_line: usize,
+    with_later_arms: bool,
+) -> Option<EnclosingMatch> {
     let relative = arm_line.checked_sub(owner.start_line)?;
     let masked = mask_comments_and_strings(&owner.body);
     let source = without_comments(&owner.body)?;
@@ -1094,11 +1685,78 @@ fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<Enclosing
         return None;
     }
     let earlier_patterns = earlier_arm_patterns(&masked, &source, brace + 1, arm_offset)?;
+    let close = with_later_arms
+        .then(|| matching_close_brace(&masked, brace))
+        .flatten();
+    let arms_from_changed =
+        close.and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
+    let match_is_tail = close
+        .and_then(|close| masked.get(close + 1..))
+        .is_some_and(|rest| rest.trim() == "}");
     Some(EnclosingMatch {
         scrutinee: scrutinee.to_string(),
         earlier_patterns,
         reached: match_always_runs(&masked[..keyword]),
+        arms_from_changed,
+        match_is_tail,
     })
+}
+
+/// The offset of the `}` that closes the `{` at `open`.
+fn matching_close_brace(masked: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, byte) in masked.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' | b'(' | b'[' => depth += 1,
+            b'}' | b')' | b']' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (byte == b'}').then_some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `(pattern, body)` of each arm in `masked[start..end]`, delimited like
+/// `earlier_arm_patterns`. The scan must consume the range exactly.
+fn arms_with_bodies(
+    masked: &str,
+    source: &str,
+    start: usize,
+    end: usize,
+) -> Option<Vec<(String, String)>> {
+    let bytes = masked.as_bytes();
+    let mut arms = Vec::new();
+    let mut arm_start = start;
+    let mut index = start;
+    let mut depth = 0usize;
+    while index < end {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b'=' if depth == 0 && bytes.get(index + 1) == Some(&b'>') => {
+                // The last arm may end at the closing brace without a `,`.
+                let body_end = match arm_expression_end(masked, index + 2, end) {
+                    Some(body_end) => body_end,
+                    None if !masked.get(index + 2..end)?.contains("=>") => end,
+                    None => return None,
+                };
+                arms.push((
+                    source.get(arm_start..index)?.trim().to_string(),
+                    source.get(index + 2..body_end)?.trim().to_string(),
+                ));
+                index = body_end;
+                arm_start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    (depth == 0 && masked.get(arm_start..end)?.trim().is_empty()).then_some(arms)
 }
 
 /// Whether the owner's body always reaches a `match` whose keyword ends
@@ -1239,6 +1897,8 @@ fn input_path_root(input: &str) -> Option<&str> {
 struct ParameterDeclaration {
     mutable: bool,
     type_name: Option<String>,
+    /// Whether the type is written as a path (`other::Kind`).
+    qualified: bool,
 }
 
 /// How `name` is declared in the owner's one-line signature: whether it is
@@ -1271,7 +1931,11 @@ fn parameter_declaration(owner: &FunctionSummary, name: &str) -> Option<Paramete
         .next()
         .filter(|name| is_identifier(name))
         .map(str::to_string);
-    Some(ParameterDeclaration { mutable, type_name })
+    Some(ParameterDeclaration {
+        mutable,
+        type_name,
+        qualified: base.contains("::"),
+    })
 }
 
 /// The owner's body after its signature line, masked.
@@ -1826,6 +2490,265 @@ mod tests {
         Ok(())
     }
 
+    fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
+        let mut selector = selector.clone();
+        selector.resolve_uncased_variants(source);
+        selector
+    }
+
+    fn uncased_selection_of(selector: &ArmSelector, owner_call: &str) -> Option<ArmSelection> {
+        selector
+            .observed_inputs(&test_with(&format!(
+                "fn t() {{\n    assert_eq!({owner_call}, 0);\n}}\n"
+            )))
+            .map(|observed| observed.selection)
+    }
+
+    const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+
+    #[test]
+    fn uncased_variants_read_only_when_the_owner_file_declares_the_enum() -> Result<(), String> {
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let judged = |source: Option<&str>, input: &str| {
+            uncased_selection_of(&resolve_with(&selector, source), &format!("f({input})"))
+        };
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
+        assert_eq!(
+            judged(Some(&declared), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged(Some(&declared), "Kind::B"),
+            Some(ArmSelection::Selects)
+        );
+        // Every source below declares `enum Kind { A, .. }` too, except the
+        // first two, so each refusal is what keeps `Kind::A` unreadable: it
+        // may be a constant, which a pattern compares by value.
+        for source in [
+            None,
+            Some(KIND.to_string()),
+            Some(format!(
+                "pub enum Kind {{ A, B }}\npub struct Kind(u8);\n{KIND}"
+            )),
+            Some(format!(
+                "pub enum Kind {{ A, B }}\npub union Kind {{ a: u8 }}\n{KIND}"
+            )),
+            Some(format!(
+                "pub enum Kind {{ A, B }}\npub trait Kind {{}}\n{KIND}"
+            )),
+            Some(format!("enum Kind {{ A, B }}\ntype Kind = u8;\n{KIND}")),
+            Some(format!("use other::Kind;\nenum Kind {{ A, B }}\n{KIND}")),
+            Some(format!(
+                "use other::Thing as Kind;\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "use other::Kind::{{self}};\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "use crate::flags::*;\nenum Kind {{ A, B }}\n{KIND}"
+            )),
+            Some(format!(
+                "bitflags! {{ struct Kind: u8 {{ const A = 1; }} }}\nmod legacy {{\n    pub enum Kind {{ A, B }}\n}}\n{KIND}"
+            )),
+            Some(format!(
+                "mod a {{\n    enum Kind {{ A }}\n}}\nmod b {{\n    enum Kind {{ A, B }}\n}}\n{KIND}"
+            )),
+            Some(format!("enum Kind {{ Alpha, B }}\n{KIND}")),
+        ] {
+            assert_eq!(
+                judged(source.as_deref(), "Kind::A"),
+                Some(ArmSelection::Unknown),
+                "{source:?}"
+            );
+        }
+        // A file-root `use super::*` brings in another file's items.
+        assert_eq!(
+            judged(Some(&format!("use super::*;\n{declared}")), "Kind::A"),
+            Some(ArmSelection::Unknown)
+        );
+        // In an inline test module it brings in only this file's items.
+        let inline_tests = format!("{declared}#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n");
+        assert_eq!(
+            judged(Some(&inline_tests), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
+        // A variant glob of the enum itself binds no type name.
+        assert_eq!(
+            judged(Some(&format!("use Kind::*;\n{declared}")), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
+        // Another type's uncased name is never this enum's variant.
+        assert_eq!(
+            judged(Some(&declared), "Other::A"),
+            Some(ArmSelection::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_uncased_pattern_reads_only_through_the_bare_scrutinee_type() -> Result<(), String> {
+        let declared = "pub enum Method {\n    GET,\n    POST,\n    PUT,\n}\n";
+        let judged = |arms: &str, input: &str| -> Result<Option<ArmSelection>, String> {
+            let body = format!(
+                "pub fn f(m: Method) -> i32 {{\n    match m {{\n{arms}\n        _ => 0,\n    }}\n}}\n"
+            );
+            let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
+                .ok_or_else(|| "premise: the arm reads its scrutinee from m".to_string())?;
+            let source = format!("{declared}{body}");
+            Ok(uncased_selection_of(
+                &resolve_with(&selector, Some(&source)),
+                &format!("f({input})"),
+            ))
+        };
+        // A multi-letter uncased variant.
+        assert_eq!(
+            judged("        Method::GET => 1,", "Method::GET")?,
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged("        Method::GET => 1,", "Method::POST")?,
+            Some(ArmSelection::Selects)
+        );
+        // `Other::GET` and `presets::Method::GET` may be constants of other
+        // types, which could equal `Method::POST`.
+        for earlier in [
+            "        Other::GET => 1,",
+            "        presets::Method::GET => 1,",
+        ] {
+            assert_eq!(
+                judged(earlier, "Method::POST")?,
+                Some(ArmSelection::Unknown),
+                "{earlier}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn self_names_the_scrutinee_enum_only_in_its_own_impl() -> Result<(), String> {
+        let judged = |impl_type: &str, body: &str, input: &str| -> Result<_, String> {
+            let mut function = owner(body, "f");
+            function.impl_context = crate::analysis::facts::FunctionImplContext::Impl {
+                self_type: impl_type.to_string(),
+            };
+            let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &function)
+                .ok_or_else(|| "premise: the arm reads its scrutinee".to_string())?;
+            let source = format!("pub enum Kind {{ A, B }}\nimpl {impl_type} {{\n{body}}}\n");
+            Ok(uncased_selection_of(
+                &resolve_with(&selector, Some(&source)),
+                input,
+            ))
+        };
+        let on_parameter = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
+        // In `impl Router`, `Self::A` is a `Router` constant: it may equal
+        // `Kind::B`, so a `Kind::B` input is not shown to reach `_`.
+        assert_eq!(
+            judged("Router", on_parameter, "Router::f(Kind::B)")?,
+            Some(ArmSelection::Unknown)
+        );
+        assert_eq!(
+            judged("Kind", on_parameter, "Kind::f(Kind::B)")?,
+            Some(ArmSelection::Selects)
+        );
+        // A test-side `Self::B` names the test's own impl type, which the
+        // owner's `impl Kind` says nothing about.
+        assert_eq!(
+            judged("Kind", on_parameter, "Kind::f(Self::B)")?,
+            Some(ArmSelection::Unknown)
+        );
+        let on_receiver = "pub fn f(self) -> i32 {\n    match self {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
+        assert_eq!(
+            judged("Kind", on_receiver, "Kind::A.f()")?,
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged("Kind", on_receiver, "Kind::B.f()")?,
+            Some(ArmSelection::Selects)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn uncased_variants_need_an_unqualified_scrutinee_type() -> Result<(), String> {
+        let body = KIND.replace("k: Kind", "k: crate::Kind");
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let source = format!("pub enum Kind {{ A, B }}\n{body}");
+        assert_eq!(
+            uncased_selection_of(&resolve_with(&selector, Some(&source)), "f(Kind::B)"),
+            Some(ArmSelection::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_uncased_pattern_resolves_both_sides() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A | Kind::B => 1,\n        _ => 0,\n    }\n}\n";
+        let source = format!("pub enum Kind {{ A, B, C, D }}\n{body}");
+        let changed = |before: &str| -> Result<ArmSelector, String> {
+            let mut probe = arm_probe("Kind::A | Kind::B => 1,", 3);
+            probe.before = Some(before.to_string());
+            ArmSelector::establish(&probe, &owner(body, "f"))
+                .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())
+        };
+        let selector = changed("Kind::A | Kind::C => 1,")?;
+        let resolved = resolve_with(&selector, Some(&source));
+        // Neither pattern takes `Kind::D`; the old one took `Kind::C`.
+        assert_eq!(
+            uncased_selection_of(&resolved, "f(Kind::D)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            uncased_selection_of(&resolved, "f(Kind::C)"),
+            Some(ArmSelection::Unknown)
+        );
+        assert_eq!(
+            uncased_selection_of(&resolve_with(&selector, None), "f(Kind::D)"),
+            Some(ArmSelection::Unknown)
+        );
+        // An original pattern that cannot be read stays unreadable.
+        let unreadable = changed("Kind::A => 1, Kind::C => 1,")?;
+        if unreadable.changed_from != Some(None) {
+            return Err(format!(
+                "premise: a two-arm old line is unreadable, got {:?}",
+                unreadable.changed_from
+            ));
+        }
+        let resolved = resolve_with(&unreadable, Some(&source));
+        assert_eq!(resolved.changed_from, Some(None));
+        assert_eq!(
+            uncased_selection_of(&resolved, "f(Kind::D)"),
+            Some(ArmSelection::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_test_file_that_may_rebind_the_type_is_refused() {
+        let roots = ["crate", "self", "super", "Self", "my_crate"].map(str::to_string);
+        let rebinds = |source: &str| test_file_may_rebind(source, "Kind", &roots);
+        for source in [
+            "struct Kind;\nimpl Kind { const A: u8 = 1; }\n",
+            "pub(crate) enum Kind { A }\n",
+            "type Kind = my_crate::Other;\n",
+            "use my_crate::Other as Kind;\n",
+            "use my_crate::presets::*;\n",
+            "use other::*;\n",
+        ] {
+            assert!(rebinds(source), "{source}");
+        }
+        for source in [
+            "use my_crate::{Kind, f};\nfn t() { f(Kind::A); }\n",
+            "use my_crate::*;\n",
+            "use super::*;\n",
+            "use my_crate::Kind::*;\n",
+            "struct KindHolder;\nfn kind() {}\n// struct Kind\n",
+        ] {
+            assert!(!rebinds(source), "{source}");
+        }
+    }
+
     #[test]
     fn integer_arms_compare_by_value() -> Result<(), String> {
         let body = "fn max_scalar_value(nbytes: usize) -> u32 {\n    match nbytes {\n        1 => 0x007F,\n        2 => 0x7FF,\n        3 => 0xFFFF,\n        _ => unreachable!(),\n    }\n}\n";
@@ -1995,10 +2918,12 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_pattern_never_credits_and_names_only_when_both_miss() -> Result<(), String> {
+    fn a_changed_pattern_credits_only_a_moved_input_and_names_only_when_both_miss()
+    -> Result<(), String> {
         let body = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
         let mut probe = arm_probe("Kind::Beta => 2,", 4);
-        probe.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
+        // The diff's head cut of `Kind::Beta | Kind::Gamma => 2,`.
+        probe.before = Some("Kind::Beta | Kind::Gamma =>".to_string());
         let selector = ArmSelector::establish(&probe, &owner(body, "kind"))
             .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
         // `Kind::Beta` runs this arm under both patterns: no discriminator.
@@ -2010,9 +2935,11 @@ mod tests {
                 )))
                 .map(|observed| observed.selection)
         };
-        // `Kind::Gamma` moved arms: it selects the original pattern, so the arm
-        // is not named unselected.
-        assert_eq!(observed("kind(Kind::Gamma)"), Some(ArmSelection::Unknown));
+        // `Kind::Gamma` moved from this arm (result 2) to `Kind::Gamma => 3`:
+        // the results are unequal literals, so the input discriminates the
+        // change (RIPR-SPEC-0229 example 8) and the arm is not named.
+        assert_eq!(observed("kind(Kind::Gamma)"), Some(ArmSelection::Selects));
+        assert!(selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
         // `Kind::Alpha` misses both patterns.
         assert_eq!(
             observed("kind(Kind::Alpha)"),
@@ -2067,6 +2994,233 @@ mod tests {
         removed.before = Some("Kind::Delta => 2,".to_string());
         removed.after = None;
         assert!(ArmSelector::establish(&removed, &owner(body, "kind")).is_none());
+        Ok(())
+    }
+
+    const DIGIT: &str = "pub fn f(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+
+    fn digit_selector(before: Option<&str>) -> Result<ArmSelector, String> {
+        let mut probe = arm_probe("1..=9 => \"digit\",", 4);
+        probe.before = before.map(str::to_string);
+        ArmSelector::establish(&probe, &owner(DIGIT, "f"))
+            .ok_or_else(|| "premise: the range arm reads its scrutinee from n".to_string())
+    }
+
+    fn selection_of(selector: &ArmSelector, call: &str) -> Option<ArmSelection> {
+        selector
+            .observed_inputs(&test_with(&format!(
+                "fn t() {{\n    assert_eq!({call}, \"x\");\n}}\n"
+            )))
+            .map(|observed| observed.selection)
+    }
+
+    /// RIPR-SPEC-0229 example 7: a range arm whose body changed is judged
+    /// by value, so inputs outside it select another arm and an input
+    /// inside it credits the arm.
+    #[test]
+    fn integer_range_arms_select_by_value() -> Result<(), String> {
+        let selector = digit_selector(Some("1..=9 => \"digits\","))?;
+        assert_eq!(
+            selection_of(&selector, "f(0)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            selection_of(&selector, "f(42)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            selection_of(&selector, "f(10)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(selection_of(&selector, "f(9)"), Some(ArmSelection::Selects));
+        assert!(selector.assertion_selects("assert_eq!(f(1), \"digit\");"));
+        assert!(!selector.assertion_selects("assert_eq!(f(0), \"zero\");"));
+        // The lower bound is read: 4 is below `5..=9`, 5 is inside it.
+        let low = PatternHead::IntRange {
+            start: Some(5),
+            end: Some(9),
+        };
+        assert_eq!(
+            judge_alternative(&low, &PatternHead::Literal(LiteralValue::Int(4))),
+            ArmSelection::SelectsOther
+        );
+        assert_eq!(
+            judge_alternative(&low, &PatternHead::Literal(LiteralValue::Int(5))),
+            ArmSelection::Selects
+        );
+        // A non-integer input against a range is not judged.
+        assert_eq!(
+            selection_of(&selector, "f('a')"),
+            Some(ArmSelection::Unknown)
+        );
+        // Exclusive, half-open and negative bounds.
+        assert_eq!(
+            integer_range("0..10"),
+            Some(PatternHead::IntRange {
+                start: Some(0),
+                end: Some(9)
+            })
+        );
+        assert_eq!(
+            integer_range("..=-1"),
+            Some(PatternHead::IntRange {
+                start: None,
+                end: Some(-1)
+            })
+        );
+        assert_eq!(
+            integer_range("10u8.."),
+            Some(PatternHead::IntRange {
+                start: Some(10),
+                end: None
+            })
+        );
+        // Not integer ranges: a char range, a path bound, a bare `..`, an
+        // inclusive range without an end.
+        for text in ["'a'..='z'", "MIN..=MAX", "..", "1..="] {
+            assert_eq!(integer_range(text), None, "{text}");
+        }
+        assert_eq!(
+            pattern_head("\"a..b\""),
+            PatternHead::Literal(LiteralValue::Str("a..b".into()))
+        );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0229 example 8: widening `1..=8` to `1..=9`. The input 9
+    /// moved from `_ => "many"` to this arm, whose results differ, so it
+    /// credits the arm; 5 runs this arm under both patterns and earns
+    /// nothing; 0 and 42 miss both, so the arm may be named.
+    #[test]
+    fn an_input_that_moved_to_an_unequal_result_credits_a_changed_pattern() -> Result<(), String> {
+        let selector = digit_selector(Some("1..=8 =>"))?;
+        assert_eq!(selection_of(&selector, "f(9)"), Some(ArmSelection::Selects));
+        assert!(selector.assertion_selects("assert_eq!(f(9), \"many\");"));
+        assert!(selector.assertion_selects("assert_eq!(f(9), \"digit\");"));
+        assert_eq!(selection_of(&selector, "f(5)"), Some(ArmSelection::Unknown));
+        assert!(!selector.assertion_selects("assert_eq!(f(5), \"digit\");"));
+        assert_eq!(
+            selection_of(&selector, "f(42)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        // Narrowing: 9 moved out of this arm to `_`, unequal results too.
+        let mut narrowed = arm_probe("1..=8 => \"digit\",", 4);
+        narrowed.before = Some("1..=9 =>".to_string());
+        let narrow = DIGIT.replace("1..=9", "1..=8");
+        let selector = ArmSelector::establish(&narrowed, &owner(&narrow, "f"))
+            .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(f(9), \"many\");"));
+        assert!(!selector.assertion_selects("assert_eq!(f(8), \"digit\");"));
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0229 example 9 and the fail-closed edges of moved-input
+    /// credit: a computed or equal result, an old line with another body,
+    /// a guarded arm in the fall-through path, or an unreached `match`.
+    #[test]
+    fn moved_input_credit_needs_provably_unequal_results() -> Result<(), String> {
+        let computed = "pub fn f(n: u32) -> u32 {\n    match n {\n        0..=4 => 1 + 1,\n        _ => 2,\n    }\n}\n";
+        let mut probe = arm_probe("0..=4 => 1 + 1,", 3);
+        probe.before = Some("0..=3 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(computed, "f"))
+            .ok_or_else(|| "premise: the computed arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(4), 2);"));
+        let equal = computed.replace("1 + 1", "2");
+        let mut probe = arm_probe("0..=4 => 2,", 3);
+        probe.before = Some("0..=3 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(&equal, "f"))
+            .ok_or_else(|| "premise: the equal arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(4), 2);"));
+        // An old whole line whose body differs is not this arm with only
+        // its pattern changed, even when the patterns share an alternative
+        // and the moved input's results are unequal.
+        let selector = digit_selector(Some("1..=8 => \"digits\","))?;
+        assert!(!selector.assertion_selects("assert_eq!(f(9), \"many\");"));
+        let kinds = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
+        let mut rebodied = arm_probe("Kind::Beta => 2,", 4);
+        rebodied.before = Some("Kind::Beta | Kind::Gamma => 5,".to_string());
+        let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
+            .ok_or_else(|| "premise: the rebodied arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
+        // A whole old line with an equal body is not a head cut either: the
+        // diff keeps whole lines when another arm of the hunk changed.
+        rebodied.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
+        let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
+            .ok_or_else(|| "premise: the whole old arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
+        // An old head that shares no leading text with the current pattern
+        // is not an anchored cut of this line (#5992 review: `0 =>` paired
+        // with `1..=9 => 2,` from another arm of the hunk).
+        let selector = digit_selector(Some("0 =>"))?;
+        assert!(!selector.assertion_selects("assert_eq!(f(5), \"many\");"));
+        assert_eq!(selection_of(&selector, "f(5)"), Some(ArmSelection::Unknown));
+        // A `match` whose value is bound and read later is not the return
+        // value: `if t > 0` maps unequal results to one value.
+        let bound = "pub fn f(n: u32) -> u32 {\n    let t = match n {\n        0..=4 => 1,\n        _ => 2,\n    };\n    if t > 0 { 7 } else { 0 }\n}\n";
+        let mut probe = arm_probe("0..=4 => 1,", 3);
+        probe.before = Some("0..=3 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(bound, "f"))
+            .ok_or_else(|| "premise: the bound match is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(4), 7);"));
+        // A guarded arm between this one and `_` may take the input.
+        let guarded = "pub fn f(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        k if k > 100 => \"huge\",\n        _ => \"many\",\n    }\n}\n";
+        let mut probe = arm_probe("1..=9 => \"digit\",", 4);
+        probe.before = Some("1..=8 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(guarded, "f"))
+            .ok_or_else(|| "premise: the guarded match is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(9), \"many\");"));
+        // Constructor results compare by name and literal payload.
+        let options = "pub fn f(n: u32) -> Option<u8> {\n    match n {\n        0..=4 => Some(1),\n        _ => None,\n    }\n}\n";
+        let mut probe = arm_probe("0..=4 => Some(1),", 3);
+        probe.before = Some("0..=3 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(options, "f"))
+            .ok_or_else(|| "premise: the option arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(f(4), None);"));
+        let some = |text: &str| result_value(text);
+        assert!(
+            some("Some(1)")
+                .zip(some("Some(2),"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            !some("Some(1)")
+                .zip(some("Some(1u8)"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            !some("Kind::Alpha")
+                .zip(some("Alpha"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            !some("Quiet")
+                .zip(some("Level::Low"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert!(
+            some("Level::High")
+                .zip(some("Level::Low"))
+                .is_some_and(|(l, r)| provably_unequal(&l, &r))
+        );
+        assert_eq!(some("Some(x)"), None);
+        // A CamelCase call with literal arguments is not a variant: `Make(1)`
+        // and `Make(2)` may return the same value (#5992 review).
+        assert_eq!(some("Make(1)"), None);
+        assert_eq!(some("Kind::Make(2)"), None);
+        assert!(some("Option::Some(1)").is_some());
+        assert_eq!(some("{ 1 }"), None);
+        // An uncased name may be an associated constant, and two constants
+        // may hold one value, so `Kind::A` and `Kind::B` are never one value
+        // each (#7543 merged with #5992).
+        assert_eq!(some("Kind::A"), None);
+        assert_eq!(some("Kind::MAX"), None);
+        // A `match` the call may skip credits nothing.
+        let skipped = "pub fn f(n: u32) -> &'static str {\n    if n == 7 { return \"seven\"; }\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+        let mut probe = arm_probe("1..=9 => \"digit\",", 5);
+        probe.before = Some("1..=8 =>".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(skipped, "f"))
+            .ok_or_else(|| "premise: the skipped match is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(f(9), \"many\");"));
         Ok(())
     }
 

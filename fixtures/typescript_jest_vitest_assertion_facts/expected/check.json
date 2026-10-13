@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/typescript_jest_vitest_assertion_facts/input",
+  "config_path": "<cwd>/fixtures/typescript_jest_vitest_assertion_facts/input/ripr.toml",
   "summary": {"changed_rust_files":0,"probes":7,"findings":7,"exposed":4,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,

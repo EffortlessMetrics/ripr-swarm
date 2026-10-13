@@ -51,12 +51,15 @@ local `git merge-tree` runs of open PR heads against `main`:
 
 `Ripr Rust Small Result` runs only when a PR moves from Draft to Ready.
 
-- Open PRs as Draft and mark them Ready once the head is final.
-- A PR opened directly as Ready, or pushed to after it went Ready, has no
-  required check and cannot merge. Convert it to Draft and mark it Ready again,
-  but first check that no Ready-triggered `routed-rust.yml` run is still queued
-  or running on that head, because the toggle cancels it.
-- Re-check auto-merge after toggling.
+- Open PRs as Draft and apply the shared
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting required qualification.
+- If the current head lacks its required check after a direct Ready opening or
+  post-Ready push, return through that same handoff before another Ready
+  transition. Preserve a queued or running Ready-triggered `routed-rust.yml`
+  run on the unchanged head; re-toggling cancels it.
+- Re-check auto-merge against the current exact-head prerequisites after a
+  transition.
 - Labels such as `full-ci` take effect at the next Ready transition.
 - Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
 

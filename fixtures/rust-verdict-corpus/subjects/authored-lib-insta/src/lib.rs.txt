@@ -1,0 +1,80 @@
+//! Order receipts rendered as text and serialized as records. Tests use insta
+//! snapshots: an inline text snapshot, a committed debug file snapshot, and a
+//! json snapshot whose `id` field is redacted.
+
+use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct LineItem {
+    pub sku: String,
+    pub qty: u32,
+    pub cents: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Record {
+    pub id: String,
+    pub total_cents: u64,
+    pub items: usize,
+}
+
+pub fn line_total(item: &LineItem) -> u64 {
+    item.cents * u64::from(item.qty)
+}
+
+pub fn render_receipt(items: &[LineItem]) -> String {
+    let mut out = String::new();
+    for item in items {
+        out.push_str(&format!("{:<6} x{:>2} {:>6}\n", item.sku, item.qty, line_total(item)));
+    }
+    let total: u64 = items.iter().map(line_total).sum();
+    out.push_str(&format!("TOTAL {}", total));
+    out
+}
+
+pub fn discount_tiers(total_cents: u64) -> Vec<(u64, u64)> {
+    [1_000u64, 5_000, 10_000]
+        .iter()
+        .map(|&threshold| (threshold, if total_cents >= threshold { threshold / 20 } else { 0 }))
+        .collect()
+}
+
+pub fn make_record(prefix: &str, seq: u32, items: &[LineItem]) -> Record {
+    Record {
+        id: format!("{}-{:04}", prefix, seq + 1),
+        total_cents: items.iter().map(line_total).sum(),
+        items: items.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cart() -> Vec<LineItem> {
+        vec![
+            LineItem { sku: "apple".into(), qty: 3, cents: 40 },
+            LineItem { sku: "pear".into(), qty: 1, cents: 95 },
+        ]
+    }
+
+    #[test]
+    fn receipt_text_is_pinned_inline() {
+        insta::assert_snapshot!(render_receipt(&cart()), @r"
+        apple  x 3    120
+        pear   x 1     95
+        TOTAL 215
+        ");
+    }
+
+    #[test]
+    fn discount_tiers_file_snapshot() {
+        insta::assert_debug_snapshot!(discount_tiers(5_000));
+    }
+
+    #[test]
+    fn record_json_with_redacted_id() {
+        let record = make_record("ord", 41, &cart());
+        insta::assert_json_snapshot!(record, { ".id" => "[id]" });
+    }
+}
