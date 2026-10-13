@@ -111,6 +111,13 @@ thread, `authored-ts-nodetest-pricing` and `authored-ts-vitest-cart`,
 mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+The TypeScript corpus carries the same kind of ledger,
+`fixtures/typescript-verdict-corpus/spec-coverage.toml`: RIPR-SPEC-0243 and
+its amendments RIPR-SPEC-0246 to RIPR-SPEC-0252 are in scope, and cases cite
+the examples they label in `spec_examples`. Examples a case could label but
+none does yet stay uncovered rather than waived. A deleted ledger fails
+`committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`.
+
 ### Perl corpus
 
 ripr does not read Perl; it reads a `ripr-perl-facts-v1` packet
@@ -166,7 +173,7 @@ Example 10 of RIPR-SPEC-0238 has no case yet (the corpus `SPEC.md` says
 why), but a case could label it, so it counts as uncovered rather than
 waived. A deleted ledger fails
 `committed_python_corpus_is_valid_and_covers_each_test_library`, since a
-ledgerless non-Rust corpus otherwise scores rows without the coverage gate.
+ledgerless non-Rust corpus (today only Perl) scores rows without the coverage gate.
 
 ## Required Evidence
 
@@ -233,6 +240,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `committed_python_corpus_is_valid_and_covers_each_test_library`
 - `python_expected_rows_agree_with_corpus_labels`
 - `fixtures/python-verdict-corpus/spec-coverage.toml` and its floor
+- `fixtures/typescript-verdict-corpus/spec-coverage.toml` and its floor
 
 ## Implementation Mapping
 

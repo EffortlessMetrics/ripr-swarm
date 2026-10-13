@@ -12,7 +12,11 @@
 # reason; waived examples are accounted for, never covered. No example is
 # waived today: every uncovered one could be labeled by a new case, so each
 # stays visible as uncovered. RIPR-SPEC-0243 example 33 (two test files, one
-# mocked) is the known gap tracked on #7099. Case ids containing `spec0234`
+# mocked) is the known gap tracked on #7099. Examples 30, 34 and 35 are also
+# uncovered: `jest-spec0234-ex30` labels only example 30's literal-`jest.fn`
+# half (RIPR-SPEC-0247 example 2), and the two node:test message cases keep
+# the message unchanged, so neither exercises the discrimination 34 and 35
+# state. Case ids containing `spec0234`
 # were named before the TypeScript rules were renumbered; they cite today's
 # RIPR-SPEC-0243.
 #
@@ -20,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 48
+floor = 45
 
 # LSP Repair Packet Command
 [[spec]]
