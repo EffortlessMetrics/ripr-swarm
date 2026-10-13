@@ -212,6 +212,7 @@ struct ReceiverTypes {
     /// Types to check one by one: numeric primitives and types that are not
     /// one identifier.
     unindexed: Vec<String>,
+    /// The other types, found through the test's identifiers.
     by_identifier: HashSet<String>,
 }
 
@@ -478,14 +479,6 @@ impl<'a> ReachGraph<'a> {
         )
     }
 
-    /// Names from which the forward walk reaches `owner_name`: every name
-    /// whose shortest non-macro call chain to the owner, through production
-    /// functions resolved by name, has 1 to `MAX_TRANSITIVE_DEPTH` hops.
-    ///
-    /// The forward walk starts at depth 1, expands names up to that depth,
-    /// and succeeds when an expanded name calls the owner, so it succeeds
-    /// exactly when such a chain exists. Walking the reversed edges from the
-    /// owner finds the same set once per owner.
     /// Indexes into `all_tests`, ascending, of every test with a call named
     /// in `names`. Scanning these instead of every test's calls makes the
     /// per-owner cost follow the owner's reaching set, not the test count.
@@ -513,6 +506,14 @@ impl<'a> ReachGraph<'a> {
         tests
     }
 
+    /// Names from which the forward walk reaches `owner_name`: every name
+    /// whose shortest non-macro call chain to the owner, through production
+    /// functions resolved by name, has 1 to `MAX_TRANSITIVE_DEPTH` hops.
+    ///
+    /// The forward walk starts at depth 1, expands names up to that depth,
+    /// and succeeds when an expanded name calls the owner, so it succeeds
+    /// exactly when such a chain exists. Walking the reversed edges from the
+    /// owner finds the same set once per owner.
     fn names_reaching(&self, owner_name: &str) -> HashSet<&'a str> {
         let mut reaching: HashSet<&'a str> = HashSet::new();
         let mut frontier: Vec<&str> = vec![owner_name];
@@ -3088,6 +3089,7 @@ mod tests {
             "<Site as Render>::render(&x);\n    Render::render(&Cache(1));",
             "// Site\n    let s = \"Site\";\n    s.render();",
             "let s: Cache = make();\n    s.render();\n    Other::render(&s);",
+            "let s = \"Site::render(x)\";\n    s.len();",
         ];
         let tests: Vec<TestFact> = bodies
             .iter()
@@ -3096,10 +3098,17 @@ mod tests {
                 let mut test =
                     make_test_at(&format!("t{index}"), "tests/it.rs", index * 10, vec![]);
                 test.body = format!("fn t{index}() {{\n    {body}\n}}").into();
+                // The last test's call text names `Site` only where its masked
+                // body does not: in a string.
+                let text = if index == bodies.len() - 1 {
+                    "Site::render(x)".to_string()
+                } else {
+                    body.lines().last().unwrap_or_default().trim().to_string()
+                };
                 test.calls = vec![CallFact {
                     line: index * 10 + 2,
                     name: "render".to_string(),
-                    text: body.lines().last().unwrap_or_default().trim().to_string(),
+                    text,
                 }];
                 test
             })
@@ -3133,6 +3142,50 @@ mod tests {
         assert!(
             agreed_true >= 5,
             "fixture must resolve some receivers: {agreed_true}"
+        );
+        // The cases the lookup could get wrong must really resolve.
+        assert!(
+            graph.test_calls_on_type(2, "render", "u8"),
+            "`5u8.render()`"
+        );
+        assert!(
+            graph.test_calls_on_type(2, "render", "f64"),
+            "`(-0.5f64).render()`"
+        );
+        assert!(
+            graph.test_calls_on_type(6, "render", "Site"),
+            "call text only"
+        );
+    }
+
+    // Only the earliest test by path, line and name gets its witness built;
+    // the other tests with a macro edge are counted. The index lists the
+    // tests out of that order.
+    #[test]
+    fn macro_witness_names_the_path_first_test_and_counts_the_rest() {
+        let outer = make_fn_with_body(
+            "outer",
+            vec![],
+            "pub fn outer() {\n    call_inner!()\n}".to_string(),
+        );
+        let source = "macro_rules! call_inner {\n    () => { inner() };\n}".to_string();
+        let index = index_with_source(
+            vec![outer],
+            vec![
+                make_test_at("z_last", "tests/b.rs", 1, vec!["outer"]),
+                make_test_at("no_edge", "tests/a.rs", 1, vec!["unrelated"]),
+                make_test_at("a_later", "tests/a.rs", 9, vec!["outer"]),
+                make_test_at("b_first", "tests/a.rs", 3, vec!["outer"]),
+            ],
+            source,
+        );
+
+        let witness = find_macro_reach_witness("inner", &index);
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.test_name.as_str(), w.test_line, w.other_test_count)),
+            Some(("b_first", 3, 2))
         );
     }
 
@@ -3492,6 +3545,11 @@ mod tests {
         assert!(!contains_identifier("outer innerish", "inner"));
         assert!(contains_identifier("outer inner", "inner"));
         assert!(!contains_identifier("inner", ""));
+        assert!(!source_macro_definition_mentions_owner(
+            "fn before() { inner(); }\nmacro_rules! call_inner { () => { other() }; }\nfn after() { inner(); }",
+            "call_inner",
+            "inner",
+        ));
     }
 
     #[test]
@@ -3517,11 +3575,6 @@ mod tests {
                 );
             }
         }
-        assert!(!source_macro_definition_mentions_owner(
-            "fn before() { inner(); }\nmacro_rules! call_inner { () => { other() }; }\nfn after() { inner(); }",
-            "call_inner",
-            "inner",
-        ));
     }
 
     #[test]
