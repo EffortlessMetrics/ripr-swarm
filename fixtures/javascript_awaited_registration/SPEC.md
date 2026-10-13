@@ -27,6 +27,10 @@ ripr check --root fixtures/javascript_awaited_registration/input \
 The Rust CLI tests compare the awaited registration to a bare registration,
 an awaited suite, a truthiness assertion, skipped and expected-failure roots,
 shadowed assertions, and registrations inside initializers and helpers.
+A local async `test` helper that discards its callback is a separate adverse
+control: its exact assertion never runs and must not supply exposure credit.
+The retained base report is also registered in the shared evidence-promotion
+honesty corpus, so re-blessing it as exposed cannot pass that invariant.
 
 For the independent Node contrast, copy `input/` to a scratch directory and run
 `node --test test/nanoid.test.js`. Restoring the original upstream module yields

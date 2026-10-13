@@ -14257,6 +14257,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_nanoid_smoke_consumer_does_not_pin_the_changed_length",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_roots_preserve_skips_expected_failure_and_assertion_shadows",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_initializer_and_helper_registrations_stay_outside_root_discovery",
+  "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_local_root_that_discards_its_callback_cannot_supply_credit",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::nanoid_upstream_bytes_keep_their_independent_provenance",
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::chai_throw_string_literal_is_exact_error_variant",
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_assert_anchored_regex_and_message_object_are_exact_error_variants",

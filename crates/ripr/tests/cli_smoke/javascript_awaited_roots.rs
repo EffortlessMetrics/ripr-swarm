@@ -166,6 +166,27 @@ fn awaited_initializer_and_helper_registrations_stay_outside_root_discovery() ->
 }
 
 #[test]
+fn awaited_local_root_that_discards_its_callback_cannot_supply_credit() -> TestResult {
+    let consumer = Consumer::new(
+        "const test = async (_name, _callback) => {}; await test('ids', () => { assert.strictEqual(nanoid().length, 21); });",
+    )?;
+    // This control declares its own root; remove the runner import so the
+    // input parses and reaches the actual provenance decision.
+    let file = consumer.root.join("test/nanoid.test.js");
+    let source = fs::read_to_string(&file)?;
+    fs::write(
+        file,
+        source.replace("import { test, describe } from 'node:test';\n", ""),
+    )?;
+    let report = consumer.check()?;
+    assert_ne!(
+        report["findings"][0]["classification"], "exposed",
+        "a local async helper never invokes the exact-assertion callback: {report}"
+    );
+    Ok(())
+}
+
+#[test]
 fn nanoid_upstream_bytes_keep_their_independent_provenance() -> TestResult {
     let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
     let provenance: Value = serde_json::from_slice(&fs::read(fixture.join("provenance.json"))?)?;
