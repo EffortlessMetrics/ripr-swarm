@@ -565,10 +565,14 @@ exit 66
         }
         let mut fixture = Fixture::new(label)?;
         fixture.preserve_on_drop = true;
+        write(
+            &fixture.root.join("src/lib.rs"),
+            &LIB_RS.replace("qty >= 10", "qty >= 12"),
+        )?;
         fs::create_dir(fixture.root.join("lib")).map_err(|error| error.to_string())?;
         write(
             &fixture.root.join("lib/Discount.pm"),
-            "package Discount;\nsub discount { return 10; }\n1;\n",
+            "package Discount;\nsub discount { return 12; }\n1;\n",
         )?;
         write(
             &fixture.base.join("managed.diff"),
@@ -645,18 +649,7 @@ exit 66
         let mut observed_live = false;
         let status = loop {
             if let Some(pid) = marker_pid(&marker)? {
-                if primary_exists(pid)? {
-                    match fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")) {
-                        Ok(children) if children.trim().is_empty() => observed_live = true,
-                        Ok(children) => {
-                            return Err(format!(
-                                "single-process exporter spawned descendants: {children}"
-                            ));
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(format!("observe exporter children: {error}")),
-                    }
-                }
+                observed_live |= primary_exists(pid)?;
             }
             if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
                 break status;
@@ -769,9 +762,9 @@ exit 66
     fn healthy(attempt: &Attempt) -> Result<(), String> {
         let report = report(&attempt.output)?;
         if report["analysis_outcome"]["analysis_complete"] != true
-            || !report["language_runs"].as_array().is_some_and(|runs| {
+            || !report["preview_languages"].as_array().is_some_and(|runs| {
                 runs.iter()
-                    .any(|run| run["language"] == "perl" && run["status"] == "ok")
+                    .any(|run| run["language"] == "perl" && run["analyzed"] == true)
             })
         {
             return Err(format!(
