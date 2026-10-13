@@ -5323,6 +5323,75 @@
           "strength": "strong"
         }
       ]
+    },
+    {
+      "id": "javascript_awaited_local_registration_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-local-root.json",
+      "vector": "local_async_test_helper_does_not_execute_exact_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "javascript_awaited_forged_require_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-forged-require.json",
+      "vector": "awaited_commonjs_forged_require_does_not_execute_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "javascript_awaited_rebound_runner_discards_callback",
+      "language": "typescript",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-rebound-runner.json",
+      "vector": "awaited_commonjs_rebound_runner_does_not_execute_assertion_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
     }
   ]
 }

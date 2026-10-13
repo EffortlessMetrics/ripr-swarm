@@ -968,6 +968,59 @@ fn config_file_discovery_stops_at_git_boundary() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn config_discovery_stops_at_unresolvable_git_entries() -> Result<(), String> {
+    for (label, target) in [("dangling", "missing-gitdir"), ("cycle", ".git")] {
+        let outer = temp_root(label)?;
+        let boundary = outer.join("project");
+        let nested = boundary.join("src");
+        fs::create_dir_all(&nested).map_err(|err| format!("mkdir failed: {err}"))?;
+        write_file(
+            &outer.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\ninclude_unchanged_tests = false\n",
+        )?;
+        std::os::unix::fs::symlink(target, boundary.join(".git"))
+            .map_err(|err| format!("symlink failed: {err}"))?;
+
+        let defaults = load_for_root(&nested)?;
+        assert!(
+            defaults.source_path().is_none(),
+            "{label}: parent config leaked"
+        );
+        let mut input = CheckInput::default();
+        apply_to_check_input(&mut input, &defaults, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Draft, "{label}");
+        assert!(input.include_unchanged_tests, "{label}");
+
+        write_file(
+            &boundary.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"ready\"\ninclude_unchanged_tests = true\n",
+        )?;
+        let local = load_for_root(&nested)?;
+        assert_eq!(
+            local.source_path(),
+            Some(boundary.join(CONFIG_FILE_NAME).as_path())
+        );
+        apply_to_check_input(&mut input, &local, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Ready, "{label}: local config must apply");
+        input.mode = Mode::Instant;
+        input.include_unchanged_tests = false;
+        apply_to_check_input(
+            &mut input,
+            &local,
+            CheckInputExplicit {
+                mode: true,
+                include_unchanged_tests: true,
+            },
+        );
+        assert_eq!(input.mode, Mode::Instant, "{label}: explicit CLI wins");
+        assert!(!input.include_unchanged_tests, "{label}: explicit CLI wins");
+        fs::remove_dir_all(&outer).map_err(|err| format!("remove fixture failed: {err}"))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn oracle_strength_literals_round_trip_through_config() -> Result<(), String> {
     let weak_smoke_none = parse_config(
