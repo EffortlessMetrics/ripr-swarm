@@ -373,7 +373,7 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     )?;
     assert!(
         rust.population("by_packet_provenance.producer.abstention_rate")
-            .is_err()
+            .is_err_and(|err| err.contains("missing corpus rate"))
     );
     Ok(())
 }
@@ -537,7 +537,7 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
     for (metric, n, d, status) in [
-        ("false_verdict", 8, 27, "below_target"),
+        ("false_verdict", 8_u32, 27_u32, "below_target"),
         ("false_actionable", 5, 15, "below_target"),
         ("false_exposed", 3, 12, "below_target"),
         ("false_silent", 0, 12, "meets_target"),
@@ -555,7 +555,7 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
         let population: Population =
             serde_json::from_value(row["samples"][0]["population"].clone())
                 .map_err(|err| err.to_string())?;
-        assert_eq!(population.totals()?, (n as u64, d as u64));
+        assert_eq!(population.totals()?, (u64::from(n), u64::from(d)));
     }
     let baseline: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
