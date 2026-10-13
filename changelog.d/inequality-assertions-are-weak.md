@@ -21,3 +21,11 @@
   helpers named `assert_unequal`, `assert_noteq`, `assert_inequal` or
   `assert_different`. `mock.assert_not_called()` and `assert_not_sent(..)`
   keep their `mock_expectation` / medium reading (#6670).
+- Oracle strength: one polarity rule now reads every `matches!` compared
+  with `==` or `!=`: only `== true`, `!= false` (or `== !false`) keeps the
+  pattern's strong reading. `!= true`, `== !true`, a comparison against a
+  non-literal, `prop_assert!(!matches!(..))`, `assert_not_matches!(..)`
+  and `matches!(..).not()` read `relational_check` / weak, as do
+  `assert_not_equal(expect_value(), 3)`, `mock.assert_ne(x, 3)` and
+  `assert_ne_state(..)`, which previously kept a mock-expectation reading
+  (#6670).

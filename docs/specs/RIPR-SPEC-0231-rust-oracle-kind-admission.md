@@ -177,13 +177,27 @@ Two pattern terms are used below.
    (and any `*assert_ne!` spelling such as `soft_assert_ne!`), `!=` in an
    `ensure!` condition, a negated `!matches!(..)` (which today reads
    `exact_error_variant` / strong at step 1 when its pattern is
-   `Err(E::X)`), a `matches!` equality operand that is negated or compared
-   against `false` (`assert_eq!(matches!(r, Err(E::X)), false)`,
-   `assert!(matches!(r, Err(E::X)) == false)`), and a custom helper whose
+   `Err(E::X)`; also `matches!(..).not()` and the `prop_assert!` form), an
+   assertion macro whose name has an inequality segment
+   (`assert_not_matches!`), a `matches!` comparison that is not positive
+   (below), and a custom helper whose
    name has a `ne`, `neq`, `not`, `noteq`, `notequal`, `nonequal`,
    `unequal`, `inequal`, `differ`, `differs`, `different` or `distinct`
    segment that step 10 admits today; such a name never earns step 10's
-   clear-exact credit. A `!=` in a boolean assertion condition is rule 1's
+   clear-exact credit. One structural polarity rule reads a `matches!`
+   compared with `==` or `!=`, as the operands of an equality macro
+   (`assert_eq!`, `assert_ne!` and their `debug_` and `prop_` spellings)
+   or at the top level of an `assert!`, `debug_assert!`, `prop_assert!` or
+   `ensure!` condition, in either operand order: against a boolean literal
+   or a negated literal, `== true`, `!= false` and `== !false` are
+   positive and keep the pattern's reading; `== false`, `!= true`,
+   `== !true` and `!= !false` are negative. A negative comparison, a
+   comparison against anything that is not a boolean literal (a variable,
+   a call, another `matches!`), a negated pattern operand
+   (`!matches!(..) == false`, a double negation not read through) and a
+   compared pattern nested in a larger condition all fail closed at
+   `relational_check` / weak. `assert_ne!` stays an inequality whatever
+   the literal. A `!=` in a boolean assertion condition is rule 1's
    inequality only when `!=` is the condition's only comparison
    (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
    strings and comments keeps the reading that `==` earns
@@ -198,11 +212,15 @@ Two pattern terms are used below.
    anywhere else (`||` at any level, a nested group) the reading is capped
    at weak. An inequality-named helper is recognized before any exact-kind
    step, so a `matches!(.., Err(E::X))` argument cannot lend it a kind, and
-   the cap keeps a reading already below weak. A mock verification or a
-   helper whose own name carries a side-effect token
-   (`mock.assert_not_called()`, `assert_not_sent(..)`) keeps its
-   `mock_expectation` / medium reading. No probe-family strength override in reveal lifts an inequality
-   above its classified strength.
+   the cap keeps a reading already below weak. A call-count or
+   observation helper (`mock.assert_not_called()`, `assert_not_sent(..)`)
+   keeps its `mock_expectation` / medium reading. Only the helper name
+   and its receiver decide that exemption, never its arguments, and a
+   name with a value-comparison segment (`equal`, `eq`, `ne`) is never
+   exempt: `assert_not_equal(expect_value(), 3)`,
+   `mock.assert_ne(x, 3)` and `assert_ne_state(machine, State::Idle)`
+   read weak. No probe-family strength override in reveal lifts an
+   inequality above its classified strength.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
    irrefutable, `..` or pins no value (rule 3's test) assigns
@@ -497,6 +515,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   `spec_0231_rule_1_inequality_helper_keeps_observer_readings` pin the
   negated or `false`-compared `matches!` operand, the `||` boundary, the
   helper and `*assert_ne!` spellings, and the observer exemption.
+  `spec_0231_rule_1_matches_comparison_polarity_is_structural`,
+  `spec_0231_rule_1_negation_spellings_follow_the_polarity_rule` and
+  `spec_0231_rule_1_observer_exemption_reads_receiver_and_name_only` pin
+  the polarity rule in every operand order and macro form, the
+  `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
+  name-and-receiver-only observer exemption.
 - Planned: one classifier unit test per remaining acceptance example (rules
   2 to 6).
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and

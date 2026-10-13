@@ -1,6 +1,7 @@
 use super::arguments::{
-    assertion_oracle_text, boolean_assertion_macro_condition, comparable_expression,
-    custom_assertion_arguments, equality_assertion_arguments, is_complete_macro_invocation,
+    AssertionComparison, assertion_comparison, assertion_oracle_text,
+    boolean_assertion_macro_condition, comparable_expression, custom_assertion_arguments,
+    equality_assertion_arguments, is_complete_macro_invocation,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::mask_comments_and_strings;
@@ -419,50 +420,195 @@ fn has_top_level_disjunction(condition: &str) -> bool {
     false
 }
 
-/// RIPR-SPEC-0231 rule 1: an equality whose operand is a negated `matches!`,
-/// or a `matches!` compared against `false`, only excludes the pattern
-/// (`assert_eq!(matches!(r, Err(E::X)), false)`,
-/// `assert!(matches!(r, Err(E::X)) == false)`), so it never reads as the
-/// variant. Covers the equality macros and a top-level `==` in a boolean
-/// assertion condition. A negated operand against anything, even `false`,
-/// fails closed rather than being read through.
-pub(super) fn contains_negated_pattern_operand(line: &str) -> bool {
-    if let Some(arguments) = equality_assertion_arguments(line)
-        && let (Some(left), Some(right)) = (arguments.first(), arguments.get(1))
-    {
-        return is_negated_pattern_equality(left, right);
-    }
-    let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
-        return false;
-    };
-    let condition = unwrap_parentheses(condition.trim());
-    let Some((operator, width)) = top_level_comparison_operator(condition) else {
-        return false;
-    };
-    if condition.get(operator..operator + width) != Some("==") {
-        return false;
-    }
-    let left = condition.get(..operator).unwrap_or_default();
-    let right = condition.get(operator + width..).unwrap_or_default();
-    is_negated_pattern_equality(left, right)
+/// The reading a `matches!` takes when an assertion compares it with `==` or
+/// `!=` (RIPR-SPEC-0231 rule 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PatternPolarity {
+    /// The comparison asserts the pattern holds (`== true`, `!= false`).
+    Positive,
+    /// The comparison excludes the pattern or cannot be resolved to a
+    /// positive reading, so it fails closed at the inequality strength.
+    NotPositive,
 }
 
-fn is_negated_pattern_equality(left: &str, right: &str) -> bool {
-    let is_pattern = |operand: &str| {
-        let operand = unwrap_parentheses(operand.trim());
-        is_complete_macro_invocation(operand, "matches!")
-            || is_complete_macro_invocation(operand, "assert_matches!")
+/// RIPR-SPEC-0231 rule 1, structurally: when an assertion compares a
+/// `matches!` (or `assert_matches!`) with `==` or `!=`, either as the two
+/// operands of an equality macro (`assert_eq!`, `assert_ne!` and their
+/// `debug_` and `prop_` spellings) or at the top level of a boolean
+/// assertion condition (`assert!`, `debug_assert!`, `prop_assert!`,
+/// `ensure!`), resolve its polarity against the other operand. Only an
+/// un-negated pattern against a boolean literal, optionally negated
+/// (`!true`), can be positive: `== true`, `!= false`, `== !false`. Every
+/// other comparison is not positive: `== false`, `!= true`, `== !true`, a
+/// negated pattern operand (`!matches!(..) == false` is a double negation
+/// and is not read through), two pattern operands, a non-literal operand,
+/// or a compared pattern nested inside a larger condition
+/// (`score == 4 && matches!(..) != true`). `None` means the assertion
+/// compares no pattern, so the other rules decide.
+pub(super) fn pattern_comparison_polarity(line: &str) -> Option<PatternPolarity> {
+    match assertion_comparison(line)? {
+        AssertionComparison::Operands {
+            not_equal,
+            left,
+            right,
+        } => {
+            if pattern_operand_negations(&left).is_some()
+                || pattern_operand_negations(&right).is_some()
+            {
+                return Some(resolve_pattern_comparison(&left, &right, not_equal));
+            }
+            (contains_compared_pattern(&left) || contains_compared_pattern(&right))
+                .then_some(PatternPolarity::NotPositive)
+        }
+        AssertionComparison::Condition(condition) => {
+            let condition = unwrap_parentheses(condition.trim());
+            if let Some((operator, width)) = top_level_comparison_operator(condition) {
+                let left = condition.get(..operator).unwrap_or_default();
+                let right = condition.get(operator + width..).unwrap_or_default();
+                if pattern_operand_negations(left).is_some()
+                    || pattern_operand_negations(right).is_some()
+                {
+                    let not_equal = condition.get(operator..operator + width) == Some("!=");
+                    return Some(resolve_pattern_comparison(left, right, not_equal));
+                }
+            }
+            contains_compared_pattern(condition).then_some(PatternPolarity::NotPositive)
+        }
+    }
+}
+
+fn resolve_pattern_comparison(left: &str, right: &str, not_equal: bool) -> PatternPolarity {
+    let literal = match (
+        pattern_operand_negations(left),
+        pattern_operand_negations(right),
+    ) {
+        (Some(0), None) => boolean_literal_value(right),
+        (None, Some(0)) => boolean_literal_value(left),
+        _ => None,
     };
-    let is_false = |operand: &str| unwrap_parentheses(operand.trim()) == "false";
-    is_negated_pattern_condition(left)
-        || is_negated_pattern_condition(right)
-        || (is_pattern(left) && is_false(right))
-        || (is_false(left) && is_pattern(right))
+    match literal {
+        Some(value) if value != not_equal => PatternPolarity::Positive,
+        _ => PatternPolarity::NotPositive,
+    }
+}
+
+/// How many negations (`!` prefixes and `.not()` calls) wrap one complete
+/// `matches!` or `assert_matches!` operand, or `None` when the operand is not
+/// such a pattern.
+fn pattern_operand_negations(operand: &str) -> Option<usize> {
+    let mut text = unwrap_parentheses(operand.trim());
+    let mut negations = 0;
+    loop {
+        if is_complete_macro_invocation(text, "matches!")
+            || is_complete_macro_invocation(text, "assert_matches!")
+        {
+            return Some(negations);
+        }
+        let rest = text.strip_prefix('!').or_else(|| strip_not_call(text))?;
+        text = unwrap_parentheses(rest.trim());
+        negations += 1;
+    }
+}
+
+/// The receiver of a trailing `.not()` call (`std::ops::Not`).
+fn strip_not_call(text: &str) -> Option<&str> {
+    text.trim_end()
+        .strip_suffix(')')?
+        .trim_end()
+        .strip_suffix('(')?
+        .trim_end()
+        .strip_suffix("not")?
+        .trim_end()
+        .strip_suffix('.')
+}
+
+/// The value of a boolean literal operand, through parentheses and any
+/// number of `!` negations (`!true` is `false`).
+fn boolean_literal_value(operand: &str) -> Option<bool> {
+    let mut text = unwrap_parentheses(operand.trim());
+    let mut negated = false;
+    loop {
+        match text {
+            "true" => return Some(!negated),
+            "false" => return Some(negated),
+            _ => {}
+        }
+        text = unwrap_parentheses(text.strip_prefix('!')?.trim());
+        negated = !negated;
+    }
+}
+
+/// One `matches!` invocation in a masked condition: where its (possibly
+/// path-qualified) name starts and where its closing delimiter ends.
+fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked
+        .match_indices("matches!")
+        .filter_map(|(found, name)| {
+            let mut start = found;
+            while start > 0 && (is_ident(bytes[start - 1]) || bytes[start - 1] == b':') {
+                start -= 1;
+            }
+            let after_name = found + name.len();
+            let open = after_name
+                + masked
+                    .get(after_name..)?
+                    .find(|ch: char| !ch.is_whitespace())?;
+            let contents = super::arguments::delimited_contents_at(text, open)?;
+            Some((start, open + contents.len() + 2))
+        })
+        .collect()
+}
+
+/// Whether a `matches!` in `text` is an operand of `==` or `!=`, looking
+/// through negations, `.not()` calls and parentheses around it.
+fn contains_compared_pattern(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    pattern_invocation_spans(text)
+        .into_iter()
+        .any(|(start, end)| {
+            let mut before = start;
+            while before > 0
+                && matches!(
+                    bytes[before - 1],
+                    b'(' | b'!' | b' ' | b'\t' | b'\n' | b'\r'
+                )
+            {
+                before -= 1;
+            }
+            let compared_before =
+                before >= 2 && matches!(&bytes[before - 2..before], b"==" | b"!=");
+            let mut after = masked.get(end..).unwrap_or_default();
+            loop {
+                let trimmed = after.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+                match strip_leading_not_call(trimmed) {
+                    Some(rest) => after = rest,
+                    None => {
+                        after = trimmed;
+                        break;
+                    }
+                }
+            }
+            compared_before || after.starts_with("==") || after.starts_with("!=")
+        })
+}
+
+/// The text after a leading `.not()` call.
+fn strip_leading_not_call(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix('.')?.trim_start().strip_prefix("not")?;
+    rest.trim_start()
+        .strip_prefix('(')?
+        .trim_start()
+        .strip_prefix(')')
 }
 
 /// Whether a boolean assertion's condition negates a `matches!` anywhere,
-/// for example inside `||` or a nested group. Such a condition cannot be read
-/// conjunct by conjunct, so the caller caps it at the inequality strength.
+/// with a `!` before it or a `.not()` call after it, for example inside `||`
+/// or a nested group. Such a condition cannot be read conjunct by conjunct,
+/// so the caller caps it at the inequality strength.
 pub(super) fn contains_negated_pattern(line: &str) -> bool {
     let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
         return false;
@@ -470,17 +616,51 @@ pub(super) fn contains_negated_pattern(line: &str) -> bool {
     let masked = mask_comments_and_strings(&condition);
     let bytes = masked.as_bytes();
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    masked.match_indices("matches!").any(|(found, _)| {
-        // Walk back over the macro path (`assert_matches!`, `std::matches!`),
-        // then over whitespace and `(`, to the operator before it.
-        let mut index = found;
-        while index > 0 && (is_ident(bytes[index - 1]) || bytes[index - 1] == b':') {
-            index -= 1;
+    pattern_invocation_spans(&condition)
+        .into_iter()
+        .any(|(start, end)| {
+            // Walk back over whitespace and `(` to the operator before it.
+            let mut index = start;
+            while index > 0 && (bytes[index - 1].is_ascii_whitespace() || bytes[index - 1] == b'(')
+            {
+                index -= 1;
+            }
+            let prefixed =
+                index > 0 && bytes[index - 1] == b'!' && (index < 2 || !is_ident(bytes[index - 2]));
+            let after = masked
+                .get(end..)
+                .unwrap_or_default()
+                .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+            prefixed || strip_leading_not_call(after).is_some()
+        })
+}
+
+/// RIPR-SPEC-0231 rule 1: an assertion macro whose own name says it asserts
+/// inequality or a non-match (`assert_not_matches!`, `assert_not_eq!`): the
+/// first macro invoked has an `assert` name with an inequality segment.
+/// `*assert_ne!` is [`is_inequality_macro_assertion`]'s case.
+pub(super) fn is_inequality_named_assertion_macro(line: &str) -> bool {
+    first_macro_name(line).is_some_and(|name| {
+        name.contains("assert") && name.split('_').any(is_inequality_name_segment)
+    })
+}
+
+/// The name of the first macro invocation (`name!(`, `name![`, `name!{`)
+/// outside strings and comments.
+fn first_macro_name(line: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(line);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked.match_indices('!').find_map(|(bang, _)| {
+        let opens = masked
+            .get(bang + 1..)?
+            .trim_start()
+            .starts_with(['(', '[', '{']);
+        let mut start = bang;
+        while start > 0 && is_ident(bytes[start - 1]) {
+            start -= 1;
         }
-        while index > 0 && (bytes[index - 1].is_ascii_whitespace() || bytes[index - 1] == b'(') {
-            index -= 1;
-        }
-        index > 0 && bytes[index - 1] == b'!' && (index < 2 || !is_ident(bytes[index - 2]))
+        (opens && start < bang).then(|| masked[start..bang].to_ascii_lowercase())
     })
 }
 
@@ -519,14 +699,79 @@ fn is_inequality_name_segment(segment: &str) -> bool {
     )
 }
 
-/// Whether an inequality-named helper reads as an observed side effect or a
-/// mock verification rather than a value comparison: a mock receiver's
-/// `.assert_*` call, or a helper whose own name carries a side-effect token
-/// (`assert_not_sent`). An argument such as `state` does not count.
+/// Whether an inequality-named helper reads as an observed call or side
+/// effect rather than a value comparison. Only the helper name and its
+/// receiver count, never its arguments (`assert_not_equal(expect_value(), 3)`
+/// is a comparison). A name with a value-comparison segment (`equal`, `eq`,
+/// `ne`, ..) is never exempt, whatever its receiver (`mock.assert_ne(x, 3)`,
+/// `assert_ne_state(machine, State::Idle)`). Otherwise a name with a
+/// call-count or observation token (`assert_not_called`, `assert_not_sent`)
+/// is exempt, and so is an argument-free verification on a mock-named
+/// receiver (`mock.assert_not_ready()`).
 pub(super) fn is_observer_named_assertion_helper(line: &str) -> bool {
-    is_mock_expectation_line(line)
-        || custom_assertion_helper_name(line.trim_start())
-            .is_some_and(|name| is_side_effect_observer_assertion(&name))
+    let trimmed = line.trim_start();
+    let Some(name) = custom_assertion_helper_name(trimmed) else {
+        return false;
+    };
+    let name = name.trim_end_matches('!');
+    if name.split('_').any(is_value_comparison_name_segment) {
+        return false;
+    }
+    const OBSERVATION_TOKENS: &[&str] = &[
+        "called",
+        "calls",
+        "invoked",
+        "invocation",
+        "sent",
+        "received",
+        "emitted",
+        "published",
+        "written",
+        "logged",
+        "recorded",
+        "saved",
+        "stored",
+        "persisted",
+        "dispatched",
+        "delivered",
+        "notified",
+        "fired",
+        "triggered",
+        "requested",
+    ];
+    if OBSERVATION_TOKENS.iter().any(|token| name.contains(token)) {
+        return true;
+    }
+    has_mock_named_receiver(trimmed)
+        && custom_assertion_arguments(trimmed).is_some_and(|arguments| {
+            arguments
+                .iter()
+                .all(|argument| mask_comments_and_strings(argument).trim().is_empty())
+        })
+}
+
+/// One `_`-separated helper-name segment that names a value comparison.
+fn is_value_comparison_name_segment(segment: &str) -> bool {
+    (is_inequality_name_segment(segment) && segment != "not")
+        || matches!(
+            segment,
+            "eq" | "equal" | "equals" | "same" | "match" | "matches"
+        )
+}
+
+/// Whether a `.assert_*` method call's receiver is mock-named
+/// (`mock.assert_not_called()`, `mock_bus.assert_*`, `self.mock.assert_*`).
+fn has_mock_named_receiver(line: &str) -> bool {
+    let masked = mask_comments_and_strings(line);
+    let Some(callee) = masked.split('(').next() else {
+        return false;
+    };
+    callee.rsplit_once('.').is_some_and(|(receiver, _)| {
+        receiver
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.trim().is_empty())
+            .is_some_and(|segment| segment.to_ascii_lowercase().contains("mock"))
+    })
 }
 
 /// An `ensure!` condition whose only comparison is `!=`. One `==` anywhere

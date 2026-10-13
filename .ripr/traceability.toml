@@ -13934,6 +13934,13 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_precedes_exact_kinds",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_is_never_exact",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_pattern_must_be_the_whole_condition",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_matches_operand_in_equality_is_weak",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_conjunct_respects_or_precedence",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_matches_comparison_polarity_is_structural",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negation_spellings_follow_the_polarity_rule",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_observer_exemption_reads_receiver_and_name_only",
   "crates/ripr/src/analysis/rust_index.rs::tests::parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations",
   "crates/ripr/tests/cli_smoke.rs::repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip",
 ]
