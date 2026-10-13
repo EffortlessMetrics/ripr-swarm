@@ -335,17 +335,16 @@ fn owner_call_argument_at(test_body: &str, owner_name: &str, index: usize) -> Op
         return None;
     };
     // One call site can still run several times: inside a loop, or inside a
-    // callback (`ids.forEach((id) => notify({ send }, id))`), and
-    // `toHaveBeenCalledWith` passes when any recorded call matches. The
-    // test's own block holds no loop, and the call sits in no nested
-    // function of it.
+    // callback, method, getter or class (`ids.forEach((id) => notify({ send },
+    // id))`), and `toHaveBeenCalledWith` passes when any recorded call
+    // matches. The test's own block holds no loop, and nothing before the
+    // call in it opens a function that could hold the call.
     let range = callback_scope_range(&masked)?;
-    let scope = &masked[range.clone()];
     if ["for", "while", "do"]
         .iter()
-        .any(|word| !identifier_offsets(scope, word).is_empty())
+        .any(|word| !identifier_offsets(&masked[range.clone()], word).is_empty())
         || !range.contains(&at)
-        || inside_nested_function(scope, at - range.start)
+        || opens_function_before_call(&masked[range.start..at])
     {
         return None;
     }
@@ -526,47 +525,67 @@ fn callback_scope_range(masked: &str) -> Option<std::ops::Range<usize>> {
     Some(0..masked.len())
 }
 
-/// `true` when `at` lies in the body of an arrow or `function` that starts
-/// inside `scope` (a callback such as `ids.forEach((id) => owner(id))`). An
-/// arrow's expression body ends at the first `,`, `;` or unmatched closer;
-/// a function type (`vi.fn<(m: string) => void>()`) ends before any call.
-fn inside_nested_function(scope: &str, at: usize) -> bool {
-    let arrows = scope.match_indices("=>").map(|(arrow, _)| arrow + 2);
-    let functions = identifier_offsets(scope, "function")
-        .into_iter()
-        .filter_map(|word| scope[word..].find('{').map(|brace| word + brace));
-    arrows.chain(functions).any(|start| {
-        if start >= at {
-            return false;
+/// `true` when the masked test text `before` the owner call opens an arrow
+/// or a method-like block (see [`has_method_like_block`]: a `function`,
+/// class, method or getter body), any of which may hold the call and run it more
+/// than once. A mock's own type arguments and implementation
+/// (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`) are skipped when
+/// they close before the call; any other arrow refuses, even one that ends
+/// before the call.
+fn opens_function_before_call(before: &str) -> bool {
+    let before = without_closed_mock_factories(before);
+    // A `function`, class, method or getter body opens with a `{` that the
+    // allowlist reads as method-like (`function (id) {`, `class H {`).
+    before.contains("=>") || has_method_like_block(&before)
+}
+
+/// `text` with each `.fn<...>(...)` mock factory's type arguments and
+/// arguments removed (`vi.fn<...>`, `jest.fn(impl)`). A group that does not
+/// close inside `text` is kept, so a call inside a mock implementation still
+/// reads as nested. An `=>` inside the type arguments does not close the `<`.
+fn without_closed_mock_factories(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(".fn") {
+        let after = start + ".fn".len();
+        kept.push_str(&rest[..after]);
+        rest = &rest[after..];
+        if rest.starts_with(is_identifier_part) {
+            continue;
         }
-        let body = &scope[start..];
-        let lead = body.len() - body.trim_start().len();
-        let braced = body.trim_start().starts_with('{');
-        let mut depth = 0usize;
-        let mut end = scope.len();
-        for (offset, c) in body.char_indices().skip_while(|(offset, _)| *offset < lead) {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' if depth == 0 => {
-                    end = start + offset;
-                    break;
-                }
-                ')' | ']' | '}' => {
-                    depth -= 1;
-                    if braced && depth == 0 {
-                        end = start + offset + 1;
-                        break;
-                    }
-                }
-                ',' | ';' if depth == 0 && !braced => {
-                    end = start + offset;
-                    break;
-                }
-                _ => {}
+        for (open, close) in [('<', '>'), ('(', ')')] {
+            if !rest.starts_with(open) {
+                continue;
+            }
+            let Some(end) = closing_offset(rest, open, close) else {
+                kept.push_str(rest);
+                return kept;
+            };
+            rest = &rest[end..];
+        }
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// The byte offset just past the `close` matching the `open` that starts
+/// `text`, skipping `=>`, or `None` when it never closes.
+fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((offset, c)) = chars.next() {
+        if c == '=' && chars.peek().is_some_and(|(_, next)| *next == '>') {
+            chars.next();
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(offset + c.len_utf8());
             }
         }
-        at < end
-    })
+    }
+    None
 }
 
 /// The owner's masked body: the text after its header (the parameter list up
@@ -638,10 +657,13 @@ fn has_method_like_block(body: &str) -> bool {
                 let Some(open) = matching_open_paren(before) else {
                     return true;
                 };
-                return !control_keyword_at(body, before[..open].trim_end());
+                return !control_keyword_at(before[..open].trim_end());
             }
             if is_identifier_part(last) {
-                return !BLOCK_WORDS.contains(&trailing_identifier(before));
+                // `cfg.try {` ends a property access (a return type such as
+                // `typeof cfg.try`), not a `try` statement.
+                let word = trailing_identifier(before);
+                return !BLOCK_WORDS.contains(&word) || is_property_name(before, word);
             }
             !matches!(
                 last,
@@ -650,54 +672,81 @@ fn has_method_like_block(body: &str) -> bool {
         })
 }
 
-/// `true` when `head`, a prefix of `body`, ends with a control keyword that
-/// stands in statement position, so the `(...)` after it is a condition and
-/// not a method's parameters. `catch` must follow a `}`; the other keywords
-/// must follow the start of the body, `;`, `}`, `)`, `else`, or a `{` that
-/// itself opens a block (see [`opens_block`]). After `,`, `:` or an object
-/// literal's `{` the word names a method, so it is not control.
-fn control_keyword_at(body: &str, head: &str) -> bool {
+/// `true` when `head` ends with a control keyword that stands in statement
+/// position, so the `(...)` after it is a condition and not a method's
+/// parameters. `catch` must follow a `}`; the other keywords must follow the
+/// start of the body, `;`, `}`, `)`, `else`, or a `{` that itself opens a
+/// block (see [`brace_context`]). After `,`, `:`, `.` or an object literal's
+/// `{` the word names a method or property, so it is not control.
+fn control_keyword_at(head: &str) -> bool {
+    brace_context(head, false)
+}
+
+/// Walk for [`control_keyword_at`]. With `block == false`, `text` ends with
+/// the word before a `(...)`; with `block == true`, `text` precedes a `{`
+/// that must open a statement block, not an object literal: one at the start
+/// of the body, after `;`, `}`, a control keyword's `(...)`, `else`, `try`,
+/// `finally` or `do`, or after a `{` that itself opens a block (`return {`,
+/// `= {` and `({` open object literals). It walks back through enclosing `{` and control
+/// headers iteratively, so deep nesting cannot overflow the stack.
+fn brace_context(text: &str, block: bool) -> bool {
     const CONTROL: [&str; 5] = ["if", "for", "while", "switch", "with"];
-    let word = trailing_identifier(head);
-    let before = head[..head.len() - word.len()].trim_end();
-    if word == "catch" {
-        return before.ends_with('}');
-    }
-    CONTROL.contains(&word) && statement_position(body, before)
-}
-
-/// `true` when the text after `before` (a trimmed prefix of `body`) starts
-/// a statement: `before` is empty or ends with `;`, `}`, `)`, `else`, or a
-/// `{` that opens a block.
-fn statement_position(body: &str, before: &str) -> bool {
-    match before.chars().next_back() {
-        None | Some(';' | '}' | ')') => true,
-        Some('{') => opens_block(body, before.len() - 1),
-        Some(_) => trailing_identifier(before) == "else",
-    }
-}
-
-/// `true` when the `{` at byte `at` of `body` opens a statement block, not
-/// an object literal: it starts the body, follows `;`, `}`, a control
-/// keyword's `(...)`, `else`, `try`, `finally` or `do`, or a `{` that itself
-/// opens a block. `return {`, `= {` and `({` open object literals.
-fn opens_block(body: &str, at: usize) -> bool {
-    let mut at = at;
+    const BLOCK_WORDS: [&str; 4] = ["else", "try", "finally", "do"];
+    let mut text = text;
+    let mut block = block;
     loop {
-        let before = body[..at].trim_end();
+        if !block {
+            // `text` ends with the word before a `(...)`.
+            let word = trailing_identifier(text);
+            if is_property_name(text, word) {
+                return false;
+            }
+            let before = text[..text.len() - word.len()].trim_end();
+            if word == "catch" {
+                return before.ends_with('}');
+            }
+            if !CONTROL.contains(&word) {
+                return false;
+            }
+            // The keyword must start a statement.
+            match before.chars().next_back() {
+                None | Some(';' | '}' | ')') => return true,
+                Some('{') => {
+                    text = &before[..before.len() - 1];
+                    block = true;
+                    continue;
+                }
+                Some(_) => {
+                    let word = trailing_identifier(before);
+                    return word == "else" && !is_property_name(before, word);
+                }
+            }
+        }
+        // `text` precedes a `{` that must open a block.
+        let before = text.trim_end();
         match before.chars().next_back() {
             None | Some(';' | '}') => return true,
-            Some('{') => at = before.len() - 1,
+            Some('{') => text = &before[..before.len() - 1],
             Some(')') => {
-                return matching_open_paren(before)
-                    .is_some_and(|open| control_keyword_at(body, before[..open].trim_end()));
+                let Some(open) = matching_open_paren(before) else {
+                    return false;
+                };
+                text = before[..open].trim_end();
+                block = false;
             }
             Some(c) if is_identifier_part(c) => {
-                return ["else", "try", "finally", "do"].contains(&trailing_identifier(before));
+                let word = trailing_identifier(before);
+                return BLOCK_WORDS.contains(&word) && !is_property_name(before, word);
             }
             Some(_) => return false,
         }
     }
+}
+
+/// `true` when `word`, the identifier `text` ends with, is a property name
+/// (`cfg.try`, `a?.if`) rather than a keyword.
+fn is_property_name(text: &str, word: &str) -> bool {
+    text[..text.len() - word.len()].trim_end().ends_with('.')
 }
 
 /// The byte offset of the `(` matching the `)` that ends `text`.

@@ -122,6 +122,10 @@ fn changed_call_a_nested_function_may_run_is_not_credited() {
         "function checkout(owner, lines, notifier) {\n  const h = { if(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.if(1); h.if(2);\n}",
         "function checkout(owner, lines, notifier) {\n  const h = { a: 1, switch(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.switch(1); h.switch(2);\n}",
         "function checkout(owner, lines, notifier) {\n  const h = { a: { b: 1 }, if(total) {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.if(1); h.if(2);\n}",
+        // A block word that ends a property access in a return type
+        // (`typeof cfg.try`) does not open a block.
+        "function checkout(owner, lines, notifier) {\n  const h = { run(total): typeof cfg.try {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
+        "function checkout(owner, lines, notifier) {\n  const h = { run(total): typeof cfg.return {\n  notifier.send(owner, `charged ${total} cents`);\n  } };\n  h.run(1); h.run(2);\n}",
     ] {
         assert!(
             !checkout_facts(owner).credits(&charged_payload(), CHECKOUT_TEST),
@@ -216,6 +220,10 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         // One call site run more than once: any recorded call may match.
         "const send = vi.fn(); for (const who of [\"ann\", \"bo\"]) checkout(who, [apple], { send });",
         "const send = vi.fn(); [\"ann\", \"bo\"].forEach((who) => checkout(who, [apple], { send }));",
+        "const send = vi.fn(); const h = { run(who) { checkout(who, [apple], { send }); } }; h.run(\"ann\"); h.run(\"bo\");",
+        "const send = vi.fn(); class H { run(w) { checkout(w, [apple], { send }); } } new H().run(\"ann\"); new H().run(\"bo\");",
+        "const send = vi.fn(); [{ who: \"ann\" }, { who: \"bo\" }].forEach(function ({ who }) { checkout(who, [apple], { send }); });",
+        "const send = vi.fn(); [\"ann\", \"bo\"].forEach((who) => wrap<string, number>(checkout(who, [apple], { send })));",
     ] {
         let test = format!(
             "it(\"t\", () => {{\n    {body}\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"

@@ -15,5 +15,6 @@
   method may run twice (#6654).
 - TypeScript (RIPR-SPEC-0255 tightens RIPR-SPEC-0247): a literal mock
   payload no longer pins the changed call when the test calls the owner in a
-  loop or a callback (`[7, 8].forEach((id) => announce(id, send))`), where
-  another recorded call may match the payload (#6654).
+  loop, a callback, a method, a getter or a class
+  (`[7, 8].forEach((id) => announce(id, send))`), where another recorded
+  call may match the payload (#6654).

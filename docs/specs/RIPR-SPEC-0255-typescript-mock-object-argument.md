@@ -97,8 +97,9 @@ keyword starts a statement (after the start of the body, `;`, `}`, `)`,
 literal's `${`. Every other `{` counts, among them one after `name(...)`,
 after any other word, after `>`, `]`, `}` or a string literal (a typed
 method such as `run(): { n: number } {` or `run(): "a" {`, or a class
-body), one after a `)` with no matching `(`, and an object method named
-like a keyword (`{ catch(e) { ... } }`, `{ a: 1, if(x) { ... } }`). This
+body), one after a `)` with no matching `(`, an object method named
+like a keyword (`{ catch(e) { ... } }`, `{ a: 1, if(x) { ... } }`), and one
+after a block word that ends a property access (`run(): typeof cfg.try {`). This
 also closes a RIPR-SPEC-0247 gap, where method shorthand
 (`const h = { run(x) { p.m(x) } }`) counted as no nested function. When the
 body holds a nested function, the changed line is accepted only when it is
@@ -122,11 +123,17 @@ arrow on the line before, or the branch of a braceless `if` / `else`.
 **Both paths: the test's one owner call runs once.** For RIPR-SPEC-0247
 rule 1's direct mock and for rule 2 below, the test's single owner call
 site must not sit inside a loop or a nested function of the test's own
-block: the block holds no `for`, `while` or `do`, and the call lies in the
-body of no arrow or `function` that starts in the block
-(`[7, 8].forEach((id) => announce(id, send))` refuses). A call site that
-runs twice records two calls, and `toHaveBeenCalledWith` passes when any
-of them matches. This tightens RIPR-SPEC-0247.
+block: the block holds no `for`, `while` or `do`, and the block's text
+before the call holds no `=>` and no method-like `{` (the same allowlist
+as rule 1, which also covers `function` and class bodies), so a callback
+(`[7, 8].forEach((id) => announce(id, send))`), a method, getter or class
+field that may hold the call refuses. A mock factory's own type arguments
+and implementation (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`)
+are skipped when they close before the call. Any other arrow before the
+call refuses, even one that ends before it, which can under-credit but
+never credits a call that runs twice. A call site that runs twice records
+two calls, and `toHaveBeenCalledWith` passes when any of them matches. This
+tightens RIPR-SPEC-0247.
 
 **Rule 2. A mock passed as the `m` entry of an inline object.** For an
 asserted target that is a single name `local` (`expect(send)`), the
@@ -224,9 +231,10 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
   `runs_changed_line_once`, `has_method_like_block`, `control_keyword_at`,
-  `opens_block`,
+  `brace_context`,
   `changed_line_is_top_level_statement` and `starts_new_statement` (rule 1);
-  `owner_call_argument_at` and `inside_nested_function` (the one-call
+  `owner_call_argument_at`, `opens_function_before_call` and
+  `without_closed_mock_factories` (the one-call
   rule); `MockCallFacts::credits_object_argument` and
   `object_literal_binds` (rule 2).
 
