@@ -596,7 +596,8 @@ pub(in crate::analysis) fn setter_plainly_writes(
 /// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
 /// takes only `&self` and its body is one tail expression returning the field
 /// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
-/// or `self.f.as_slice()`. A body that reads another field, computes a value
+/// or `self.f.as_slice()`, in an inherent impl of `impl_type` (not a trait
+/// impl). A body that reads another field, computes a value
 /// from the field (`self.f.get(k).copied()`), or does anything else first,
 /// and an ambiguous or missing method, give `false`: a method named after the
 /// field is not evidence that it returns that field.
@@ -609,6 +610,9 @@ pub(in crate::analysis) fn getter_plainly_reads(
     let mut candidates = index.functions().iter().filter(|function| {
         function.name == getter
             && !function.source_role.is_evidence_role()
+            // An inherent method only: a trait method may be another
+            // impl's body at the call site.
+            && !function.id.0.contains(" for ")
             && OwnerCall::from_symbol(&function.id.0)
                 .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
     });
@@ -890,6 +894,24 @@ mod tests {
         let index = settings_index("pub fn entries(&self) -> u32 { self.attempts }");
         assert!(!getter_plainly_reads(
             &index, "Retry", "entries", "attempts"
+        ));
+        // A trait method is not an inherent getter.
+        let path = PathBuf::from("src/settings.rs");
+        let facts = crate::analysis::rust_index::summarize_file(
+            path.clone(),
+            "pub struct RetryBuilder { attempts: u32 }\n\
+             pub trait Entries { fn entries(&self) -> u32; }\n\
+             impl Entries for RetryBuilder { fn entries(&self) -> u32 { self.attempts } }\n"
+                .to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        assert!(!getter_plainly_reads(
+            &index,
+            "RetryBuilder",
+            "entries",
+            "attempts"
         ));
     }
 

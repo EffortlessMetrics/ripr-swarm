@@ -8,13 +8,14 @@ use super::builder_override::{
     OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
 };
 use super::propagation_witness::{
-    assertion_field_collection_read, assertion_observes_direct_collection,
+    assertion_field_collection_reads, assertion_observes_direct_collection,
     direct_collection_mutation_receiver, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
 use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -349,12 +350,12 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
 }
 
 /// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
-/// that the owner writes (`self.log.push(..)`). Its primary subject must read
-/// that field from the binding the test called the owner on (`inv.log`,
-/// `inv.log.len()`), or read it through a method whose body returns that
-/// field (`inv.history()` with `fn history(&self) -> &[Event] { &self.log }`).
-/// A shared name is not a read: `inv.log()` returning another field does not
-/// confirm.
+/// that the owner writes (`self.log.push(..)`). One compared side must read
+/// that field from the binding the test called the owner on, after that
+/// call (`inv.log`, `inv.log.len()`), or read it through a method whose body
+/// returns that field (`inv.history()` with
+/// `fn history(&self) -> &[Event] { &self.log }`). A shared name is not a
+/// read: `inv.log()` returning another field does not confirm.
 fn field_collection_observer_confirms(
     path: &str,
     owner: Option<OwnerCall<'_>>,
@@ -365,25 +366,66 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
-    let Some(read) = assertion_field_collection_read(&assertion.text, path) else {
-        return false;
-    };
-    calls_method_on(&test.body, &read.binding, owner.name())
-        && read.getter.as_deref().is_none_or(|getter| {
-            owner
-                .impl_type()
-                .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+    assertion_field_collection_reads(&assertion.text, path)
+        .into_iter()
+        .any(|read| {
+            owner_call_precedes_read(
+                &test.body,
+                test.start_line,
+                &read.binding,
+                owner.name(),
+                assertion.line,
+            ) && read.getter.as_deref().is_none_or(|getter| {
+                owner
+                    .impl_type()
+                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            })
         })
 }
 
-/// Whether `body` calls `binding.method(..)` on that exact binding.
-fn calls_method_on(body: &str, binding: &str, method: &str) -> bool {
-    let call = format!("{binding}.{method}(");
-    body.match_indices(&call).any(|(start, _)| {
-        body[..start].chars().next_back().is_none_or(|before| {
+/// Whether `body`, whose first line is file line `start_line`, calls
+/// `binding.method(..)` on a line before `read_line` without rebinding
+/// `binding` (`let binding = ..`) between that call and the read. Comments
+/// and string contents never count as a call.
+fn owner_call_precedes_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
+    let bound_at = |at: usize| {
+        masked[..at].chars().next_back().is_none_or(|before| {
             !(before.is_ascii_alphanumeric() || before == '_' || before == '.')
         })
-    })
+    };
+    let rebinding_lines: Vec<usize> = masked
+        .match_indices("let ")
+        .filter(|(at, _)| bound_at(*at))
+        .filter_map(|(at, keyword)| {
+            let rest = masked[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(binding)?;
+            after
+                .chars()
+                .next()
+                .is_none_or(|next| !(next.is_ascii_alphanumeric() || next == '_'))
+                .then(|| line_at(at))
+        })
+        .collect();
+    let call = format!("{binding}.{method}(");
+    masked
+        .match_indices(&call)
+        .filter(|(at, _)| bound_at(*at))
+        .map(|(at, _)| line_at(at))
+        .any(|call_line| {
+            call_line < read_line
+                && !rebinding_lines
+                    .iter()
+                    .any(|line| *line > call_line && *line <= read_line)
+        })
 }
 
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
@@ -3318,6 +3360,35 @@ fn pin_strength_admits(assertion: &OracleFact) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
+    /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
+        // The body starts at file line 10; the read sits on line 13.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let precedes = |lines: &str| owner_call_precedes_read(&body(lines), 10, "order", "add", 13);
+        assert!(precedes(
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.entries(), &[4]);"
+        ));
+        for refused in [
+            // Read before the call.
+            "    let mut order = Order::new();\n    assert_eq!(order.entries(), &[] as &[u32]);\n    order.add(4);",
+            // Rebound between the call and the read.
+            "    order.add(4);\n    let order = Order::new();\n    assert!(order.entries().is_empty());",
+            "    order.add(4);\n    let mut order = Order::new();\n    assert!(order.entries().is_empty());",
+            // A call in a comment or string, or on another binding.
+            "    let mut order = Order::new();\n    // order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            "    let mut order = Order::new();\n    let s = \"order.add(4)\";\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            "    let mut order = Order::new();\n    my_order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
+        ] {
+            assert!(!precedes(refused), "{refused}");
+        }
+        // Rebinding another name between the call and the read is fine.
+        assert!(precedes(
+            "    order.add(4);\n    let orders = Order::new();\n    assert_eq!(order.entries(), &[4]);"
+        ));
+    }
     use std::path::PathBuf;
 
     fn related(name: &str, line: usize, reason: Option<RelationReason>) -> RelatedTest {

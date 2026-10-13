@@ -610,14 +610,36 @@ pub(in crate::analysis) struct FieldCollectionRead {
     pub(in crate::analysis) getter: Option<String>,
 }
 
-/// The read of the field collection `path` by `assertion_text`'s primary
-/// subject (`assert_eq!(subject, ..)`), or `None` when the subject is not
-/// rooted at a local binding read of that field or of one method.
-pub(in crate::analysis) fn assertion_field_collection_read(
+/// The reads of the field collection `path` by `assertion_text`'s compared
+/// sides: its primary subject (`assert_eq!(subject, ..)`, `assert!(subject)`)
+/// and, for `assert_eq!`, the second operand too, since either side may hold
+/// the actual value. A side that is not rooted at a local binding read of
+/// that field or of one argument-free method reads nothing.
+pub(in crate::analysis) fn assertion_field_collection_reads(
     assertion_text: &str,
     path: &str,
-) -> Option<FieldCollectionRead> {
-    let subject = assertion_primary_subject(assertion_text)?;
+) -> Vec<FieldCollectionRead> {
+    let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
+        .into_iter()
+        .collect();
+    if let Some(payload) = macro_payload(assertion_text, "assert_eq") {
+        let payload = payload.trim_start();
+        if let Some(second) = subjects
+            .first()
+            .and_then(|first| payload.strip_prefix(first.as_str()))
+            .and_then(|rest| rest.trim_start().strip_prefix(','))
+            .and_then(first_call_argument)
+        {
+            subjects.push(second);
+        }
+    }
+    subjects
+        .iter()
+        .filter_map(|subject| subject_field_collection_read(subject, path))
+        .collect()
+}
+
+fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldCollectionRead> {
     let mut bare = subject.trim();
     bare = bare.strip_prefix('&').map_or(bare, str::trim);
     bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
@@ -1746,47 +1768,44 @@ mod tests {
         }
     }
 
-    /// RIPR-SPEC-0228: the assertion's primary subject reads the field
-    /// collection directly or through one argument-free method; the expected
-    /// side, another field, or a call with arguments is not such a read.
+    /// RIPR-SPEC-0228: a compared side reads the field collection directly
+    /// or through one argument-free method; another field, another root, or a
+    /// computed value is not such a read.
     #[test]
-    fn assertion_field_collection_read_names_binding_and_getter() {
+    fn assertion_field_collection_reads_name_binding_and_getter() {
         let direct = |binding: &str| {
-            Some(FieldCollectionRead {
+            vec![FieldCollectionRead {
                 binding: binding.to_string(),
                 getter: None,
-            })
+            }]
         };
         let through = |binding: &str, getter: &str| {
-            Some(FieldCollectionRead {
+            vec![FieldCollectionRead {
                 binding: binding.to_string(),
                 getter: Some(getter.to_string()),
-            })
+            }]
         };
+        let reads = |text: &str| assertion_field_collection_reads(text, "log");
+        assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
+        assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
         assert_eq!(
-            assertion_field_collection_read("assert_eq!(inv.log, vec![1]);", "log"),
-            direct("inv")
+            reads("assert_eq!(inv.history(), &[1]);"),
+            through("inv", "history")
         );
+        // Either side of an equality may hold the actual value.
+        assert_eq!(reads("assert_eq!(vec![1], inv.log);"), direct("inv"));
         assert_eq!(
-            assertion_field_collection_read("assert_eq!(&inv.log[0], &1);", "log"),
-            direct("inv")
-        );
-        assert_eq!(
-            assertion_field_collection_read("assert_eq!(inv.history(), &[1]);", "log"),
+            reads("assert_eq!(&[1], inv.history());"),
             through("inv", "history")
         );
         for other in [
             "assert_eq!(inv.logs, vec![1]);",
-            "assert_eq!(vec![1], inv.log);",
             "assert_eq!(inv.at(0), 1);",
             "assert_eq!(make().log, vec![1]);",
             "assert_eq!(inv.history().first().copied().unwrap() + 1, 2);",
+            "assert_ne!(vec![1], inv.log);",
         ] {
-            assert_eq!(
-                assertion_field_collection_read(other, "log"),
-                None,
-                "{other}"
-            );
+            assert!(reads(other).is_empty(), "{other}");
         }
     }
 

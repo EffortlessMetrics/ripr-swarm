@@ -270,15 +270,27 @@ changes `self.count += 2` to `self.count += 1`.
 
 - Collection writes on a field path (`self.f.push(..)`, `self.f.insert(..)`)
   are implemented for side-effect and call-deletion probes (#7131 lane):
-  `field_collection_write_path` and `assertion_field_collection_read` in
+  `field_collection_write_path` and `assertion_field_collection_reads` in
   `propagation_witness.rs`, `field_collection_observer_confirms` in
-  `reveal.rs`, `getter_plainly_reads` in `builder_override.rs`. The read
-  must come from the binding the test called the owner on; a getter
-  confirms only when its body is `self.f`, `&self.f`, `&self.f[..]`,
-  `self.f.clone()` or `self.f.as_slice()`. Rule 3 (no intervening write
-  between the owner call and the read) is not yet checked for these
-  writes, as before for bare-receiver pushes. A field of a struct literal
-  pushed onto the collection is not yet credited (#7131).
+  `reveal.rs`, `getter_plainly_reads` in `builder_override.rs`. One side of
+  the assertion (either operand of `assert_eq!`) must read the field from
+  the binding the test called the owner on, on a later line, with no
+  `let` rebinding that name in between; comments and strings never count as
+  the call. A getter confirms only when it is an inherent method whose body
+  is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
+  `self.f.as_slice()`.
+- Not yet implemented for these writes, all failing closed: rule 3 (no
+  intervening write between the owner call and the read), as before for
+  bare-receiver pushes; the `static_unknown` fallback with
+  `rust_state_read_path_unresolved` for a strong oracle on an unresolved
+  getter, which reads `weakly_exposed` instead (example 13); reads that are
+  not a compared side (`let items = &c.items;` then an assertion on
+  `items`, `assert!(!c.items.is_empty())`, `c.items.iter().any(..)`), an
+  owner called as `Basket::add(&mut c, 4)` or through a helper, and
+  `prop_assert_eq!`/`debug_assert_eq!`. A whole-value comparison of the
+  receiver keeps the effect-observer path (RIPR-SPEC-0094 Part D). A field
+  of a struct literal pushed onto the collection is not yet credited
+  (#7131).
 - Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
   their corpus cases read `static_unknown`.
 
