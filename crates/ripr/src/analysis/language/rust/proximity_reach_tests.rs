@@ -446,6 +446,17 @@ fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() ->
     }
     assert_eq!(direct_count, 1);
     assert!(!super::needs_mixed_macro_reach_limit(&miss));
+    let mut no_direct_oracle = before.clone();
+    let mut direct_count = 0;
+    for test in &mut no_direct_oracle.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            assert!(test.oracle.is_some());
+            test.oracle = None;
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&no_direct_oracle));
     finding.static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
     assert!(!super::needs_mixed_macro_reach_limit(&finding));
     Ok(())

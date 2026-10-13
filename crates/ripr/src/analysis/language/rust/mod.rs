@@ -1270,7 +1270,7 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         })
 }
 
-/// A weak direct discriminator does not rule out an opaque macro path.
+/// A recognized weak direct oracle does not rule out an opaque macro path.
 /// Examined misses supply no oracle row, and a confirmed discriminator is
 /// preserved even when another RIPR stage keeps the classification weak.
 fn needs_mixed_macro_reach_limit(finding: &Finding) -> bool {
@@ -1280,6 +1280,7 @@ fn needs_mixed_macro_reach_limit(finding: &Finding) -> bool {
         && finding.ripr.reveal.discriminate.state != crate::domain::StageState::Yes
         && finding.oracle_related_tests().any(|test| {
             test.relation_reason == Some(crate::domain::RelationReason::DirectOwnerCall)
+                && test.oracle.is_some()
         })
 }
 
@@ -3821,6 +3822,66 @@ mod tests {
         assert_eq!(confirmed.class, ExposureClass::Exposed);
         assert_eq!(confirmed.ripr.reveal.discriminate.state, StageState::Yes);
         assert_eq!(confirmed.static_limit_kind, None);
+
+        // #7089 owns a direct call without a recognized oracle beside a
+        // proximity-only oracle. Our mixed gate must leave the concrete
+        // main-index assertion witness available at either reach budget.
+        write(
+            &root.join("a/src/lib.rs"),
+            "pub fn inner(x: i64) -> i64 {\n    3 * x\n}\npub fn other(x: i64) -> i64 { x + 1 }\n#[cfg(test)] mod tests { use super::*; macro_rules! assert_rate { ($actual:expr, $expected:expr) => { if $actual != $expected { panic!(\"rate mismatch\"); } }; } #[test] fn rate_triples() { assert_rate!(inner(4), 12); } #[test] fn other_is_positive() { assert!(other(1) > 0); } }\n",
+        )?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "pub fn relay(x: i64) -> i64 { scope_a::inner(x) }\n",
+        )?;
+        let (assertion, _, _) = run(DependentScopeMode::NameAdmitted)?;
+        let (assertion_over, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        for finding in [&assertion, &assertion_over] {
+            let direct = finding
+                .related_tests
+                .iter()
+                .find(|test| test.name == "rate_triples")
+                .ok_or("the custom assertion must retain its direct test")?;
+            assert_eq!(
+                direct.relation_reason,
+                Some(crate::domain::RelationReason::DirectOwnerCall)
+            );
+            assert!(direct.oracle.is_none());
+            assert!(
+                finding
+                    .related_tests
+                    .iter()
+                    .any(|test| test.name == "other_is_positive" && test.oracle.is_some())
+            );
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+            );
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("assert_rate!") && line.contains("rate_triples"))
+            );
+            assert!(
+                !finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("did not search dependent packages"))
+            );
+            assert!(finding.canonical_gap.is_none());
+        }
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(
+            format!("{:?}", assertion.ripr),
+            format!("{:?}", assertion_over.ripr)
+        );
+        assert_eq!(
+            format!("{:?}", assertion.related_tests),
+            format!("{:?}", assertion_over.related_tests)
+        );
         fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
     }

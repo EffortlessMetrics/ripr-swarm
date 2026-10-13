@@ -304,13 +304,16 @@ an assertion inside that helper is refused like any untrusted macro.
    owner's file and calls `outer()`, which invokes `call_inner!`. Result:
    `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
    next step naming the witnessing test.
-6. **A weak test also calls the owner** (#7542): same macro shape plus
+6. **A recognized weak direct oracle also calls the owner** (#7542): same macro shape plus
    `assert!(inner(2) > 0)`, while the opaque `outer_triples` route asserts
    `outer(4) == 12`. Reach stays `yes` and classification stays `weakly_exposed`,
    but the finding names `rust_macro_reach_unresolved` and `outer_triples`.
    It does not advise writing an assertion before that route is inspected.
    A direct confirmed discriminator gets no new limit, including when another
    weak stage leaves its overall class `weakly_exposed`.
+   A direct call with no recognized oracle is outside this mixed gate. An
+   unread assertion macro with the owner in its arguments remains governed by
+   RIPR-SPEC-0120 (#7089), including when dependent reach exceeds its budget.
 
 ## Required Evidence
 
