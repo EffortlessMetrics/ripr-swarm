@@ -173,8 +173,10 @@ scope for the root: Rust is enabled and either a Cargo.toml is found at the
 selected root, an ancestor Cargo project bounded by git, or nested in this
 tree; Rust markers (`.rs` files) are detected at the selected root; or no
 other language is detected or enabled. A Python-only or TypeScript-only root
-with no nested or ancestor Cargo.toml reports those checks as `skipped` with
-the reason and does not fail on them. A Cargo.toml at the selected root, an
+with no nested or ancestor Cargo.toml reports `cargo_toml` as `skipped` with
+the reason. The analysis profile also skips `cargo` and `rustc`; `--profile
+source-build` still probes those tools and can exit `2` if they are missing.
+A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
 (for example `rust/Cargo.toml` at a polyglot git root that also has
 `package.json`) passes `cargo_toml`.

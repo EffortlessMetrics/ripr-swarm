@@ -458,8 +458,9 @@ Rust is in scope when it is enabled and Cargo.toml is found at the selected
 root, an ancestor Cargo project bounded by git, or nested in this tree; when
 .rs files are detected at the selected root; or when no other language is
 detected or enabled. Otherwise (for example a Python-only or TypeScript-only
-root with no nested or ancestor Cargo.toml) the Cargo.toml, cargo, and rustc
-checks print as skipped with the reason and do not fail doctor.
+root with no nested or ancestor Cargo.toml) the analysis profile skips the
+Cargo.toml, cargo, and rustc checks with the reason and does not fail doctor.
+`--profile source-build` still probes cargo and rustc.
 
 First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its
