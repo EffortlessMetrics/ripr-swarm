@@ -41,6 +41,10 @@ The default contract is:
   intentionally created by `init` or other commands.
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
+- Config discovery stops at a `.git` directory entry, including a dangling or
+  cyclic symlink. The nearest config within that boundary still applies and
+  explicit CLI settings still override it; enclosing repository policy cannot
+  cross the boundary. This entry does not establish valid Git provenance.
 - Malformed or unknown config fails closed with an actionable path and message.
 - Static outputs must use static evidence vocabulary and must not claim runtime
   mutation confirmation.

@@ -21,7 +21,9 @@ repository `ripr.toml` file. It pairs with:
 
 `ripr.toml` is repository-scoped. Starting at the selected root, `ripr` walks
 parent directories until it finds the nearest config, then stops at a Cargo
-workspace manifest or `.git` boundary. A package-only `Cargo.toml` does not stop
+workspace manifest or `.git` boundary (including a dangling or cyclic `.git`
+symlink). A config at the boundary still applies; a config above it does not.
+A package-only `Cargo.toml` does not stop
 the walk. `ripr` does not read global user config or hidden alternate config
 files. Environment variables are process-local tuning knobs and are documented
 separately from repo policy.
