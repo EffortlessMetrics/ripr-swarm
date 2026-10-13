@@ -14326,6 +14326,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0254"
+name = "TypeScript lookup-table entry"
+spec = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/lookup_table_tests.rs::lookup_table_change_reads_the_moved_keys_and_the_key_parameter",
+  "crates/ripr/src/analysis/language/typescript/tests/lookup_table_tests.rs::lookup_table_change_refuses_other_shapes",
+  "crates/ripr/src/analysis/language/typescript/tests/lookup_table_tests.rs::lookup_table_entry_is_exposed_when_a_test_looks_up_a_changed_key",
+  "crates/ripr/src/analysis/language/typescript/tests/lookup_table_tests.rs::lookup_table_entry_stays_weak_without_a_changed_key_lookup",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/lookup_table_guard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md",
+]
+metrics = [
+  "typescript_lookup_table_entry_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0250"
 name = "TypeScript match-object field pin"
 spec = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
