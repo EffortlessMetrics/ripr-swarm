@@ -6886,6 +6886,26 @@ fn associated_function_pin_refuses_other_names_for_the_type() {
 }
 
 #[test]
+fn associated_function_pin_refuses_a_cfg_gated_owner() {
+    // With the cfg off, `Gauge::reading()` reaches a trait default the
+    // index never sees (#7724), so a gate on the owner, its `impl` or an
+    // enclosing module refuses.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    for lib in [
+        "pub struct Gauge;\n\n#[cfg(feature = \"inherent\")]\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg(feature = \"inherent\")]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg_attr(feature = \"inherent\", inline)]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+    ] {
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}");
+    }
+    // Control: the same owner without a cfg pins.
+    let lib = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+    assert_eq!(admitted.map(|texts| texts.len()), Some(1), "{lib}");
+}
+
+#[test]
 fn associated_function_pin_refuses_a_longer_import_path() {
     // `demo::fs` re-exports another crate, whose own `Gauge` the test could
     // be importing; the pin admits only `use <krate>::T;`.

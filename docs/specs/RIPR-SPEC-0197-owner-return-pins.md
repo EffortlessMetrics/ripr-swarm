@@ -435,8 +435,11 @@ rule only for an assertion whose context was admitted.
      `pub use`) or a nested module's import refuses, as does a declaration or `type` alias of `T` in the
      test's file, a rename to `T`, a `use` or item of `T` in the test body,
      or a macro in the body that mentions `T`. The owner's library must not
-     export another `T` (a foreign `pub use` or glob). A bare `name(..)`
-     still never names the associated owner (shape 1 above).
+     export another `T` (a foreign `pub use` or glob). A `cfg` on the
+     owner, its `impl`, an enclosing module or its file refuses, as for a
+     bare call (#7082): with the cfg off, `T::name` can reach a trait
+     default the index never sees. A bare `name(..)` still never names the
+     associated owner (shape 1 above).
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
    every input: no closure, `|=` or non-binary `|`, no `&&`/`||`, no `if`, `match`,

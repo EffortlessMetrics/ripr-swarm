@@ -56,7 +56,8 @@ credit):
   name or token similarity alone, and no other weak signal can ride
   through it;
 - the workspace index must be complete (the same precondition as the
-  #2971 uniqueness bypass) and the path-dependency adjacency must report
+  #2971 uniqueness bypass), except for the inherent type-path route below
+  (#6617), and the path-dependency adjacency must report
   a `Complete` capture: `limited` (partial edge inventory) and
   `unavailable` admit nothing, never a blanket admit;
 - the calling test's file and the owner's file must attribute to their
@@ -279,8 +280,9 @@ call.
   (section-and-name declarations per pair)
 - `crates/ripr/src/analysis/classifier.rs` — `classify_probe` threading
 - `crates/ripr/src/analysis/language/rust/mod.rs` — per-pass context
-  construction (diff mode: whole-workspace index only; repo mode:
-  always)
+  construction (diff mode: a whole-workspace index, or a package-narrowed
+  index that took in dependent packages, which feeds only the inherent
+  type-path route (#6617); repo mode: always)
 
 ## Metrics
 

@@ -2046,9 +2046,26 @@ impl OwnerReturnPin {
             // #6617: `T::name(..)` names the owner only through the owner's
             // own `T`. A module path `a::b::name(..)` is `CallShape::Path`
             // (its segments are never CamelCase), so it never reaches here.
+            //
+            // A cfg on the owner, its `impl`, an enclosing module or its file
+            // may drop it from the build, and `T::name` then reaches a trait
+            // default the index never sees (#7082, #7724).
             (PinCall::Associated { type_name }, CallShape::Associated(named)) => {
                 helper.is_none()
                     && named == type_name
+                    && index
+                        .files()
+                        .get(&self.owner_file)
+                        .and_then(|facts| {
+                            item_nesting_with_impl(
+                                &facts.source,
+                                &self.name,
+                                self.owner_start_line,
+                                true,
+                            )
+                        })
+                        .is_some_and(|owner| !owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
                     && !bound_by_macro(&masked_body, type_name)
                     && !body_rebinds_type(&masked_body, type_name)
                     && test_source.is_some_and(|source| {
