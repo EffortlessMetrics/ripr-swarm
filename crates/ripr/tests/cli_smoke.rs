@@ -42,6 +42,9 @@ mod output_leaf_identity;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_unittest_selectors.rs"]
+mod python_unittest_selectors;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;

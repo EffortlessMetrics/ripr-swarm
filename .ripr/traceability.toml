@@ -9,6 +9,20 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/slice_boundary.rs::unresolved_calls_cannot_credit_skipped_slice_rows",
+  "crates/ripr/tests/slice_boundary.rs::fallible_slice_observations_cannot_credit_later_rows",
+  "crates/ripr/tests/slice_boundary.rs::ignored_fallible_closure_cannot_credit_skipped_slice_rows",
+  "crates/ripr/tests/slice_boundary.rs::fully_executed_slice_table_needs_no_assertion_for_activation",
+  "crates/ripr/tests/slice_boundary.rs::hidden_documentation_inputs_withhold_missing_empty_claims",
+  "crates/ripr/tests/slice_boundary.rs::unrelated_documentation_does_not_hide_known_table_inputs",
+  "crates/ripr/tests/slice_boundary.rs::workspace_expansion_limits_withhold_partial_slice_evidence",
+  "crates/ripr/tests/slice_boundary.rs::retained_property_table_names_the_missing_empty_slice",
+  "crates/ripr/tests/slice_boundary.rs::slice_elements_are_not_slice_lengths_and_empty_rows_are_observed",
+  "crates/ripr/tests/slice_boundary.rs::unreadable_or_skippable_slice_tables_withhold_missing_empty_claims",
+  "crates/ripr/tests/slice_boundary.rs::helpers_aliases_and_opaque_macros_cannot_supply_partial_slice_evidence",
+  "crates/ripr/tests/slice_boundary.rs::equality_keeps_the_matching_table_witness",
+  "crates/ripr/tests/slice_boundary.rs::recursive_empty_input_cannot_disappear_from_cardinality_evidence",
+  "crates/ripr/tests/slice_boundary.rs::production_function_pointer_input_cannot_disappear",
   "crates/ripr/tests/unindexed_guidance.rs::unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim",
   "crates/ripr/tests/unindexed_guidance.rs::weak_direct_owner_assertion_keeps_exact_value_advice",
   "crates/ripr/tests/unindexed_guidance.rs::wrapper_error_retains_specific_guidance_for_proximity_reach",
@@ -154,6 +168,10 @@ tests = [
   "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes"
 ]
 fixtures = [
+  "fixtures/rust_slice_table_boundary",
+  "fixtures/rust_slice_table_zero_elements",
+  "fixtures/rust_slice_table_try_exit",
+  "fixtures/rust_slice_table_call_exit",
   "fixtures/rust_where_bound_declarations",
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
@@ -179,6 +197,8 @@ fixtures = [
   "fixtures/weak_error_oracle_assert_matches"
 ]
 code = [
+  "crates/ripr/src/analysis/classify/slice_boundary.rs",
+  "crates/ripr/src/analysis/syntax/owner_pin/slice_table.rs",
   "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/facts/build.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
@@ -3085,6 +3105,17 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_literal_path_dots_cannot_name_another_module",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_dot_free_paths_preserve_qualified_and_quoted_selectors",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::repair_placement_uses_first_runnable_oracle_relation",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::repair_placement_distinguishes_same_file_method_names",
+  "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::pytest_keeps_literal_path_dots_in_its_file_selector",
+  "crates/ripr/tests/cli_smoke/python_unittest_selectors.rs::python_unittest_selectors_preserve_literal_file_identity",
+  "crates/ripr/tests/cli_smoke/python_unittest_selectors.rs::python_repair_route_and_card_use_the_same_runnable_test",
+  "crates/ripr/tests/cli_smoke/python_unittest_selectors.rs::python_repair_card_distinguishes_mixed_framework_duplicate_names",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::python_selected_line_preserves_unknown_row_over_stronger_duplicate",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::python_selected_identity_legacy_unique_and_absent_declaration_stay_distinct",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::python_declared_unusable_identity_never_borrows_a_competing_row",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",

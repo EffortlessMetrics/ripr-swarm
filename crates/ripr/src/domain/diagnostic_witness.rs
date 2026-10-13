@@ -76,7 +76,20 @@ impl DiagnosticWitness {
         // Tests listed only as examined misses (#5344) supplied no oracle and
         // are never a fix site: a fix site claims "this test runs the change
         // and has this oracle".
-        let best_test = if finding.language == Some(LanguageId::Perl) {
+        let best_test = if finding.language == Some(LanguageId::Python)
+            && finding.evidence.iter().any(|entry| {
+                [
+                    "suggested_test_file:",
+                    "suggested_test_name:",
+                    "suggested_test_line:",
+                ]
+                .iter()
+                .any(|prefix| entry.starts_with(prefix))
+            }) {
+            // A declared repair target cannot borrow another test's oracle
+            // when its complete identity is missing or ambiguous.
+            python_suggested_related_test(finding)
+        } else if finding.language == Some(LanguageId::Perl) {
             perl_suggested_related_test(finding)
         } else {
             suggested_related_test(finding)
@@ -158,6 +171,44 @@ impl DiagnosticWitness {
             limitations,
         })
     }
+}
+
+/// Resolve the Python producer's selected row once for cards and diagnostic
+/// witnesses. Older declarations without a line still require one unique row.
+pub(crate) fn python_suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    if finding.language != Some(LanguageId::Python) {
+        return None;
+    }
+    let evidence = |prefix: &str| {
+        let mut values = finding
+            .evidence
+            .iter()
+            .filter_map(|entry| entry.strip_prefix(prefix));
+        let value = values.next()?.trim();
+        (values.next().is_none() && !value.is_empty()).then_some(value)
+    };
+    let file = evidence("suggested_test_file:")?.replace('\\', "/");
+    let name = evidence("suggested_test_name:")?;
+    let line = if finding
+        .evidence
+        .iter()
+        .any(|entry| entry.starts_with("suggested_test_line:"))
+    {
+        let line = evidence("suggested_test_line:")?.parse::<usize>().ok()?;
+        if line == 0 {
+            return None;
+        }
+        Some(line)
+    } else {
+        None
+    };
+    let mut matches = finding.oracle_related_tests().filter(|test| {
+        test.name == name
+            && display_path(&test.file).trim_start_matches("./") == file.trim_start_matches("./")
+            && line.is_none_or(|line| test.line == line)
+    });
+    let selected = matches.next()?;
+    matches.next().is_none().then_some(selected)
 }
 
 /// Resolve the Perl producer's complete declared test identity once for all
@@ -464,6 +515,143 @@ mod tests {
     fn exposed_finding_without_missing_fact_does_not_become_a_gap_witness() {
         let finding = sample_finding();
         assert!(DiagnosticWitness::from_finding(&finding).is_none());
+    }
+
+    fn python_duplicate_finding() -> Finding {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language = Some(LanguageId::Python);
+        finding.evidence = vec![
+            "suggested_test_file: tests/test_mixed.v2.py".to_string(),
+            "suggested_test_name: test_same".to_string(),
+            "suggested_test_line: 7".to_string(),
+        ];
+        finding.related_tests = [
+            (
+                4,
+                OracleKind::SmokeOnly,
+                OracleStrength::Smoke,
+                Some("assertTrue(value)"),
+            ),
+            (7, OracleKind::Unknown, OracleStrength::Unknown, None),
+        ]
+        .into_iter()
+        .map(|(line, oracle_kind, oracle_strength, oracle)| RelatedTest {
+            name: "test_same".to_string(),
+            file: PathBuf::from("./tests/test_mixed.v2.py"),
+            line,
+            oracle: oracle.map(ToString::to_string),
+            oracle_kind,
+            oracle_strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        })
+        .collect();
+        finding
+    }
+
+    #[test]
+    fn python_selected_line_preserves_unknown_row_over_stronger_duplicate() -> Result<(), String> {
+        let mut finding = python_duplicate_finding();
+        for reverse in [false, true] {
+            if reverse {
+                finding.related_tests.reverse();
+                finding.evidence[0] = "suggested_test_file: .\\tests\\test_mixed.v2.py".to_string();
+            }
+            let site = DiagnosticWitness::from_finding(&finding)
+                .and_then(|witness| witness.fix_site)
+                .ok_or("selected Unknown row must remain a fix site")?;
+            assert_eq!(site.line, 7);
+            assert_eq!(site.test_name, "test_same");
+            assert_eq!(site.oracle_strength, "unknown");
+            assert_eq!(site.oracle_kind, "unknown");
+            assert!(site.current_oracle.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_selected_identity_legacy_unique_and_absent_declaration_stay_distinct() {
+        let mut finding = python_duplicate_finding();
+        finding.evidence.pop();
+        assert!(python_suggested_related_test(&finding).is_none());
+        assert!(DiagnosticWitness::from_finding(&finding).is_some_and(|w| w.fix_site.is_none()));
+
+        finding.related_tests.remove(0);
+        assert_eq!(
+            python_suggested_related_test(&finding).map(|test| test.line),
+            Some(7)
+        );
+        assert_eq!(
+            DiagnosticWitness::from_finding(&finding)
+                .and_then(|w| w.fix_site)
+                .map(|s| s.line),
+            Some(7)
+        );
+
+        let mut finding = python_duplicate_finding();
+        finding.evidence.clear();
+        assert_eq!(
+            DiagnosticWitness::from_finding(&finding)
+                .and_then(|w| w.fix_site)
+                .map(|s| s.line),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn python_declared_unusable_identity_never_borrows_a_competing_row() {
+        let original = python_duplicate_finding();
+        let mut variants = Vec::new();
+        for bad_line in ["", "not-a-line", "0", "99"] {
+            let mut finding = original.clone();
+            finding.evidence[2] = format!("suggested_test_line: {bad_line}");
+            variants.push(finding);
+        }
+        for index in [0, 1] {
+            let mut finding = original.clone();
+            finding.evidence.remove(index);
+            variants.push(finding);
+        }
+        for (index, entry) in [
+            (0, "suggested_test_file: tests/other.py"),
+            (1, "suggested_test_name: test_other"),
+        ] {
+            let mut finding = original.clone();
+            finding.evidence[index] = entry.to_string();
+            variants.push(finding);
+        }
+        for entry in [
+            "suggested_test_file: tests/other.py",
+            "suggested_test_name: test_other",
+            "suggested_test_line: 7",
+        ] {
+            let mut finding = original.clone();
+            finding.evidence.push(entry.to_string());
+            variants.push(finding);
+        }
+        let mut unmatched = original.clone();
+        unmatched.related_tests[1].miss =
+            Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        variants.push(unmatched);
+        let mut duplicate = original.clone();
+        duplicate
+            .related_tests
+            .push(duplicate.related_tests[1].clone());
+        variants.push(duplicate);
+        for finding in variants {
+            assert!(
+                python_suggested_related_test(&finding).is_none(),
+                "{:?}",
+                finding.evidence
+            );
+            assert!(
+                DiagnosticWitness::from_finding(&finding).is_some_and(|w| w.fix_site.is_none()),
+                "{:?}",
+                finding.evidence
+            );
+        }
     }
 
     #[test]

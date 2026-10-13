@@ -5,6 +5,78 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_slice_ordinary_call_cannot_credit_skipped_rows",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_call_exit",
+      "vector": "successful_termination_inside_assertion_does_not_execute_every_slice_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_slice_try_exit_cannot_credit_skipped_rows",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_try_exit",
+      "vector": "discarded_fallible_closure_does_not_execute_every_slice_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_slice_element_zero_is_not_empty_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_zero_elements",
+      "vector": "literal_slice_elements_cannot_supply_length_boundary",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "ts_reexported_expect_cannot_credit_local_rejection_helper",
       "language": "typescript",
       "tier": "pure",
