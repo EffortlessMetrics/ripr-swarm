@@ -182,7 +182,10 @@ and the rejected alternative. Recorded on #6654.
    file (`jest-spec0234-ex03` and `vitest-orders-label-snapshot` show the
    committed form can be either way, and `--ci` behaviour decides it, not
    the test text). Rejected: keep medium, which reads text the reviewer
-   can see as unreviewed.
+   can see as unreviewed. Superseded for committed files by
+   RIPR-SPEC-0258 decision 1: a committed entry the test file names reads
+   strong, because whether a reviewer reads the expected text does not
+   change whether the test fails.
 4. **Where the reading lives.** Adopted: rules 2 and 3 read at assertion
    extraction, because they depend only on the assertion; rule 1 reads in
    the classifier, because it needs the changed line and owner body.
@@ -190,7 +193,9 @@ and the rejected alternative. Recorded on #6654.
    for no new class.
 5. **`t.assert.*`, committed snapshots and custom matchers.** Not changed
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
-   remaining false verdicts stay listed on #6654.
+   remaining false verdicts stay listed on #6654. Superseded for
+   committed snapshots by RIPR-SPEC-0258, which credits
+   `jest-spec0234-ex03`.
 
 ## Required Evidence
 

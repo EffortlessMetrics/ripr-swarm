@@ -11,10 +11,18 @@
 
 use super::*;
 
-/// Text every snapshot matcher call contains. Each such call advances the
-/// runner's per-title counter, so it is counted whether or not it writes to
-/// the committed file; comments and strings only over-count, which refuses.
-const SNAPSHOT_CALL: &str = "Snapshot(";
+/// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
+/// whitespace, by `(`. Each such call advances the runner's per-title
+/// counter, so it is counted whether or not it writes to the committed file;
+/// comments and strings only over-count, which refuses.
+fn snapshot_calls(text: &str) -> usize {
+    text.match_indices("Snapshot")
+        .filter(|(index, matched)| {
+            text.get(index + matched.len()..)
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        })
+        .count()
+}
 
 /// Promote each test's `toMatchSnapshot()` assertion to `snapshot` / strong
 /// when the committed entry it compares with exists (rule 1).
@@ -29,10 +37,10 @@ pub(crate) fn promote_committed_snapshots(
     // record a snapshot under another test's title.
     let in_bodies: usize = tests
         .iter()
-        .map(|test| test.body_text.matches(SNAPSHOT_CALL).count())
+        .map(|test| snapshot_calls(&test.body_text))
         .sum();
     if in_bodies == 0
-        || file_source.matches(SNAPSHOT_CALL).count() != in_bodies
+        || snapshot_calls(file_source) != in_bodies
         || file_source.contains(".concurrent")
     {
         return;
@@ -81,9 +89,10 @@ struct CommittedSnapshots {
 impl CommittedSnapshots {
     /// `true` when the file stores `<key> 1` exactly once and no `<key> 2`:
     /// the assertion ran once when the file was written, and its one entry
-    /// is the one it compares with.
+    /// is the one it compares with. The runner writes each entry at the start
+    /// of a line, so text elsewhere (a comment) is not an entry.
     fn pins_only_entry(&self, key: &str) -> bool {
-        let entry = |counter: usize| format!("exports[`{key} {counter}`] = ");
+        let entry = |counter: usize| format!("\nexports[`{key} {counter}`] = ");
         self.text.matches(&entry(1)).count() == 1 && !self.text.contains(&entry(2))
     }
 }
@@ -91,10 +100,14 @@ impl CommittedSnapshots {
 fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSnapshots> {
     let directory = test_file.parent()?;
     let name = test_file.file_name()?.to_str()?;
-    let path = root
-        .join(directory)
-        .join("__snapshots__")
-        .join(format!("{name}.snap"));
+    let snapshots = directory.join("__snapshots__");
+    // A committed-history run reads the test file at `HEAD`; a `.snap` file
+    // edited, deleted, untracked or ignored there is not the entry `HEAD`
+    // holds.
+    if crate::analysis::committed_source::snapshot_inputs_differ_in(root, &snapshots) {
+        return None;
+    }
+    let path = root.join(&snapshots).join(format!("{name}.snap"));
     let text = read_config_capped(&path).ok()?;
     let header = text.lines().next()?;
     let (separator, runner) = if header.starts_with("// Jest Snapshot v1") {
@@ -105,9 +118,11 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
         return None;
     };
     let configs = runner_configs(root, directory)?;
-    // Vitest reads a file left by Jest but keys titles with ` > `, so the
-    // Jest header no longer names the entry the assertion compares with.
-    if runner == SnapshotRunner::Jest && configs.mentions_vitest {
+    // The header names the runner that wrote the file, not the one that runs
+    // it: Vitest reads a file Jest left but keys titles with ` > `, and the
+    // reverse holds for Jest. Only a header that agrees with the configs
+    // names the entry the assertion compares with.
+    if (runner == SnapshotRunner::Vitest) != configs.mentions_vitest {
         return None;
     }
     Some(CommittedSnapshots {
@@ -127,46 +142,53 @@ struct RunnerConfigs {
     mentions_vitest: bool,
 }
 
-/// Config file names a runner reads for its snapshot location or update mode.
-const RUNNER_CONFIG_PREFIXES: [&str; 4] = [
-    "jest.config.",
-    "vitest.config.",
-    "vite.config.",
-    "vitest.workspace.",
-];
-
 /// Text that moves snapshot files away from the default location or makes
 /// every run rewrite them, so a committed entry no longer fails a changed
 /// value.
 const SNAPSHOT_OVERRIDES: [&str; 7] = [
     "snapshotResolver",
     "resolveSnapshotPath",
+    "snapshotEnvironment",
     "updateSnapshot",
     "--update",
     " -u",
     "\"-u\"",
-    "update:",
 ];
+
+/// `true` when `text` holds an `update` key (`update: true`, `update : x`,
+/// `"update": x`), Vitest's option to rewrite every changed snapshot.
+fn mentions_update_key(text: &str) -> bool {
+    text.match_indices("update").any(|(index, matched)| {
+        text.get(index + matched.len()..).is_some_and(|rest| {
+            rest.strip_prefix(['"', '\''])
+                .unwrap_or(rest)
+                .trim_start()
+                .starts_with(':')
+        })
+    })
+}
 
 /// The runner configs and `package.json` files in the test's directory and
 /// every ancestor up to `root`, or `None` when one mentions a snapshot
-/// override or cannot be read.
+/// override, cannot be read, or (in a committed-history run) differs from
+/// `HEAD`.
 fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
     let mut configs = RunnerConfigs {
         mentions_vitest: false,
     };
     let mut current = Some(directory);
     while let Some(relative) = current {
+        if crate::analysis::committed_source::snapshot_inputs_differ_in(root, relative) {
+            return None;
+        }
         for entry in std::fs::read_dir(root.join(relative)).ok()? {
             let entry = entry.ok()?;
             let file_name = entry.file_name();
             let Some(file_name) = file_name.to_str() else {
                 continue;
             };
-            let is_config = file_name == "package.json"
-                || RUNNER_CONFIG_PREFIXES
-                    .iter()
-                    .any(|prefix| file_name.starts_with(prefix));
+            let is_config = !file_name.ends_with(".snap")
+                && crate::analysis::language::snapshot_input(Path::new(file_name));
             if !is_config {
                 continue;
             }
@@ -174,6 +196,9 @@ fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
             if SNAPSHOT_OVERRIDES
                 .iter()
                 .any(|override_text| text.contains(override_text))
+                // Vitest reads `update` from its own config only; a
+                // `package.json` script may be named `update`.
+                || (file_name != "package.json" && mentions_update_key(&text))
             {
                 return None;
             }
@@ -203,7 +228,7 @@ fn title_parts(test: &TypeScriptTest) -> Vec<&str> {
 /// characters the snapshot file escapes. The caller refuses a key another
 /// test's title also joins to, since the two share its counter.
 fn snapshot_key(test: &TypeScriptTest, separator: &str) -> Option<String> {
-    if test.body_text.matches(SNAPSHOT_CALL).count() != 1 {
+    if snapshot_calls(&test.body_text) != 1 {
         return None;
     }
     let parts = title_parts(test);

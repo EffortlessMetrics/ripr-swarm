@@ -69,15 +69,24 @@ fn committed_snapshot_keys_join_describe_titles_per_runner() -> Result<(), Strin
         vec![OracleStrength::Strong]
     );
     let vitest = format!("{VITEST_HEADER}{}", entry("price > caps 1", "140"));
+    let vitest_config = ("vitest.config.ts", "export default { test: {} };");
     assert_eq!(
-        strengths("snap-describe-vitest", test, &[(SNAP_PATH, &vitest)])?,
+        strengths(
+            "snap-describe-vitest",
+            test,
+            &[(SNAP_PATH, &vitest), vitest_config]
+        )?,
         vec![OracleStrength::Strong]
     );
     // Each runner's own separator only: a Vitest file keyed the Jest way
     // holds no entry this assertion compares with.
     let crossed = format!("{VITEST_HEADER}{}", entry("price caps 1", "140"));
     assert_eq!(
-        strengths("snap-describe-crossed", test, &[(SNAP_PATH, &crossed)])?,
+        strengths(
+            "snap-describe-crossed",
+            test,
+            &[(SNAP_PATH, &crossed), vitest_config]
+        )?,
         vec![OracleStrength::Medium]
     );
     Ok(())
@@ -96,6 +105,12 @@ fn snapshot_without_its_committed_entry_stays_medium() -> Result<(), String> {
     let unknown = format!("// Snapshot v2\n\n{}", entry("price 1", "140"));
     assert_eq!(
         strengths("snap-header", PRICE_TEST, &[(SNAP_PATH, &unknown)])?,
+        medium
+    );
+    // An entry the runner did not write (here, in a comment) is not one.
+    let commented = format!("{JEST_HEADER}// {}", entry("price 1", "140"));
+    assert_eq!(
+        strengths("snap-commented", PRICE_TEST, &[(SNAP_PATH, &commented)])?,
         medium
     );
     // A second entry means the assertion ran twice when the file was written.
@@ -124,6 +139,9 @@ fn snapshot_whose_counter_cannot_be_named_stays_medium() -> Result<(), String> {
     // A hint changes the key.
     let hint = "test(\"price\", () => {\n  expect(price(150)).toMatchSnapshot(\"cap\");\n});\n";
     assert_eq!(strengths("snap-hint", hint, &files)?, medium(1));
+    // Whitespace before `(` still calls the matcher and advances the counter.
+    let spaced = "test(\"price\", () => {\n  expect(1).toMatchSnapshot ();\n  expect(price(150)).toMatchSnapshot();\n});\n";
+    assert_eq!(strengths("snap-spaced", spaced, &files)?, medium(2));
     // Titles in two describes that join to the same key share its counter.
     let joined = "describe(\"a b\", () => {\n  test(\"c\", () => {\n    expect(price(150)).toMatchSnapshot();\n  });\n});\ndescribe(\"a\", () => {\n  test(\"b c\", () => {\n    expect(price(90)).toMatchSnapshot();\n  });\n});\n";
     let joined_snap = jest_snap(&[("a b c 1", "140")]);
@@ -163,72 +181,159 @@ fn snapshot_whose_counter_cannot_be_named_stays_medium() -> Result<(), String> {
 }
 
 #[test]
-fn snapshot_location_or_update_override_stays_medium() -> Result<(), String> {
+fn snapshot_input_differing_from_head_stays_medium() -> Result<(), String> {
+    // A committed-history run reads the test at `HEAD`: a `.snap` file or
+    // runner config that differs there (edited, untracked, ignored) is not
+    // what `HEAD` holds.
     let snap = jest_snap(&[("price 1", "140")]);
-    let medium = vec![OracleStrength::Medium];
-    for (config, text) in [
+    for (label, dirty, expected) in [
+        (
+            "snap-clean-inputs",
+            "src/__snapshots__/other.test.ts.snap",
+            OracleStrength::Strong,
+        ),
+        ("snap-dirty-entry", SNAP_PATH, OracleStrength::Medium),
+        ("snap-dirty-config", "package.json", OracleStrength::Medium),
+        (
+            "snap-dirty-test-config",
+            "test/jest.config.js",
+            OracleStrength::Medium,
+        ),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        let written = ts_write_file(&root.join(SNAP_PATH), &snap)
+            .and_then(|()| ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST));
+        let relative = Path::new("test/price.test.ts");
+        let mut tests = extract_tests(relative, PRICE_TEST);
+        let overlay =
+            crate::analysis::committed_source::CommittedSourceOverlay::from_entries(&root, [])
+                .with_snapshot_inputs(&[dirty]);
+        if written.is_ok() {
+            crate::analysis::committed_source::with_overlay(
+                Some(std::sync::Arc::new(overlay)),
+                || promote_committed_snapshots(&root, relative, PRICE_TEST, &mut tests),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        written?;
+        let strengths: Vec<OracleStrength> = tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .map(|assertion| assertion.oracle_strength.clone())
+            .collect();
+        assert_eq!(strengths, vec![expected], "{dirty}");
+    }
+    Ok(())
+}
+
+#[test]
+fn snapshot_location_or_update_override_stays_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, snap) in [
         (
             "jest.config.js",
             "module.exports = { snapshotResolver: \"./resolver.js\" };",
-        ),
-        (
-            "vitest.config.ts",
-            "export default { test: { resolveSnapshotPath: (p) => p } };",
-        ),
-        (
-            "vitest.config.ts",
-            "export default { test: { update: true } };",
-        ),
-        (
-            "vite.config.ts",
-            "export default { test: { update: true } };",
-        ),
-        (
-            "vitest.workspace.ts",
-            "export default [{ test: { resolveSnapshotPath: (p) => p } }];",
+            &jest,
         ),
         (
             "jest.config.js",
             "module.exports = { updateSnapshot: \"all\" };",
+            &jest,
         ),
-        ("package.json", "{ \"scripts\": { \"test\": \"jest -u\" } }"),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest -u\" } }",
+            &jest,
+        ),
         (
             "package.json",
             "{ \"scripts\": { \"test\": \"jest --updateSnapshot\" } }",
+            &jest,
+        ),
+        (
+            "package.json",
+            "{ \"jest\": { \"args\": [\"-u\"] } }",
+            &jest,
         ),
         (
             "test/package.json",
             "{ \"scripts\": { \"test\": \"vitest --update\" } }",
+            &vitest,
         ),
-        ("package.json", "{ \"jest\": { \"args\": [\"-u\"] } }"),
-        // Vitest keys a file Jest left with ` > `, so the Jest header no
-        // longer names the entry.
-        ("vitest.config.ts", "export default { test: {} };"),
+        (
+            "vitest.config.ts",
+            "export default { test: { resolveSnapshotPath: (p) => p } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { snapshotEnvironment: \"./env.ts\" } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { update: true } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { update : true } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { \"update\": true } };",
+            &vitest,
+        ),
+        (
+            "vite.config.ts",
+            "export default { test: { update: true } };",
+            &vitest,
+        ),
+        (
+            "vitest.workspace.ts",
+            "export default [{ test: { resolveSnapshotPath: (p) => p } }];",
+            &vitest,
+        ),
+        // The header names the runner that wrote the file: Vitest keys a
+        // file Jest left with ` > `, and Jest the reverse.
+        ("vitest.config.ts", "export default { test: {} };", &jest),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest\" } }",
+            &vitest,
+        ),
     ] {
         assert_eq!(
             strengths(
                 "snap-override",
                 PRICE_TEST,
-                &[(SNAP_PATH, &snap), (config, text)]
+                &[(SNAP_PATH, snap), (config, text)]
             )?,
-            medium,
+            vec![OracleStrength::Medium],
             "{config}: {text}"
         );
     }
-    // A config that only names the runner keeps the default location.
-    assert_eq!(
-        strengths(
-            "snap-plain-config",
-            PRICE_TEST,
-            &[
-                (SNAP_PATH, &snap),
-                (
-                    "package.json",
-                    "{ \"scripts\": { \"test\": \"jest --ci\" } }"
-                )
-            ]
-        )?,
-        vec![OracleStrength::Strong]
-    );
+    // A config that only names the runner keeps the default location, and a
+    // `package.json` script named `update` is not Vitest's option.
+    for (config, text, snap) in [
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest --ci\", \"update\": \"npm i\" } }",
+            &jest,
+        ),
+        ("vitest.config.ts", "export default { test: {} };", &vitest),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-plain-config",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
     Ok(())
 }

@@ -82,15 +82,23 @@ runner's entry for it can be named and is committed:
 - no `package.json`, `jest.config.*`, `vitest.config.*`, `vite.config.*`
   or `vitest.workspace.*` in the test file's directory or any ancestor up
   to the root mentions `snapshotResolver`, `resolveSnapshotPath`,
-  `updateSnapshot`, `--update`, ` -u`, `"-u"` or `update:`, and each such
-  file reads; a moved file or a run that rewrites snapshots no longer fails
-  on a changed value;
-- with a Jest header, none of those files is a `vite*` config or mentions
-  `vitest`: Vitest reads a file Jest left but keys titles with ` > `;
+  `snapshotEnvironment`, `updateSnapshot`, `--update`, ` -u` or `"-u"`, no
+  runner config holds an `update` key (`update:`, `update :`,
+  `"update":`), and each such file reads; a moved file or a run that
+  rewrites snapshots no longer fails on a changed value;
+- the header agrees with the runner those files name: a Vitest header
+  needs a `vite*` config or a mention of `vitest`, and a Jest header needs
+  neither. The header names the runner that wrote the file, and the other
+  runner keys titles with its own separator;
 - the file holds no `.concurrent` test, which may record a snapshot under
   another test's title;
+- in a committed-history run (the default diff), neither the snapshot
+  file nor any `package.json` or runner config in those directories differs
+  from `HEAD` (edited, deleted, untracked or ignored): the test file is read
+  at `HEAD`, so its entry must be the one `HEAD` holds;
 - every snapshot matcher call in the test file sits in a test body (text
-  `Snapshot(`, counting inline snapshots, which advance the same counter),
+  `Snapshot`, optional whitespace, `(`; counting inline snapshots, which
+  advance the same counter),
   so no hook or helper advances the counter;
 - the test body holds exactly one such call, and this assertion is its
   only argument-free `toMatchSnapshot`;
@@ -98,7 +106,8 @@ runner's entry for it can be named and is committed:
   would share the counter;
 - no title holds `` ` ``, `\`, `$`, a line break or nothing, which the file
   escapes or the runner formats;
-- the file holds the entry `<titles> 1` exactly once and no `<titles> 2`,
+- the file holds the entry `<titles> 1` exactly once, at the start of a
+  line as the runner writes it, and no `<titles> 2`,
   where `<titles>` joins the describe titles and the test title with a
   space for Jest and with ` > ` for Vitest. A second entry means the
   assertion ran more than once when the file was written.
@@ -126,8 +135,9 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 
 ### Known limits
 
-- The snapshot file is read from the working tree, as owner and test
-  sources are.
+- The snapshot file and configs are read from the working tree. A
+  committed-history run refuses when one differs from `HEAD`; a
+  `--worktree` run reads the working tree throughout.
 - A test registered from a template title (`%s`, `%#`, a non-literal
   describe title) has no matching entry and stays medium. A `test.each`
   with one row and a literal title runs once and can read strong.
@@ -155,20 +165,28 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 2. The same test under `describe("price")` with entry `price priceEx03 1`
    (Jest) or `price > priceEx03 1` (Vitest): strong. A Vitest file keyed
    with a space: medium.
-3. No snapshot file, an entry for another test, an unknown header, or a
-   second entry `priceEx03 2`: medium.
+3. No snapshot file, an entry for another test, an unknown header, a
+   second entry `priceEx03 2`, or the entry only inside a comment:
+   medium.
 4. A second snapshot call in the body (inline included), a snapshot call
    in an `afterEach` hook, two tests titled `priceEx03`, tests
    `a b` / `c` and `a` / `b c` (both keyed `a b c`), a `test.concurrent`,
    a hint (`toMatchSnapshot("cap")`), or an empty title or one holding
    `` ` ``, `$` or `\`: medium.
 5. A `snapshotResolver` or `updateSnapshot` in `jest.config.js`, a
-   `resolveSnapshotPath` or `update: true` in `vitest.config.ts`,
-   `vite.config.ts` or `vitest.workspace.ts`, `jest -u`,
+   `resolveSnapshotPath`, `update: true` or `update : true` in
+   `vitest.config.ts`, a `snapshotEnvironment` or `"update": true` there,
+   the same in `vite.config.ts` or `vitest.workspace.ts`, `jest -u`,
    `jest --updateSnapshot`, `vitest --update` or `["-u"]` in a
-   `package.json` at the root or in the test directory, or a
-   `vitest.config.ts` beside a Jest-headered file: medium. A `jest --ci`
-   script: strong.
+   `package.json` at the root or in the test directory, a
+   `vitest.config.ts` beside a Jest-headered file, or a Vitest-headered
+   file with only a Jest `package.json`: medium. A `jest --ci` script, a
+   `package.json` script named `update`, or a plain `vitest.config.ts`
+   beside a Vitest-headered file: strong.
+6. In a committed-history run, an edited or untracked snapshot file, or an
+   edited `package.json` or runner config in the test's directory or an
+   ancestor: medium. A `toMatchSnapshot ()` call with a space before `(`
+   counts as a snapshot call.
 
 ## Test Mapping
 
@@ -177,7 +195,12 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
   `snapshot_whose_counter_cannot_be_named_stays_medium` pins example 4;
-  `snapshot_location_or_update_override_stays_medium` pins example 5.
+  `snapshot_location_or_update_override_stays_medium` pins example 5;
+  `snapshot_input_differing_from_head_stays_medium` pins example 6.
+- `crates/ripr/src/analysis/committed_source/tests.rs`:
+  `porcelain_parser_records_unrouted_snapshot_inputs` and
+  `snapshot_inputs_differ_only_in_their_own_directory` pin the
+  committed-history record example 6 reads.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-spec0234-ex03` reads `credited`.
 
@@ -185,7 +208,13 @@ RIPR-SPEC-0243 ladder, including the observation guard.
 
 - `crates/ripr/src/analysis/language/typescript/committed_snapshot.rs`:
   `promote_committed_snapshots`, `committed_snapshot_file`,
-  `runner_configs`, `joined_title` and `snapshot_key`.
+  `runner_configs`, `joined_title`, `snapshot_key`, `snapshot_calls` and
+  `mentions_update_key`.
+- `crates/ripr/src/analysis/committed_source.rs`: the committed-history
+  probe records snapshot inputs that differ from `HEAD`;
+  `snapshot_inputs_differ_in` answers for one directory.
+- `crates/ripr/src/analysis/language/router.rs`: `snapshot_input` names
+  the files.
 - `crates/ripr/src/analysis/language/typescript/mod.rs`: calls the
   promotion once per extracted test file.
 
