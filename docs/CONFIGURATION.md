@@ -1079,6 +1079,13 @@ languages continue. The accepted managed producer values are
 | `timeout_ms` | integer | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` also resolves to `30000`; it does not disable the timeout. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
 
+A timed-out or failed managed export does not replace the previous published
+packet. Each invocation stages its output separately. Once its process has
+settled, ripr discards that invocation's partial packet; a cleanup blocker is
+preserved and named in the failure diagnostic. Forced interruption or
+unconfirmed process cleanup can retain staging, which a subsequent invocation
+does not consume.
+
 To evaluate preview languages, keep Rust enabled and add only the preview
 adapters the repo wants to inspect:
 

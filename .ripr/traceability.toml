@@ -5860,6 +5860,11 @@ tests = [
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_digest_drift",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_discards_partial_preserves_published_packet_and_restarts",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_without_a_partial_packet_is_a_cleanup_noop",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_nonzero_exit_rejects_partial_and_preserves_published_packet",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_retains_directory_evidence_and_reports_cleanup_failure",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_preserves_overlapping_live_sibling_packet",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5877,6 +5882,7 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "xtask/src/fixture_contracts/mod.rs",
   "xtask/src/reports/perl_migration.rs",
+  "crates/ripr/src/app/check.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md",

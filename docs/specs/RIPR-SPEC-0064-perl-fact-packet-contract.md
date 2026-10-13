@@ -115,6 +115,19 @@ If the exporter is unavailable, RIPR records an unavailable/limitation state.
 It must not invent a packet, canonical actionable gap, repair card, verify
 result, or badge movement from the missing exporter.
 
+Explicitly configured managed exporters use separate, exclusively created
+staging for each invocation. Successful publication keeps the existing final
+packet key and path. A failed or timed-out invocation must not replace the
+previous published packet or delete another invocation's live output.
+
+After confirmed process settlement, RIPR discards only that invocation's
+unpublished packet and removes its empty staging directory. A cleanup blocker
+is preserved and named in the producer-failure diagnostic; cleanup never
+recursively removes evidence. Unconfirmed process cleanup or forced interruption
+retains private staging. A subsequent invocation uses fresh staging and cannot
+consume the retained partial packet. This lifecycle contract does not change
+cache identity, reuse policy, or the platform process-containment authority.
+
 ### Packet status
 
 Top-level `packet_status` is one of:
