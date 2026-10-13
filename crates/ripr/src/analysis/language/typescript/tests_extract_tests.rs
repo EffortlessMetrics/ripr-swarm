@@ -3,6 +3,33 @@
 use super::*;
 
 #[test]
+fn awaited_roots_retain_call_identity_and_complete_extraction() {
+    let source = "import assert from 'node:assert/strict';\nimport { test, describe } from 'node:test';\nawait describe('suite', async () => {\n  await test('id', () => { assert.strictEqual(nanoid().length, 21); });\n});\n";
+    let file = Path::new("test/nanoid.test.js");
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].name, "suite id");
+    assert_eq!(tests[0].line, 4);
+    assert!(tests[0].body_text.starts_with("test('id'"));
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert!(detect_partial_test_extraction(file, source, &tests).is_none());
+}
+
+#[test]
+fn awaited_unwalked_root_keeps_the_partial_extraction_disclosure() {
+    let source = "import { test } from 'node:test';\nasync function register() {\n  await test('id', () => { expect(nanoid().length).toBe(21); });\n}\n";
+    let file = Path::new("test/nanoid.test.js");
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty());
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_some(),
+        "unsupported helper registration must be disclosed"
+    );
+    assert_eq!(gap.map(|gap| gap.sample_line), Some(3));
+}
+
+#[test]
 fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
     let imports =
         "import assert from 'node:assert/strict'; import { test, suite } from 'node:test';\n";

@@ -1,0 +1,192 @@
+//! Public CLI controls over pinned Nano ID JavaScript, with authored consumers.
+
+use super::{run_command, unique_temp_workspace, workspace_root};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::PathBuf;
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+struct Consumer {
+    root: PathBuf,
+}
+
+impl Consumer {
+    fn new(registration: &str) -> TestResult<Self> {
+        let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
+        let root = unique_temp_workspace("javascript-awaited-root");
+        fs::create_dir_all(&root)?;
+        let consumer = Self { root };
+        for file in [
+            "package.json",
+            "ripr.toml",
+            "non-secure/index.js",
+            "url-alphabet/index.js",
+        ] {
+            let destination = consumer.root.join(file);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(fixture.join("input").join(file), destination)?;
+        }
+        fs::create_dir_all(consumer.root.join("test"))?;
+        fs::write(
+            consumer.root.join("test/nanoid.test.js"),
+            format!(
+                "import assert from 'node:assert/strict';\nimport {{ test, describe }} from 'node:test';\nimport {{ nanoid }} from '../non-secure/index.js';\n{registration}\n"
+            ),
+        )?;
+        fs::copy(
+            fixture.join("diff.patch"),
+            consumer.root.join("change.patch"),
+        )?;
+        Ok(consumer)
+    }
+
+    fn check(&self) -> TestResult<Value> {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&self.root),
+            &[
+                "check",
+                "--root",
+                ".",
+                "--diff",
+                "change.patch",
+                "--mode",
+                "fast",
+                "--json",
+            ],
+        )?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "nonempty anchored subject: {report}");
+        assert_eq!(findings[0]["probe"]["file"], "non-secure/index.js");
+        assert_eq!(findings[0]["probe"]["line"], 21);
+        assert_eq!(findings[0]["language"], "javascript");
+        assert_eq!(findings[0]["language_status"], "preview");
+        assert_eq!(findings[0]["source_currentness"], "candidate_current");
+        assert_eq!(findings[0]["ripr"]["infect"]["state"], "unknown");
+        assert_eq!(findings[0]["ripr"]["propagate"]["state"], "unknown");
+        Ok(report)
+    }
+}
+
+impl Drop for Consumer {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn awaited_nanoid_consumer_credits_the_same_assertion_as_a_bare_root() -> TestResult {
+    for registration in [
+        "test('default id length', () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('default id length', () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('default id length', { skip: false, expectFailure: false }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('default id length', { skip: undefined }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "await describe('ids', async () => { await test('default id length', () => { assert.strictEqual(nanoid().length, 21); }); });",
+    ] {
+        let report = Consumer::new(registration)?.check()?;
+        let finding = &report["findings"][0];
+        assert_eq!(
+            finding["classification"], "exposed",
+            "{registration}: {finding}"
+        );
+        assert_eq!(finding["oracle_kind"], "exact_value");
+        assert_eq!(finding["oracle_strength"], "strong");
+        assert_eq!(finding["related_tests_total"], 1);
+        assert_eq!(finding["related_tests"][0]["oracle_kind"], "exact_value");
+    }
+    Ok(())
+}
+
+#[test]
+fn awaited_nanoid_smoke_consumer_does_not_pin_the_changed_length() -> TestResult {
+    let report = Consumer::new("await test('default id exists', () => { assert.ok(nanoid()); });")?
+        .check()?;
+    let finding = &report["findings"][0];
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(finding["oracle_kind"], "smoke_only");
+    assert_eq!(finding["related_tests_total"], 1);
+    Ok(())
+}
+
+#[test]
+fn awaited_roots_preserve_skips_expected_failure_and_assertion_shadows() -> TestResult {
+    for registration in [
+        "await test.skip('ids', () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('ids', { skip: true }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('ids', { todo: true }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('ids', { expectFailure: true }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "const undefined = true; await test('ids', { skip: undefined }, () => { assert.strictEqual(nanoid().length, 21); });",
+        "const undefined = true; await describe('ids', { skip: undefined }, async () => { await test('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+    ] {
+        let report = Consumer::new(registration)?.check()?;
+        assert_eq!(
+            report["findings"][0]["classification"], "no_static_path",
+            "{registration}: {report}"
+        );
+        assert_eq!(report["findings"][0]["related_tests_total"], 0);
+    }
+    for registration in [
+        "await describe('ids', async (assert) => { await test('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+        "await describe('ids', async () => { const assert = { strictEqual() {} }; await test('id', () => { assert.strictEqual(nanoid().length, 21); }); });",
+        "await test('ids', (assert) => { assert.strictEqual(nanoid().length, 21); });",
+    ] {
+        let report = Consumer::new(registration)?.check()?;
+        assert_ne!(
+            report["findings"][0]["classification"], "exposed",
+            "{registration}: {report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn awaited_initializer_and_helper_registrations_stay_outside_root_discovery() -> TestResult {
+    for registration in [
+        "const registered = await test('ids', () => { assert.strictEqual(nanoid().length, 21); });",
+        "async function register() { await test('ids', () => { assert.strictEqual(nanoid().length, 21); }); }",
+    ] {
+        let report = Consumer::new(registration)?.check()?;
+        assert_eq!(
+            report["findings"][0]["classification"], "no_static_path",
+            "{registration}: {report}"
+        );
+        assert_eq!(report["findings"][0]["related_tests_total"], 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn nanoid_upstream_bytes_keep_their_independent_provenance() -> TestResult {
+    let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
+    let provenance: Value = serde_json::from_slice(&fs::read(fixture.join("provenance.json"))?)?;
+    let pins = provenance["retained_files"]
+        .as_array()
+        .ok_or("missing source pins")?;
+    assert_eq!(pins.len(), 4);
+    for pin in pins {
+        let path = pin["path"].as_str().ok_or("missing source path")?;
+        let bytes = fs::read(fixture.join("upstream").join(path))?;
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        assert_eq!(Some(digest.as_str()), pin["sha256"].as_str(), "{path}");
+        if path != "non-secure/index.js" {
+            assert_eq!(
+                fs::read(fixture.join("upstream").join(path))?,
+                fs::read(fixture.join("input").join(path))?
+            );
+        }
+    }
+    let base = fs::read_to_string(fixture.join("upstream/non-secure/index.js"))?;
+    let head = fs::read_to_string(fixture.join("input/non-secure/index.js"))?;
+    assert_eq!(head.replace("return id.slice(1)", "return id"), base);
+    Ok(())
+}

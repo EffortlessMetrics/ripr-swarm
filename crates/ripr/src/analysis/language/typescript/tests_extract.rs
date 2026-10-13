@@ -43,6 +43,24 @@ pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>
     }
 }
 
+/// The call of a bare or once-awaited statement registration (SPEC-0243
+/// rule 1). All registration consumers share this boundary, including the
+/// option fence, callback shadows, assertion admission and title masking.
+/// Initializers, nested calls and other wrappers remain outside it.
+fn statement_call<'s, 'a>(stmt: &'s Statement<'a>) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Statement::ExpressionStatement(statement) = stmt else {
+        return None;
+    };
+    let expression = match &statement.expression {
+        Expression::AwaitExpression(awaited) => &awaited.argument,
+        expression => expression,
+    };
+    match expression {
+        Expression::CallExpression(call) => Some(call),
+        _ => None,
+    }
+}
+
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the second parse must
@@ -682,8 +700,7 @@ pub(crate) fn collect_tests_from_statements(
         // declaration-scope fence before either a test or suite can donate
         // assertions. Callback-local bindings do not affect registration options.
         if !unshadowed_undefined
-            && let Statement::ExpressionStatement(expression) = stmt
-            && let Expression::CallExpression(call) = &expression.expression
+            && let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
@@ -746,9 +763,7 @@ pub(crate) fn collect_tests_from_statements(
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
-            if let Statement::ExpressionStatement(statement) = stmt
-                && let Expression::CallExpression(call) = &statement.expression
-            {
+            if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
@@ -941,8 +956,8 @@ fn collect_scope_bindings(
                 ));
             }
         }
-        Statement::ExpressionStatement(expr_stmt) => {
-            let Expression::CallExpression(call) = &expr_stmt.expression else {
+        Statement::ExpressionStatement(_) => {
+            let Some(call) = statement_call(stmt) else {
                 return;
             };
             let phase = match &call.callee {
@@ -1383,10 +1398,7 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 /// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
 /// `it('x', { timeout }, (t) => ...)`).
 fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return Vec::new();
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
+    let Some(call) = statement_call(stmt) else {
         return Vec::new();
     };
     call.arguments
@@ -1409,12 +1421,7 @@ fn module_specifier_span(stmt: &Statement<'_>) -> Option<oxc_span::Span> {
 }
 
 fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     match call.arguments.first()? {
         oxc_ast::ast::Argument::StringLiteral(literal) => {
             Some(literal.span.start as usize..literal.span.end as usize)
@@ -1716,12 +1723,7 @@ pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
     {
@@ -1741,12 +1743,7 @@ pub(crate) fn test_from_statement(
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptTest> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
@@ -2491,7 +2488,7 @@ impl UnextractedTestFinder<'_> {
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
             Expression::AwaitExpression(await_expr) => {
-                self.visit_expression(&await_expr.argument, false);
+                self.visit_expression(&await_expr.argument, statement_position);
             }
             Expression::UnaryExpression(unary) => {
                 self.visit_expression(&unary.argument, false);

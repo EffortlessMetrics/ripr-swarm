@@ -790,6 +790,16 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs`:
+  `awaited_roots_retain_call_identity_and_complete_extraction` and
+  `awaited_unwalked_root_keeps_the_partial_extraction_disclosure` cover rule 1.
+- `crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs`: the pinned Nano ID
+  consumer covers bare/awaited registration parity, exact/smoke oracles,
+  qualification options, assertion shadows, unsupported registration positions,
+  and byte-identical upstream provenance through the actual CLI.
+- `fixtures/javascript_awaited_registration`: genuine JavaScript production
+  source with a separately authored Node consumer and independent runtime contrast.
+
 - Existing: `crates/ripr/src/analysis/language/typescript/tests.rs`:
   `ts_returnvalue_unrelated_strong_assertion_downgrades`,
   `ts_returnvalue_owner_aliased_local_observation_stays_exposed`,
