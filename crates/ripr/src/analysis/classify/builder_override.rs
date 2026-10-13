@@ -593,9 +593,12 @@ pub(in crate::analysis) fn setter_plainly_writes(
     stores
 }
 
-/// The body of the one non-test inherent method `name` on `impl_type`.
-/// `None` when there is none, several, or only a trait impl's: a trait
-/// method may be another impl's body at the call site.
+/// The body of the one non-test inherent method `name` on `impl_type`,
+/// shared by getter credit and the pushed-literal callee-write check. Two
+/// exclusions keep the body the one the call site runs: functions in an
+/// evidence role (tests, fixtures) are skipped, and so are trait impls
+/// (`impl Trait for Type`), since a trait method may dispatch to another
+/// impl's body. `None` when no candidate remains, or several do.
 pub(in crate::analysis) fn inherent_method_body<'a>(
     index: &'a RustIndex,
     impl_type: &str,
@@ -617,8 +620,8 @@ pub(in crate::analysis) fn inherent_method_body<'a>(
 /// RIPR-SPEC-0228 getter credit: whether `impl_type`'s method `getter`
 /// takes only `&self` and its body is one tail expression returning the field
 /// path `field` itself: `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()`
-/// or `self.f.as_slice()`, in an inherent impl of `impl_type` (not a trait
-/// impl). A body that reads another field, computes a value
+/// or `self.f.as_slice()`, in an inherent impl of `impl_type` resolved by
+/// [`inherent_method_body`]. A body that reads another field, computes a value
 /// from the field (`self.f.get(k).copied()`), or does anything else first,
 /// and an ambiguous or missing method, give `false`: a method named after the
 /// field is not evidence that it returns that field.
