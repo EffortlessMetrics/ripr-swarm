@@ -457,6 +457,19 @@ object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
 projects JSON and Markdown. The protocol does not execute agents, grade
 repairs, or claim intervention value.
 
+## Work portfolio ranking keys
+
+The read-only `cargo xtask work portfolio`, `work candidates`, and
+`work explain` v1 JSON documents carry an additive candidate `ranking_key`
+array of exactly eight integers, in the factor order declared by
+[RIPR-SPEC-0234](specs/RIPR-SPEC-0234-work-portfolio-compiler.md).
+Candidates sort by this key ascending lexicographically, then by
+`candidate_id` ascending. The existing `ranking_factors` retain their prose
+and source references. Legacy rows can omit the key; omission or null means
+unavailable, not zero. Regenerated portfolio identities include the key.
+Markdown displays the same key and tie-break; this advisory ordering does
+not select work or grant authority.
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
