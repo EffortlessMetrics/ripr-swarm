@@ -485,6 +485,9 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
         ("assert!((matches!(r, Ok(_))) == true);", &weak),
         ("assert!(matches!(r, Ok(_)) == (true));", &weak),
         ("assert!(false == matches!(r, Ok(_)));", &weak),
+        // A pinned pattern compared with `false` asserts it does not match,
+        // which pins nothing either (rule 1).
+        ("assert!(matches!(r, Ok(3)) == false);", &weak),
         (
             "assert!(xs.iter().any(|x| ::core::matches!(x, Some(_))));",
             &weak,
