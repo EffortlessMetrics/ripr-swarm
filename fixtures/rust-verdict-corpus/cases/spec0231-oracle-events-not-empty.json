@@ -50,5 +50,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#16"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "mock_expectation",
+    "strength": "medium",
+    "spec": "RIPR-SPEC-0231#16"
+  }
 }
