@@ -974,9 +974,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the body call, so it cannot pass on a `KeyError` token match.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited once rules 12 to 14 land. The corpus has no
-  `assertRaises` callable, `assertRaises ... as cm` or example 34 case
-  yet; each needs its own case before those parts read as established.
+  (#6597) score credited once rules 12 to 14 land. Example 34's
+  `exc.value is not None` and length forms have cases
+  (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`, #7546);
+  the corpus has no `assertRaises` callable, `assertRaises ... as cm` or
+  other example 34 form yet, and each needs its own case before those
+  parts read as established.
 
 ## Implementation Mapping
 

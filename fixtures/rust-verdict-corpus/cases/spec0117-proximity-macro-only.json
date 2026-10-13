@@ -1,0 +1,62 @@
+{
+  "case_id": "spec0117-proximity-macro-only",
+  "subject_id": "authored-spec0117-5",
+  "diff": "cases/spec0117-proximity-macro-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "same_file_unit_test_public_api_invokes_macro_naming_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 4",
+        "mutated_line": "x * 4",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_triples",
+        "equivalence_review": "not equivalent: outer(4) yields 16 instead of 12"
+      },
+      {
+        "replacement": "x + 3",
+        "mutated_line": "x + 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_triples",
+        "equivalence_review": "not equivalent: outer(4) yields 7 instead of 12"
+      },
+      {
+        "replacement": "x / 3",
+        "mutated_line": "x / 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_triples",
+        "equivalence_review": "not equivalent: outer(4) yields 1 instead of 12"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The only related test, tests::outer_triples in the owner's file, pins outer(4) to 12; outer reaches the private inner only through call_inner!, whose definition names inner, and every listed mutant fails it. ripr reports weakly_exposed with static_limit_kind rust_macro_reach_unresolved and outer_triples related by same_test_file, an acceptable abstention. Spec cells: RIPR-SPEC-0117 example 5.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#5"
+  ]
+}

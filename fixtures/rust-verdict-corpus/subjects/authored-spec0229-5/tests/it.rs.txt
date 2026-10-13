@@ -1,0 +1,6 @@
+use spec0229_5::f;
+
+#[test]
+fn some_five_passes_the_guard() {
+    assert_eq!(f(Some(5)), 1);
+}
