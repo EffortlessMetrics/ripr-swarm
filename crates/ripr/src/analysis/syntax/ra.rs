@@ -2456,7 +2456,10 @@ enum DropInScope {
 
 /// Nonrecursive whole-file root proof for each qualified statement macro.
 /// Unknown glob roots remain unproved.
-pub(crate) fn assertion_root_binding_is_unrebound(path: &str, node: &SyntaxNode) -> bool {
+pub(crate) fn assertion_root_binding_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+) -> bool {
     drop_in_assertion_leaf(path).is_some()
         && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
         && node.ancestors().last().is_some_and(|file| {
@@ -2471,7 +2474,7 @@ pub(crate) fn assertion_root_binding_is_unrebound(path: &str, node: &SyntaxNode)
 /// function to retain its independently proven binding.
 pub(crate) fn assertion_root_is_unrebound(
     path: &str,
-    node: &SyntaxNode,
+    node: &ra_ap_syntax::SyntaxNode,
     statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
 ) -> bool {
     let function = node.ancestors().find_map(ast::Fn::cast);
@@ -2487,7 +2490,7 @@ pub(crate) fn assertion_root_is_unrebound(
 
 /// Initial qualified capture keeps no-implicit-prelude contexts refused.
 /// A no_std root supplies std only through an explicit unrenamed declaration.
-pub(crate) fn assertion_root_is_available(path: &str, node: &SyntaxNode) -> bool {
+pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some((root, _)) = path.strip_prefix("::").unwrap_or(path).split_once("::") else {
         return false;
     };

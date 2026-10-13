@@ -623,14 +623,15 @@ impl OwnerPinSyntax {
                                 .is_some_and(|file| {
                                     crate::analysis::syntax::ra::assertion_root_is_available(
                                         name,
-                                        file.syntax(),
+                                        file.tree().syntax(),
                                     )
                                 })
                         })
                     })
                 && facts.role_provenance.edges.iter().all(|edge| {
                     parse_clean_source_file(&edge.declaration).is_some_and(|file| {
-                        file.syntax()
+                        file.tree()
+                            .syntax()
                             .descendants()
                             .filter_map(ast::Module::cast)
                             .all(|module| {
