@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "return_value",
   "test_shape": "nodetest_context_t_bracket_assert_equal",
-  "hard_case": "`t[\"assert\"].equal` runs the same strict comparison as `t.assert.equal`, but the spec reads no assertion through a computed member",
+  "hard_case": "`t[\"assert\"].equal` runs the same loose (`==`) comparison as `t.assert.equal`, but the spec reads no assertion through a computed member",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
