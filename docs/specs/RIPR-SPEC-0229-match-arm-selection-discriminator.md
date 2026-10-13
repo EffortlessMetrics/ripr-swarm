@@ -354,7 +354,10 @@ implies but does not spell out:
   start at the workspace's `src/lib.rs` or `src/main.rs` or a
   `crates/<name>/src/` one, with no workspace file declaring a `mod` of
   that file's stem (a package-root `lib.rs` with `mod src { mod lib; }`)
-  or using `#[path]`, which reaches anywhere. Each path step must be the one
+  or a macro-generated `mod $name;`, no package file outside `src/`,
+  `tests/`, `benches/`, `examples/` and `build.rs` (a possible declared
+  crate root), and no `#[path]`, which reaches anywhere. Each path step
+  must be a top-level `mod` of its parent file. Each path step must be the one
   `mod` of that name in its parent file, declared out of line. An inline or
   `cfg`-duplicated module on the path, a `cfg` or `cfg_attr` on the import
   or a module step, a chain below an inline module, a

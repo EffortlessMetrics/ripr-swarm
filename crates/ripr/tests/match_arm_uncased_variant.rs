@@ -538,3 +538,48 @@ fn a_root_named_module_file_below_a_package_root_library_names_no_arm() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn a_nested_module_step_beside_a_renamed_import_names_no_arm() -> Result<(), String> {
+    // #7686 review: `kinds` at the crate root is `constants` renamed; the
+    // enum's `mod kinds;` is nested in `mod outer`, a different module.
+    let lib = format!(
+        "mod outer {{\n    mod kinds;\n}}\npub mod constants;\npub use constants as kinds;\npub use crate::kinds::Kind;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let files = [
+        ("src/constants.rs", CONSTANTS),
+        ("src/outer/kinds.rs", ENUM),
+    ];
+    assert_eq!(
+        changed_wildcard(&lib, &files, WILDCARD_TEST, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_root_named_module_generated_by_a_macro_names_no_arm() -> Result<(), String> {
+    // #7686 review: the library root is `src/real.rs`, whose macro
+    // generates `pub mod lib;`, so `src/lib.rs` is a module and its
+    // `crate::kinds` is `constants` renamed, not `src/kinds.rs`.
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let manifest = "[package]\nname = \"uncased-variant\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/real.rs\"\n\n[workspace]\n";
+    let root = "macro_rules! m {\n    ($n:ident) => {\n        pub mod $n;\n    };\n}\n\npub mod constants;\npub use constants as kinds;\nm!(lib);\n";
+    let files = [
+        ("Cargo.toml", manifest),
+        ("src/real.rs", root),
+        ("src/constants.rs", CONSTANTS),
+        ("src/kinds.rs", ENUM),
+        ("src/lib/kinds.rs", ENUM),
+    ];
+    let test = "use uncased_variant::{kinds::Kind, lib::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(&owner, &files, test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}

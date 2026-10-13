@@ -1495,8 +1495,9 @@ fn imported_enum_variants(
     // the workspace's `src/` or a `crates/<name>/src/` root. Default module
     // resolution reaches those paths from another crate only through a
     // `mod` of the root's stem (a `lib.rs` at the package root with `mod src
-    // { mod lib; }`), and `#[path]` reaches anywhere, so no workspace file
-    // may have either (#7686 review).
+    // { mod lib; }`, or a macro's `mod $name;`) from a crate root outside
+    // Cargo's standard directories, and `#[path]` reaches anywhere, so none
+    // of these may appear (#7686 review).
     let root = owner_chain
         .first()
         .map_or(owner_file, |edge| edge.parent.as_path());
@@ -1505,19 +1506,45 @@ fn imported_enum_variants(
         .map(|component| component.as_os_str().to_str())
         .collect::<Option<Vec<_>>>()
         .unwrap_or_default();
+    // The package directory holding that root: "" or `crates/<name>`.
+    let package = components
+        .len()
+        .checked_sub(2)
+        .map(|len| &components[..len]);
+    let stem = components
+        .last()
+        .map(|file| file.trim_end_matches(".rs"))
+        .unwrap_or_default();
     let crate_root = matches!(
         components.as_slice(),
         ["src", "lib.rs" | "main.rs"] | ["crates", _, "src", "lib.rs" | "main.rs"]
-    ) && !files.values().any(|facts| {
+    ) && !files.iter().any(|(path, facts)| {
+        // A package file outside Cargo's standard target directories may be
+        // a declared crate root (`[lib] path = "lib.rs"`) whose modules
+        // reach `src/lib.rs`; another member's files are its own package.
+        let parts = path
+            .components()
+            .map(|component| component.as_os_str().to_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        let nonstandard = package.is_some_and(|package| {
+            parts.starts_with(package)
+                && !(package.is_empty() && parts.first() == Some(&"crates"))
+                && !matches!(
+                    parts.get(package.len()).copied(),
+                    Some("src" | "tests" | "benches" | "examples" | "build.rs")
+                )
+        });
         let masked = mask_comments_and_strings(&facts.source);
-        super::call_identity::has_path_attribute(&facts.source)
-            || components.last().is_some_and(|file| {
-                let stem = file.trim_end_matches(".rs");
-                whole_word_offsets(&masked, stem).into_iter().any(|offset| {
-                    let before = masked[..offset].trim_end();
-                    let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
-                    before.ends_with("mod")
-                })
+        nonstandard
+            || super::call_identity::has_path_attribute(&facts.source)
+            // A workspace macro may generate `mod $name;` for any name.
+            || whole_word_offsets(&masked, "mod")
+                .into_iter()
+                .any(|offset| masked[offset + 3..].trim_start().starts_with('$'))
+            || whole_word_offsets(&masked, stem).into_iter().any(|offset| {
+                let before = masked[..offset].trim_end();
+                let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
+                before.ends_with("mod")
             })
     });
     if !crate_root {
@@ -1533,18 +1560,30 @@ fn imported_enum_variants(
         if matches!(*step, "crate" | "self" | "super") {
             return None;
         }
-        // The step's one `mod` in this file must be out of line: an inline
-        // module of that name, or a `cfg` alternative to it, records no
-        // edge and may declare a different `Kind` (#7686 review).
+        // The step's one `mod` in this file must be out of line and at the
+        // file's top level: an inline module of that name, a `cfg`
+        // alternative to it, or a nested `mod outer { mod kinds; }` beside a
+        // top-level `use constants as kinds;` names a different module
+        // (#7686 review).
         let parent = crate::analysis::syntax::parse_clean_source_file(&files.get(&file)?.source)?;
         let mut modules = parent
             .tree()
             .syntax()
             .descendants()
             .filter_map(ast::Module::cast)
-            .filter(|module| module.name().is_some_and(|name| name.text() == *step));
+            .filter(|module| {
+                module.name().is_some_and(|name| {
+                    let text = name.text();
+                    text.strip_prefix("r#").unwrap_or(text) == *step
+                })
+            });
         let only = modules.next()?;
-        if only.item_list().is_some() || cfg_gated(&only) || modules.next().is_some() {
+        let top_level = only
+            .syntax()
+            .parent()
+            .is_some_and(|holder| ast::SourceFile::can_cast(holder.kind()));
+        if only.item_list().is_some() || !top_level || cfg_gated(&only) || modules.next().is_some()
+        {
             return None;
         }
         let mut children = files.iter().filter_map(|(child, facts)| {
