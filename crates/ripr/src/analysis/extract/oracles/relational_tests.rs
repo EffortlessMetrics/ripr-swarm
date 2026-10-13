@@ -454,7 +454,6 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
 
 #[test]
 fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), String> {
-    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
     let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
     let exact = (OracleKind::ExactValue, OracleStrength::Strong);
     for (text, expected) in [
