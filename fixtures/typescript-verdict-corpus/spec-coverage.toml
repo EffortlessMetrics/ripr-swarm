@@ -11,20 +11,20 @@
 # RIPR-SPEC-0252, RIPR-SPEC-0254 and RIPR-SPEC-0256. An in-scope example a case cannot label is waived with a
 # reason; waived examples are accounted for, never covered. No example is
 # waived today: every uncovered one could be labeled by a new case, so each
-# stays visible as uncovered. RIPR-SPEC-0243 example 33 (two test files, one
-# mocked) is the known gap tracked on #7099. Examples 30, 34 and 35 are also
-# uncovered: `jest-spec0234-ex30` labels only example 30's literal-`jest.fn`
-# half (RIPR-SPEC-0247 example 2), and the two node:test message cases keep
-# the message unchanged, so neither exercises the discrimination 34 and 35
-# state. Case ids containing `spec0234`
-# were named before the TypeScript rules were renumbered; they cite today's
-# RIPR-SPEC-0243.
+# stays visible as uncovered. Every RIPR-SPEC-0243 example has a case:
+# `jest-spec0243-ex33-two-files-one-mocked` labels example 33 (#7099),
+# `jest-spec0243-ex30-factory-db` example 30's non-literal `db`, and the
+# `nodetest-spec0243-ex34-*` and `-ex35-*` cases change the message their
+# payload pins (the older `nodetest-currency-throws-regex` and
+# `nodetest-charge-rejects-message` keep it unchanged, so they cite neither).
+# Case ids containing `spec0234` were named before the TypeScript rules were
+# renumbered; they cite today's RIPR-SPEC-0243.
 #
 # `floor` is the covered-example count `verdict-corpus check` protects. Raise
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 47
+floor = 67
 
 # LSP Repair Packet Command
 [[spec]]

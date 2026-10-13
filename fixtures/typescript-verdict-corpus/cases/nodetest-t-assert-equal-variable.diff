@@ -1,0 +1,9 @@
+diff --git a/src/gracefee.ts b/src/gracefee.ts
+index 0000000..1111111 100644
+--- a/src/gracefee.ts
++++ b/src/gracefee.ts
+@@ -1,3 +1,3 @@
+ export function graceFee(days: number): number {
+-  return days * 3;
++  return days * 4;
+ }
