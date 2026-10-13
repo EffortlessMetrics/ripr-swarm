@@ -66,6 +66,10 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     owner_pin_syntax: super::OwnerPinSyntax,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
+    /// The analysis root that probe paths are joined onto, while index and
+    /// test paths stay relative to it (#6791). `None` when the caller did not
+    /// name one; same-file matching then infers the changed file's path.
+    analysis_root: Option<std::path::PathBuf>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -148,6 +152,14 @@ impl RelatedTestCandidateIndex {
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
     /// (#5320), so the owner-pin ambiguity unions match the full selection.
+    /// Record the root that probe paths are joined onto, so same-file
+    /// matching strips it exactly instead of inferring the changed file from
+    /// indexed path tails (#6791).
+    pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
+        self.analysis_root = Some(root.to_path_buf());
+        self
+    }
+
     pub(in crate::analysis) fn with_withheld_macro_bindings(
         mut self,
         withheld: super::WithheldMacroBindings,
@@ -595,7 +607,12 @@ fn find_related_tests_with_candidates<'a>(
     // `tokenizer/mod.rs` tests are not related to a `serialize/mod.rs` change
     // through the shared stem `mod` (#5395).
     let file_name = module_stem(&probe.location.file).unwrap_or_default();
-    let probe_path = probe_index_path(&probe.location.file, owner_fn, index);
+    let analysis_root = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.analysis_root.as_deref(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -1736,7 +1753,9 @@ fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path)
 /// The changed file's path in the index's root-relative form (#6791).
 ///
 /// Probe locations are joined onto the analysis root (`--root`), while index
-/// and test paths are root-relative. The changed file is the longest indexed
+/// and test paths are root-relative. With the root known, stripping it is
+/// exact. Without it (callers that build their own candidate index), the
+/// changed file is inferred: the longest indexed
 /// path that the probe path ends with on a segment boundary; the owner's file
 /// counts as indexed. A shorter match is a different file that only shares a
 /// tail, such as the root crate's `src/lib.rs` for a member crate's
@@ -1748,10 +1767,20 @@ fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path)
 /// test path exactly. Non-UTF-8 paths fail closed (#3545).
 fn probe_index_path(
     probe_file: &Path,
+    analysis_root: Option<&Path>,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
 ) -> Option<String> {
-    let probe_path = normalize_path(Path::new(probe_file.to_str()?));
+    let probe_text = probe_file.to_str()?;
+    // The analysis root is exact: strip it and the rest is the changed
+    // file's root-relative path.
+    if let Some(relative) = analysis_root.and_then(|root| probe_file.strip_prefix(root).ok()) {
+        let relative = normalize_path(Path::new(relative.to_str()?));
+        if !relative.is_empty() {
+            return Some(relative);
+        }
+    }
+    let probe_path = normalize_path(Path::new(probe_text));
     let owner_path = owner_fn
         .and_then(|owner| owner.file.to_str())
         .map(|file| normalize_path(Path::new(file)));
@@ -7768,7 +7797,7 @@ fn crate_c_score_test() {
         // An empty index: the probe path stands for itself.
         let index = RustIndex::default();
         let same = |probe: &str, test: &str| {
-            let probe_path = super::probe_index_path(Path::new(probe), None, &index);
+            let probe_path = super::probe_index_path(Path::new(probe), None, None, &index);
             super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
         };
         assert!(!same(
@@ -7864,7 +7893,7 @@ fn crate_c_score_test() {
                 ),
             );
         }
-        let resolve = |probe: &str| super::probe_index_path(Path::new(probe), None, &index);
+        let resolve = |probe: &str| super::probe_index_path(Path::new(probe), None, None, &index);
         assert_eq!(
             resolve("ws/crates/a/src/lib.rs").as_deref(),
             Some("crates/a/src/lib.rs")
@@ -7888,12 +7917,17 @@ fn crate_c_score_test() {
         }
         let root_owner = function("src/lib.rs", "f");
         assert_eq!(
-            super::probe_index_path(Path::new("app/src/lib.rs"), Some(&root_owner), &rooted)
-                .as_deref(),
+            super::probe_index_path(
+                Path::new("app/src/lib.rs"),
+                None,
+                Some(&root_owner),
+                &rooted
+            )
+            .as_deref(),
             Some("src/lib.rs")
         );
         assert_eq!(
-            super::probe_index_path(Path::new("app/src/lib.rs"), None, &rooted).as_deref(),
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &rooted).as_deref(),
             Some("app/src/lib.rs")
         );
         // No indexed tail: the probe keeps its own path.
@@ -7938,6 +7972,68 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn analysis_root_resolves_an_ownerless_probe_exactly() {
+        // #6791 review: under root `/tmp/app`, an ownerless change in the
+        // root package's `src/lib.rs` has the probe path `/tmp/app/src/lib.rs`,
+        // whose longer tail `app/src/lib.rs` is a member's file. Tail
+        // inference picks the member; the known root picks the right file.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("app/src/lib.rs", "member_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root = Path::new("/tmp/app");
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), Some(root), None, &index)
+                .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), None, None, &index)
+                .as_deref(),
+            Some("app/src/lib.rs")
+        );
+        // A relative root, including `.`, strips the same way.
+        assert_eq!(
+            super::probe_index_path(
+                Path::new("./app/src/lib.rs"),
+                Some(Path::new(".")),
+                None,
+                &index
+            )
+            .as_deref(),
+            Some("app/src/lib.rs")
+        );
+
+        let mut probe = probe("/tmp/app/src/lib.rs", "marker");
+        probe.owner = None;
+        let candidates = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &candidates,
+        );
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["root_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
     fn foreign_separator_probe_still_resolves_the_canonical_companion() {
         // The probe path was recorded with Windows separators; the stem
         // extraction must split on both flavors so `config_tests` stays a
@@ -7974,7 +8070,7 @@ fn crate_c_score_test() {
             b"crates/core/tests/foo\x81_tests.rs".to_vec(),
         ));
         let index = RustIndex::default();
-        let probe_path = super::probe_index_path(&probe_file, None, &index);
+        let probe_path = super::probe_index_path(&probe_file, None, None, &index);
         assert_eq!(probe_path, None);
         assert!(!super::same_test_file(
             &probe_file,
