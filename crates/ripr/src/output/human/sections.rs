@@ -343,6 +343,16 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
+    render_finding_with_shared_sections(finding, config, root, wording, None)
+}
+
+pub(super) fn render_finding_with_shared_sections(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+    wording: JsonPointerWording,
+    shared: Option<&super::shared::SharedSections>,
+) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
     out.push_str(&format!(
@@ -423,13 +433,12 @@ pub(crate) fn render_finding_with_config(
     ));
 
     out.push_str("\nEvidence\n");
-    for line in evidence_path_lines(finding, wording) {
-        if is_wrappable_advisory_prose(&line) {
-            out.push_str(&wrap_human_prose(&line, "  - ", "    "));
-        } else {
-            out.push_str(&format!("  - {line}"));
+    if let Some(shared) = shared {
+        out.push_str(&shared.evidence);
+    } else {
+        for line in evidence_path_lines(finding, wording) {
+            push_evidence_line(&mut out, &line);
         }
-        out.push('\n');
     }
 
     let weakness = weakness_lines(finding);
@@ -517,10 +526,32 @@ pub(crate) fn render_finding_with_config(
 
     if finding.recommended_next_step.is_some() {
         out.push_str("\nNext step\n");
-        out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+        if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
+            out.push_str(guidance);
+        } else {
+            out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+        }
     }
 
-    out
+    if shared.is_some() {
+        // The catalogue owns section spacing for this compact exhaustive CLI
+        // form. Raw multiline literals have already refused sharing; removing
+        // empty separator lines here cannot remove a source/evidence line.
+        out.split_inclusive('\n')
+            .filter(|line| *line != "\n")
+            .collect()
+    } else {
+        out
+    }
+}
+
+pub(super) fn push_evidence_line(out: &mut String, line: &str) {
+    if is_wrappable_advisory_prose(line) {
+        out.push_str(&wrap_human_prose(line, "  - ", "    "));
+    } else {
+        out.push_str(&format!("  - {line}"));
+    }
+    out.push('\n');
 }
 
 fn limitation_detail_lines(finding: &Finding) -> Vec<(&'static str, &str)> {
