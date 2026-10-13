@@ -500,7 +500,16 @@ fn tail_if_branch_value(
     }
     let changed_line = masked.lines().nth(offset)?;
     let changed = changed_line.trim();
-    if !changed.starts_with("if ") || !changed.contains(&code(&probe.expression)) {
+    // The probe must be the `if` condition itself, not text that merely
+    // appears inside a branch value on the same line.
+    let Some(condition) = changed
+        .strip_prefix("if ")
+        .and_then(|rest| rest.split_once('{'))
+        .map(|(condition, _)| condition.trim())
+    else {
+        return None;
+    };
+    if condition != code(&probe.expression) {
         return None;
     }
     let rest = masked
@@ -1473,6 +1482,8 @@ mod tests {
             "pub fn dispatch(x: i32, callback: fn() -> i32) {\n    if x > 1 { notify() } else { log() }\n}",
             // Both branches diverging produces no returned value.
             "pub fn f(x: i32) -> i32 {\n    if x > 1 { panic!() } else { todo!() }\n}",
+            // The probe text inside a branch value is not the `if` condition.
+            "pub fn f(a: bool) -> bool {\n    if a { x > 1 } else { false }\n}",
         ] {
             let owner = tail_owner(body);
             let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
