@@ -912,6 +912,11 @@ fn argument_deleted_after_a_replaced_one_in_a_kept_call_is_recorded() -> Result<
         vec![line(3, 3, "        a,"), line(4, 3, "        b,")],
     )?;
     assert_eq!(base_side_texts(&findings), vec!["b,"], "{findings:?}");
+    assert_eq!(
+        base_side(&findings),
+        vec![(3, "keep".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
     Ok(())
 }
 
