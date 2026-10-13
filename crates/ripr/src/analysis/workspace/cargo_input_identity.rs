@@ -321,8 +321,31 @@ mod tests {
     fn cargo_home_windows_relative_absolute_and_verbatim_preserve_directory_authority()
     -> Result<(), String> {
         check_home_directory_authority(|root| {
-            let absolute = root.join("home");
-            let verbatim = absolute.canonicalize().map_err(|error| error.to_string())?;
+            let verbatim = root
+                .join("home")
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            let mut components = verbatim.components();
+            let Some(std::path::Component::Prefix(prefix)) = components.next() else {
+                return Err("Windows fixture needs a rooted directory".to_string());
+            };
+            let mut absolute = match prefix.kind() {
+                std::path::Prefix::VerbatimDisk(drive) => {
+                    PathBuf::from(format!("{}:", char::from(drive)))
+                }
+                std::path::Prefix::VerbatimUNC(server, share) => {
+                    PathBuf::from(r"\\").join(server).join(share)
+                }
+                _ => return Err("Windows fixture needs a verbatim drive or UNC root".to_string()),
+            };
+            for component in components {
+                absolute.push(component.as_os_str());
+            }
+            assert_eq!(
+                absolute.canonicalize().map_err(|error| error.to_string())?,
+                verbatim,
+                "fixture spellings must resolve to the same directory"
+            );
             assert_ne!(
                 absolute.as_os_str(),
                 verbatim.as_os_str(),
@@ -338,8 +361,8 @@ mod tests {
         check_home_directory_authority(|root| {
             let literal = root.join(r"\\?\home");
             std::fs::create_dir_all(&literal).map_err(|error| error.to_string())?;
-            std::fs::write(literal.join("config.toml"), "[build]\njobs=1\n")
-                .map_err(|error| error.to_string())?;
+            let config = literal.join("config.toml");
+            std::fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
             let env = HomeEnvironment {
                 cargo_home: Some(literal.into_os_string()),
                 home: None,
@@ -356,6 +379,20 @@ mod tests {
             assert_ne!(
                 literal, ordinary,
                 "Unix backslashes are literal filename bytes"
+            );
+            std::fs::write(&config, "[build]\njobs=2\n").map_err(|error| error.to_string())?;
+            let edited =
+                cargo_input_identity_with_env(root, &env).ok_or("edited literal-home identity")?;
+            assert_ne!(
+                literal, edited,
+                "literal-home configuration edits invalidate identity"
+            );
+            std::fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let reverted = cargo_input_identity_with_env(root, &env)
+                .ok_or("reverted literal-home identity")?;
+            assert_eq!(
+                literal, reverted,
+                "literal-home configuration revert restores identity"
             );
             Ok(vec![PathBuf::from("home")])
         })
