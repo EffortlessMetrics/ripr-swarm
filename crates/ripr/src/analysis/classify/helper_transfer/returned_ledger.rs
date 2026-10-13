@@ -30,7 +30,7 @@ pub(crate) fn returned_ledger(
     if probe.family != ProbeFamily::FieldConstruction || probe.owner.as_ref() != Some(&owner.id) {
         return None;
     }
-    let hop = chain.hops.first()?;
+    let hop = chain.hops.first().filter(|hop| !hop.through_macro)?;
     let owner_parse = parse_clean_source_file(&owner.body)?;
     let function = owner_parse
         .tree()
@@ -423,6 +423,7 @@ mod tests {
                 caller: function("collect", caller),
                 call_text: "record(&mut errors);".to_string(),
                 arguments: vec!["&mut errors".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
