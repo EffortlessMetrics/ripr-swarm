@@ -31,10 +31,42 @@ executable.
 
 For a reviewed local wheelhouse during qualification:
 
+Create a fresh tool environment with Python 3.10 or newer, then use that
+environment's interpreter and executable explicitly. Activation is optional;
+installing with a selected Python does not put its `ripr` on PATH.
+Keep this tool environment separate from the project's test environment.
+
+On Linux or macOS:
+
 ```console
-python -m pip install --no-index --find-links ./wheelhouse ripr-rs
-ripr --version
+python3 -m venv ".ripr-tool"
+".ripr-tool/bin/python" -m pip install --no-index --only-binary=:all: --find-links "./wheelhouse" ripr-rs
+".ripr-tool/bin/ripr" --version
 ```
+
+On Windows PowerShell:
+
+```powershell
+py -3 -m venv ".ripr-tool"
+& ".\.ripr-tool\Scripts\python.exe" -m pip install --no-index --only-binary=:all: --find-links "./wheelhouse" ripr-rs
+& ".\.ripr-tool\Scripts\ripr.exe" --version
+```
+
+Choose an unused tool-directory name and keep both paths quoted when replacing
+it or the wheelhouse path, including paths with spaces or non-ASCII characters.
+Use the same explicit executable path for later commands and fresh shells.
+
+To upgrade from a newly reviewed wheelhouse, repeat the same environment's pip
+command with `--upgrade`; to replace installed files from that wheelhouse, use
+`--force-reinstall` instead. Run its explicit `ripr --version` afterward.
+These operations target the tool environment rather than the project's Python.
+
+If pip reports no matching distribution, check that the local wheelhouse contains
+a wheel qualified for this OS/architecture and Python version. `--no-index` and
+`--only-binary=:all:` keep this route offline and wheel-only; obtaining a compatible
+reviewed wheel is a separate step. If the explicit `ripr` path is missing, inspect
+the installation failure and rerun pip with the same tool interpreter. A bare
+`ripr` can select another installation and does not diagnose this environment.
 
 ## Package contract
 

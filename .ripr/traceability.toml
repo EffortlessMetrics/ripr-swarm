@@ -8823,7 +8823,7 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_witness_pointer_uses_may_language_and_no_coverage_claim",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit",
-  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weak_direct_test_preserves_the_unresolved_macro_witness",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit",
@@ -8858,10 +8858,19 @@ tests = [
   "crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one",
   "crates/ripr/tests/macro_generated_tests.rs::a_shadowing_let_in_a_generated_test_reads_like_the_hand_written_one",
   "crates/ripr/tests/macro_generated_tests.rs::a_cfg_gated_invocation_adds_no_test",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::mixed_macro_witness_survives_dependent_scope_narrowing",
+  "crates/ripr/tests/mixed_macro_reach.rs::weak_direct_oracle_preserves_the_macro_witness_in_ready_and_draft",
+  "crates/ripr/tests/mixed_macro_reach.rs::strong_direct_oracle_remains_credited_beside_the_macro",
+  "crates/ripr/tests/mixed_macro_reach.rs::weak_direct_without_a_test_macro_route_keeps_the_gap",
+  "crates/ripr/tests/mixed_macro_reach.rs::unrelated_macro_with_weak_direct_keeps_the_gap",
+  "crates/ripr/tests/mixed_macro_reach.rs::lexical_transitive_route_with_weak_direct_keeps_the_gap",
+  "fixtures/rust_mixed_direct_macro_reach/expected/check.json",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/rust_macro_reach_limitation",
+  "fixtures/rust_mixed_direct_macro_reach",
   "fixtures/evidence-promotion-honesty-corpus",
 ]
 code = [

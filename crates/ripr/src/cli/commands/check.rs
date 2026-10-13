@@ -51,7 +51,10 @@ fn validate_repo_scope_diff_inputs(
         if diff != Path::new("-") && !diff.is_file() {
             // Untyped on purpose: a missing `--diff` names no analysis
             // stage, matching the diff-scoped loader's fallback identity.
-            return Err(format!("check: --diff {} is not a readable file", diff.display()).into());
+            return Err(format!(
+                "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                diff.display()
+            ).into());
         }
         return Ok(());
     }
