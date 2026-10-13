@@ -133,6 +133,9 @@ documented decisions and proceed"). Recorded on #6654.
   the ambiguous fallback.
 - A key the test computes (`const sku = "pear"`, a template literal) is
   not read, so such a test stays `weakly_exposed` (under-credit).
+- A key passed as a number (`unitPrice(3)` for an integer-keyed table) is
+  not read as naming key `3`, since rule 2 reads only quoted string keys,
+  so an integer-keyed table stays `weakly_exposed` (under-credit).
 
 ## Required Evidence
 
