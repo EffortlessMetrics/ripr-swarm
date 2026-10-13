@@ -747,7 +747,7 @@ fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
 /// workspace directory from an absolute `crates/<name>/`, so two packages
 /// under absolute roots could read as one (#7576). An absolute path is keyed
 /// by the whole directory above its one `src/` or `tests/` component; a path
-/// with several (an ancestor `/home/u/src/`) cannot be split by its layout,
+/// with several (an ancestor `/srv/src/`) cannot be split by its layout,
 /// so it is keyed as its own package and never shares a crate with another
 /// file.
 fn package_key(path: &Path) -> Option<String> {
@@ -2307,14 +2307,14 @@ mod tests {
         );
         assert_eq!(package_key(Path::new("src/lib.rs")), None);
         // An ancestor `src/` leaves the layout unreadable: the file is its
-        // own package, never the package of `/home/u/src/proj/src/lib.rs`.
+        // own package, never the package of `/srv/src/proj/src/lib.rs`.
         assert_eq!(
-            package_key(Path::new("/home/u/src/proj/tests/api.rs")),
-            Some("/home/u/src/proj/tests/api.rs?".to_string())
+            package_key(Path::new("/srv/src/proj/tests/api.rs")),
+            Some("/srv/src/proj/tests/api.rs?".to_string())
         );
         assert_ne!(
-            package_key(Path::new("/home/u/src/proj/src/lib.rs")),
-            package_key(Path::new("/home/u/src/proj/tests/api.rs"))
+            package_key(Path::new("/srv/src/proj/src/lib.rs")),
+            package_key(Path::new("/srv/src/proj/tests/api.rs"))
         );
         // Absolute `crates/<name>/` keeps its workspace directory.
         assert_ne!(
