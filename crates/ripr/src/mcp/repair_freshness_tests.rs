@@ -2,10 +2,10 @@
 
 use super::*;
 use crate::app::repair_attempt::{
-    begin_repair_attempt_with, edit_cage_policy_from_packet, find_manifest_artifact_by_role,
-    finish_repair_attempt, load_repair_attempt_manifest, receipt_binding_from,
-    retain_terminal_evidence, write_edit_cage_baseline, BeforeArtifactSource,
-    BeginRepairAttemptOptions, RepairAttemptId,
+    BeforeArtifactSource, BeginRepairAttemptOptions, RepairAttemptId, begin_repair_attempt_with,
+    edit_cage_policy_from_packet, find_manifest_artifact_by_role, finish_repair_attempt,
+    load_repair_attempt_manifest, receipt_binding_from, retain_terminal_evidence,
+    write_edit_cage_baseline,
 };
 use std::path::PathBuf;
 
@@ -243,8 +243,8 @@ fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), St
 }
 
 #[test]
-fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt(
-) -> Result<(), String> {
+fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt()
+-> Result<(), String> {
     let (root, id) = prepared("diverged")?;
     let manifest_path = root.join(format!(
         "target/ripr/repair-attempts/{}/attempt.json",
@@ -322,8 +322,8 @@ fn issue_terminal_receipt_with_grip(
     expected_movement: &str,
 ) -> Result<(), String> {
     use crate::output::agent_receipt::{
-        render_agent_receipt_value_json, AgentReceiptAnalysisOutcome,
-        AgentReceiptArtifactProvenance, AgentReceiptProvenance,
+        AgentReceiptAnalysisOutcome, AgentReceiptArtifactProvenance, AgentReceiptProvenance,
+        render_agent_receipt_value_json,
     };
     let after_path = "target/ripr/workflow/after.json";
     let verify_path = "target/ripr/workflow/agent-verify.json";
@@ -443,8 +443,8 @@ fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(),
 }
 
 #[test]
-fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head(
-) -> Result<(), String> {
+fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head()
+-> Result<(), String> {
     let (root, id) = prepared("tampered")?;
     finish_and_issue(&root, &id)?;
     let before = receipt_document(&root, &id)?;
@@ -657,11 +657,13 @@ fn durable_selected_action_failed_current_restarts_before() -> Result<(), String
         after.verdict.status,
         crate::edit_cage::EditCageVerdictStatus::Violated
     );
-    assert!(after
-        .verdict
-        .violations
-        .iter()
-        .any(|violation| violation.path == "outside.rs"));
+    assert!(
+        after
+            .verdict
+            .violations
+            .iter()
+            .any(|violation| violation.path == "outside.rs")
+    );
     assert_eq!(
         load_repair_attempt_manifest(&root, &id)?.state,
         RepairAttemptState::Failed
