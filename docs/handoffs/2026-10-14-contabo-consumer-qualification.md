@@ -35,9 +35,14 @@ from that workflow rather than copied into a second command portfolio. The
 current-main reconciliation brings #7918's landed `cargo xtask ci-policy`
 composition into this source; the previous `d51471b24...` checkpoint remains in
 the merge ancestry. The recorded integration basis is
-`7c24ed92e24fd5cdcd3399012d5c4f03f7404bf9`. The earlier `0598981b9...` basis
-and `eb754b9f...` proof remain historical epochs; the current main merge was
-clean and preserved its `ci-policy` composition.
+`ab3daa37c93d604092f24b483aba294c8c6c0d96`. The earlier `7c24ed92e...` and
+`0598981b9...` bases and their proof remain historical epochs; current main merged
+cleanly and preserved its `ci-policy` composition. Landed #7968 repairs both
+scalar projection fallback tuples to `(call, expected, None)`, resolving the two
+E0308 errors reproduced on exact `7c24ed92e...` main without manufacturing direct
+adaptor call text. Existing run `38606464827`'s **Ripr Rust Small Result** job
+`116023617352` reads back successful; that legacy required result does not qualify
+this governed consumer or a Contabo slot.
 
 For rehearsal, PR evidence evaluates the detached subject against its reviewed
 actual ancestor base, with no fabricated PR payload or constituent identities.
@@ -249,6 +254,16 @@ bounded qualification packet; #4840 separately observes actual native G later.
 Focused adapter tests exercise exact dispatch identity, the current command owner,
 missing-proof refusal and real-shell failure propagation. Source checks, local
 fixtures and independent review do not establish a real owned workload result.
+After the landed prerequisite was reconciled, actual
+`cargo test --locked -p xtask --example contabo_product_proof` passed all eleven
+tests (none failed/ignored, native exit 0) on merge checkpoint
+`ba6636476bf96f906b563f8c083bda481cb2ddf1`. This supersedes the missing Cargo
+dimension of the earlier direct-rustc seam proof; the original failed baseline
+and repaired overwrite control remain separate epochs. The documentation-only
+basis refresh leaves adapter/contract/caller/command-owner bytes unchanged.
+Exact-head workspace results and source/review custody are retained in Draft
+PR #7929; neither local compile proof nor the upstream required result supplies
+central artifact transport, #7164 pool/lifecycle or #4840 native-G evidence.
 The minimal Bash shim is the required central entrypoint; Rust owns the adapter.
 Revert this staged caller, adapter, shim and scoped policy/doc additions to remove
 rehearsal without changing the existing required producer or live settings.
