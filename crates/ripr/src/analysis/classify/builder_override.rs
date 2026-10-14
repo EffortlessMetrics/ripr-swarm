@@ -29,7 +29,7 @@
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasName},
+    ast::{self, HasArgList, HasAttrs, HasName},
 };
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
@@ -807,6 +807,302 @@ pub(in crate::analysis) fn function_returns_value(function: &str) -> bool {
         .is_none_or(|method| method.ret_type().is_some())
 }
 
+/// Upper bound on constructor delegations (`new` -> `default`) and owner
+/// helper calls (`ship` -> `refresh` -> `on_hand`) the keyed checks follow.
+const MAX_KEYED_HOPS: usize = 4;
+
+/// RIPR-SPEC-0228 keyed reads: whether `impl_type::ctor()` builds a value
+/// whose map field `field` holds no entries, so an entry a test reads back
+/// after the owner call can only have come from a call in the test. The
+/// constructor body must be one tail expression: a struct literal setting
+/// `field` to an empty std collection (`BTreeMap::new()`,
+/// `HashMap::default()`, `Default::default()`), or leaving it to a
+/// `..Self::default()` spread; or a delegation (`Self::default()`,
+/// `Shelf::with_capacity(4)`) to a constructor that does. `default` resolves
+/// to an inherent `default`, then a manual `impl Default`, then a derived
+/// `Default` whose field type is such a collection. A nested path, a
+/// statement in the body, an unresolved or ambiguous constructor and
+/// anything else give `false`.
+pub(in crate::analysis) fn constructor_starts_empty(
+    index: &RustIndex,
+    impl_type: &str,
+    ctor: &str,
+    field: &str,
+) -> bool {
+    !field.contains('.') && starts_empty_within(index, impl_type, ctor, field, MAX_KEYED_HOPS)
+}
+
+fn starts_empty_within(
+    index: &RustIndex,
+    impl_type: &str,
+    ctor: &str,
+    field: &str,
+    hops: usize,
+) -> bool {
+    let Some(hops) = hops.checked_sub(1) else {
+        return false;
+    };
+    if ctor != "default" {
+        return inherent_method_body(index, impl_type, ctor)
+            .is_some_and(|body| body_starts_empty(index, impl_type, body, field, hops));
+    }
+    let candidates = |inherent: bool| {
+        index
+            .functions()
+            .iter()
+            .filter(move |function| {
+                function.name == "default"
+                    && !function.source_role.is_evidence_role()
+                    && function.id.0.contains(" for ") != inherent
+                    && (inherent || function.id.0.contains("Default for "))
+                    && OwnerCall::from_symbol(&function.id.0)
+                        .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+            })
+            .map(|function| function.body.as_str())
+            .collect::<Vec<_>>()
+    };
+    // An inherent `default` shadows the trait method at `T::default()`.
+    match (candidates(true).as_slice(), candidates(false).as_slice()) {
+        ([body], _) | ([], [body]) => body_starts_empty(index, impl_type, body, field, hops),
+        ([], []) => derived_default_starts_empty(index, impl_type, field),
+        _ => false,
+    }
+}
+
+fn body_starts_empty(
+    index: &RustIndex,
+    impl_type: &str,
+    body: &str,
+    field: &str,
+    hops: usize,
+) -> bool {
+    let Some(block) = parse_clean_source_file(body)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .and_then(|method| method.body())
+        .and_then(|body| body.stmt_list())
+    else {
+        return false;
+    };
+    if block.statements().next().is_some() {
+        return false;
+    }
+    let compact = |node: &SyntaxNode| -> String {
+        node.text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect()
+    };
+    let names_self_type = |path: &str| path == "Self" || path == impl_type;
+    match block.tail_expr() {
+        Some(ast::Expr::RecordExpr(record)) => {
+            if !record
+                .path()
+                .is_some_and(|path| names_self_type(&compact(path.syntax())))
+            {
+                return false;
+            }
+            let Some(fields) = record.record_expr_field_list() else {
+                return false;
+            };
+            let mut named = fields
+                .fields()
+                .filter(|entry| entry.field_name().is_some_and(|name| name.text() == field));
+            if let Some(entry) = named.next() {
+                // A shorthand `Self { stock }` reads a local, never an empty
+                // collection path.
+                return entry
+                    .expr()
+                    .is_some_and(|value| is_empty_collection(&compact(value.syntax())));
+            }
+            fields.spread().is_some_and(|spread| {
+                let spread = compact(spread.syntax());
+                (spread == "Default::default()"
+                    || spread
+                        .strip_suffix("::default()")
+                        .is_some_and(names_self_type))
+                    && starts_empty_within(index, impl_type, "default", field, hops)
+            })
+        }
+        Some(ast::Expr::CallExpr(call)) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let callee = compact(callee.syntax());
+            callee
+                .rsplit_once("::")
+                .filter(|(owner, ctor)| names_self_type(owner) && is_identifier(ctor))
+                .is_some_and(|(_, ctor)| starts_empty_within(index, impl_type, ctor, field, hops))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `impl_type`, declared once in the index, derives `Default` and
+/// declares `field` as a std map or set, whose derived default is empty.
+fn derived_default_starts_empty(index: &RustIndex, impl_type: &str, field: &str) -> bool {
+    let declaration = format!("struct {impl_type}");
+    let mut found = index
+        .files()
+        .values()
+        .filter(|file| file.source.contains(&declaration))
+        .filter_map(|file| parse_clean_source_file(&file.source))
+        .flat_map(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Struct::cast)
+                .filter(|item| item.name().is_some_and(|name| name.text() == impl_type))
+                .collect::<Vec<_>>()
+        });
+    let (Some(item), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let derives_default = item.attrs().any(|attr| {
+        let text: String = attr
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        text.starts_with("#[derive(")
+            && text
+                .trim_start_matches("#[derive(")
+                .trim_end_matches(")]")
+                .split(',')
+                .any(|name| name == "Default" || name.ends_with("::Default"))
+    });
+    let Some(ast::FieldList::RecordFieldList(fields)) = item.field_list() else {
+        return false;
+    };
+    derives_default
+        && fields.fields().any(|entry| {
+            entry.name().is_some_and(|name| name.text() == field)
+                && entry.ty().is_some_and(|ty| {
+                    let ty = ty.syntax().text().to_string();
+                    let name = ty.split('<').next().unwrap_or_default().trim();
+                    EMPTY_COLLECTIONS.contains(&name.rsplit("::").next().unwrap_or_default())
+                })
+        })
+}
+
+const EMPTY_COLLECTIONS: [&str; 6] = [
+    "BTreeMap", "HashMap", "IndexMap", "BTreeSet", "HashSet", "IndexSet",
+];
+
+/// `BTreeMap::new()`, `std::collections::HashMap::<K, V>::default()` or
+/// `Default::default()`, whitespace removed.
+fn is_empty_collection(expression: &str) -> bool {
+    if expression == "Default::default()" {
+        return true;
+    }
+    let Some(path) = expression
+        .strip_suffix("::new()")
+        .or_else(|| expression.strip_suffix("::default()"))
+    else {
+        return false;
+    };
+    let path = path.split("::<").next().unwrap_or_default();
+    let path = path.strip_prefix("std::collections::").unwrap_or(path);
+    EMPTY_COLLECTIONS.contains(&path)
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether the owner (`owner_body`, first line
+/// `owner_start_line`) touches the map field `field` only through the
+/// insert statement on `probe_line` and read-only lookups
+/// (`self.f.get(..)`, `.contains_key(..)`, `.len()`, `.is_empty()`), and
+/// every `self.m(..)` helper it calls does the same. A second insert, an
+/// `entry(..)` update or a helper that rewrites the entry would decide what
+/// the test reads instead of the probe. A bare `self` (handed to a free
+/// function), a helper that does not resolve to one inherent method of the
+/// owner's impl type (from its symbol `owner_id`), or a helper chain deeper
+/// than [`MAX_KEYED_HOPS`] (a recursive helper) gives `false`.
+pub(in crate::analysis) fn owner_touches_field_only_at(
+    index: &RustIndex,
+    owner_id: &str,
+    owner_body: &str,
+    owner_start_line: usize,
+    probe_line: usize,
+    field: &str,
+) -> bool {
+    let mut masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = probe_line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let Some(end) = masked
+        .get(line_at..)
+        .and_then(|rest| rest.find(';'))
+        .map(|at| line_at + at)
+    else {
+        return false;
+    };
+    masked.replace_range(line_at..end, &" ".repeat(end - line_at));
+    let Some(impl_type) = OwnerCall::from_symbol(owner_id).and_then(|owner| owner.impl_type())
+    else {
+        return false;
+    };
+    method_touches_field_read_only(index, impl_type, &masked, field, MAX_KEYED_HOPS)
+}
+
+fn method_touches_field_read_only(
+    index: &RustIndex,
+    impl_type: &str,
+    masked: &str,
+    field: &str,
+    hops: usize,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    // The signature's `&mut self` is not a use.
+    let Some(body_start) = masked.find('{') else {
+        return false;
+    };
+    let body = &masked[body_start..];
+    body.match_indices("self").all(|(at, word)| {
+        if body[..at].chars().next_back().is_some_and(ident) {
+            return true;
+        }
+        let rest = &body[at + word.len()..];
+        if rest.starts_with(ident) {
+            return true;
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        if name == field {
+            return [".get(", ".contains_key(", ".len()", ".is_empty()"]
+                .iter()
+                .any(|read| after.starts_with(read));
+        }
+        if !after.starts_with('(') {
+            return true;
+        }
+        let Some(next) = hops.checked_sub(1) else {
+            return false;
+        };
+        let Some(callee) = inherent_method_body(index, impl_type, name) else {
+            return false;
+        };
+        let callee = crate::analysis::extract::mask_comments_and_strings(callee);
+        method_touches_field_read_only(index, impl_type, &callee, field, next)
+    })
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether two plain literals ([`literal_value`])
+/// hold the same value (`5`, `5u32` and `5_u32` do). `None` when either is
+/// not a plain literal.
+pub(in crate::analysis) fn literals_equal(left: &str, right: &str) -> Option<bool> {
+    Some(literal_value(left)? == literal_value(right)?)
+}
+
 fn keyed_getter_fallback(
     index: &RustIndex,
     impl_type: &str,
@@ -1233,6 +1529,243 @@ mod tests {
             getter_plainly_reads_key(&index, "Retry", "entry", "attempts"),
             None
         );
+    }
+
+    fn source_index(source: &str) -> RustIndex {
+        let path = PathBuf::from("src/shelf.rs");
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        index
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a constructor counts as empty only when
+    /// it plainly builds the map field as an empty std collection.
+    #[test]
+    fn constructor_starts_empty_only_for_a_plainly_empty_field() {
+        let shelf = |derive: &str, field: &str, constructors: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 #[derive(Debug{derive})]\n\
+                 pub struct Shelf {{ {field}, low: u32 }}\n\
+                 impl Shelf {{\n{constructors}\n}}\n"
+            ))
+        };
+        let map = "stock: BTreeMap<String, u32>";
+        let starts_empty =
+            |index: &RustIndex, ctor: &str| constructor_starts_empty(index, "Shelf", ctor, "stock");
+        for (derive, constructors, ctor) in [
+            (
+                ", Default",
+                "pub fn new(low: u32) -> Self { Self { low, ..Self::default() } }",
+                "new",
+            ),
+            (
+                ", Default",
+                "pub fn new() -> Self { Self::default() }",
+                "new",
+            ),
+            (", Default", "", "default"),
+            (
+                "",
+                "pub fn new() -> Self { Shelf { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                "pub fn new() -> Self { Self { stock: std::collections::BTreeMap::<String, u32>::default(), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                "pub fn new() -> Self { Self::with_low(3) }\npub fn with_low(low: u32) -> Self { Self { stock: Default::default(), low } }",
+                "new",
+            ),
+            // An inherent `default` is what `Shelf::default()` calls.
+            (
+                "",
+                "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 0 } }",
+                "default",
+            ),
+        ] {
+            assert!(
+                starts_empty(&shelf(derive, map, constructors), ctor),
+                "{constructors} / {ctor}"
+            );
+        }
+        for (derive, field, constructors, ctor) in [
+            // Seeds the map, or builds it somewhere the check cannot see.
+            (
+                "",
+                map,
+                "pub fn new() -> Self { let mut stock = BTreeMap::new(); stock.insert(\"K\".into(), 5); Self { stock, low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Self { stock: BTreeMap::from([(\"K\".into(), 5)]), low: 1 } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new(stock: BTreeMap<String, u32>) -> Self { Self { stock, low: 1 } }",
+                "new",
+            ),
+            ("", map, "pub fn new() -> Self { build() }", "new"),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Other { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            // A statement first, or a delegation to another type's constructor.
+            (
+                "",
+                map,
+                "pub fn new() -> Self { let low = 1; Self { stock: BTreeMap::new(), low } }",
+                "new",
+            ),
+            (
+                "",
+                map,
+                "pub fn new() -> Self { Other::make() }\npub fn make() -> Self { Self { stock: BTreeMap::new(), low: 1 } }",
+                "new",
+            ),
+            // No `Default` at all, and a constructor that calls itself.
+            ("", map, "pub fn new() -> Self { Self::default() }", "new"),
+            ("", map, "pub fn new() -> Self { Self::new() }", "new"),
+            // A derived Default over a field that is not a std collection.
+            (", Default", "stock: Stock", "", "default"),
+            // No such constructor.
+            (", Default", map, "", "with"),
+        ] {
+            assert!(
+                !starts_empty(&shelf(derive, field, constructors), ctor),
+                "{constructors} / {ctor}"
+            );
+        }
+        let manual = |body: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 pub struct Shelf {{ {map} }}\n\
+                 impl Default for Shelf {{ fn default() -> Self {{ {body} }} }}\n"
+            ))
+        };
+        assert!(starts_empty(
+            &manual("Self { stock: BTreeMap::new() }"),
+            "default"
+        ));
+        // A spread takes the field from a `Default` that must itself be empty.
+        let seeding_default = |extra: &str| {
+            source_index(&format!(
+                "use std::collections::BTreeMap;\n\
+                 pub struct Shelf {{ {map}, low: u32 }}\n\
+                 impl Default for Shelf {{ fn default() -> Self {{ Self {{ stock: BTreeMap::from([(\"K\".into(), 5)]), low: 0 }} }} }}\n\
+                 impl Shelf {{ {extra} }}\n"
+            ))
+        };
+        assert!(!starts_empty(
+            &seeding_default("pub fn new(low: u32) -> Self { Self { low, ..Self::default() } }"),
+            "new"
+        ));
+        // An inherent `default` shadows the trait's at `Shelf::default()`.
+        assert!(starts_empty(
+            &seeding_default(
+                "pub fn default() -> Self { Self { stock: BTreeMap::new(), low: 1 } }"
+            ),
+            "default"
+        ));
+        assert!(!starts_empty(
+            &manual(
+                "let mut s = Self { stock: BTreeMap::new() }; s.stock.insert(\"K\".into(), 5); s"
+            ),
+            "default"
+        ));
+        // A nested field path is never checked.
+        assert!(!constructor_starts_empty(
+            &shelf(", Default", map, ""),
+            "Shelf",
+            "default",
+            "stock.inner"
+        ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: the owner may touch the inserted map
+    /// elsewhere only to read it, itself or through its helpers.
+    #[test]
+    fn owner_touches_field_only_at_its_insert() {
+        let touches = |owner: &str, helpers: &str| {
+            let source = format!(
+                "pub struct Shelf {{ stock: BTreeMap<String, u32>, low_stock: Vec<String> }}\n\
+                 impl Shelf {{\n{owner}\n{helpers}\n}}\n"
+            );
+            let index = source_index(&source);
+            // The owner starts on file line 3 and its insert is line 5.
+            owner_touches_field_only_at(
+                &index,
+                "src/shelf.rs::impl Shelf::put",
+                owner,
+                3,
+                5,
+                "stock",
+            )
+        };
+        let owner = |middle: &str| {
+            format!(
+                "pub fn put(&mut self, sku: &str, qty: u32) {{\n    let had = self.stock.get(sku).copied();\n    self.stock.insert(sku.to_string(), qty);\n{middle}\n}}"
+            )
+        };
+        for (middle, helpers) in [
+            ("    self.low_stock.push(sku.to_string());", ""),
+            (
+                "    if self.stock.len() > 3 { self.refresh(sku); }",
+                "fn refresh(&mut self, sku: &str) { if self.count(sku) < 2 { self.low_stock.push(sku.into()); } }\nfn count(&self, sku: &str) -> u32 { self.stock.get(sku).copied().unwrap_or(0) }",
+            ),
+            (
+                "    let _ = self.stock.is_empty() || self.stock.contains_key(sku);",
+                "",
+            ),
+            // The same read-only helper called twice.
+            (
+                "    let _ = self.count(sku) + self.count(\"other\");",
+                "fn count(&self, sku: &str) -> u32 { self.stock.get(sku).copied().unwrap_or(0) }",
+            ),
+        ] {
+            assert!(touches(&owner(middle), helpers), "{middle}");
+        }
+        for (middle, helpers) in [
+            ("    self.stock.insert(sku.to_string(), qty + 1);", ""),
+            (
+                "    *self.stock.entry(sku.to_string()).or_insert(0) += 1;",
+                "",
+            ),
+            ("    self.stock.clear();", ""),
+            (
+                "    self.bump(sku);",
+                "fn bump(&mut self, sku: &str) { self.stock.insert(sku.into(), 9); }",
+            ),
+            ("    self.missing(sku);", ""),
+            ("    reset(self);", ""),
+            ("    std::mem::take(&mut self.stock);", ""),
+            (
+                "    self.again(sku);",
+                "fn again(&mut self, sku: &str) { self.again(sku); }",
+            ),
+        ] {
+            assert!(!touches(&owner(middle), helpers), "{middle}");
+        }
+        // The probe line must hold a statement.
+        assert!(!owner_touches_field_only_at(
+            &source_index("pub struct Shelf;"),
+            "src/shelf.rs::impl Shelf::put",
+            "fn put(&mut self) {}",
+            3,
+            1,
+            "stock",
+        ));
     }
 
     /// RIPR-SPEC-0228 keyed reads: an expected value the getter also

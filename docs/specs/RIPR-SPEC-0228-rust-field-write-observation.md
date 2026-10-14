@@ -270,7 +270,12 @@ changes `self.count += 2` to `self.count += 1`.
 20. `self.stock.insert(sku.to_string(), qty)` in `fill`, test
     `b.fill("BOLT", 3); b.set("BOLT", 5); assert_eq!(b.count("BOLT"), 5)`:
     not `exposed`. `set` rewrites the entry between the owner call and the
-    read (rule 3), so the read never sees what `fill` stored.
+    read (rule 3), so the read never sees what `fill` stored. A write on
+    the read's own line before the assertion (`b.set("BOLT", 5);
+    assert_eq!(..)`), an earlier call that may already store the expected
+    value (`b.set("BOLT", 5); b.fill("BOLT", 5)`), a constructor that
+    seeds the map, and an owner that writes the map again after the insert
+    (`self.stock.insert(..)` twice, `self.bump(sku)`) count the same way.
 
 ## Test Mapping
 
@@ -338,21 +343,42 @@ changes `self.count += 2` to `self.count += 1`.
   literal other than the `unwrap_or` default, a non-zero, non-empty or
   `true` literal against `unwrap_or_default`): otherwise the assertion
   passes whether or not the insert ran. `assert!` and `assert_ne!` reads
-  do not count. The test binding must be declared in the test as the owner
-  type (`let s = Shelf::new()`, `let s: Shelf = ..`, `Shelf { .. }`). An
-  accepted owner call before the read must pass the same key in the insert
+  do not count. The assertion must open its line. The test binding must
+  be declared in the test by a constructor of the owner type that builds
+  the map field empty (`constructor_starts_empty` in
+  `builder_override.rs`): `let s = Shelf::ctor(..)`, or
+  `let s: Shelf = Default::default()`, where the constructor body is one
+  struct literal setting the field to an empty std map or set
+  (`BTreeMap::new()`, `HashMap::default()`, `Default::default()`) or
+  leaving it to `..Self::default()`, or a delegation such as
+  `Self::default()` to a constructor that does; `default` resolves to an
+  inherent `default`, a manual `impl Default`, or a derived `Default` over
+  a std map or set field. A struct literal in the test, a seeding
+  constructor (`Shelf::with("K", 5)`) or any other initializer fails
+  closed. An accepted owner call before the read must pass the same key in the insert
   key's argument position: a literal, or an identifier the test does not
   name again between the call and the read. The call must run to
   completion: a bare statement when the owner returns nothing, otherwise
   ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
   name. Rule 3 holds for keyed reads: between that call and the read the
   test may name the binding only as `binding.getter(..)` through the
-  verified getter. No earlier statement on the binding may spell both the
-  key and the expected literal (`s.set("K", 5)` before `s.put("K", 5)`), since
-  the entry may already hold it. The insert must be a top-level statement of
-  the owner (`self.<path>.insert(..)` outside any branch, loop, block or
-  closure), its key parameter must not be rebound in the owner body, and a
-  `#[should_panic]` test never confirms.
+  verified getter. Between the declaration and the owner call, every
+  statement that names the binding must be a plain call
+  `binding.m(<literals>)`, optionally ending in `.unwrap()`, `.expect(..)`
+  or `?`, none of whose literal arguments equals the expected value under
+  any spelling (`7`, `7u32`, `7_u32`): `s.set("K", 5)`, `s.set("K", v)` or
+  `seed(&mut s)` before `s.put("K", 5)` may already have stored the
+  expected value. The insert must be a top-level statement of the owner
+  (`self.<path>.insert(..)` outside any branch, loop, block or closure),
+  and elsewhere the owner may touch `self.<path>` only through
+  `.get(..)`, `.contains_key(..)`, `.len()` or `.is_empty()`, directly or
+  through the `self.m(..)` helpers it calls (`owner_touches_field_only_at`
+  in `builder_override.rs`); a second insert, an `entry(..)` update, a
+  bare `self` or an unresolved helper fails closed. The key parameter must
+  not be rebound in the owner body, and a `#[should_panic]` test never
+  confirms. Not detected: an earlier call with literal arguments that
+  stores a value computed from them (`s.add("K", 3, 4)` storing 7, or two
+  `+=` receipts summing to it) equal to the expected value (#7988).
 - Not yet implemented for argument-free field reads: rule 3 (no
   intervening write between the owner call and the read). This one does not
   fail closed: a later write through the binding can still read `exposed`

@@ -4,14 +4,15 @@ use crate::analysis::classify::{
     TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
     body_contains_owner_call, call_parameter_names, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
-    fallible_literal_witness, function_returns_value, getter_plainly_reads,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness,
+    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_line_runs_unconditionally,
-    owner_may_be_reached_unseen, package_prefix, parameter_rebound,
+    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
+    owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -455,18 +456,28 @@ impl ClassifiedProbeEvidence {
             .map(owner_parameter_names)
             .unwrap_or_default();
         // RIPR-SPEC-0228 keyed reads: only a map insert reads these names,
-        // and only one at the owner's top level, which runs on every call. A
+        // and only one at the owner's top level, which runs on every call,
+        // in an owner that touches that map nowhere else but to read it. A
         // parameter the owner rebinds in its body (`let sku = "LAST"`) may
         // not be what a later use of its name holds, so it keys nothing.
         let owner_argument_names: Vec<String> = context
             .owner_fn
             .filter(|function| {
-                function.body.as_str().contains(".insert(")
-                    && owner_line_runs_unconditionally(
+                unconditional_owner_insert_field(
+                    function.body.as_str(),
+                    function.start_line,
+                    context.probe.location.line,
+                )
+                .is_some_and(|field| {
+                    owner_touches_field_only_at(
+                        context.index,
+                        &function.id.0,
                         function.body.as_str(),
                         function.start_line,
                         context.probe.location.line,
+                        &field,
                     )
+                })
             })
             .map(|function| {
                 call_parameter_names(function)
@@ -593,6 +604,9 @@ impl ClassifiedProbeEvidence {
                 owner_returns_value: context
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
+                constructor_starts_empty: &|impl_type, ctor, field| {
+                    constructor_starts_empty(context.index, impl_type, ctor, field)
+                },
             },
             arm_selector.as_ref(),
         );
