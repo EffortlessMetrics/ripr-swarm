@@ -2185,6 +2185,7 @@ impl RustAdapter {
                 seeded.record_span(&mut parser_spans);
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
+                let propagation_origin = seeded.propagation_origin;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index =
@@ -2201,6 +2202,7 @@ impl RustAdapter {
                     workspace_index_complete,
                     dependency_edges.as_ref(),
                     related_test_candidate_index,
+                    propagation_origin.as_ref(),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
@@ -2721,6 +2723,7 @@ impl RustAdapter {
                     true,
                     Some(&dependency_edges),
                     related_test_candidate_index,
+                    None,
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every

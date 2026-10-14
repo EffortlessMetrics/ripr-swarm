@@ -267,7 +267,23 @@ rule only for an assertion whose context was admitted.
    change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
-   unpinned. An expected operand naming a `let` whose initializer mentions
+   unpinned. A primitive scalar result (cell-0094) is the exception: when
+   the owner declares `bool`, `char`, `f32`, `f64` or a built-in integer
+   type, and its own file neither declares nor imports an item of that
+   name, the binding is `Copy` with no interior mutability, so no statement
+   can change it. Its other uses may then also sit in another plain
+   `assert!`, `assert_eq!` or `assert_ne!` after the `let`
+   (`let b = bonus(4); assert!(b > MULTIPLIER); assert_eq!(b, 12);`), and
+   statements may stand between the `let` and the pinned assertion. Every
+   use outside the `let` must still lie in such an assertion, since an item
+   (`const b`), pattern or other macro outside one can rebind the name. The
+   pinned assertion names the binding once, opens its line, and sits in the
+   `let`'s own block at its depth: leaving that block
+   (`{ let b = f(); } assert_eq!(b, 12);`) or entering a deeper one
+   (`{ use super::*; assert_eq!(b, 12); }`) may put another `b` in scope.
+   Residuals: a generic parameter or a macro-generated item named like the
+   primitive in the owner's file, and a non-std glob import bringing such a
+   type into it. An expected operand naming a `let` whose initializer mentions
    the owner, directly or through further `let`s, compares the owner with
    itself and is refused, and so is one naming a value ripr cannot trace
    to a simple `let` (`let (same, _) = (f(4), 0);`). This binding scan runs
@@ -1075,6 +1091,30 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+### Format owner tails (#6578)
+
+`format_tail_witness` in `classify/propagation_witness.rs` completes a
+DirectReturn witness for a `return_value` probe whose changed expression is
+the owner's whole body, one `format!("literal", args..)` tail (or a lone
+`format!("literal")`, whose format may capture identifiers, `"{name}"`), on the
+probe's line, matching the owner's local return-value sink. `format!`
+evaluates each argument once and writes it into the `String` it returns (an
+unused argument does not compile), so the changed argument reaches the
+return with nothing in between, as a constant tail does. Only the bare
+`format!` with parentheses, a string-literal format and arguments free of
+macros, closures, blocks, branches, loops, `?`, `return`, `break`,
+`continue`, `.await` and `yield`; the owner's file must hold no binding site
+that may rebind `format` (a `macro_rules!`, an import, `#[macro_use]`,
+`#![no_implicit_prelude]` or a foreign glob). Limit: only the owner's own
+file is read, as for the standard-macro trust of owner bodies, so a
+`macro_rules! format` reached from another module through `#[macro_use]`
+is not seen. Whether the formatting keeps
+two values apart (`{:.0}`, a lossy `Display`) is not settled here, as
+integer division is not for an arithmetic tail. Without this witness
+`assert_eq!(label(4), "w12")` on `fn label(x: u32) -> String { format!("w{}", x * 3) }`
+read as a false `weakly_exposed` gap, because the current-path witness
+refuses any macro in the path.
+
 ### Same-named module-level functions (#6544)
 
 A bare call used to refuse the pin whenever any other module-level `fn` of
@@ -1211,6 +1251,46 @@ value when:
 4. Every other rule above holds unchanged: the scrutinee is the owner call
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the normalized pattern.
+
+### Inline expect-test pins (#6578)
+
+`expect![["text"]].assert_eq(&owner(..))` from `expect_test` compares the
+actual text with the inline literal and panics on a mismatch (unless
+`UPDATE_EXPECT` is set, which rewrites the expectation instead), as
+`assert_eq!(owner(..), "text")` does. The pin reads the argument as the
+actual side and the literal as the expected value when:
+
+1. The assertion is one method call `assert_eq` (no turbofish) on a bare
+   `expect!` invocation whose brackets hold one single-line string literal
+   (`[[..]]` or `[..]`) or nothing (the empty expectation, `""`), with one
+   argument. expect-test trims a multi-line literal's indentation before
+   comparing, so its raw text is not the compared value and refuses. A
+   single leading `&` borrows the actual value and is dropped; `&mut` or
+   `&raw` refuses. The comparison is a statement or the tail of the test's
+   own body; one nested in a block, branch, closure or `||` may never run
+   and is not extracted as its own oracle.
+2. The bare `expect!` must be expect-test's: its file imports
+   `use expect_test::expect;` under its own name, verified against the
+   manifest as `pretty_assertions` is (Required Evidence below), and no
+   `macro_rules!`, other import or glob may bind `expect`. That trust is
+   the test side's alone: `expect!` is no `std` macro, so in an owner body
+   (or any binding read) it stays an unknown macro that may hide a
+   `return` (a try-style `expect!(x)`), and the return paths stay open.
+3. Every other rule above holds unchanged: the actual side is the owner call
+   shape, execution and macro admission, `#[should_panic]`, and the
+   return-path gate on the literal.
+
+The parser grades a comparison it reads as an expect-test comparison
+(`assert_eq` or `assert_debug_eq` on an `expect!`/`expect_file!` receiver)
+never above `snapshot` / medium, read from its parsed shape, so a
+single-bracket, spaced (`expect! [[..]]`, `.assert_eq (..)`) or line-split
+call grades as the canonical spelling does. A weaker reading of the compared
+value (a tautology, a broad `is_err()`) is kept.
+The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
+bool-owner pin, only its probe-relative strength rises once the pin admits
+it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
+qualified `expect_test::expect!`, and every `insta` macro stay
+`snapshot` / medium.
 
 ## Required Evidence
 
@@ -1357,6 +1437,9 @@ value when:
   (or found from another working directory) is not read, and a file
   compiled by a package other than its nearest manifest (a target `path`
   or `#[path]` from a sibling) is judged by the nearest manifest.
+- `use expect_test::expect;` under its own name makes a bare `expect!`
+  expect-test's on the same manifest terms as `pretty_assertions`
+  (inline expect-test pins, #6578).
 
 ### Matched before/after observations
 
@@ -1636,6 +1719,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_crate_relative_path_in_another_target_is_not_the_owners_crate`,
   `the_owners_library_name_roots_a_path_from_another_crate`,
   `a_result_bound_once_and_only_asserted_pins_like_the_call`,
+  `a_scalar_result_read_by_other_assertions_still_pins` and
+  `a_shadowed_primitive_return_is_not_a_scalar` (cell-0094),
   `review_holes_in_path_and_let_bound_pins_stay_closed`,
   `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
   `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,

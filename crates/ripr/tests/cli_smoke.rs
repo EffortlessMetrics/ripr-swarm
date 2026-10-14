@@ -14,11 +14,16 @@ mod advisory_write_safety;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/artifact_mode_precedence.rs"]
+mod artifact_mode_precedence;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[path = "cli_smoke/closed_stderr.rs"]
+mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -67,6 +72,9 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_effect_aliases.rs"]
+mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -14704,6 +14712,61 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     let stdout = String::from_utf8_lossy(&dry_run.stdout);
     assert!(stdout.contains("\"kind\": \"gate_baseline\""));
     assert!(!dry_run_out.exists());
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), String> {
+    // Issue #7421 review: the missing producing-build identity must reach
+    // the operator at creation time on stdout, not only inside the ledger.
+    let workspace = unique_temp_workspace("baseline-create-unversioned");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let source = workspace.join("gate-decision-unversioned.json");
+    std::fs::write(
+        &source,
+        r#"{
+  "schema_version": "0.1",
+  "mode": "visible-only",
+  "decisions": [
+    {
+      "decision": "advisory",
+      "id": "ripr-gate-unversioned-smoke",
+      "seam_id": "unversioned-smoke",
+      "static_class": "weakly_gripped",
+      "placement": {"path": "src/unversioned.rs", "line": 9},
+      "evidence": {}
+    }
+  ]
+}"#,
+    )
+    .map_err(|e| format!("write source: {e}"))?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let source_arg = source.display().to_string();
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from",
+        &source_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("source gate-decision report carries no subject.analyzer_version"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Warnings: 1"), "{stdout}");
+
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"analyzer_version\": null"),
+        "{baseline}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())

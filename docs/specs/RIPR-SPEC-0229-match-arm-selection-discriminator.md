@@ -213,6 +213,41 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+### A guard-only edit is the guard's predicate
+
+When an edit lies wholly inside an arm's guard (`n if 0 > n =>` from
+`n if n < 0 =>`), the line carries the guard's `predicate` finding alone.
+Arm selection never evaluates guards, so an arm finding there can only
+read unconfirmed, while the predicate's boundary pairing is the
+discriminator the edit needs. The arm head is kept when the edit reaches
+past the guard's predicate (a renamed binding, a changed pattern) or when
+the line has no predicate shape that holds the edit.
+
+A bare binding in a guarded arm (`p if 100 <= p =>`) holds the scrutinee's
+value, so when the owner body's only `match` is on a parameter
+(`match points {`), the guard's boundary reads that parameter's test
+inputs and can name `p == 100` as missing. The operand stays unread when:
+
+- the body has a second `match` (the arm could belong to either);
+- the binding's name appears anywhere but inside a one-line guard,
+  between `if` and `=>`: on another line or in the arm body after `=>`
+  (a `let`, a loop variable, a closure parameter), or in a guard that holds
+  a closure parameter list;
+- the parameter appears anywhere but the signature (which ends at its
+  first `{`) and its `match` line, read with comments and string contents
+  masked so neither hides code after it (`let points = points - 50;`, a closure
+  `|points|`, a statement after the `{` on the signature line), since it
+  may be rebound or shadowed before the `match`;
+- the binding's name may resolve to a constant (a `const` or `static` of
+  that name in the owner file, or an import of it), since the pattern then
+  compares the constant instead of binding the scrutinee, or the owner
+  file is unavailable;
+- the binding is not a bare identifier.
+
+The old line such an edit replaced (its positional counterpart, not any
+line with the same text) is not probed again as deleted behavior: the
+guard's predicate already carries the old guard as its `before`.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented
@@ -403,7 +438,9 @@ implies but does not spell out:
 - A selected-arm control (`assert_eq!(reason(None), 0)`) reads `exposed`.
 - An unresolved-input control reads no named missing discriminator and is
   not upgraded.
-- A guarded-arm control reads no named missing discriminator.
+- A guarded-arm control reads no arm-selection missing discriminator. A
+  guard-only edit carries only its guard's predicate finding, which may name
+  the boundary under RIPR-SPEC-0186.
 - The expected-side trap reads below `exposed`.
 - Golden drift on the #5432 list is reviewed row by row: each finding that
   leaves `static_unknown` names its unselected arm, and none gains `exposed`
@@ -434,7 +471,9 @@ the diff changes `None => 1` to `None => 0`.
    `assert_eq!(f(Kind::A), 1)`: `weakly_exposed`; missing discriminator
    `value` `_`.
 5. `match x { Some(v) if v > 4 => 1, _ => 0 }`, the diff changes the guard
-   from `v > 3`, test `assert_eq!(f(Some(5)), 1)`: no named missing discriminator.
+   from `v > 3`, test `assert_eq!(f(Some(5)), 1)`: no arm-selection missing
+   discriminator. The guard-only edit carries only the predicate finding
+   `v > 4`, which stays `weakly_exposed` and names `v == 4` as its boundary.
 6. `match k { Kind::A => Kind::B, Kind::B => Kind::A }`, arm `Kind::B =>`
    changed, test `assert_eq!(f(Kind::A), Kind::B)`: `weakly_exposed`; missing
    discriminator `value` `Kind::B`.

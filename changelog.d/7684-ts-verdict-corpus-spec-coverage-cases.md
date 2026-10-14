@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The TypeScript verdict corpus gains twenty runtime-labeled cases for
   acceptance examples it did not yet cover: RIPR-SPEC-0243 examples 30, 33, 34
   and 35, node:test context asserts (RIPR-SPEC-0252), the legacy and

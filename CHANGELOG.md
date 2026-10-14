@@ -48,12 +48,6 @@ are scoped or reviewed.
   `bulk_rate(parcels::BULK_ITEMS)` when the argument is a path-qualified
   constant (#6668).
 
-- CI: ub-review selects RIPR's companion configuration and Rust repository
-  identity, and requests resolved-candidate receipts under the same PR-specific
-  artifact name used for upload. Review remains advisory; artifact retrieval
-  requires the existing token's Actions access and exact-revision reuse checks
-  still apply (#6337).
-
 - MCP wire names unified on `canonical_id` (same spelling the evidence
   documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
   `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
@@ -264,14 +258,6 @@ are scoped or reviewed.
   sampled, and the summary states that the full per-file list is not
   materialized in output. No JSON/SARIF schema shape changes. (#5022)
 
-- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
-  identity, including target kind/source and exact executable hash. Required
-  release controls must resolve to one owning artifact across both samples;
-  missing or ambiguous provenance is refused instead of borrowing another
-  target's pass. Log-derived report entries use bounded excerpts and section
-  counts with explicit truncation and omissions; doctest transitions are
-  explicit and never assigned an inferred package (#5043).
-
 - The Python preview adapter now resolves a module-level named constant used
   as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
   `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
@@ -314,10 +300,6 @@ are scoped or reviewed.
   [#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
 
 
-
-
-
-
 - `path_dependencies.rs` no longer carries `allow(dead_code)`.
   `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
   expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
@@ -330,41 +312,6 @@ are scoped or reviewed.
   `policy/clippy-exceptions.toml` has no live rows;
   `clippy-exception-0001` is retired
   ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
-
-- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
-  every `[[planned]]` row whose `activate_when_msrv` is already met by
-  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
-  narrative `reason` does not satisfy the gate. The four current planned
-  lints copy their existing `reason` into `blocked_by` and are not promoted
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
-
-- `cargo xtask check-allow-attributes` now fails a
-  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
-  current source count, including a row whose suppression is gone. The
-  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
-  7 to 4, matching the four remaining suppressions. Over-budget
-  suppressions still fail
-  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
-
-- `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
-  as TOML: unique ids, required nonblank fields, optional ISO `expires`
-  dates that are not in the past, unknown fields, duplicate keys, and
-  trailing garbage. Test-valued `covered_by` resolution uses the
-  TOML-decoded command (including single-quoted strings)
-  ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
-
-- `cargo xtask check-lint-policy` now compares `[[planned]]`
-  `activate_when_msrv` to `[workspace.package] rust-version`. The four current
-  planned lints are not promoted; the remaining-blocker field is `blocked_by`
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990))
-  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
-
-- `cargo xtask check-lint-policy` now parses `policy/clippy-debt.toml`
-  as TOML: unique ids, required nonblank fields, ISO `target` dates that
-  are not in the past, unknown fields, duplicate keys, and debt lints
-  that are not already active, planned, or present in `Cargo.toml`.
-  `clippy-debt-0001` stays deferred
-  ([#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833)).
 
 - `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
   and names `ci-full` as the complete local pass. The sequential cargo
@@ -543,27 +490,6 @@ are scoped or reviewed.
   `ripr.toml` enables" (#5214).
 - `schemas/ripr/doctor.schema.json`: the doctor document now has a published
   JSON Schema, and `docs/OUTPUT_SCHEMA.md` documents its shape (#5214).
-- Verdict corpus: authored subjects. Three small crates written for the
-  corpus add 23 runtime-labeled cases covering the verdicts and probe
-  families the real crates left empty: field construction, call deletion,
-  side effect, error path, static unknown and non-arithmetic return values.
-  ripr now credits 6 authored lines, and 3 of those credits are false
-  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
-  cases are reported apart from upstream ones under `by_origin`, because
-  they were chosen to fill cells: the upstream rates stay 10 of 20 false
-  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
-  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
-  current case exercises it (RIPR-SPEC-0219).
-- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
-  specs define and no corpus case exercised: assertions that never run
-  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
-  Result matches, `matches!` and `return Err` oracles, self-computed
-  expected values, named-constant and split-test boundaries, macro and
-  helper-chain reach, scanner and recursive helpers, cross-crate tests,
-  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
-  corpus's first silent verdict). Two changed-`let` cases exercise the
-  retarget projection. Authored rates now read 23 of 36 false actionable
-  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
@@ -591,31 +517,6 @@ are scoped or reviewed.
   fields and consumers must treat them as line-only. `agent verify`
   requires the current `0.4` envelope, so regenerate snapshots rather than
   hand-editing versions (#5336).
-- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
-  reported as strongly gripped with every mutant missed. Neither is credited
-  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
-  reads limited. The spot-check miss on the otel line came from a build that
-  did not compile it, so its truth comes from `--features profiling-traced`.
-  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
-  #5332, #5335).
-- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
-  scoreboards (speed, ci, trust, paste, first_run) on a pinned
-  real-repository corpus: cold pilot and warm check time and peak memory,
-  generated workflow size, false-clean and self-contradicting output, and
-  paste safety of printed commands under a hostile repository path. Targets
-  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
-  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
-  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
-  nightly `DX Scoreboard` workflow runs it (#5299).
-
-- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
-  second semver and bytesize pins), now 32 cases across 10 subjects. The
-  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
-  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
-  `no_static_path_with_related_tests` contradictions, for 10 of 20
-  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
-  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
-  later (RIPR-SPEC-0219, #5332).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards
@@ -637,14 +538,6 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
-- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
-  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
-  bytesize excerpts, each labeled by running mutants against the crate's own
-  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
-  actionable, false exposed or false silent and counts contradictions inside
-  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
-  (false actionable), no case is credited, and 2 of 29 findings contradict
-  themselves. It runs no mutation testing or network access.
 - Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
   a frozen protocol names study identity, assignment, equal budgets, the named
   RIPR evidence surface, leakage controls, retries, stopping, non-compensating
@@ -739,47 +632,12 @@ are scoped or reviewed.
   append one compact JSONL record so adopting consumers can populate history
   trend fields. Generated CI still only reads those files when present and
   never passes `--out-jsonl` (#4392).
-- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
-  receipt for merge/protection surfaces (`#4832`). Desired settings, live
-  observation, apply-route capability, and rollback identity stay separate
-  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
-  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
-  applies settings or enables a queue (#4872).
-- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
-  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
-  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
-  publication (#4631).
-- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
-  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
-  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
-  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
-  advisory under the lane contract (test/lint verdicts never gate; missing or
-  zero-subject evidence fails the job). The label-gated full suite is
-  unchanged (#4938).
-- LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
-  sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
-  unchanged save/refresh, production/related/unrelated edits, rename, config
-  change, cancellation, corrupt cache, and explicit full refresh. A stale
-  cached answer cannot satisfy a speed target, and a fast elapsed time cannot
-  hide a redundant full rescan or duplicate diagnostic publication. The
-  historical 2s/10s/30s figures remain proposals, not gates (#4689).
-- Identity: `cargo xtask check-identity-registry` enforces one governed
-  identifier catalog and generated `docs/identity` table. Vocabulary and
-  compatibility map only; it does not migrate consumers (#4804).
 - CLI: `ripr check` projects producer-owned analysis stages and throttled
   heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
   JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
   reveals the active stage and heartbeats; producer `completed` is held until
   the command actually succeeds. Unknown totals stay unknown; `--quiet`
   suppresses the stream. This does not make analysis faster (#4810).
-- `cargo xtask rust-judged-panel feedback` and `check` now retain one
-  checked feedback ledger over the frozen #3806 Rust judgments. Every
-  terminal case gets a disposition; confirmed defects stay replay-only
-  unless a producer-path fixture can keep the exact mechanism; JSON and
-  Markdown reports carry denominators without an overall analyzer score,
-  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
-  (#4796).
-
 - Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
   `PATH` for Rust, Python, TypeScript, TSX, and JavaScript files. Zed runs
   only language servers an extension registers, so ripr could not run in Zed
@@ -1042,40 +900,11 @@ are scoped or reviewed.
   via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
   step-debugging with variable inspection (#2420).
 
-- `cargo xtask module-health` now reports a **responsibility signal** alongside
-  its line count: a heuristic count of distinct top-level concerns (distinct
-  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
-  when it exceeds a fixed threshold. This surfaces the "structurally entangled
-  even if not huge" case that a pure line count misses (e.g. a small file
-  exposing many distinct concern families). Both signals appear in the JSON and
-  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
-  responsibility signal is documented as a smell, not a measurement; the
-  advisory still always exits 0 and is never wired into CI gates (#1854).
-
 - Property-based tests (`proptest`) added for the diff parser, covering parser
   totality (never panics on arbitrary input), structural invariants (no empty
   paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
   This is the first property-based testing infrastructure in the repo (#2751).
 
-- New `cargo xtask eval-sweep check` command: the typed offline validator for
-  the accepted Python eval-sweep artifacts (RIPR-SPEC-0086). It validates the
-  accepted eight-subject manifest under a deny-unknown schema (exactly eight
-  uniquely identified subjects, immutable https/sha pins, portable secret-free
-  diff paths) and retained run receipts in both owned shapes — the historical
-  0.2 report the sweep command writes and the 0.3 currentness shape (binary/
-  features/config/profile/input identity, materialization/detection/
-  corpus-selection/execution states, evidence digests, repeat-run comparison
-  identity, manifest-digest binding) — failing closed on changed denominators,
-  unknown state vocabulary, contradictory status, malformed or stale digest
-  bindings, and hand-edited aggregates that disagree with the derived rows
-  (including a supplied `gate_status` that differs from the gate the rows
-  derive and summary distributions that do not match the row-derived key set
-  exactly); missing identities are typed `incomplete`, never invented. It
-  writes the versioned `eval-sweep-check.{json,md}` reports (kind
-  `python_eval_sweep_check_report`, schema `0.1`) whose verdict vocabulary is
-  `valid` / `incomplete` / `not_run` — a structural currentness-readiness
-  verdict, never a robustness or adequacy claim
-  ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
 - `ripr feedback record` writes a local usefulness receipt bound to one
   analysis snapshot (`--snapshot`, required) with a reason from a closed list,
   such as `useful_actionable` or `false_actionable`, under
@@ -1138,11 +967,6 @@ are scoped or reviewed.
   `refresh_replayable` is `true` only for producer-validated repo-exposure
   sources; records and unidentified kinds keep their repo-exposure recovery
   commands but no longer advertise them as a replay (#5985).
-- Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
-  JSON through the same product importer as `ripr calibrate cargo-mutants`.
-  A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
-  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
-  is no longer read as all-unknown (#5374).
 - Rust analysis: a test-local identifier that contains an error lexeme in
   operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
   error path as `exposed`. The operand twin stays `weakly_exposed` with
@@ -2163,10 +1987,6 @@ are scoped or reviewed.
   inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
   ends quietly with exit `2` instead of an internal-error report.
 
-- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
-  command that keeps base, head, and root arguments literal when copied, including
-  refs with shell syntax and roots with spaces (#4367).
-
 - `ripr receipt check --ledger` explains each cross-reference state after its
   token. `receipt_ok` now says it only means the ledger still lists the
   receipt's gap, not that the gap is closed, so it no longer reads as a fix
@@ -2432,11 +2252,6 @@ are scoped or reviewed.
   `lang-rust` feature's manifest, and release CI now builds the packaged crate
   from a fresh resolution
   ([#3787](https://github.com/EffortlessMetrics/ripr-swarm/issues/3787)).
-- `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
-  `verification.status: "verification_not_run"` as the attempt's verify
-  result. It counts as a missing verify result
-  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
-
 - `ripr gate evaluate --gap-ledger` no longer reports an already-observed
   (closed) gap under "Suppressed" as configured-hidden. The ledger's
   `not_policy_targeted` state also covers no-action records, so the gate now
@@ -2549,13 +2364,6 @@ are scoped or reviewed.
   It no longer prints "none detected" beside a Perl section that counts the
   same files. Files under `target/`, `node_modules/`, `blib/` or hidden
   directories detect nothing, as they already counted nothing (#4302).
-
-- `cargo xtask vscode-package` now reads the built VSIX and fails if it
-  carries workspace build output (anything under `extension/target/`, Cargo
-  `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
-  entries or 64 MiB unpacked. On the 0.11.0 trial join, Cargo output left under
-  `editors/vscode/target/` was packed into a 725 MB VSIX; this check fails
-  packaging if an ignore rule ever misses that output again (#4218).
 
 - The LSP local file-URI decoder refuses a parent-directory segment (`..`),
   including one written with percent-encoding or backslashes, instead of
@@ -2783,42 +2591,6 @@ are scoped or reviewed.
   `ETXTBSY` cannot arise. A staged copy-then-rename fallback covers hosts without
   hard links. Test-only change; no `ripr` behavior is affected
   ([#3051](https://github.com/EffortlessMetrics/ripr-swarm/issues/3051)).
-
-- `cargo xtask check-public-api` now observes the transitive public surface.
-  Its collector matched two line prefixes in `crates/ripr/src/lib.rs`, so every
-  `pub` item reachable through an allowlisted `pub mod` was invisible: a new
-  `pub const` in `domain/mod.rs` was reported as `pass`. The gate now parses the
-  crate's module tree and records module-level items whose visibility is a bare
-  `pub`, following `pub mod` into other files. `policy/public_api.txt` is
-  rewritten as a `<kind> <path>` recording of the surface that already existed —
-  214 entries where 18 lines were recorded before. No item's visibility changed;
-  the previously unrecorded items were already public. The gate does not cover
-  public struct fields, enum variants, trait items, or associated functions in
-  `impl` blocks, and it records a glob re-export as a glob because a syntax walk
-  cannot expand one. Both limits are stated in the gate's own report.
-
-  Three blind spots in that first walk are closed. `cfg` predicates were
-  decided by looking for the identifiers `test` and `not` anywhere in the
-  predicate, which was wrong in both directions: `#[cfg(any(test, feature =
-  "x"))]` was dropped although a feature-enabled build exports it, so an
-  accidental public addition passed the gate, and `#[cfg(all(test, not(feature
-  = "x")))]` was recorded although nothing but a test build compiles it. Each
-  predicate is now evaluated with `test = false` and every other option left
-  unknown, and an item is dropped only when no non-test build can compile it.
-  Non-`pub` modules were skipped entirely, so a `#[macro_export] macro_rules!`
-  declared in one was missed even though it binds at the crate root whatever
-  the declaring module's visibility; such modules are now walked for their
-  exported macros and nothing else. Completed work was keyed by file path
-  alone, so with two `#[path]` modules sharing one file only the first path was
-  recorded; it is now keyed by file and module path, with a separate
-  in-progress set bounding a module tree that names itself. A `#[path]` on a
-  module declared at the top level of a non-`mod.rs` file also resolved against
-  the wrong base directory — it is relative to the directory holding that file,
-  not to the file's child-module directory, which is how
-  `crates/ripr/src/cli/commands.rs` declares its subcommands.
-
-  `policy/public_api.txt` is unchanged: none of these corrections moves the
-  `ripr` crate's own recorded surface (#3067).
 
 - The `fabricated_result` case in `fixtures/assurance_vocabulary/assurance/corpus.json`
   omitted `runtime_mutation`, so it failed the assurance schema for a missing
@@ -3407,6 +3179,26 @@ are scoped or reviewed.
   reference. 103 historical entries were backfilled from their originating
   squash-merge commits; `cargo xtask check-changelog-fragments` rejects a
   future Unreleased bullet that names none (#7671).
+
+- Unreleased user-facing sections no longer carry internal test-corpus or
+  CI/xtask bookkeeping. That class is summarized under `### Internal / CI`,
+  and `changelog.d/` fragments for it use the `Internal / CI` section.
+  `ripr init --ci` workflow notes and analyzer behavior proven by a corpus
+  case stay in the user-facing section that describes them (#7674).
+
+### Internal / CI
+
+- Verdict-corpus case batches and lockfile/summary/relabel bookkeeping that
+  previously sat in Added and Fixed. Analyzer behavior proven by a corpus
+  case stays in the user-facing section that describes it (#7674,
+  RIPR-SPEC-0219).
+- Contributor xtask and CI-lane plumbing that previously sat in Added,
+  Changed, and Fixed: `dx-scoreboard`, merge-queue capture, the
+  windows-advisory and local-wheelhouse lanes, ub-review companion config,
+  lint/allow/covered-by policy gates, identity-registry, module-health,
+  eval-sweep check, rust-judged-panel, lsp-performance-report,
+  mutation-calibration importer, `ripr-pr` timeout packets,
+  actionable-gap-outcomes, vscode-package, and check-public-api (#7674).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
