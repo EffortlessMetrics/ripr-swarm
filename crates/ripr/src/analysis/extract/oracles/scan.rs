@@ -2457,7 +2457,10 @@ fn is_call_path(callee: &str) -> bool {
         *byte != b'#'
             || (index >= 1
                 && bytes[index - 1] == b'r'
-                && (index == 1 || !is_ident_byte(bytes[index - 2])))
+                && (index == 1 || !is_ident_byte(bytes[index - 2]))
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|next| is_ident_byte(*next)))
     });
     raw_prefix_only
         && bytes.first().is_some_and(|b| is_ident_byte(*b))
