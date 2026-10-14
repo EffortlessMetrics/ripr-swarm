@@ -207,9 +207,28 @@ fn is_throw_site(token: &LineToken) -> bool {
 }
 
 /// How many `throw` / `Promise.reject` sites the line has. More than one
-/// makes the first-site message untrustworthy (#7950).
+/// makes the first-site message untrustworthy (#7950). Template
+/// interpolations are scanned too: a second site inside `` `${throw ...}` ``
+/// is still a site on the line. An interpolation that cannot be tokenized
+/// counts as one unread site so the first-site message is not trusted.
 fn throw_site_count(tokens: &[LineToken]) -> usize {
-    tokens.iter().filter(|token| is_throw_site(token)).count()
+    tokens.iter().map(throw_sites_in_token).sum()
+}
+
+fn throw_sites_in_token(token: &LineToken) -> usize {
+    if is_throw_site(token) {
+        return 1;
+    }
+    match token {
+        LineToken::Template { interpolations, .. } => interpolations
+            .iter()
+            .map(|source| match tokenize(source) {
+                Some(nested) => throw_site_count(&nested),
+                None => 1,
+            })
+            .sum(),
+        _ => 0,
+    }
 }
 
 /// The tokens before and from the `throw` keyword or the `Promise.reject`
@@ -1015,6 +1034,27 @@ mod tests {
         );
         assert_eq!(mixed.old_message, None);
         assert_eq!(mixed.new_message, None);
+
+        // A throw inside a template interpolation is a second site.
+        let nested = ErrorChangeFacts::read(
+            Some(
+                r#"if (a) throw new Error("a"); return `${(() => { throw new Error("b") })()}`; "#,
+            ),
+            r#"if (a) throw new Error("x"); return `${(() => { throw new Error("b") })()}`; "#,
+        );
+        assert_eq!(nested.old_message, None);
+        assert_eq!(nested.new_message, None);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsLiteral, r#""a""#),
+            &nested
+        ));
+        // An interpolation without a throw is not a second site.
+        let template_value = ErrorChangeFacts::read(
+            Some(r#"if (a) throw new Error("a"); return `${n}`; "#),
+            r#"if (a) throw new Error("x"); return `${n}`; "#,
+        );
+        assert_eq!(template_value.old_message.as_deref(), Some("a"));
+        assert_eq!(template_value.new_message.as_deref(), Some("x"));
 
         // A `throw` inside a string is not a second site.
         let literal_word = ErrorChangeFacts::read(
