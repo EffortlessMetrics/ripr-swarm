@@ -2054,6 +2054,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::PythonTransitiveReachUnresolved,
         StaticLimitKind::RustAssertionContextUnresolved,
         StaticLimitKind::RustLogCaptureUnresolved,
+        StaticLimitKind::RustPanicOutcomeUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)

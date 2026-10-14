@@ -697,6 +697,140 @@ fn names(text: &str, ident: &str) -> bool {
     })
 }
 
+const PANIC_LIMIT: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
+const PANIC_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the changed code decides the panic the `#[should_panic]` test expects";
+const PANIC_MACROS: [&str; 10] = [
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// RIPR-SPEC-0240: a `#[should_panic]` test with no assertion still has an
+/// oracle, the panic outcome. When such a test calls the owner directly and
+/// the owner can panic at or after the changed line, a changed guard may
+/// decide that panic, so "no assertion" is not established and the
+/// `reachable_unrevealed` gap is withheld under its own limit. A test with
+/// `expected = ".."` counts only when that text is in a string literal of
+/// the owner, since a different message means the panic comes from
+/// elsewhere. ripr does not credit the panic either: a bare
+/// `#[should_panic]` also passes on a panic from another callee. Returns
+/// `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_should_panic_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some() || finding.class != ExposureClass::ReachableUnrevealed {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    let body = owner.body.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let panics_at_or_after_change = masked.lines().enumerate().any(|(offset, line)| {
+        owner.start_line + offset >= changed_line
+            && PANIC_MACROS.iter().any(|name| invokes_macro(line, name))
+    });
+    if !panics_at_or_after_change {
+        return false;
+    }
+    let owner_literals = string_literal_contents(body);
+    let panicking: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            related.relation_reason == Some(RelationReason::DirectOwnerCall)
+                && index.tests().iter().any(|test| {
+                    test.name == related.name
+                        && test.file == related.file
+                        && test.assertions.is_empty()
+                        && expects_owner_panic(test, &owner_literals)
+                })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if panicking.is_empty() {
+        return false;
+    }
+    let next_step = format!(
+        "{} passes only if this code panics, and ripr does not resolve whether the changed code decides that panic, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call panics first; add a test only if it does not.",
+        panicking.join(", ")
+    );
+    withhold_gap(
+        finding,
+        PANIC_LIMIT,
+        PANIC_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &panicking,
+    );
+    true
+}
+
+/// Whether the masked `line` invokes the macro `name!` (`std::panic!` and
+/// `core::panic!` included; `debug_assert!` is not `assert!`).
+fn invokes_macro(line: &str, name: &str) -> bool {
+    line.match_indices(name).any(|(at, _)| {
+        let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
+        line[..at].chars().next_back().is_none_or(boundary)
+            && line[at + name.len()..].trim_start().starts_with('!')
+    })
+}
+
+/// Whether `test` is a `#[should_panic]` test whose expected panic the
+/// owner can raise: a bare attribute, or `expected = ".."` whose text is in
+/// one of the owner's string literals. An attribute ripr cannot read keeps
+/// the gap.
+fn expects_owner_panic(test: &TestFact, owner_literals: &[String]) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        if compact == "#[should_panic]" {
+            return true;
+        }
+        let Some(arguments) = compact
+            .strip_prefix("#[should_panic(expected=")
+            .and_then(|rest| rest.strip_suffix(")]"))
+        else {
+            return false;
+        };
+        // Read the literal from the original text so inner spaces survive.
+        if !(arguments.starts_with('"') && arguments.ends_with('"')) {
+            return false;
+        }
+        match string_literal_contents(attr).as_slice() {
+            [expected] => {
+                !expected.is_empty()
+                    && owner_literals
+                        .iter()
+                        .any(|literal| literal.contains(expected.as_str()))
+            }
+            _ => false,
+        }
+    })
+}
+
 fn gap_rests_on_refusal(finding: &Finding) -> bool {
     // A producer that already named a limit owns the finding's explanation.
     finding.static_limit_kind.is_none()
@@ -1605,5 +1739,63 @@ mod tests {
             &index,
             Some("audit")
         ));
+    }
+
+    #[test]
+    fn a_panic_macro_is_read_by_its_own_name() {
+        assert!(invokes_macro("panic!(\"x\");", "panic"));
+        assert!(invokes_macro("std::panic! (\"x\");", "panic"));
+        assert!(invokes_macro("assert!(cols > 0);", "assert"));
+        assert!(!invokes_macro("debug_assert!(cols > 0);", "assert"));
+        assert!(!invokes_macro("let panic = 1;", "panic"));
+        assert!(!invokes_macro("my_panic!(x);", "panic"));
+    }
+
+    const PANIC_SOURCE: &str = r#"pub fn row(index: usize) -> usize {
+    if index >= 100 {
+        panic!("index past the end");
+    }
+    index / 4
+}
+
+#[test]
+#[should_panic]
+fn bare() { row(100); }
+
+#[test]
+#[should_panic(expected = "past the")]
+fn owned_message() { row(100); }
+
+#[test]
+#[should_panic(expected = "grid needs columns")]
+fn foreign_message() { row(100); }
+
+#[test]
+#[should_panic(expected = "")]
+fn empty_message() { row(100); }
+
+#[test]
+fn plain() { row(100); }
+"#;
+
+    #[test]
+    fn a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches() {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            PANIC_SOURCE.to_string(),
+        );
+        let owner_literals = vec!["index past the end".to_string()];
+        let expects = |name: &str| {
+            facts
+                .tests
+                .iter()
+                .find(|test| test.name == name)
+                .map(|test| expects_owner_panic(test, &owner_literals))
+        };
+        assert_eq!(expects("bare"), Some(true));
+        assert_eq!(expects("owned_message"), Some(true));
+        assert_eq!(expects("foreign_message"), Some(false));
+        assert_eq!(expects("empty_message"), Some(false));
+        assert_eq!(expects("plain"), Some(false));
     }
 }
