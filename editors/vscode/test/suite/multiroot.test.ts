@@ -244,42 +244,60 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         `real session bound to ${expected.root}`);
       const client = controller.client!;
       assert.ok(client.serverProcess?.pid, 'selected session must own a real server process');
-      // Interactive save refreshes deliberately defer expensive seam evidence.
-      // Drive the existing public full-refresh command; it does not select
-      // roots. A refresh issued while the session-start save refresh is still
-      // settling can complete without committing a new attempt (observed on
-      // CI: the attempt counter stays at the save's attempt while an
-      // identical command issued later commits a full attempt), so confirm
-      // the commit by the published attempt id and re-issue when the command
-      // produced none — the same recovery a developer performs by running the
-      // command again.
+      // Interactive save refreshes deliberately defer expensive seam evidence,
+      // so drive the framed full-refresh wire command until the full-seam
+      // snapshot commits and its seam diagnostics publish. On CI, refreshes
+      // issued while the session-start save refresh is still settling can
+      // complete without committing full evidence (the save's own deferred
+      // attempt supersedes them), while the same wire command issued after
+      // the settling window commits — so re-issue on a cadence instead of
+      // failing on the startup churn.
       const attemptBeforeRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
       }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
         .analysis_status?.attempt_id;
+      const uri = vscode.Uri.file(path.join(expected.root, expected.source));
+      const seamPresent = () => vscode.languages.getDiagnostics(uri).some(d => d.source === 'ripr'
+        && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped');
+      const seamDeadline = Date.now() + 90_000;
       let attemptAfterRefresh = attemptBeforeRefresh;
-      // The server-side refresh path can decline refreshes for a window
-      // after the session-start save settles (CI: the attempt id stays put
-      // across immediate re-issues while an identical request after the
-      // window commits a full attempt with the seam inventory). Poll the
-      // framed wire command through that window instead of failing on the
-      // startup churn; the attempt id remains the commit oracle.
-      const confirmRefreshDeadline = Date.now() + 75_000;
-      while (Date.now() < confirmRefreshDeadline && attemptAfterRefresh === attemptBeforeRefresh) {
-        await bounded(client.sendRequest('workspace/executeCommand', {
-          command: 'ripr.refresh', arguments: [],
-        }), 'framed full refresh');
+      let lastError: unknown;
+      while (Date.now() < seamDeadline && !seamPresent()) {
+        try {
+          await bounded(client.sendRequest('workspace/executeCommand', {
+            command: 'ripr.refresh', arguments: [],
+          }), 'framed full refresh');
+        } catch (error) {
+          lastError = error;
+        }
+        // The framed refresh resolves when its analysis settles; give the
+        // publication a moment, then re-issue if the seams are still absent.
+        try {
+          await waitFor(seamPresent, 'seam publication', 10_000);
+        } catch (error) {
+          lastError = error;
+        }
         attemptAfterRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
           .analysis_status?.attempt_id;
-        if (attemptAfterRefresh === attemptBeforeRefresh) {
-          await new Promise(resolve => setTimeout(resolve, 5_000));
-        }
       }
       assert.notStrictEqual(attemptAfterRefresh, attemptBeforeRefresh,
-        'the explicit full refresh must commit a new analysis attempt');
-      const attemptAfterFirstRefresh = attemptAfterRefresh;
+        `the explicit full refresh must commit a new analysis attempt`
+        + ` (last error: ${String(lastError)})`);
+      await waitFor(seamPresent, `nonempty real seam diagnostics at ${uri}`, 10_000, async () => {
+        const status = await client.sendRequest('workspace/executeCommand', {
+          command: 'ripr.collectWorkspaceStatus', arguments: [],
+        }) as { analysis_status?: Record<string, unknown> };
+        return JSON.stringify({
+          attempt_after_first_refresh: attemptAfterRefresh,
+          attempt: (status.analysis_status as { attempt_id?: string })?.attempt_id,
+          run_status: (status.analysis_status as { run_status?: string })?.run_status,
+          profile: (status.analysis_status as { diagnostic_profile?: string })?.diagnostic_profile,
+          components: (status.analysis_status as { components?: Array<{ component: string; state: string; kind: string | null }> })
+            ?.components?.map(c => `${c.component}:${c.state}${c.kind ? `(${c.kind})` : ''}`),
+        });
+      });
       const status = await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
       }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
@@ -288,31 +306,6 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.strictEqual(status.analysis_status?.effective_root?.replace(/\\/g, '/'),
         expected.root.replace(/\\/g, '/'));
       assert.strictEqual(status.analysis_status?.root_state, 'selected_single_root');
-      const uri = vscode.Uri.file(path.join(expected.root, expected.source));
-      await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'ripr'
-        && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped'),
-      `nonempty real seam diagnostics at ${uri}`, 60_000, async () => {
-        // Dissect a seam timeout: run the refresh command once more directly,
-        // then report whether a subsequent explicit refresh produces the seam
-        // evidence (server path) or not (negotiation/provisioning path).
-        const before = vscode.languages.getDiagnostics(uri).filter(d => d.source === 'ripr').length;
-        await vscode.commands.executeCommand('ripr.refreshDiagnostics');
-        await new Promise(resolve => setTimeout(resolve, 10_000));
-        const after = vscode.languages.getDiagnostics(uri).filter(d => d.source === 'ripr').map(d =>
-          `${typeof d.code === 'object' ? d.code.value : d.code}`);
-        const status = await client.sendRequest('workspace/executeCommand', {
-          command: 'ripr.collectWorkspaceStatus', arguments: [],
-        }) as { analysis_status?: Record<string, unknown> };
-        return JSON.stringify({
-          ripr_diag_before: before, ripr_diag_after_retry: after,
-          attempt_after_first_refresh: attemptAfterFirstRefresh,
-          attempt: (status.analysis_status as { attempt_id?: string })?.attempt_id,
-          run_status: (status.analysis_status as { run_status?: string })?.run_status,
-          profile: (status.analysis_status as { diagnostic_profile?: string })?.diagnostic_profile,
-          components: (status.analysis_status as { components?: Array<{ component: string; state: string; kind: string | null }> })
-            ?.components?.map(c => `${c.component}:${c.state}${c.kind ? `(${c.kind})` : ''}`),
-        });
-      });
       assertOnlyRootDiagnostics(expected.root);
       assert.strictEqual(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(other.root, other.source)))
         .filter(d => d.source === 'ripr').length, 0, 'other root must have no retained diagnostics');
