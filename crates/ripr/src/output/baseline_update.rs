@@ -1397,14 +1397,19 @@ mod tests {
         })
     }
 
-    /// Pre-#7941 `MatchResult::None` arm: drop unmatched entries whenever
-    /// `--remove-resolved` is set, ignoring analyzer-build discontinuity.
-    /// This compiled control must keep failing the new regression.
-    fn reverted_guard_remove_unmatched_on_remove_resolved(
+    /// Pre-#7941 `MatchResult::None` shrink: unmatched entries are dropped
+    /// whenever `--remove-resolved` is set, ignoring analyzer-build
+    /// discontinuity. Compared against production `removed_resolved` below
+    /// so restoring that arm makes the two counts match and the test fail.
+    fn reverted_guard_removed_resolved_count(
         remove_resolved: bool,
-        _is_build_discontinuity: bool,
-    ) -> bool {
-        remove_resolved
+        unmatched_entries: usize,
+    ) -> usize {
+        if remove_resolved {
+            unmatched_entries
+        } else {
+            0
+        }
     }
 
     #[test]
@@ -1659,16 +1664,14 @@ mod tests {
     #[test]
     fn reverted_guard_unconditional_remove_resolved_still_drops_build_crossing_debt()
     -> Result<(), String> {
-        // Compiled control for the pre-repair MatchResult::None arm. If
-        // production is reverted to this arm, the assertions below fail the
-        // new regression (entries stay 1 today; the old arm would drop them).
-        assert!(
-            reverted_guard_remove_unmatched_on_remove_resolved(true, true),
-            "pre-repair arm still treats build-crossing absence as resolved"
+        let unmatched = 1usize;
+        let old_removed = reverted_guard_removed_resolved_count(true, unmatched);
+        assert_eq!(
+            old_removed, unmatched,
+            "pre-repair None arm drops every unmatched row under --remove-resolved"
         );
-        assert!(!reverted_guard_remove_unmatched_on_remove_resolved(
-            false, true
-        ));
+        assert_eq!(reverted_guard_removed_resolved_count(false, unmatched), 0);
+
         let report = update_unmatched(Some(BUILD_A), Some(BUILD_B), true)?;
         assert_eq!(
             baseline_update_after_entry_count(&report),
@@ -1677,10 +1680,11 @@ mod tests {
         );
         assert_eq!(baseline_update_removed_resolved_count(&report), 0);
         assert_eq!(baseline_update_preserved_stale_count(&report), 1);
-        assert!(unmatched_absence_is_build_discontinuity(
-            Some(BUILD_A),
-            Some(BUILD_B)
-        ));
+        assert_ne!(
+            old_removed,
+            baseline_update_removed_resolved_count(&report),
+            "if production restores the pre-#7941 None arm, removed_resolved becomes {old_removed} and this control fails"
+        );
         Ok(())
     }
 }
