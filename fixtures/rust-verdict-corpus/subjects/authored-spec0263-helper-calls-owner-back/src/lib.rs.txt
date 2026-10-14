@@ -1,4 +1,4 @@
-/// Records `x` only when it is large, then retries it ten higher.
+/// Records `x` only when it is large, then retries it ten higher while below 20.
 pub fn add(v: &mut Vec<u32>, x: u32) {
     if x > 10 {
         v.push(x);

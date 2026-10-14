@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "small_values_come_back_large calls add(&mut v, 4); 4 misses `x > 10`, but the helper again calls add(v, 14) and add(v, 24), which enter the guard, so v is [14, 24] and both mutants fail the equality. Spec cells: RIPR-SPEC-0263 example 6: a helper that calls the owner back names no guard.",
+  "reasoning": "small_values_come_back_large calls add(&mut v, 4); 4 misses `x > 10`, but add hands x to the helper again, which calls add(v, 14); that call enters the guard and hands 14 on, so again calls add(v, 24), which also enters. v is [14, 24] and both mutants fail the equality. Spec cells: RIPR-SPEC-0263 example 6: a helper that calls the owner back names no guard.",
   "labeling_observation": {
     "ripr_commit": "46faff1e7",
     "full_checkout_verdict": "credited",
