@@ -1,3 +1,5 @@
+mod json_construction;
+
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
 use crate::analysis::rust_index::summarize_file;
@@ -4178,7 +4180,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
                 trusted_macro_binding_sites(
                     &facts.data().source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &assertion_context_macros(),
                     &|_, _| false,
                     &|_| false,
                 )
@@ -4218,7 +4220,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
-            ambiguous.len() == NON_RETURNING_MACROS.len(),
+            ambiguous.len() == assertion_context_macros().len(),
             saturated,
             "{files:?}"
         );
@@ -4232,6 +4234,9 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
 
 #[test]
 fn trusted_macro_names_are_distinct_so_a_full_set_means_saturated() {
+    assert!(!NON_RETURNING_MACROS.contains(&"json"));
+    let context = assertion_context_macros();
+    assert_eq!(context.iter().collect::<BTreeSet<_>>().len(), context.len());
     let distinct = NON_RETURNING_MACROS.iter().collect::<BTreeSet<_>>();
     assert_eq!(distinct.len(), NON_RETURNING_MACROS.len());
 }

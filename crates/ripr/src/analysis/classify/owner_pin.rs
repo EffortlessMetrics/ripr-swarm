@@ -265,11 +265,20 @@ impl WithheldMacroBindings {
         if self.any_name {
             return true;
         }
-        let drop_in_verified = |krate: &str| drop_ins.verified(path, krate);
+        let drop_in_verified = |krate: &str| {
+            if krate == "serde_json" {
+                drop_ins.verified_literal_json(path)
+            } else {
+                drop_ins.verified(path, krate)
+            }
+        };
         let root = withheld_crate_root(path);
-        for (name, site) in
-            macro_binding_scan(source, packages, NON_RETURNING_MACROS, &drop_in_verified)
-        {
+        for (name, site) in macro_binding_scan(
+            source,
+            packages,
+            &assertion_context_macros(),
+            &drop_in_verified,
+        ) {
             if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
@@ -864,6 +873,12 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        // Recheck provenance for every admission even when syntax is memoized.
+        if facts.source.contains("json")
+            && !index.drop_in_manifests.verified_literal_json(&test.file)
+        {
+            ambiguous.insert("json".to_string());
+        }
         ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
         Ok(ambiguous)
@@ -947,7 +962,7 @@ impl OwnerPinSyntax {
             .map(|(condition, _)| err_return_guard_key(condition));
         let file_refusal = by_file
             .entry(test.file.clone())
-            .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
+            .or_insert_with(|| owner_pin_assertions(&facts.source, &assertion_context_macros()))
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
@@ -1382,7 +1397,7 @@ fn workspace_macro_binding_site(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Option<(PathBuf, MacroBindingSite)> {
-    if !NON_RETURNING_MACROS.contains(&name) {
+    if !assertion_context_macros().contains(&name) {
         return None;
     }
     // Every file may be parsed for this one name, which was a quarter of a
@@ -1463,7 +1478,7 @@ fn test_macro_binding_site(
     memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
-    if !NON_RETURNING_MACROS.contains(&name) {
+    if !assertion_context_macros().contains(&name) {
         return None;
     }
     let facts = index.files().get(&test.file)?;
@@ -1502,7 +1517,13 @@ fn macro_binding_sites(
         index.macro_scope_crates(),
         &[name],
         &|line, declaration| module_resolved(path, line, declaration),
-        &|krate| index.drop_in_manifests.verified(path, krate),
+        &|krate| {
+            if krate == "serde_json" {
+                index.drop_in_manifests.verified_literal_json(path)
+            } else {
+                index.drop_in_manifests.verified(path, krate)
+            }
+        },
     )
 }
 
@@ -1518,6 +1539,7 @@ fn trusted_macro_sites_in(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
+    let context_macros = assertion_context_macros();
     type ScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
     let scan = |files: &[ScanFile<'_>]| -> Vec<(PathBuf, String, MacroBindingSite)> {
         files
@@ -1531,9 +1553,15 @@ fn trusted_macro_sites_in(
                 trusted_macro_binding_sites(
                     source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &context_macros,
                     &|line, declaration| module_resolved(path, line, declaration),
-                    &|krate| index.drop_in_manifests.verified(path, krate),
+                    &|krate| {
+                        if krate == "serde_json" {
+                            index.drop_in_manifests.verified_literal_json(path)
+                        } else {
+                            index.drop_in_manifests.verified(path, krate)
+                        }
+                    },
                 )
                 .into_iter()
                 .map(|(name, site)| ((*path).clone(), name, site))
@@ -1572,7 +1600,7 @@ fn trusted_macro_sites_in(
         })
         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source));
     absorb(scan(&likely), &mut global);
-    if global.len() < NON_RETURNING_MACROS.len() {
+    if global.len() < context_macros.len() {
         absorb(scan(&rest), &mut global);
     }
     (global, scoped, by_root)
@@ -3863,6 +3891,16 @@ fn final_statement(masked: &str, end: usize) -> Option<(usize, usize)> {
 /// owned by the syntax scan, which also bounds the names a file's stored
 /// [`crate::analysis::syntax::MacroBindingCandidates`] can report.
 const NON_RETURNING_MACROS: &[&str] = TRUSTED_MACRO_NAMES;
+
+// `json` is a construction candidate only in assertion context. It must never
+// enter the owner-side generic non-returning list: an opaque owner macro can exit.
+fn assertion_context_macros() -> Vec<&'static str> {
+    NON_RETURNING_MACROS
+        .iter()
+        .copied()
+        .chain(["json"])
+        .collect()
+}
 
 /// Trusted names whose trust is the test-side binding scan's alone (#6578).
 /// `expect!` is no `std` macro: outside a test that verifies
