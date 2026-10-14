@@ -9,6 +9,8 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/replacement_identity_tests.rs",
+  "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",
   "crates/ripr/tests/cli_smoke.rs::check_human_output_reports_sample_findings",
