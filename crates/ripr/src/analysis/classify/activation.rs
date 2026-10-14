@@ -1455,15 +1455,14 @@ fn missing_guard_entry_discriminator(
     // enters the guard (mutual recursion), which no test input shows.
     // A macro the owner invokes may expand to a call back into the owner
     // (`bump!(v)` → `add(v, 20)`), which neither check above can read.
-    // A function value (`use crate::add as push_big;`, `static BIG: fn(..)
-    // = add;`, `[add]`, `apply(v, add)`) calls the owner under a name no
-    // body scan for the owner finds.
+    // Every mention of the owner outside its own header and plain `use`
+    // paths must be a call in a related test, whose input is read below.
+    // Any other mention (a production caller, a `Drop` or operator impl, a
+    // closure in a `static`, a renamed import, a stored pointer) may run
+    // the owner with an input no test shows.
     if owner_may_reenter(owner, &functions_by_name)
         || invokes_unread_macro(&owner.body)
-        || index
-            .files()
-            .values()
-            .any(|file| names_function_as_value(&file.source, &owner.name))
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
     {
         return None;
     }
@@ -1580,43 +1579,61 @@ fn may_reach_owner_unread(
     invokes_unread_macro(&test.body)
 }
 
-/// Whether `source` names `function` other than in a direct call
-/// (`add(`), a `fn add` header or a plain `use` path: a renamed import
-/// (`use crate::add as push_big;`), a stored pointer (`static BIG: fn(..) =
-/// add;`, `[add]`) or an argument (`apply(v, add)`). Calls through that value
-/// run the function under a name a scan for it cannot find. Comments and
-/// strings are masked; a local or field that shares the name also counts,
-/// which only withholds the guard reading.
-fn names_function_as_value(source: &str, function: &str) -> bool {
+/// Whether any indexed file mentions `owner` more often than the related
+/// tests in it do. Mentions in the owner's `fn` header and in plain `use`
+/// paths do not count ([`unread_mentions`]); every other mention must be
+/// one a related test's body holds, since only those calls are read.
+fn owner_named_outside_related_tests(
+    index: &crate::analysis::rust_index::RustIndex,
+    owner: &str,
+    related_tests: &[&TestSummary],
+) -> bool {
+    index.files().iter().any(|(path, file)| {
+        let read: usize = related_tests
+            .iter()
+            .filter(|test| test.file == *path)
+            .map(|test| unread_mentions(&test.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read
+    })
+}
+
+/// How many times `source` names `function` other than in a `fn function`
+/// header or a plain `use` path. Calls, renamed imports (`use crate::add as
+/// push_big;`), stored pointers (`static BIG: fn(..) = add;`, `[add]`) and
+/// arguments (`apply(v, add)`) all count. Comments and strings are masked;
+/// a local or field sharing the name also counts, which only withholds the
+/// guard reading.
+fn unread_mentions(source: &str, function: &str) -> usize {
     if function.is_empty() || !source.contains(function) {
-        return false;
+        return 0;
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    masked.match_indices(function).any(|(offset, _)| {
-        let before = &masked[..offset];
-        let rest = &masked[offset + function.len()..];
-        if before.chars().next_back().is_some_and(is_word)
-            || rest.chars().next().is_some_and(is_word)
-        {
-            return false;
-        }
-        let after = rest.trim_start();
-        if after.starts_with('(') {
-            return false;
-        }
-        let preceding = before.trim_end();
-        if preceding
-            .strip_suffix("fn")
-            .is_some_and(|head| !head.chars().next_back().is_some_and(is_word))
-        {
-            return false;
-        }
-        let renamed = after
-            .strip_prefix("as")
-            .is_some_and(|tail| !tail.chars().next().is_some_and(is_word));
-        renamed || !in_use_item(before)
-    })
+    masked
+        .match_indices(function)
+        .filter(|(offset, _)| {
+            let before = &masked[..*offset];
+            let rest = &masked[offset + function.len()..];
+            if before.chars().next_back().is_some_and(is_word)
+                || rest.chars().next().is_some_and(is_word)
+            {
+                return false;
+            }
+            let preceding = before.trim_end();
+            if preceding
+                .strip_suffix("fn")
+                .is_some_and(|head| !head.chars().next_back().is_some_and(is_word))
+            {
+                return false;
+            }
+            let renamed = rest
+                .trim_start()
+                .strip_prefix("as")
+                .is_some_and(|tail| !tail.chars().next().is_some_and(is_word));
+            renamed || !in_use_item(before)
+        })
+        .count()
 }
 
 /// Whether the text ending at `before` is inside a `use` item: the last
@@ -6724,28 +6741,28 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
-    fn a_function_named_as_a_value_is_seen_and_a_call_or_use_path_is_not() {
-        for source in [
-            "use crate::add as push_big;",
-            "use crate::{add as push_big, other};",
-            "pub static BIG: fn(&mut Vec<u32>, u32) = add;",
-            "pub const OPS: [fn(&mut Vec<u32>, u32); 1] = [add];",
-            "fn t() { apply(&mut v, add); }",
-            "fn t() { let f = add; }",
-            "fn t() { xs.iter().map(Self::add); }",
+    fn every_mention_but_a_header_or_plain_use_path_is_unread() {
+        for (source, count) in [
+            ("use crate::add as push_big;", 1),
+            ("use crate::{add as push_big, other};", 1),
+            ("pub static BIG: fn(&mut Vec<u32>, u32) = add;", 1),
+            ("pub const OPS: [fn(&mut Vec<u32>, u32); 1] = [add];", 1),
+            ("fn t() { apply(&mut v, add); }", 1),
+            ("fn t() { let f = add; }", 1),
+            ("fn t() { xs.iter().map(Self::add); }", 1),
+            ("fn drop(&mut self) { add(&mut self.0, 20); }", 1),
+            ("fn t() { add(&mut v, 4); crate::add (&mut v, 5); }", 2),
+            ("use crate::add;", 0),
+            ("use crate::{add, other};\nuse std::fmt;", 0),
+            ("pub fn add(v: &mut Vec<u32>, x: u32) {}", 0),
+            (
+                "fn t() { adder(1); add_all(); } // add(v, 1) as push_big",
+                0,
+            ),
+            ("fn t() { let s = \"add(v, 20)\"; }", 0),
+            ("#[test]\nfn add() {}", 0),
         ] {
-            assert!(names_function_as_value(source, "add"), "{source}");
-        }
-        for source in [
-            "use crate::add;",
-            "use crate::{add, other};\nuse std::fmt;",
-            "pub fn add(v: &mut Vec<u32>, x: u32) {}",
-            "fn t() { add(&mut v, 4); crate::add (&mut v, 5); s.add(1); }",
-            "fn t() { adder(1); add_all(); } // add as push_big",
-            "fn t() { let s = \"add as x\"; }",
-            "#[test]\nfn add() {}",
-        ] {
-            assert!(!names_function_as_value(source, "add"), "{source}");
+            assert_eq!(unread_mentions(source, "add"), count, "{source}");
         }
     }
 }

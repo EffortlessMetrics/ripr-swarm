@@ -82,13 +82,17 @@ counterpart for side effects.
    one of their names to something else: a `macro_rules! println` definition,
    an import, or a glob or `#[macro_use]` that may bring one in, read by the
    parser-backed macro binding scan. A path-qualified call is trusted only
-   under `std::`, `core::` or `alloc::` (`helpers::println!` is unread). Any indexed file that names the owner as a value, rather than in a
-   direct call, its `fn` header or a plain `use` path, is refused, since
-   calls through that value run it under another name. Examples are a
+   under `std::`, `core::` or `alloc::` (`helpers::println!` is unread).
+
+   Every mention of the owner in any indexed file, other than its own `fn`
+   header and plain `use` paths, must be a call held by a related test's
+   body, since only those calls are read. Any other mention is refused,
+   since it may run the owner with an input no test shows. That covers a
+   production caller, a `Drop` or operator impl, a closure in a `static`, a
    renamed import (`use crate::add as push_big;`), a stored pointer
-   (`static BIG: fn(..) = add;`, `[add]`) and an argument (`apply(v, add)`).
-   Comments and strings are masked. A local or field that shares the
-   owner's name also refuses, which is a known over-refusal.
+   (`[add]`) and an argument (`apply(v, add)`). Comments and strings are
+   masked. An unrelated test that calls the owner, or a local or field
+   sharing its name, also refuses; that is a known over-refusal.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -148,9 +152,10 @@ counterpart for side effects.
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
    calls a helper that calls it back: no guard named (recursion). The same
    holds when a macro the owner, a helper it calls or a test helper invokes
-   calls it back (including a local macro named `println`), and when a test calls the owner through a value: a
-   renamed import (`use crate::add as push_big;` then
-   `push_big(&mut v, 20)`), a `static` pointer or a `const` table.
+   calls it back (including a local macro named `println`). It also holds
+   when a test calls the owner through a value (a renamed import, a
+   `static` pointer or closure, a `const` table), and when production code
+   calls it (a `Drop` or `AddAssign` impl).
 
 ## Test Mapping
 

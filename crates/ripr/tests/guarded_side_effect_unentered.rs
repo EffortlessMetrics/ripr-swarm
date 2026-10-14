@@ -402,7 +402,40 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
             "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    if x < 10 {{\n        helpers::println!(v);\n    }}\n}}\n"
         )
     };
+    // Production code reaches the owner with 20 without a call the test
+    // shows: a closure in a static, a `Drop` impl, an operator impl.
+    let closure_item = "pub static BIG: fn(&mut Vec<u32>, u32) = |v, x| add(v, x * 5);";
+    let closure_test =
+        test_calling("    add(&mut v, 4);\n    guarded_side_effect::BIG(&mut v, 4);");
+    let drop_item = "pub struct G(pub Vec<u32>);\n\nimpl Drop for G {\n    fn drop(&mut self) {\n        add(&mut self.0, 20);\n    }\n}";
+    let drop_test =
+        test_calling("    add(&mut v, 4);\n    let _g = guarded_side_effect::G(Vec::new());");
+    let operator_item = "pub struct W(pub Vec<u32>);\n\nimpl std::ops::AddAssign<u32> for W {\n    fn add_assign(&mut self, x: u32) {\n        add(&mut self.0, x);\n    }\n}";
+    let operator_test = test_calling(
+        "    add(&mut v, 4);\n    let mut w = guarded_side_effect::W(Vec::new());\n    w += 20;",
+    );
     let cases = [
+        (
+            "closure in a static",
+            stored("v.push(x);", closure_item),
+            stored("v.push(x * 1);", closure_item),
+            3,
+            closure_test,
+        ),
+        (
+            "drop impl",
+            stored("v.push(x);", drop_item),
+            stored("v.push(x * 1);", drop_item),
+            3,
+            drop_test,
+        ),
+        (
+            "operator impl",
+            stored("v.push(x);", operator_item),
+            stored("v.push(x * 1);", operator_item),
+            3,
+            operator_test,
+        ),
         (
             "shadowed println",
             shadowed("v.push(x);", "println!(v)"),
