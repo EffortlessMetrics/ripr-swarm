@@ -149,8 +149,9 @@ separate supply-chain boundary.
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
-  actions. Defaults to `true`; set it to `false` for an explicit disabled
-  editor status without starting the language server.
+  actions. Defaults to `true`; set it to `false` to hide the main status-bar
+  item and skip starting the language server. `ripr: Show Status` still names
+  the disabled state.
 - `ripr.server.args`: arguments used to start the language server. Defaults to
   `["lsp", "--stdio"]`.
 - `ripr.server.autoDownload`: automatically download a matching server when
@@ -200,7 +201,7 @@ command, editor selector set, enabled languages reported by the last server
 refresh, and the next safe action for the current state. This is the first
 place to check when no diagnostics appear.
 
-- disabled by `ripr.enabled = false`
+- disabled by `ripr.enabled = false` (main status-bar item hidden; `ripr: Show Status` still names it)
 - workspace unresolved
 - server unavailable
 - analysis queued

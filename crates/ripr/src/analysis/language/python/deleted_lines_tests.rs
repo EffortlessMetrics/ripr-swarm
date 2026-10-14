@@ -653,3 +653,337 @@ fn deleted_tail_evidence_names_its_own_line() -> Result<(), String> {
     }
     Ok(())
 }
+
+const KEEP: &str = "CAP = 100\n\n\ndef keep(items):\n    total = sum(items)\n    return total\n";
+
+/// The text of every base-side record, trimmed.
+fn base_side_texts(findings: &[Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .filter(|finding| finding.source_currentness.is_base_side())
+        .filter_map(|finding| finding.probe.before.as_deref())
+        .map(|text| text.trim().to_string())
+        .collect()
+}
+
+/// A deleted statement that wraps its arguments is one record, on the line
+/// that starts it: the argument line and the closing line are fragments of
+/// it, not statements of their own (#7690).
+#[test]
+fn deleted_multi_line_statement_is_one_record() -> Result<(), String> {
+    let findings = analyze(
+        "multi-line-statement",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    total = min("),
+            line(7, 6, "        total,"),
+            line(8, 6, "        CAP,"),
+            line(9, 6, "    )"),
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(6, "keep".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    assert_eq!(base_side_texts(&findings), vec!["total = min("]);
+    Ok(())
+}
+
+/// The issue's `with open(` shape: the block header wraps, and the body
+/// line under it is a statement of its own.
+#[test]
+fn deleted_wrapped_block_header_keeps_only_statement_starts() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-with",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    with open("),
+            line(7, 6, "        path,"),
+            line(8, 6, "    ) as handle:"),
+            line(9, 6, "        total = handle.read()"),
+        ],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["with open(", "total = handle.read()"],
+        "{findings:?}"
+    );
+    assert!(
+        base_side(&findings)
+            .iter()
+            .all(|(_, owner, _)| owner == "keep"),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A triple-quoted string deleted from a live function, its body at column
+/// 0, is one record on the function: its body and closing quotes are not
+/// module statements.
+#[test]
+fn deleted_triple_quoted_string_body_is_not_the_modules() -> Result<(), String> {
+    let findings = analyze(
+        "triple-quoted-body",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    note = \"\"\""),
+            line(7, 6, "hello"),
+            line(8, 6, "\"\"\""),
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(6, "keep".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A deleted `def` whose signature closes with `) -> int:` at column 0
+/// records nothing: the closing line continues the deleted signature.
+#[test]
+fn deleted_signature_close_with_a_return_type_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "signature-return-type",
+        KEEP,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def clamp("),
+            line(10, 7, "    total,"),
+            line(11, 7, ") -> int:"),
+            line(12, 7, "    return min(total, CAP)"),
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A backslash continues a statement onto the next line.
+#[test]
+fn deleted_backslash_continuation_is_one_record() -> Result<(), String> {
+    let findings = analyze(
+        "backslash",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    total = total + \\"),
+            line(7, 6, "        CAP"),
+        ],
+    )?;
+    assert_eq!(base_side_texts(&findings), vec!["total = total + \\"]);
+    Ok(())
+}
+
+/// A deleted function whose docstring spans lines records nothing: the
+/// docstring body is one string, so the `return` under it still belongs to
+/// the deleted `def`, not to the kept function above (#7690).
+#[test]
+fn deleted_function_with_a_multi_line_docstring_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "multi-line-docstring",
+        KEEP,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def gone(total):"),
+            line(10, 7, "    \"\"\"Doc."),
+            line(11, 7, "    more"),
+            line(12, 7, "    \"\"\""),
+            line(13, 7, "    return min(total, CAP)"),
+        ],
+    )?;
+    assert!(base_side_texts(&findings).is_empty(), "{findings:?}");
+    Ok(())
+}
+
+/// A backslash that ends a comment is part of the comment, so the next
+/// deleted line is a statement of its own (#7690).
+#[test]
+fn backslash_ending_a_comment_does_not_join_lines() -> Result<(), String> {
+    let findings = analyze(
+        "comment-backslash",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    total = total + 1  # wraps \\"),
+            line(7, 6, "    total = min(total, CAP)"),
+        ],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["total = total + 1  # wraps \\", "total = min(total, CAP)"]
+    );
+    Ok(())
+}
+
+/// A deleted run that starts inside a kept docstring closes it: the `"""`
+/// is the docstring's close, so the statement after it is still recorded
+/// (#7690).
+#[test]
+fn deleted_run_closing_a_kept_docstring_keeps_the_statement_after_it() -> Result<(), String> {
+    let findings = analyze(
+        "kept-docstring-opener",
+        "def f(x):\n    \"\"\"Summary.\n\n    \"\"\"\n    return x\n",
+        &[4],
+        vec![
+            line(4, 4, "    Details."),
+            line(5, 4, "    \"\"\""),
+            line(6, 5, "    x = adjust(x)"),
+        ],
+    )?;
+    assert!(
+        base_side(&findings).contains(&(5, "f".to_string(), SourceCurrentness::BaseDeleted)),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"x = adjust(x)".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// The same when a kept assignment opens the string the run closes.
+#[test]
+fn deleted_run_closing_a_kept_string_keeps_the_statement_after_it() -> Result<(), String> {
+    let findings = analyze(
+        "kept-string-opener",
+        "def keep(items):\n    note = \"\"\"\nhello\nbye\"\"\"\n    return items\n",
+        &[4],
+        vec![line(4, 4, "\"\"\""), line(5, 5, "    items = clamp(items)")],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["items = clamp(items)"],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// An argument deleted from a kept multi-line call is a deletion of its
+/// own: the call starts and closes on kept lines, so the removed line is
+/// the record, on the function that holds the call (#7690).
+#[test]
+fn argument_deleted_from_a_kept_call_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "kept-call-argument",
+        "def keep(items):\n    total = min(\n        sum(items),\n    )\n    return total\n",
+        &[],
+        vec![line(4, 4, "        CAP,")],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(4, "keep".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    assert_eq!(base_side_texts(&findings), vec!["CAP,"]);
+    Ok(())
+}
+
+/// Two arguments deleted together from a kept call: the first is the
+/// record and the second is a fragment of the same statement.
+#[test]
+fn arguments_deleted_together_from_a_kept_call_are_one_record() -> Result<(), String> {
+    let findings = analyze(
+        "kept-call-arguments",
+        "def keep(items):\n    total = min(\n        sum(items),\n    )\n    return total\n",
+        &[],
+        vec![line(4, 4, "        CAP,"), line(5, 4, "        FLOOR,")],
+    )?;
+    assert_eq!(base_side_texts(&findings), vec!["CAP,"], "{findings:?}");
+    Ok(())
+}
+
+/// Inside a kept call, a removed argument an added argument replaces is the
+/// candidate side's record, so the argument deleted after it still gets
+/// its own base-side record (#7690).
+#[test]
+fn argument_deleted_after_a_replaced_one_in_a_kept_call_is_recorded() -> Result<(), String> {
+    let findings = analyze(
+        "kept-call-replaced-argument",
+        "def keep(items):\n    total = min(\n        c,\n    )\n    return total\n",
+        &[3],
+        vec![line(3, 3, "        a,"), line(4, 3, "        b,")],
+    )?;
+    assert_eq!(base_side_texts(&findings), vec!["b,"], "{findings:?}");
+    assert_eq!(
+        base_side(&findings),
+        vec![(3, "keep".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A deleted call wrapped in a lone opening bracket is still one record,
+/// on its first behavior line: the bracket line carries no behavior of its
+/// own (#7690).
+#[test]
+fn deleted_statement_opening_with_a_lone_bracket_is_recorded() -> Result<(), String> {
+    let findings = analyze(
+        "lone-bracket-start",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    ("),
+            line(7, 6, "        send_event()"),
+            line(8, 6, "    )"),
+        ],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["send_event()"],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A bracket only the candidate opens does not swallow later deletions: the
+/// run's start comes from the old file's kept lines, so each deleted call is
+/// a record of its own (#7690).
+#[test]
+fn candidate_only_bracket_does_not_merge_later_deletions() -> Result<(), String> {
+    let findings = analyze(
+        "candidate-only-bracket",
+        "def keep(items):\n    value = (\n    # note\n    # more\n        1\n    )\n    return value\n",
+        &[2, 5, 6],
+        vec![
+            line(2, 2, "    value = 1"),
+            line(4, 4, "    log_a()"),
+            line(5, 4, "    log_b()"),
+        ],
+    )?;
+    let texts = base_side_texts(&findings);
+    assert!(texts.contains(&"log_a()".to_string()), "{findings:?}");
+    assert!(texts.contains(&"log_b()".to_string()), "{findings:?}");
+    Ok(())
+}
+
+/// A line inside a bracket keeps the indent of the statement it sits in:
+/// a zero-indented call inside a deleted function's lone `(` neither moves
+/// the function's `return` to the kept function above nor records on it
+/// (#7690).
+#[test]
+fn zero_indented_line_inside_a_bracket_does_not_decide_nesting() -> Result<(), String> {
+    let findings = analyze(
+        "zero-indented-in-bracket",
+        KEEP,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def gone():"),
+            line(10, 7, "    ("),
+            line(11, 7, "send_event()"),
+            line(12, 7, "    )"),
+            line(13, 7, "    return 2"),
+        ],
+    )?;
+    assert!(base_side_texts(&findings).is_empty(), "{findings:?}");
+    Ok(())
+}

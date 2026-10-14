@@ -1,0 +1,11 @@
+diff --git a/src/settingsCopy.ts b/src/settingsCopy.ts
+index 0000000..1111111 100644
+--- a/src/settingsCopy.ts
++++ b/src/settingsCopy.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function readyCopy(cfg: Ready): Ready {
+-  return cfg;
++  return { ...cfg };
+ }

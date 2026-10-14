@@ -14,7 +14,7 @@ import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFail
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
-import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction } from './statusRender';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 import {
   validateFirstPrPacket,
@@ -73,6 +73,15 @@ const ATTEMPT_SELECTION_STATE_KEY = 'ripr.activeAttemptSelection.v1';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function disabledStatus(): RiprStatusState {
+  return {
+    kind: 'disabled',
+    summary: 'ripr editor analysis is disabled by configuration.',
+    detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
+    nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
+  };
 }
 
 /**
@@ -545,18 +554,18 @@ export class RiprClientController {
     const config = this.runtime.getConfig(
       this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
     );
-    await this.refreshSetupStatusFiles();
 
     if (!config.enabled) {
-      this.updateStatus({
-        kind: 'disabled',
-        summary: 'ripr editor analysis is disabled by configuration.',
-        detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
-        nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
-      });
+      // Hide before the async setup-file read so a disable restart does not
+      // leave `ripr: stopped` (or the constructor's initial stopped item)
+      // visible while those reads complete.
+      this.updateStatus(disabledStatus());
       this.output.appendLine('ripr editor analysis is disabled by configuration.');
+      await this.refreshSetupStatusFiles();
       return;
     }
+
+    await this.refreshSetupStatusFiles();
 
     if (this.workspaceRootState.kind === 'ambiguousMultiRoot') {
       this.updateStatus({
@@ -903,6 +912,18 @@ export class RiprClientController {
     // ownership of a client that may have started successfully. (#2822)
     this.startGeneration++;
 
+    // Config is already the new value when onDidChangeConfiguration restarts.
+    // Hide the opt-out immediately so a stalled waitForLifecycle or
+    // client.stop() cannot keep the previous item visible. Reuse this
+    // snapshot for the final status so a disable transition never renders
+    // visible `stopped`.
+    const config = this.runtime.getConfig(
+      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+    );
+    if (!config.enabled) {
+      this.updateStatus(disabledStatus());
+    }
+
     if (starting) {
       const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
       await waitForLifecycle(
@@ -932,12 +953,14 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
-    this.updateStatus({
-      kind: 'stopped',
-      summary: 'ripr server has stopped.',
-      detail: 'Run ripr: Restart Server to start analysis again.',
-      nextStep: 'Run ripr: Restart Server.'
-    });
+    this.updateStatus(config.enabled
+      ? {
+          kind: 'stopped',
+          summary: 'ripr server has stopped.',
+          detail: 'Run ripr: Restart Server to start analysis again.',
+          nextStep: 'Run ripr: Restart Server.'
+        }
+      : disabledStatus());
     return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 
@@ -1771,6 +1794,18 @@ export class RiprClientController {
   }
 
   private updateStatus(status: RiprStatusState): void {
+    // A disable restart hides immediately, then awaits client.stop(). Session
+    // notifications can still fire in that window and would otherwise replace
+    // `disabled` with a visible analysis kind. While ripr.enabled is false,
+    // only an explicit disabled paint may occupy the main item.
+    if (status.kind !== 'disabled') {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      if (!enabled) {
+        return;
+      }
+    }
     this.status = status;
     this.renderStatusBar();
   }
@@ -1791,7 +1826,11 @@ export class RiprClientController {
     const colors = statusBarColors(this.status.kind);
     this.statusBar.backgroundColor = colors?.background;
     this.statusBar.color = colors?.foreground;
-    this.statusBar.show();
+    if (shouldShowMainStatusBar(this.status.kind)) {
+      this.statusBar.show();
+    } else {
+      this.statusBar.hide();
+    }
   }
 
   private async showStatusAsync(): Promise<void> {

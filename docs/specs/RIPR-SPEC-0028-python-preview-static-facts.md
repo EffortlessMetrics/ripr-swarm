@@ -198,6 +198,30 @@ mock expectations, and custom `assert_*` helpers.
 - `self.assertEqual(a, b)` â†’ exact-value oracle; `assertNotEqual` â†’
   relational check, weak
 - `self.assertRaises(...)` â†’ error-path oracle
+- `self.assertListEqual(owner(), [literal elements])` supplies strong exact-value
+  evidence for a whole returned list, including short numeric element changes.
+  Valid whitespace and grouping parentheses in the direct callee preserve its
+  parsed identity, including imported aliases and module-qualified free calls.
+  This bounded shape requires a module-level direct canonical `unittest.TestCase` or imported
+  `TestCase` base, no additional bases, class hooks/assignments/decorators, and an
+  ordinary `self` method with that call as its only statement. Both positional
+  operands are required; message arguments, slices, nonliteral expectations,
+  custom receivers, inherited wrappers and visible framework rebinding remain
+  unknown helpers. Visible owner rebinding cannot supply sink alignment. Credit
+  also requires the asserted operand to make a zero-argument call to the
+  same imported free-function owner through a bare or dotted static name.
+  Computed callees such as `owner().method()` or `owner()()` remain unknown
+  helpers. The assertion row binds its declaration line as well as file/name;
+  matching expected literals in another row
+  or a nested wrapper cannot supply sink alignment. Skip and parser limitations
+  remain governed by their existing admission paths.
+  Whole-list credit additionally requires old/new literal-list returns with a
+  different length or a same-type scalar constant that compares differently.
+  Equal spellings/values and mixed scalar types (including Python-equal `1`,
+  `True` and `1.0`) remain uncredited; numeric coercions and nonliteral return
+  elements are not evaluated by this bounded path. An unproved list-equality
+  change retains the finding and limitation without inventing a missing exact
+  assertion, typed repair placement or repair card.
 - `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
