@@ -24,3 +24,7 @@ A goldens attempt on unchanged 8b lacked fixture-pinned anyhow 1.0.100 in the re
 The platform reported a disconnection at 09:29 UTC. Read-only recovery checks confirmed unchanged a97 and continuing original precommit PIDs. Its receipt then recorded explicit exit 0 at 09:33:54 UTC. No interrupted check is claimed as passing and no duplicate precommit was started.
 
 Prior exact-a4 and compiler-only evidence remains immutable at `5585bfb60af9456a0aed3bbfe4132d4595dff89b`. The inherited external-corpus setup failure in #7880 remains separate; no full external-corpus pass, released analyzer parity, general alias/value-flow support, Ready, protected merge, release or gate clearance is claimed. PR body and threads are unchanged. Ordinary source/evidence branch push and technical handoff are the authorized publication boundary.
+
+## Publication readback
+
+Source fast-forward a4→a97 and initial evidence branch push exited 0. Connected GitHub readback confirms PR #7817 open/Draft, source head a97 and existing PR body byte-equal to its pre-publication read. Technical handoff comment [6165494812](https://github.com/EffortlessMetrics/ripr-swarm/pull/7817#issuecomment-6165494812) was posted and read back byte-equal. The initial immutable source/test archive is b1b12c39ac2e7fbd6b2a8a78e4c31cbb4f2e85f9. This append preserves publication receipts; source candidate is unchanged. Hosted first-page snapshot is incomplete and supplies no actual-checkout or all-required-check qualification.
