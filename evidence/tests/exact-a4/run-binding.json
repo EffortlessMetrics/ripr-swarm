@@ -1,0 +1,60 @@
+{
+  "candidate_commit": "a4e22c0c0ee52a5a858077b2639b3737934b55fa",
+  "candidate_tree": "0acdc48cdb96f6267fd7b2b799b918d42910323e",
+  "candidate_status": "clean",
+  "started_utc": "2026-10-14T07:40:11.908068+00:00",
+  "source_sha256": {
+    "crates/ripr/src/analysis/classifier/evidence.rs": "acad5c6876fe49c91200ad1f2dd05ef5e258cb9c7d8eb74c557e3edf50a3d68c",
+    "crates/ripr/src/analysis/classify/implicit_effect.rs": "c9bccae2ea24c0d0a56391653c042d970b28da78f2bbeda6a8273a6fa60378c1",
+    "crates/ripr/src/analysis/classify/transitive_reach.rs": "92ca94177a4b92753acef9fa0cfd33ea5141395936e73985ed467f1707c9d7d1",
+    "crates/ripr/tests/sibling_effect_oracle.rs": "d78b50983693c3603c54a38b5925f54e55d5e4b8baeb785f6e6648d218f48ec7"
+  },
+  "commands": [
+    {
+      "name": "sibling_effect_oracle",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--test",
+        "sibling_effect_oracle"
+      ],
+      "exit": 0,
+      "finished_utc": "2026-10-14T07:40:15.216366+00:00"
+    },
+    {
+      "name": "goldens",
+      "command": [
+        "cargo",
+        "xtask",
+        "goldens",
+        "check"
+      ],
+      "exit": 0,
+      "finished_utc": "2026-10-14T07:43:48.901511+00:00"
+    },
+    {
+      "name": "honesty",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-evidence-promotion-honesty"
+      ],
+      "exit": 0,
+      "finished_utc": "2026-10-14T07:43:49.196091+00:00"
+    },
+    {
+      "name": "dogfood",
+      "command": [
+        "cargo",
+        "xtask",
+        "dogfood"
+      ],
+      "exit": 0,
+      "finished_utc": "2026-10-14T07:43:50.582781+00:00"
+    }
+  ],
+  "completed_utc": "2026-10-14T07:43:50.583308+00:00"
+}

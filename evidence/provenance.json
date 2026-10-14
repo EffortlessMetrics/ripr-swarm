@@ -21,14 +21,87 @@
     "agent": "/root/frozen_tree_review_final",
     "review_basis_head": "db69f41b771d3ff14fc0be9041fe992c7c3818ee",
     "review_basis_tree": "98adc43a7d2127381c499335638fffb225346a61",
-    "review_scope_note": "The final candidate source was in the working tree at review time. The two fingerprints reported by the reviewer match files in candidate commit a4; reviewer stated no edits or test runs."
+    "review_scope_note": "The final candidate source was in the working tree at review time. The two fingerprints reported by the reviewer match files in candidate commit a4; reviewer stated no edits or test runs.",
+    "fingerprinted_changed_files": [
+      "crates/ripr/src/analysis/classify/implicit_effect.rs",
+      "crates/ripr/tests/sibling_effect_oracle.rs"
+    ],
+    "changed_files_not_fingerprint_bound_by_review": [
+      "crates/ripr/src/analysis/classifier/evidence.rs",
+      "crates/ripr/src/analysis/classify/transitive_reach.rs"
+    ],
+    "coverage": "Recorded hashes bind 2 of 4 changed source/test files; they do not fingerprint-bind every changed seam."
   },
   "test_provenance": {
     "focused_receipt": "tests/focused-receipts.json",
     "focused_receipt_note": "The post-commit focused runner recorded four successful commands: reveal, transitive, integration and CLI rerun. Exact-head logs for those four are preserved. It then began goldens; that run was stopped before completion at the user instruction to stop local commands. No exact-head goldens exit is claimed; exact-head honesty and dogfood were not run.",
     "sibling_effect_oracle": "Reported exit 0, 13 passed on the final repaired source worktree; the source file fingerprint in candidate-file-sha256.json matches commit a4. Raw stdout was not retained. The older 13/13 raw log is retained under tests/pre-final and predates final source edits.",
-    "native_fixture_controls": "Rustc fixture-control receipts were recorded before candidate commit a4. They test fixture mutation behavior and are not analyzer executions; source/log receipts are retained without claiming exact-a4 runtime.",
-    "external_corpus": "Full pinned external-corpus qualification remains blocked by inherited setup failure tracked in issue #7880; no full-corpus pass is claimed.",
-    "stopped_local_command": "The focused runner was terminated while goldens was in progress. It was stopped on explicit user instruction; no focused runner or test compiler remains active."
+    "native_fixture_controls": "Rustc fixture-control receipts were recorded before candidate commit a4. They compile fixture programs with and without effect writes; they establish fixture-level mutation sensitivity only, not analyzer behavior on candidate a4. Inputs, compile/run output, and receipts are archived separately.",
+    "external_corpus": "Full pinned external-corpus qualification remains blocked by the inherited setup failure tracked in issue #7880; no full-corpus pass is claimed.",
+    "stopped_local_command": "The focused runner was terminated while goldens was in progress. It was stopped on explicit user instruction; no focused runner or test compiler remains active.",
+    "exact_candidate_qualification": {
+      "candidate_commit": "a4e22c0c0ee52a5a858077b2639b3737934b55fa",
+      "candidate_tree": "0acdc48cdb96f6267fd7b2b799b918d42910323e",
+      "candidate_status": "clean",
+      "started_utc": "2026-10-14T07:40:11.908068+00:00",
+      "completed_utc": "2026-10-14T07:43:50.583308+00:00",
+      "commands": [
+        {
+          "name": "sibling_effect_oracle",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "ripr",
+            "--test",
+            "sibling_effect_oracle"
+          ],
+          "exit": 0,
+          "finished_utc": "2026-10-14T07:40:15.216366+00:00",
+          "raw_log": "tests/exact-a4/sibling_effect_oracle.log"
+        },
+        {
+          "name": "goldens",
+          "command": [
+            "cargo",
+            "xtask",
+            "goldens",
+            "check"
+          ],
+          "exit": 0,
+          "finished_utc": "2026-10-14T07:43:48.901511+00:00",
+          "raw_log": "tests/exact-a4/goldens.log"
+        },
+        {
+          "name": "honesty",
+          "command": [
+            "cargo",
+            "xtask",
+            "check-evidence-promotion-honesty"
+          ],
+          "exit": 0,
+          "finished_utc": "2026-10-14T07:43:49.196091+00:00",
+          "raw_log": "tests/exact-a4/honesty.log"
+        },
+        {
+          "name": "dogfood",
+          "command": [
+            "cargo",
+            "xtask",
+            "dogfood"
+          ],
+          "exit": 0,
+          "finished_utc": "2026-10-14T07:43:50.582781+00:00",
+          "raw_log": "tests/exact-a4/dogfood.log"
+        }
+      ],
+      "source_sha256": {
+        "crates/ripr/src/analysis/classifier/evidence.rs": "acad5c6876fe49c91200ad1f2dd05ef5e258cb9c7d8eb74c557e3edf50a3d68c",
+        "crates/ripr/src/analysis/classify/implicit_effect.rs": "c9bccae2ea24c0d0a56391653c042d970b28da78f2bbeda6a8273a6fa60378c1",
+        "crates/ripr/src/analysis/classify/transitive_reach.rs": "92ca94177a4b92753acef9fa0cfd33ea5141395936e73985ed467f1707c9d7d1",
+        "crates/ripr/tests/sibling_effect_oracle.rs": "d78b50983693c3603c54a38b5925f54e55d5e4b8baeb785f6e6648d218f48ec7"
+      }
+    }
   }
 }

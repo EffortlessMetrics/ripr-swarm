@@ -1,5 +1,3 @@
-# Sibling effect suite result record
+# Sibling effect suite result
 
-Command: `cargo test --locked -p ripr --test sibling_effect_oracle`
-
-Reported outcome on final repaired source: exit 0, 13 passed, 0 failed. The final source/test file fingerprint is bound by `provenance.json`. Raw stdout was not captured in the compact evidence directory; `pre-final/public-repaired-review.log` is retained separately and predates the final source edits, so it is not claimed as the raw log for this result.
+The exact-candidate raw log is now `exact-a4/sibling_effect_oracle.log`, with the command, exit code, candidate commit/tree, and four source-file fingerprints in `exact-a4/run-binding.json`. Result: 13 passed, 0 failed. The earlier pre-final log remains under `pre-final/` for historical context only.

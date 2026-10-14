@@ -1,0 +1,3 @@
+# Fixture-control scope
+
+`native/` and `native-matrix/` contain compiled Rustc fixture tests with original and write-removal variants. They are runtime controls for the fixture assertions, not analyzer executions. Their receipts predate candidate commit `a4e22c0c0ee52a5a858077b2639b3737934b55fa`; do not describe them as exact-head analyzer mutation tests. Compiler-backed refusal controls for cross-file Drop, Drop aliases, qualified/grouped macros, and shadowed `core` are preserved under `fixtures/unsupported-expansion-controls/`, with source, lockfiles, original/removed logs, and receipts. These support the bounded negative-control design, but are separately scoped from the exact-candidate Cargo qualification in `tests/exact-a4/`.
