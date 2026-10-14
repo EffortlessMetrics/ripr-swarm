@@ -1328,13 +1328,15 @@ pub(crate) fn evidence_promotion_external_semantic_violations(
     case: &EvidencePromotionExternalCase,
     check_json: &Value,
 ) -> Vec<String> {
-    evidence_promotion_semantic_violations(
+    evidence_promotion_semantic_violations_scoped(
         &case.id,
         None,
         &case.assertions,
         check_json,
         None,
         false,
+        None,
+        Some(evidence_promotion_pinned_external_is_diff_sourced(case)),
     )
 }
 
@@ -1354,6 +1356,7 @@ pub(crate) fn evidence_promotion_semantic_violations(
         human_text,
         fixture_human_required,
         None,
+        None,
     )
 }
 
@@ -1362,6 +1365,9 @@ pub(crate) fn evidence_promotion_semantic_violations(
 /// `probe.family` matches are judged, so one fixture can carry both a
 /// refused-family control and a promoted-family positive control. A selector
 /// that matches no finding is a violation, never a vacuous pass.
+///
+/// `diff_sourced_override` lets a pinned-external `--diff` launch reuse the
+/// existing #3952 `base` exemption without fabricating a fixture `diff.patch`.
 pub(crate) fn evidence_promotion_semantic_violations_scoped(
     case_id: &str,
     source_fixture: Option<&str>,
@@ -1370,9 +1376,12 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
     human_text: Option<&str>,
     fixture_human_required: bool,
     probe_family: Option<&str>,
+    diff_sourced_override: Option<bool>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     let case_label = evidence_promotion_assertion_case_label(case_id, source_fixture);
+    let diff_sourced = diff_sourced_override
+        .unwrap_or_else(|| evidence_promotion_case_is_diff_sourced(source_fixture));
     let mut findings: Vec<Value> = check_json
         .get("findings")
         .and_then(Value::as_array)
@@ -1491,7 +1500,6 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 }
             }
             EvidencePromotionSemanticAssertion::MustDiscloseScope => {
-                let diff_sourced = evidence_promotion_case_is_diff_sourced(source_fixture);
                 let missing_scope =
                     evidence_promotion_missing_scope_fields(check_json, diff_sourced);
                 if !missing_scope.is_empty() {
@@ -3179,11 +3187,11 @@ fn evidence_promotion_missing_scope_fields(
     check_json: &Value,
     diff_sourced: bool,
 ) -> Vec<&'static str> {
-    // #3952: a diff-sourced report has no base by construction
+    // #3952 / #7880: a diff-sourced report has no base by construction
     // (`CheckOutput.base` is documented as "when applicable", and the diff
     // file — not a revision — is the scope). Its machine-readable scope
-    // statement is tool/mode/root plus the harness-pinned `diff.patch`,
-    // so `base` is excused only there; every other report must carry it.
+    // statement is tool/mode/root plus the pinned `--diff` input, so `base`
+    // is excused only there; every other report must carry it.
     ["schema_version", "tool", "mode", "root", "base"]
         .iter()
         .filter_map(|field| {
@@ -3204,6 +3212,18 @@ fn evidence_promotion_missing_scope_fields(
 /// envelope's scope is the diff file rather than a base revision).
 fn evidence_promotion_case_is_diff_sourced(source_fixture: Option<&str>) -> bool {
     source_fixture.is_some_and(|fixture| Path::new(fixture).join("diff.patch").exists())
+}
+
+/// Pinned-external launches are command-template-bound to
+/// `ripr check --root {checkout} --diff {external_patch} --mode fast --json`.
+/// A `--diff` envelope has no revision `base` by construction (#3952, #7880).
+fn evidence_promotion_pinned_external_is_diff_sourced(
+    case: &EvidencePromotionExternalCase,
+) -> bool {
+    case.external_command
+        .split_whitespace()
+        .any(|part| part == "--diff")
+        && !case.external_patch.as_os_str().is_empty()
 }
 
 fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value]) -> bool {
@@ -4450,6 +4470,7 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
                 source_human_text.as_deref(),
                 !source_fixture.is_empty(),
                 probe_family,
+                None,
             ));
             continue;
         }
