@@ -15,6 +15,8 @@ const CASES: &[(&str, bool, bool)] = &[
     ("unrelated", false, false),
     ("rebound", false, false),
     ("mutated", false, false),
+    ("raw_mutated", false, false),
+    ("raw_rebound", false, false),
     ("alias", false, true),
     ("ambiguous", false, false),
     ("guarded", false, false),

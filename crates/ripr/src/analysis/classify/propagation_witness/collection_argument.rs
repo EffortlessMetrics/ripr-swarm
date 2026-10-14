@@ -20,8 +20,9 @@ pub(in crate::analysis) fn assertion_observes_collection_argument(
     index: &RustIndex,
     test: &TestSummary,
     assertion: &OracleFact,
+    syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> bool {
-    observed_projection(receiver, owner, index, test, assertion).is_some()
+    observed_projection(receiver, owner, index, test, assertion, syntax).is_some()
 }
 
 fn observed_projection(
@@ -30,8 +31,8 @@ fn observed_projection(
     index: &RustIndex,
     test: &TestSummary,
     assertion: &OracleFact,
+    syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> Option<()> {
-    let syntax = crate::analysis::classify::OwnerPinSyntax::default();
     if !assertion.text.trim_start().starts_with("assert_eq!")
         || !syntax.admits(test, assertion, index)
         || !syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "vec", index)
@@ -157,7 +158,7 @@ fn observed_projection(
         return None;
     }
     let prefix = (!segments.is_empty()).then(|| format!("{}::", segments.join("::")));
-    if !targeted_free_call_reaches_owner(test, owner, prefix.as_deref(), index, &syntax)
+    if !targeted_free_call_reaches_owner(test, owner, prefix.as_deref(), index, syntax)
         || shared_owner_call_identity(index, owner).is_some_and(|identity| {
             identity.resolve_call(test, index, &segments) != CallTarget::Owner
         })
@@ -201,7 +202,10 @@ fn statement_expression(statement: ast::Stmt) -> Option<ast::Expr> {
 fn mentions_binding(node: &SyntaxNode, binding: &str) -> bool {
     node.descendants_with_tokens()
         .filter_map(|node| node.into_token())
-        .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == binding)
+        .any(|token| {
+            token.kind() == SyntaxKind::IDENT
+                && token.text().strip_prefix("r#").unwrap_or(token.text()) == binding
+        })
 }
 
 fn compact(text: &str) -> String {
@@ -221,4 +225,51 @@ fn literal_vec(text: &str) -> bool {
             .trim_end_matches(',')
             .split(',')
             .all(|element| !element.is_empty() && element.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::classify::{OwnerPinSyntax, WithheldMacroBindings};
+    use crate::analysis::facts::build_index;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn field_argument_observer_retains_withheld_macro_authority() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/collection_argument_tuple/input");
+        let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "add")
+            .ok_or("owner")?;
+        let test = index.tests().first().ok_or("test")?;
+        let assertion = test.assertions.first().ok_or("assertion")?;
+        assert!(assertion_observes_collection_argument(
+            "v",
+            owner,
+            &index,
+            test,
+            assertion,
+            &OwnerPinSyntax::default()
+        ));
+        for name in ["assert_eq", "vec"] {
+            let mut withheld = WithheldMacroBindings::default();
+            withheld.absorb(
+                Path::new("dep/src/lib.rs"),
+                &format!("#[macro_export] macro_rules! {name} {{ ($($t:tt)*) => {{}}; }}"),
+                index.macro_scope_crates(),
+                &index.drop_in_manifests,
+            );
+            let syntax = OwnerPinSyntax::default().with_withheld(withheld);
+            assert!(
+                !assertion_observes_collection_argument(
+                    "v", owner, &index, test, assertion, &syntax
+                ),
+                "a withheld {name} binding cannot be replaced by a fresh syntax authority"
+            );
+        }
+        Ok(())
+    }
 }

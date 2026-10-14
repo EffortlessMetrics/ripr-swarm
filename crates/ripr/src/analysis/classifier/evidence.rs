@@ -565,6 +565,7 @@ impl ClassifiedProbeEvidence {
                                 context.index,
                                 test,
                                 assertion,
+                                pin_syntax,
                             )
                         })
                 },

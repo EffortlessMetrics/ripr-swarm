@@ -7300,6 +7300,7 @@ name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs::tests::field_argument_observer_retains_withheld_macro_authority",
   "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_public_check_pins_exact_observation",
   "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_compiling_behavioral_mutants",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",

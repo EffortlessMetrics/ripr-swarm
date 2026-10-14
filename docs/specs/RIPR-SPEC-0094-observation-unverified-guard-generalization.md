@@ -262,7 +262,10 @@ projection passed by `&mut` in a direct owner call, for example
 - the expected vector contains independent unsuffixed decimal integer literals and `vec!` has
   no competing macro binding;
 - no other statement between construction and assertion uses that root, and
-  no other owner-call argument uses it.
+  no other owner-call argument uses it. Raw identifiers (`r#b` and `b`) name
+  the same root for this refusal;
+- assertion and vector macro admission retains the run's syntax authority,
+  including binding evidence from withheld files in a narrowed diff index.
 
 A different field or receiver, an unrelated or self-computed assertion,
 aliases, rebinding, intervening mutation, indexed/dynamic projections,

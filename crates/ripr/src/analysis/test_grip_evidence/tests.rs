@@ -19448,6 +19448,8 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
         ("wrong_receiver", StageState::Weak),
         ("rebound", StageState::Weak),
         ("mutated", StageState::Weak),
+        ("raw_mutated", StageState::Weak),
+        ("raw_rebound", StageState::Weak),
         ("alias", StageState::Weak),
         ("ambiguous", StageState::Weak),
         ("guarded", StageState::Weak),
