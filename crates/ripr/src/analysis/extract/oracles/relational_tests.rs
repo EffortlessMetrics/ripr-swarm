@@ -780,6 +780,19 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             "assert_eq!((flag && matches!(r, Err(E::Bad))) == true, true);",
             &weak,
         ),
+        // The cap holds when the compared chain is itself one conjunct.
+        (
+            "assert_eq!(flag && ((ready && matches!(r, Ok(3))) == true), true);",
+            &weak,
+        ),
+        (
+            "assert!(flag && ((ready && matches!(r, Ok(3))) == true));",
+            &weak,
+        ),
+        (
+            "assert!(((ready && matches!(r, Ok(3))) == true) && flag);",
+            &weak,
+        ),
         // A bool value compared with a literal reads as that value or its
         // negation, which pins it.
         ("assert_eq!(x != true, true);", &exact),
