@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 121
+floor = 112
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -473,79 +473,8 @@ reason = "non-Rust language or packaging surface"
 # Seam grip classification order
 [[spec]]
 id = "RIPR-SPEC-0236"
-scope = "in"
-
-[[spec.waived]]
-example = 1
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 2
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 3
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 4
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 5
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 6
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 7
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 8
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 9
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 10
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 11
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 12
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 13
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 14
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 15
-reason = "a `classify_seam` stage-tuple row; it grades the seam grip class from given stage states, not a diff verdict"
-
-[[spec.waived]]
-example = 20
-reason = "`ripr pilot` listing order and actionable count for probe c4; pilot output, not a diff verdict"
-
-[[spec.waived]]
-example = 25
-reason = "latent per the spec's rule R1: no seam is inventoried for a `static` closure owner (probe c9), so no case can show the unresolved-owner reach"
-
-[[spec.waived]]
-example = 27
-reason = "pilot top-list membership over given seam classes; pilot ordering (RIPR-SPEC-0237), not a diff verdict"
+scope = "out"
+reason = "seam grip class, evidence-record category and pilot claims; corpus rows score diff verdicts and carry no seam fields, so no case can pin them (as RIPR-SPEC-0233 example 2). The probes stay as uncited `spec0236-*` verdict cases"
 
 # Pilot seam ranking
 [[spec]]

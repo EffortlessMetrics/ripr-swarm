@@ -54,8 +54,5 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  },
-  "spec_examples": [
-    "RIPR-SPEC-0236#17"
-  ]
+  }
 }
