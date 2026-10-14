@@ -415,6 +415,11 @@ function assertOnlyRootDiagnostics(root: string | undefined): void {
 
 async function assertNoRootActions(root: RootExpectation): Promise<void> {
   const uri = vscode.Uri.file(path.join(root.root, root.source));
+  // The inactive root's source may never have been opened in this journey;
+  // executeCodeActionProvider requires an open text model for the URI and
+  // throws a bare illegal argument otherwise, so open the persisted document
+  // before asserting the inactive root offers no ripr actions.
+  await vscode.workspace.openTextDocument(uri);
   const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
     'vscode.executeCodeActionProvider', uri, new vscode.Range(0, 0, 6, 0));
   assert.strictEqual((actions ?? []).filter(action => {
