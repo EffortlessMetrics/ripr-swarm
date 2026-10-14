@@ -23,8 +23,9 @@ concurrency:
 
 jobs:
   qualification:
+    # Refuse a stale dispatch before reusable allocation or any Cargo bootstrap.
     # Unknown policy is refusal, not permission to use hosted recovery.
-    if: github.event_name == 'workflow_dispatch' && vars.EM_CI_GITHUB_HOSTED_ENABLED == 'false'
+    if: github.event_name == 'workflow_dispatch' && inputs.expected_sha == github.sha && vars.EM_CI_GITHUB_HOSTED_ENABLED == 'false'
     uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@a3125de962a74e7ec2e127d41d7532f66c69334d
     with:
       profile: standard

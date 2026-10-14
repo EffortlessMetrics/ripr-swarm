@@ -191,6 +191,61 @@ fn execute(step: &Step, base: &str, head: &str) -> Result<i32, String> {
     Ok(status.code().unwrap_or(1))
 }
 
+fn prepare_matching_llvm(
+    required: &str,
+    selected: &str,
+    mut run_command: impl FnMut(&str, &[&str]) -> Result<String, String>,
+) -> Result<String, String> {
+    if required != selected
+        || required.split('.').count() != 3
+        || required
+            .split('.')
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("LLVM setup requires the exact repository-selected Rust toolchain".into());
+    }
+    // The active one-job image is writable and ephemeral. Add this component
+    // only to its selected toolchain; neither image activation nor a shared
+    // host/toolchain mutation is part of this consumer setup.
+    run_command(
+        "rustup",
+        &[
+            "component",
+            "add",
+            "llvm-tools-preview",
+            "--toolchain",
+            selected,
+        ],
+    )?;
+    let sysroot = run_command("rustc", &["--print", "sysroot"])?;
+    let version = run_command("rustc", &["-vV"])?;
+    if !version
+        .lines()
+        .any(|line| line == format!("release: {required}"))
+    {
+        return Err("selected compiler version differs from LLVM component toolchain".into());
+    }
+    let host = version
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .ok_or("compiler host missing")?;
+    if host != "x86_64-unknown-linux-gnu" || !std::path::Path::new(&sysroot).is_absolute() {
+        return Err("LLVM setup requires the selected Linux x64 compiler sysroot".into());
+    }
+    let llvm = std::path::Path::new(&sysroot)
+        .join("lib/rustlib")
+        .join(host)
+        .join("bin/llvm-profdata");
+    let observed = run_command(
+        llvm.to_str().ok_or("non-UTF-8 LLVM tool path")?,
+        &["--version"],
+    )?;
+    if observed.trim().is_empty() {
+        return Err("matching llvm-profdata returned no version".into());
+    }
+    Ok(observed)
+}
+
 fn run() -> Result<i32, String> {
     let event: Value = serde_json::from_slice(
         &fs::read(env::var("GITHUB_EVENT_PATH").map_err(|e| e.to_string())?)
@@ -217,6 +272,27 @@ fn run() -> Result<i32, String> {
     // .cargo/config.toml force-redirects linker temps here; nextest's store and
     // RIPR reports also intentionally remain workspace-relative (not binaries).
     fs::create_dir_all("target").map_err(|e| e.to_string())?;
+    let pin: toml::Value =
+        toml::from_str(&fs::read_to_string("rust-toolchain.toml").map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let required = pin["toolchain"]["channel"]
+        .as_str()
+        .ok_or("repository Rust toolchain pin missing")?;
+    let selected = env::var("RUSTUP_TOOLCHAIN")
+        .map_err(|error| format!("central selected toolchain missing: {error}"))?;
+    let llvm_started = Instant::now();
+    let llvm_setup = prepare_matching_llvm(required, &selected, capture);
+    println!(
+        "{}",
+        json!({"phase":"llvm_prerequisite", "toolchain":selected,
+        "outcome": if llvm_setup.is_ok() { "pass" } else { "setup_refusal" },
+        "duration_ms":llvm_started.elapsed().as_millis()})
+    );
+    let llvm_version = llvm_setup?;
+    println!(
+        "{}",
+        json!({"phase":"llvm_prerequisite", "toolchain":selected, "version":llvm_version})
+    );
     let steps = portfolio(&fs::read_to_string(OWNER).map_err(|e| e.to_string())?)?;
     println!(
         "{}",
@@ -378,5 +454,120 @@ mod tests {
         assert_ne!(shim, wrong);
         assert_eq!(execute(&harness(&wrong), "base", "head")?, 29);
         Ok(())
+    }
+
+    #[test]
+    fn reusable_condition_refuses_wrong_sha_before_allocation() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(".github/workflows/contabo-qualification.yml"))
+            .map_err(|e| e.to_string())?;
+        let condition = source
+            .lines()
+            .find_map(|line| line.strip_prefix("    if: "))
+            .ok_or("reusable job condition missing")?;
+        let evaluate = |condition: &str,
+                        event: &str,
+                        expected: &str,
+                        actual: &str,
+                        hosted: &str|
+         -> Result<bool, String> {
+            let mut admitted = true;
+            for term in condition.split(" && ") {
+                admitted &= match term {
+                    "github.event_name == 'workflow_dispatch'" => event == "workflow_dispatch",
+                    "inputs.expected_sha == github.sha" => expected == actual,
+                    "vars.EM_CI_GITHUB_HOSTED_ENABLED == 'false'" => hosted == "false",
+                    _ => return Err(format!("unsupported workflow condition fixture: {term}")),
+                };
+            }
+            Ok(admitted)
+        };
+        let head = "a".repeat(40);
+        let wrong = "b".repeat(40);
+        assert!(evaluate(
+            condition,
+            "workflow_dispatch",
+            &head,
+            &head,
+            "false"
+        )?);
+        assert!(!evaluate(
+            condition,
+            "workflow_dispatch",
+            &wrong,
+            &head,
+            "false"
+        )?);
+        assert!(!evaluate(condition, "pull_request", &head, &head, "false")?);
+        assert!(!evaluate(condition, "workflow_dispatch", &head, &head, "")?);
+        let old = condition.replace("inputs.expected_sha == github.sha && ", "");
+        assert_ne!(condition, old);
+        assert!(
+            evaluate(&old, "workflow_dispatch", &wrong, &head, "false")?,
+            "removing the production guard must admit the wrong source in this control"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn matching_llvm_is_installed_before_the_native_probe() -> Result<(), String> {
+        let mut installed = false;
+        let mut commands = Vec::new();
+        let version = prepare_matching_llvm("1.95.0", "1.95.0", |program, args| {
+            commands.push(format!("{program} {}", args.join(" ")));
+            match (program, args) {
+                (
+                    "rustup",
+                    [
+                        "component",
+                        "add",
+                        "llvm-tools-preview",
+                        "--toolchain",
+                        "1.95.0",
+                    ],
+                ) => {
+                    installed = true;
+                    Ok(String::new())
+                }
+                ("rustc", ["--print", "sysroot"]) => Ok("/job/toolchain".into()),
+                ("rustc", ["-vV"]) => Ok("release: 1.95.0\nhost: x86_64-unknown-linux-gnu".into()),
+                (
+                    "/job/toolchain/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata",
+                    ["--version"],
+                ) if installed => Ok("LLVM version for selected compiler".into()),
+                _ => Err("missing matching LLVM prerequisite".into()),
+            }
+        })?;
+        assert!(!version.is_empty());
+        assert_eq!(
+            commands.first().map(String::as_str),
+            Some("rustup component add llvm-tools-preview --toolchain 1.95.0")
+        );
+        assert_eq!(commands.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_toolchain_or_missing_component_is_not_a_test_skip() {
+        let mut calls = 0;
+        assert!(
+            prepare_matching_llvm("1.95.0", "1.98.1", |_, _| {
+                calls += 1;
+                Ok(String::new())
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 0);
+        assert!(
+            prepare_matching_llvm("1.95.0", "1.95.0", |_, _| {
+                calls += 1;
+                Err("component unavailable".into())
+            })
+            .is_err()
+        );
+        assert_eq!(
+            calls, 1,
+            "setup failure must stop before any compiler/test probe"
+        );
     }
 }
