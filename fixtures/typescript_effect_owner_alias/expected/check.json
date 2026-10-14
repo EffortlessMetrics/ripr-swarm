@@ -1,0 +1,186 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_effect_owner_alias/input",
+  "config_path": "<cwd>/fixtures/typescript_effect_owner_alias/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:48d84ea994c8821b","base_revision":null,"input_identity":"sha256:32f6ea75bab145d4eabdb66c315e350d0b00ee2d35f23ed739a002b0fb926bc0","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_receipt.ts:typescript_preview:eb6f83d9",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_receipt.ts:typescript_preview:eb6f83d9",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "src/receipt.ts",
+        "line": 2,
+        "expression": "  console.log(\"audit\", amount * 9);",
+        "owner": "typescript:src/receipt.ts::emitReceipt"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `emitReceipt`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `emitReceipt`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.", "local flow reaches call effect: console.log(\"audit\", amount * 9); (line 2)", "related test tests/receipt.test.ts:4 unchanged return is not the audit event uses strong exact value oracle: assert.strictEqual(...)", "missing discriminator log contains \"audit\": changed TypeScript call side effect at line 2 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"console.log(\"audit\", amount * 9);","line":2}
+      ],
+      "evidence": ["owner: emitReceipt", "missing_discriminator: log contains \"audit\"", "typescript_oracle_observed: discount(100)", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/receipt.test.ts:5", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`", "raw_evidence_ref: file=src/receipt.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_receipt.ts:typescript_preview:eb6f83d9;owner=emitReceipt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: node_test", "typescript_test_runner: node_test", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: node --test tests/receipt.test.ts"],
+      "missing": ["propagation_unknown: changed value sinks to a non-escaping call effect (`\"audit\"`); all strong assertions observe the owner return value, not this call effect; propagation unknown"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "log contains \"audit\"",
+            "reason": "changed TypeScript call side effect at line 2 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"call_effect","text":"console.log(\"audit\", amount * 9);","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "log contains \"audit\"",
+          "reason": "changed TypeScript call side effect at line 2 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"call_effect","text":"console.log(\"audit\", amount * 9);","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "unchanged return is not the audit event",
+          "file": "tests/receipt.test.ts",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert.strictEqual(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "side_effect changed at src/receipt.ts:2: `console.log(\"audit\", amount * 9);`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "log contains \"audit\"",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "emitReceipt",
+        "owner_kind": "function",
+        "probe_family": "side_effect",
+        "related_test": {
+          "file": "tests/receipt.test.ts",
+          "line": 4,
+          "name": "unchanged return is not the audit event"
+        },
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": "node --test tests/receipt.test.ts"
+        },
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+      },
+      "typescript_repair_packet": {
+        "allowed_edit_surface": [
+          "tests/receipt.test.ts"
+        ],
+        "assertion_shape": "expect(discount(100)).toBe(expected)",
+        "authority_boundary": "preview_advisory_only",
+        "canonical_gap_id": "gap:typescript:typescript_preview:eb6f83d9",
+        "file": "src/receipt.ts",
+        "forbidden_files": [
+          "src/receipt.ts"
+        ],
+        "gap_id": "probe:src_receipt.ts:typescript_preview:eb6f83d9",
+        "language": "typescript",
+        "language_status": "preview",
+        "line": 2,
+        "missing_discriminator": "log contains \"audit\"",
+        "must_not_change": [
+          "Do not edit production code unless the focused proof exposes a real product defect.",
+          "Do not broaden the change beyond this GapRecord and its repair route.",
+          "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
+          "Do not generate tests or call external providers from this packet.",
+          "Do not treat preview-language evidence as gate authority."
+        ],
+        "owner": "emitReceipt",
+        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:eb6f83d9 --verify-command 'node --test tests/receipt.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-eb6f83d9.json",
+        "repair_kind": "AddBoundaryAssertion",
+        "schema_version": "0.5",
+        "source": "typescript_preview_projection",
+        "target_test": "tests/receipt.test.ts::unchanged return is not the audit event",
+        "verify_command": "node --test tests/receipt.test.ts"
+      },
+      "preview_actionability": {
+        "actionability_category": "complete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "",
+        "gap_state": "actionable",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/receipt.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 2,
+            "owner": "emitReceipt",
+            "raw": "file=src/receipt.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_receipt.ts:typescript_preview:eb6f83d9;owner=emitReceipt",
+            "sample": null,
+            "source_id": "probe:src_receipt.ts:typescript_preview:eb6f83d9"
+          }
+        ],
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`",
+        "unlock_condition": null,
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; the repair packet is complete and delegatable (advisory).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; the repair packet is complete and delegatable (advisory).",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/receipt.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/receipt.ts","digest":"sha256:b40e835d8a7e8cd8f8cb504d2f8fcbb01ec8d5910ba893f0ddfc63a999e00379"},{"path":"tests/receipt.test.ts","digest":"sha256:292c4cdf1bf31680b61f9967b5e1171322599fe672231768e1e548eb08579ad5"}]}
+}

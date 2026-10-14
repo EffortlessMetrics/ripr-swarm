@@ -1,0 +1,9 @@
+diff --git a/src/receipt.ts b/src/receipt.ts
+--- a/src/receipt.ts
++++ b/src/receipt.ts
+@@ -1,4 +1,4 @@
+ export function emitReceipt(amount: number): number {
+-  console.log("audit", amount * 7);
++  console.log("audit", amount * 9);
+   return amount - 10;
+ }

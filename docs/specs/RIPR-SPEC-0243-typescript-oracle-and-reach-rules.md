@@ -480,8 +480,14 @@ StaticUnknown families always pass it.
   contains a changed token.
 - **Effect families** (SideEffect, CallDeletion) pass when a strong
   assertion's observed expression shares a changed identifier token, or
-  does not contain the owner name as a substring (the side channel rule,
-  which stays a substring test so that it fails closed).
+  does not contain the owner name or an admitted free-function import local
+  as a substring (the side channel rule, which stays a substring test so
+  that it fails closed). For a direct, named-alias or imported free-function
+  relation, the same module/export/call/shadow checks used by rules 5 and 7
+  and RIPR-SPEC-0251 identify both named and default locals. Mixed direct and
+  aliased calls retain every such local even when another call determines
+  the relation kind. A same-named free export cannot stand for a method.
+  Other effect confirmations and value-family rules stay unchanged (#7514).
 
 **Rule 6. Value-family references match whole identifiers.** In the value
 branch, "references the owner" and "contains a changed token" mean a whole

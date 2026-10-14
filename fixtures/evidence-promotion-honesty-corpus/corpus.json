@@ -5,6 +5,21 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "typescript_owner_alias_return_cannot_observe_effect",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_effect_owner_alias",
+      "vector": "renamed_owner_return_is_not_a_side_channel",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
+      ]
+    },
+    {
       "id": "typescript_empty_each_registers_no_test_evidence",
       "language": "typescript",
       "tier": "pure",
