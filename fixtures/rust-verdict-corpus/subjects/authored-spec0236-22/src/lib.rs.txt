@@ -1,0 +1,11 @@
+fn tier(total: u64) -> u64 {
+    if total >= 100 { 20 } else { 0 }
+}
+
+fn route(total: u64) -> u64 {
+    tier(total)
+}
+
+pub fn checkout(total: u64) -> u64 {
+    route(total)
+}

@@ -21,7 +21,7 @@
         "mutated_line": "if v >= 1 { \"items\" } else { \"item\" }",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: v == 1 now reads items; Plural(3)/suffix(3) still reads items so the test cannot see it"
+        "equivalence_review": "not equivalent: v == 1 now reads items; suffix(3) still reads items so the test cannot see it"
       },
       {
         "replacement": "if v > 3 { \"items\" } else { \"item\" }",

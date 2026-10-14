@@ -21,14 +21,14 @@
         "mutated_line": "if total > 100 { 20 } else { 0 }",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: total == 100 now gives 0; 150 still gives 20"
+        "equivalence_review": "not equivalent: total == 100 now gives 0 instead of 20"
       },
       {
         "replacement": "if total >= 200 { 20 } else { 0 }",
         "mutated_line": "if total >= 200 { 20 } else { 0 }",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: totals 100..=199 give 0, so 150 gives 0"
+        "equivalence_review": "not equivalent: totals 100..=199 now give 0 instead of 20"
       },
       {
         "replacement": "if total >= 100 { 30 } else { 0 }",
