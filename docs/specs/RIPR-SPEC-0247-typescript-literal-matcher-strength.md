@@ -240,8 +240,10 @@ and the rejected alternative. Recorded on #6654.
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
-   `jest-spec0234-ex03`, and for `t.assert.*` by RIPR-SPEC-0252, which
-   credits `nodetest-latefee-t-assert`.
+   `jest-spec0234-ex03`; for `t.assert.*` by RIPR-SPEC-0252, which
+   credits `nodetest-latefee-t-assert`; and for a same-file
+   strict-equality custom matcher by RIPR-SPEC-0262, which credits
+   `jest-cents-custom-matcher`.
 6. **Test-local literal `const` (rule 2, amended 2026-10-14).** Adopted:
    a `const` bound once to a primitive literal at the top level of the
    test body reads as that literal, because a primitive `const` can be
@@ -293,7 +295,9 @@ and the rejected alternative. Recorded on #6654.
   could reach.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
   `toHaveBeenCalledTimes`.
-- No change to committed snapshot strength.
+- No change to committed snapshot strength, except the named committed
+  entry RIPR-SPEC-0258 reads as strong; every other committed snapshot
+  stays medium.
 - No change to `t.assert.*` here (superseded by RIPR-SPEC-0252, which
   reads it as legacy `node:assert`).
 - No change to Rust or Python oracle classification.

@@ -2661,7 +2661,9 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || nested_invocations(&tokens)
-        .any(|(name, plain)| !(plain && (name == NESTED_MATCHES || name == "json" && literal_json)))
+        .any(|(name, plain)| {
+            !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+        })
         || tokens.windows(3).enumerate().any(|(at, window)| {
             window[0].text() == "json"
                 && window[1].text() == "!"
@@ -2669,10 +2671,11 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
         })
 }
 
-/// A bare `matches!` in a macro operand expands to one `match` over its own
-/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
-/// reads for exits; its binding is checked with the invoking macros'.
-const NESTED_MATCHES: &str = "matches";
+/// A bare `matches!` or `format!` in a macro operand expands to one `match`
+/// or call over its own operands (RIPR-SPEC-0197 literal `matches!` and
+/// rendered scalar pins), which the token scan above already reads for
+/// exits; its binding is checked with the invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
@@ -2700,16 +2703,21 @@ fn nested_invocations(
             {
                 return None;
             }
-            let qualified = at
-                .checked_sub(1)
-                .and_then(|before| tokens.get(before))
-                .is_some_and(|token| token.text() == "::");
+            // Inside a token tree `::` lexes as two `:` tokens; a single
+            // `:` is a field or type annotation, not a path.
+            let before = |back: usize| {
+                at.checked_sub(back)
+                    .and_then(|index| tokens.get(index))
+                    .map(|token| token.text())
+            };
+            let qualified =
+                before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
             Some((name.text(), !qualified))
         })
 }
 
-/// The macros `node` invokes: every macro call's path, plus a `matches!`
-/// nested in a macro operand, so the binding check covers it too.
+/// The macros `node` invokes: every macro call's path, plus every name
+/// invoked inside a macro operand, so the binding check covers it too.
 fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
     node.descendants()
         .filter_map(ast::MacroCall::cast)

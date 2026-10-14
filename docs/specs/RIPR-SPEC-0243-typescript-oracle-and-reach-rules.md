@@ -252,7 +252,7 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
-| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
+| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -662,7 +662,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
-- No resolution of custom matchers, `expect.extend`, or helper bodies.
+- No resolution of custom matchers, `expect.extend`, or helper bodies,
+  except a same-file strict-equality matcher (RIPR-SPEC-0262).
 - No expected-value liveness check for ReturnValue or ErrorPath.
 - No infection or propagation modeling.
 - No change to the per-test display oracle (filed separately).

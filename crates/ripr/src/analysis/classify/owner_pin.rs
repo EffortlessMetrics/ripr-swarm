@@ -50,7 +50,8 @@ use super::call_identity::{CallTarget, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
-    flattened_use_paths, use_statement_binds_name, use_statement_first_segment,
+    flattened_use_paths, split_top_level_arguments, use_statement_binds_name,
+    use_statement_first_segment,
 };
 use crate::analysis::extract::{
     err_return_guard_twin, fact_body_defines_callee_fn, fact_body_let_shadow_line,
@@ -1810,7 +1811,10 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
-        let reads_assert_eq = !is_guard && is_plain_macro(&assertion.text, "assert_eq");
+        // A nested `format!` is read only as a rendered scalar pin.
+        let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
+        let reads_assert_eq =
+            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -1820,18 +1824,36 @@ impl OwnerReturnPin {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
+            // trap-shine-debug-exact-control: the std rendering of a
+            // primitive scalar names its value, so an exact string pins it.
+            let rendered = (self.returns_scalar && matches!(self.path, ReturnPathGate::Any))
+                .then(|| {
+                    [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                        rendered_scalar_operand(operands[at])
+                            .filter(|_| is_plain_string_literal(operands[other]))
+                            // #7905: every NaN payload renders as `NaN`.
+                            .filter(|_| operands[other].trim() != "\"NaN\"")
+                            .and_then(|call| self.awaited_call_shape(call, &self.name))
+                            .map(|call| (call, operands[other]))
+                    })
+                })
+                .flatten();
             match (
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
+                rendered,
             ) {
-                (Some(call), None) => (call, operands[1]),
-                (None, Some(call)) => (call, operands[0]),
+                (_, _, Some(pin)) if renders => pin,
+                _ if renders => return false,
+                (Some(call), None, _) => (call, operands[1]),
+                (None, Some(call), _) => (call, operands[0]),
+                (None, None, Some(pin)) => pin,
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
                 // Only a test that names the owner outside this assertion
                 // can bind its result, and only in the test's own body: a
                 // borrowed helper assertion names the helper's parameters,
                 // not the test's bindings (#6482).
-                (None, None)
+                (None, None, None)
                     if (test.start_line..=test.end_line).contains(&assertion.line)
                         && owner_named_outside(test, &assertion.text, &self.name) =>
                 {
@@ -5157,6 +5179,22 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
+/// `assert_eq!` whose only nested macros are `format!`, which
+/// [`rendered_scalar_operand`] reads.
+fn is_assert_eq_of_render(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [(first, _), nested @ ..] = invocations.as_slice() else {
+        return false;
+    };
+    *first == "assert_eq"
+        && !nested.is_empty()
+        && nested.iter().all(|(name, _)| *name == "format")
+        && masked
+            .find("assert_eq")
+            .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
 /// Whether a macro other than a known non-binding one mentions `name` in
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
@@ -6621,6 +6659,33 @@ fn let_initializer(binding: &str) -> Option<&str> {
     };
     let initializer = initializer.strip_prefix('=')?;
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
+}
+
+/// trap-shine-debug-exact-control: the call `operand` renders when it is
+/// exactly `format!("{}", call)` or `format!("{:?}", call)`. A primitive
+/// scalar's std `Display` and `Debug` text differs for every value but NaN,
+/// so comparing it with an exact string pins the value; the text `NaN`
+/// is refused (#7905). Width, precision,
+/// alternate and hex flags, extra arguments and other wrappers are refused.
+fn rendered_scalar_operand(operand: &str) -> Option<&str> {
+    let inner = operand
+        .trim()
+        .strip_prefix("format!")?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    match split_top_level_arguments(inner)?.as_slice() {
+        [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
+        _ => None,
+    }
+}
+
+/// A plain `"..."` string literal with no escapes or inner quotes.
+fn is_plain_string_literal(text: &str) -> bool {
+    text.trim()
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|inner| !inner.contains(['"', '\\']))
 }
 
 /// cell-0094: whether `owner` declares a primitive scalar return type that
