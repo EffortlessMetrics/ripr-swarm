@@ -6413,7 +6413,11 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
         let declared = whole_word_offsets(&masked, &returned)
             .into_iter()
             .any(|offset| {
-                let before = masked[..offset].trim_end();
+                // #7835 review: `type r#u32` declares the same name.
+                let before = masked[..offset]
+                    .strip_suffix("r#")
+                    .unwrap_or(&masked[..offset]);
+                let before = before.trim_end();
                 ["struct", "enum", "union", "type", "trait"]
                     .iter()
                     .any(|keyword| before.ends_with(keyword))

@@ -6255,6 +6255,10 @@ fn a_shadowed_primitive_return_is_not_a_scalar() {
         "#[allow(non_camel_case_types)]\npub struct u32(std::cell::Cell<u64>);\n",
         "#[allow(non_camel_case_types)]\npub type u32 = std::cell::Cell<u64>;\n",
         "use std::cell::Cell as u32;\n",
+        // #7835 review: a raw identifier declares the same name.
+        "#[allow(non_camel_case_types)]\npub struct r#u32(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type r#u32 = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as r#u32;\n",
     ] {
         let lib = unit_tests(prelude, body);
         assert!(lib.starts_with(prelude), "{lib}");
@@ -6266,6 +6270,7 @@ fn a_shadowed_primitive_return_is_not_a_scalar() {
         "#[allow(non_camel_case_types)]\npub struct gauge(std::cell::Cell<u64>);\n",
         "#[allow(non_camel_case_types)]\npub type gauge = std::cell::Cell<u64>;\n",
         "use std::cell::Cell as gauge;\n",
+        "#[allow(non_camel_case_types)]\npub type r#gauge = std::cell::Cell<u64>;\n",
         "pub fn widen(x: u8) -> u64 {\n    x as u64 + 0 as u32 as u64\n}\n",
     ] {
         let lib = unit_tests(prelude, body);
