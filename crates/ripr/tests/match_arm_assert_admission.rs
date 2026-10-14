@@ -170,9 +170,49 @@ fn unestablished_plain_assertion_names_its_macro_in_human_and_json() -> Result<(
         .find(|finding| finding.probe.family == ProbeFamily::MatchArm)
         .ok_or("MatchArm must be present")?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
-    for format in [OutputFormat::HumanFull, OutputFormat::Json] {
+    for format in [
+        OutputFormat::Human,
+        OutputFormat::HumanFull,
+        OutputFormat::Json,
+    ] {
         let text = render_check(&output, &format)?;
         assert!(text.contains("`assert!`"), "{text}");
+        assert!(!text.contains("`assert_eq!`"), "{text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn shadowed_reachable_unrevealed_assertion_names_its_macro_in_all_formats() -> Result<(), String> {
+    let output = analyze_output(
+        "macro_rules! assert { ($cond:expr) => { let _ = $cond; }; }",
+        "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));",
+    )?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::MatchArm)
+        .ok_or("MatchArm must be present")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{finding:?}"
+    );
+    for format in [
+        OutputFormat::Human,
+        OutputFormat::HumanFull,
+        OutputFormat::Json,
+    ] {
+        let text = render_check(&output, &format)?;
+        if format == OutputFormat::Human {
+            assert!(text.contains("standard `assert!`"), "{text}");
+            assert!(text.contains("Not credited: `assert!`"), "{text}");
+        }
+        // Full human and JSON retain their existing refusal representation.
+        assert!(
+            text.contains("rust_assertion_context_unestablished"),
+            "{text}"
+        );
         assert!(!text.contains("`assert_eq!`"), "{text}");
     }
     Ok(())
