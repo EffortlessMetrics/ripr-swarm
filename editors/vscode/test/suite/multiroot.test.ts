@@ -319,7 +319,22 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
             ?.components?.map(c => `${c.component}:${c.state}${c.kind ? `(${c.kind})` : ''}`),
         });
       });
-      const status = await sampleStatus() as { analysis_status?: { effective_root?: string; root_state?: string } };
+      // The bound-root status is sampled through a bounded wait: a root
+      // reconciliation restart can transiently project a status without the
+      // effective root (the restart settles within the window).
+      const boundStatus = async () => {
+        const sampled = await sampleStatus() as { analysis_status?: { effective_root?: string; root_state?: string } };
+        return sampled.analysis_status ?? {};
+      };
+      await waitFor(async () => {
+        const s = await boundStatus();
+        return s.effective_root?.replace(/\\/g, '/') === expected.root.replace(/\\/g, '/')
+          && s.root_state === 'selected_single_root';
+      }, 'framed workspace status bound to the selected root', 20_000, async () => {
+        const s = await boundStatus();
+        return JSON.stringify(s);
+      });
+      const status = { analysis_status: await boundStatus() };
       // The server's status projects its canonical root spelling (forward
       // slashes on every host); identity compares separators-insensitively.
       assert.strictEqual(status.analysis_status?.effective_root?.replace(/\\/g, '/'),
