@@ -125,11 +125,11 @@ Read the buckets this way:
 | Bucket | Meaning | Usual action |
 | --- | --- | --- |
 | `still_present` | Reviewed baseline debt still appears in current evidence. | Keep visible or burn down with a focused test. |
-| `resolved` | Reviewed baseline debt no longer appears in current evidence. | Remove it with shrink-only update after review. |
+| `resolved` | Reviewed baseline debt no longer appears in current evidence, with no analyzer-build identity discontinuity between the two sides. | Remove it with shrink-only update after review. |
 | `new_policy_eligible` | Current policy-eligible gap is not in the baseline. | Add a focused test or acknowledge visibly. |
 | `acknowledged` | Current gap was accepted for this PR with a label such as `ripr-waive`. | Keep visible in review; do not treat as hidden success. |
 | `suppressed` | Current gap is hidden or configured off by repository policy. | Review suppression policy separately from baseline debt. |
-| `stale_baseline_entry` | Baseline entry parses but cannot join cleanly to current evidence. | Repair or remove after review. |
+| `stale_baseline_entry` | Baseline entry parses but cannot join cleanly to current evidence, including analyzer-version identity discontinuity across an upgrade (issue #7421). | Repair or remove after review; for a version discontinuity, re-create the baseline with the current build. |
 | `invalid_baseline_entry` | Baseline entry is malformed or lacks stable identity fields. | Repair the baseline before relying on stricter modes. |
 | `missing_current_input` | Current gate evidence was unavailable or unreadable. | Regenerate the missing artifact. |
 

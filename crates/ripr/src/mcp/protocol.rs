@@ -704,6 +704,33 @@ fn status_output_schema() -> Value {
     })
 }
 
+/// Scope facts emitted by `workspace::scope_disclosure` for a committed snapshot.
+/// No snapshot or a clean tree emits null; untracked details are optional.
+fn scope_disclosure_schema() -> Value {
+    json!({
+        "type": ["object", "null"],
+        "properties": {
+            "analyzed": { "type": "string", "const": "committed default-branch diff" },
+            "uncommitted_edits": { "type": "string", "const": "outside this analysis" },
+            "note": { "type": "string" },
+            "untracked_edits": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 3 },
+                    "total": { "type": "integer", "minimum": 1 },
+                    "more": { "type": "integer", "minimum": 0 },
+                    "listing_example": { "type": "string" },
+                    "remedy": { "type": "string" }
+                },
+                "required": ["files", "total", "more", "listing_example", "remedy"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["analyzed", "uncommitted_edits", "note"],
+        "additionalProperties": false
+    })
+}
+
 fn status_success_schema() -> Value {
     json!({
         "type": "object",
@@ -864,6 +891,7 @@ fn status_success_schema() -> Value {
                         "required": ["kind", "base", "mode", "scope"],
                         "additionalProperties": false
                     },
+                    "scope": scope_disclosure_schema(),
                     "last_completed_snapshot": { "type": ["object", "null"] },
                     "last_known_good": { "type": ["object", "null"] },
                     "last_failure": { "type": ["object", "null"] },
@@ -921,6 +949,7 @@ fn status_success_schema() -> Value {
                     "attempt_state",
                     "current_attempt",
                     "current_desired_input",
+                    "scope",
                     "last_completed_snapshot",
                     "last_known_good",
                     "last_failure",
@@ -1000,6 +1029,7 @@ fn refresh_output_schema() -> Value {
                         "required": ["state", "failure"],
                         "additionalProperties": false
                     },
+                    "scope": scope_disclosure_schema(),
                     "snapshot": { "type": ["object", "null"] },
                     "last_known_good": { "type": ["object", "null"] },
                     "claim_boundary": { "type": "string" },
@@ -1008,7 +1038,7 @@ fn refresh_output_schema() -> Value {
                         "items": { "type": "string" }
                     }
                 },
-                "required": ["schema_version", "attempt", "snapshot", "last_known_good", "claim_boundary", "limitations"],
+                "required": ["schema_version", "attempt", "scope", "snapshot", "last_known_good", "claim_boundary", "limitations"],
                 "additionalProperties": false
             },
             typed_failure_document_schema(REFRESH_SCHEMA_VERSION)

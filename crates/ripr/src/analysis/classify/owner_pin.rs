@@ -51,7 +51,8 @@ use super::call_identity::{CallTarget, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
-    flattened_use_paths, use_statement_binds_name, use_statement_first_segment,
+    flattened_use_paths, split_top_level_arguments, use_statement_binds_name,
+    use_statement_first_segment,
 };
 use crate::analysis::extract::{
     err_return_guard_twin, fact_body_defines_callee_fn, fact_body_let_shadow_line,
@@ -553,6 +554,25 @@ impl OwnerPinSyntax {
         self.refusal(test, assertion, index).is_none()
     }
 
+    /// The context gates every assertion shares (parser-backed file,
+    /// resolved module composition) with no visible binding that may rebind
+    /// `assert!`, `assert_ne!` or `matches!` on the assertion's line.
+    /// RIPR-SPEC-0231 sibling exclusion credits an `assert_ne!` or
+    /// `assert!(!matches!(..))` only through it.
+    pub(in crate::analysis) fn admits_assertion_context(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        self.context_ambiguities(test, assertion.line, index)
+            .is_ok_and(|ambiguous| {
+                !["assert", "assert_ne", "matches"]
+                    .iter()
+                    .any(|name| ambiguous.contains(*name))
+            })
+    }
+
     /// The test-local check helper an `assertion` this admission admits is
     /// borrowed from (#6482); `None` for the test's own assertion or one it
     /// refuses.
@@ -575,6 +595,186 @@ impl OwnerPinSyntax {
             .cloned()
     }
 
+    /// Exact call syntax is authority only when the selected source composes
+    /// through admitted module declarations. This shares the assertion gate,
+    /// including its supported test-build cfg rules.
+    pub(in crate::analysis) fn targeted_source_provenance_is_admitted(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> bool {
+        if self.source_provenance_refusal(test, index).is_some() {
+            return false;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        let mut by_file = self.by_file.borrow_mut();
+        facts.role_provenance.edges.iter().all(|edge| {
+            let Some(parent) = index.files().get(&edge.parent) else {
+                return false;
+            };
+            by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_targeted_module_declaration(edge.line, &edge.declaration)
+        })
+    }
+
+    /// Call occurrence parsing borrows binding authority only. It does not
+    /// grant assertion execution, oracle strength or receiver identity.
+    pub(in crate::analysis) fn targeted_macro_binding_is_unambiguous(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
+            let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
+                return false;
+            };
+            let verified = if matches!(root, "std" | "core") {
+                matches!(leaf, "assert" | "assert_eq" | "assert_ne")
+                    && index
+                        .drop_in_manifests
+                        .unbound_standard_root(&test.file, root)
+            } else {
+                matches!(leaf, "assert_eq" | "assert_ne")
+                    && index.drop_in_manifests.verified(&test.file, root)
+            };
+            if !verified {
+                return false;
+            }
+            // A qualified root does not borrow a custom bare leaf's
+            // ambiguity. Source availability and all binding-capable
+            // statement macros are checked separately by the collector.
+            let Some(facts) = index.files().get(&test.file) else {
+                return false;
+            };
+            return self.targeted_source_provenance_is_admitted(test, index)
+                && std::iter::once(&test.file)
+                    .chain(facts.role_provenance.edges.iter().map(|e| &e.parent))
+                    .all(|path| {
+                        index.files().get(path).is_some_and(|facts| {
+                            crate::analysis::syntax::parse_clean_source_file(&facts.source)
+                                .is_some_and(|file| {
+                                    crate::analysis::syntax::ra::assertion_root_is_available(
+                                        name,
+                                        file.tree().syntax(),
+                                    )
+                                })
+                        })
+                    })
+                && facts.role_provenance.edges.iter().all(|edge| {
+                    parse_clean_source_file(&edge.declaration).is_some_and(|file| {
+                        file.tree()
+                            .syntax()
+                            .descendants()
+                            .filter_map(ast::Module::cast)
+                            .all(|module| {
+                                crate::analysis::syntax::ra::assertion_root_is_available(
+                                    name,
+                                    module.syntax(),
+                                )
+                            })
+                    })
+                });
+        } else {
+            if name.contains("::") {
+                return false;
+            }
+            name
+        };
+        self.targeted_source_provenance_is_admitted(test, index)
+            && !self.trusted_macro_ambiguities(index).contains(name)
+            && !self
+                .scoped_names_for(test, line)
+                .iter()
+                .any(|candidate| candidate == name)
+            && !self
+                .crate_names_for(test, index)
+                .iter()
+                .any(|candidate| candidate == name)
+    }
+
+    fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
+        ambiguous
+            .get_or_insert_with(|| {
+                let (mut global, scoped, by_root) =
+                    trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
+                *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+                let mut by_root = by_root;
+                for (root, names) in &self.withheld.by_root {
+                    by_root
+                        .entry(root.clone())
+                        .or_default()
+                        .extend(names.iter().cloned());
+                }
+                *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+                // Withheld crate-root files' crate-local sites are routed by
+                // root below; every other withheld site is workspace-wide.
+                global.extend(self.withheld.trusted.iter().cloned());
+                global
+            })
+            .clone()
+    }
+
+    /// File composition authority shared by assertion admission and targeted
+    /// assertion operands. Syntax in an included or unadmitted module cannot
+    /// borrow a standard macro binding from an incomplete scope view.
+    fn source_provenance_refusal(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let Some(facts) = index
+            .files()
+            .get(&test.file)
+            .filter(|facts| !facts.used_lexical_fallback)
+        else {
+            return Some(AssertionRefusal::LexicalFallback);
+        };
+        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
+            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
+        }
+        let mut by_file = self.by_file.borrow_mut();
+        for edge in &facts.role_provenance.edges {
+            // Module composition already owns resolution. Include expansions
+            // lack an exact declaration coordinate here, so remain unknown.
+            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                return Some(AssertionRefusal::IncludedFile {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                });
+            }
+            let Some(parent) = index
+                .files()
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+            else {
+                return Some(AssertionRefusal::LexicalFallback);
+            };
+            if !by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_module_declaration(edge.line, &edge.declaration)
+            {
+                return Some(AssertionRefusal::ModuleDeclaration {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                    declaration: edge.declaration.clone(),
+                });
+            }
+        }
+        None
+    }
+
     /// The gates every assertion of `test` shares, whatever its macro: a
     /// parser-backed file, resolved module composition, and each module
     /// declaration on the chain admitted. `Ok` holds the macro names some
@@ -585,28 +785,14 @@ impl OwnerPinSyntax {
         line: usize,
         index: &RustIndex,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
+        if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            return Err(Box::new(refusal));
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
-        let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped, by_root) =
-                trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
-            *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
-            let mut by_root = by_root;
-            for (root, names) in &self.withheld.by_root {
-                by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .extend(names.iter().cloned());
-            }
-            *self.crate_macro_bindings.borrow_mut() = Some(by_root);
-            // Withheld crate-root files' crate-local sites are routed by
-            // root below; every other withheld site is workspace-wide.
-            global.extend(self.withheld.trusted.iter().cloned());
-            global
-        });
+        let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
             .files()
             .get(&test.file)
@@ -614,9 +800,6 @@ impl OwnerPinSyntax {
         else {
             return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
-            return Err(Box::new(AssertionRefusal::UnresolvedModule(reason.clone())));
-        }
         let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
         let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
             let names = local_empty_macro_names(&facts.source);
@@ -646,35 +829,6 @@ impl OwnerPinSyntax {
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
         ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
-        let mut by_file = self.by_file.borrow_mut();
-        for edge in &facts.role_provenance.edges {
-            // Module composition already owns resolution. Include expansions
-            // lack an exact declaration coordinate here, so remain unknown.
-            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-                return Err(Box::new(AssertionRefusal::IncludedFile {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                }));
-            }
-            let Some(parent) = index
-                .files()
-                .get(&edge.parent)
-                .filter(|facts| !facts.used_lexical_fallback)
-            else {
-                return Err(Box::new(AssertionRefusal::LexicalFallback));
-            };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
-                .admits_module_declaration(edge.line, &edge.declaration)
-            {
-                return Err(Box::new(AssertionRefusal::ModuleDeclaration {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                    declaration: edge.declaration.clone(),
-                }));
-            }
-        }
         Ok(ambiguous)
     }
 
@@ -1801,7 +1955,10 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
-        let reads_assert_eq = !is_guard && is_plain_macro(&assertion.text, "assert_eq");
+        // A nested `format!` is read only as a rendered scalar pin.
+        let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
+        let reads_assert_eq =
+            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -1813,18 +1970,36 @@ impl OwnerReturnPin {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
+            // trap-shine-debug-exact-control: the std rendering of a
+            // primitive scalar names its value, so an exact string pins it.
+            let rendered = (self.returns_scalar && matches!(self.path, ReturnPathGate::Any))
+                .then(|| {
+                    [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                        rendered_scalar_operand(operands[at])
+                            .filter(|_| is_plain_string_literal(operands[other]))
+                            // #7905: every NaN payload renders as `NaN`.
+                            .filter(|_| operands[other].trim() != "\"NaN\"")
+                            .and_then(|call| self.awaited_call_shape(call, &self.name))
+                            .map(|call| (call, operands[other], None))
+                    })
+                })
+                .flatten();
             match (
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
+                rendered,
             ) {
-                (Some(call), None) => (call, operands[1], Some(operands[0])),
-                (None, Some(call)) => (call, operands[0], Some(operands[1])),
+                (_, _, Some(pin)) if renders => pin,
+                _ if renders => return false,
+                (Some(call), None, _) => (call, operands[1], Some(operands[0])),
+                (None, Some(call), _) => (call, operands[0], Some(operands[1])),
+                (None, None, Some(pin)) => pin,
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
                 // Only a test that names the owner outside this assertion
                 // can bind its result, and only in the test's own body: a
                 // borrowed helper assertion names the helper's parameters,
                 // not the test's bindings (#6482).
-                (None, None)
+                (None, None, None)
                     if (test.start_line..=test.end_line).contains(&assertion.line)
                         && owner_named_outside(test, &assertion.text, &self.name) =>
                 {
@@ -3701,9 +3876,13 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
             continue;
         }
         let before = masked[..offset].trim_end();
+        // Step past the whole boundary character: a non-ASCII one is more
+        // than one byte, and `position + 1` would split it (#7926 review).
         let start = before
-            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .map_or(0, |position| position + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, character)| !(character.is_ascii_alphanumeric() || *character == '_'))
+            .map_or(0, |(position, character)| position + character.len_utf8());
         let name = &before[start..];
         if !is_plain_identifier(name) || NEGATING_KEYWORDS.contains(&name) {
             continue;
@@ -5163,6 +5342,22 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
+/// `assert_eq!` whose only nested macros are `format!`, which
+/// [`rendered_scalar_operand`] reads.
+fn is_assert_eq_of_render(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [(first, _), nested @ ..] = invocations.as_slice() else {
+        return false;
+    };
+    *first == "assert_eq"
+        && !nested.is_empty()
+        && nested.iter().all(|(name, _)| *name == "format")
+        && masked
+            .find("assert_eq")
+            .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
 /// Whether a macro other than a known non-binding one mentions `name` in
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
@@ -5181,17 +5376,91 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
         })
 }
 
-/// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like. Related-test reach shares the
-/// single-file rename refusal (#7067).
+/// Whether the file renames some item to `name` (`use a::b as name;`,
+/// `extern crate a as name;`), so `name` may not be the item it looks like.
+/// Related-test reach shares the single-file rename refusal (#7067).
+///
+/// Only an `as` inside a `use` or `extern crate` item renames: a cast
+/// (`letters as u32`) or a qualified path (`<T as Clone>::clone`) in plain
+/// code binds no name, so it does not make `u32` or `Clone` something
+/// else. Lexical, so a `use` in any module, function body or macro body
+/// counts. An `as` inside a macro invocation's arguments or an attribute
+/// counts too: the macro may expand it into a `use`
+/// (`import!(other::Fake as u32);`), and ripr does not expand macros.
 pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "as")
+    let spans = rename_item_spans(&masked);
+    whole_word_offsets(&masked, "as").into_iter().any(|offset| {
+        starts_with_word(masked[offset + "as".len()..].trim_start(), name)
+            && spans.iter().any(|span| span.contains(&offset))
+    })
+}
+
+/// The byte spans in `masked` where an `as` may rename: every `use ..;`
+/// and `extern crate ..;` item, from the keyword to its `;` (or the end of
+/// the text when the `;` is missing, which keeps an unterminated item
+/// renaming), every macro invocation's delimited arguments and every
+/// attribute (`#[..]`, `#![..]`). An unmatched delimiter runs to the end of
+/// the text, which fails closed.
+fn rename_item_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let delimited = |open_at: usize| {
+        let (open, close) = match bytes[open_at] {
+            b'(' => (b'(', b')'),
+            b'[' => (b'[', b']'),
+            _ => (b'{', b'}'),
+        };
+        open_at..matching_close(masked, open_at, open, close).unwrap_or(masked.len())
+    };
+    // Any `name!` followed by a delimiter, whatever the name: a Unicode or
+    // keyword-like macro name still expands its arguments (#7926 review).
+    // A negation such as `if !(x)` adds a span too, which only refuses more.
+    let macro_spans = masked.match_indices('!').filter_map(|(bang, _)| {
+        let named = masked[..bang]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|character| character.is_alphanumeric() || character == '_');
+        let after = masked[bang + 1..].trim_start();
+        (named && after.starts_with(['(', '[', '{'])).then(|| delimited(masked.len() - after.len()))
+    });
+    let attribute_spans = masked.match_indices('#').filter_map(|(hash, _)| {
+        let after = masked[hash + 1..].trim_start();
+        let after = after.strip_prefix('!').map_or(after, str::trim_start);
+        after
+            .starts_with('[')
+            .then(|| delimited(masked.len() - after.len()))
+    });
+    let mut spans: Vec<std::ops::Range<usize>> = macro_spans.chain(attribute_spans).collect();
+    spans.extend(rename_statement_spans(masked));
+    spans
+}
+
+/// The `use ..;` and `extern crate ..;` items of [`rename_item_spans`].
+fn rename_statement_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let item_end = |from: usize| {
+        masked[from..]
+            .find(';')
+            .map_or(masked.len(), |end| from + end)
+    };
+    // `impl Trait + use<'a>` (precise capturing) is not an import.
+    let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
-        .any(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .filter(|offset| !masked[offset + "use".len()..].trim_start().starts_with('<'))
+        .map(|offset| offset..item_end(offset))
+        .collect();
+    spans.extend(
+        whole_word_offsets(masked, "extern")
+            .into_iter()
+            .filter(|offset| {
+                starts_with_word(masked[offset + "extern".len()..].trim_start(), "crate")
+            })
+            .map(|offset| offset..item_end(offset)),
+    );
+    spans
 }
 
 /// An alias cannot be excluded merely because its spelling differs from an
@@ -6627,6 +6896,33 @@ fn let_initializer(binding: &str) -> Option<&str> {
     };
     let initializer = initializer.strip_prefix('=')?;
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
+}
+
+/// trap-shine-debug-exact-control: the call `operand` renders when it is
+/// exactly `format!("{}", call)` or `format!("{:?}", call)`. A primitive
+/// scalar's std `Display` and `Debug` text differs for every value but NaN,
+/// so comparing it with an exact string pins the value; the text `NaN`
+/// is refused (#7905). Width, precision,
+/// alternate and hex flags, extra arguments and other wrappers are refused.
+fn rendered_scalar_operand(operand: &str) -> Option<&str> {
+    let inner = operand
+        .trim()
+        .strip_prefix("format!")?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    match split_top_level_arguments(inner)?.as_slice() {
+        [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
+        _ => None,
+    }
+}
+
+/// A plain `"..."` string literal with no escapes or inner quotes.
+fn is_plain_string_literal(text: &str) -> bool {
+    text.trim()
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|inner| !inner.contains(['"', '\\']))
 }
 
 /// cell-0094: whether `owner` declares a primitive scalar return type that

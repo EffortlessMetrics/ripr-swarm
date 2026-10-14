@@ -86,6 +86,8 @@ mod parameter_boundary_tests;
 #[cfg(test)]
 mod record_field_boundary_tests;
 #[cfg(test)]
+mod replacement_identity_tests;
+#[cfg(test)]
 mod where_bound_boundary_tests;
 
 #[cfg(test)]

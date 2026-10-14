@@ -215,8 +215,12 @@ loses its only finding.
 
 ### A guard-only edit is the guard's predicate
 
-When an edit lies wholly inside an arm's guard (`n if 0 > n =>` from
-`n if n < 0 =>`), the line carries the guard's `predicate` finding alone.
+When an edit lies wholly inside one comparison of an arm's guard
+(`n if 0 > n =>` from `n if n < 0 =>`), the line carries the guard's
+`predicate` finding alone. A deleted or added conjunct (`n if a && 0 > n`
+to `n if 0 > n`) is more than that comparison's edit, so the arm head
+stays; an edit inside one operand of an unchanged `&&`/`||` chain is
+still the guard predicate's.
 Arm selection never evaluates guards, so an arm finding there can only
 read unconfirmed, while the predicate's boundary pairing is the
 discriminator the edit needs. The arm head is kept when the edit reaches
@@ -228,11 +232,13 @@ value, so when the owner body's only `match` is on a parameter
 (`match points {`), the guard's boundary reads that parameter's test
 inputs and can name `p == 100` as missing. The operand stays unread when:
 
-- the body has a second `match` (the arm could belong to either);
+- the body has a second `match` keyword, however spelled (`match(other)`,
+  or `match` ending its line), since the arm could belong to either;
 - the binding's name appears anywhere but inside a one-line guard,
   between `if` and `=>`: on another line or in the arm body after `=>`
-  (a `let`, a loop variable, a closure parameter), or in a guard that holds
-  a closure parameter list;
+  (a `let`, a loop variable, a closure parameter), or in a guard that is
+  not a plain expression (a block, a statement, a closure, a `let`, `for`
+  or `match`);
 - the parameter appears anywhere but the signature (which ends at its
   first `{`) and its `match` line, read with comments and string contents
   masked so neither hides code after it (`let points = points - 50;`, a closure
@@ -241,7 +247,10 @@ inputs and can name `p == 100` as missing. The operand stays unread when:
 - the binding's name may resolve to a constant (a `const` or `static` of
   that name in the owner file, or an import of it), since the pattern then
   compares the constant instead of binding the scrutinee, or the owner
-  file is unavailable;
+  file is unavailable, does not parse cleanly, or may declare items through
+  a macro (`macro_rules!`, `include!`, a macro call at the item level of
+  any module, or a statement macro inside the owner; a statement macro in
+  another function scopes its items there and does not count);
 - the binding is not a bare identifier.
 
 The old line such an edit replaced (its positional counterpart, not any
