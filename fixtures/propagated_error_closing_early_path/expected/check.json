@@ -98,8 +98,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
-      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "recommended_next_step": "Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.",
+      "suggested_next_action": "Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

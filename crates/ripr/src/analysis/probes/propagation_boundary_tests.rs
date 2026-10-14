@@ -192,3 +192,60 @@ fn an_exact_sibling_error_does_not_confirm_the_changed_question_mark() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = "#[derive(Debug, PartialEq)]\nenum Failure { Missing }\nfn check(early: bool, value: Option<Result<(), Failure>>) -> Result<(), Failure> {\n    if early { return Err(Failure::Missing); }\n    value .ok_or(\n        Failure::Missing\n    )?\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn only_early_error() {\n        assert_eq!(check(true, None), Err(Failure::Missing));\n    }\n}\n";
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let mut index = RustIndex::default();
+    index.insert_file(path.clone(), facts, true);
+    let changed = ChangedFile {
+        path,
+        added_lines: [5, 7]
+            .into_iter()
+            .map(|line| ChangedLine {
+                line,
+                new_side_line: line,
+                text: source.lines().nth(line - 1).unwrap().to_string(),
+            })
+            .collect(),
+        removed_lines: Vec::new(),
+    };
+    let seeded = super::diff::probes_for_file_with_relations(Path::new("."), &changed, &index, &[]);
+    let errors = seeded
+        .iter()
+        .filter(|s| s.probe.family == ProbeFamily::ErrorPath)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        errors.len(),
+        1,
+        "canonical subject must remain deduplicated: {errors:?}"
+    );
+    let error = errors[0];
+    assert!(error.probe.expression.ends_with(")?"));
+    let origin = error
+        .propagation_origin
+        .as_ref()
+        .ok_or("deduplication lost the closing mutation site")?;
+    assert_eq!(origin.new_side_line, 7);
+    let candidates = crate::analysis::classify::RelatedTestCandidateIndex::new(&index);
+    let finding = crate::analysis::classifier::classify_probe_with_candidate_index(
+        &error.probe,
+        &index,
+        true,
+        None,
+        &candidates,
+        Some(origin),
+    );
+    assert_ne!(finding.class, crate::domain::ExposureClass::Exposed);
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("propagation_boundary_activation_unestablished")
+    );
+    Ok(())
+}

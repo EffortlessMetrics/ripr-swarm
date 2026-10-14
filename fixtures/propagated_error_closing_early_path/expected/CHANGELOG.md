@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (3)
+
+Reason:
+RIPR-SPEC-0197: changed propagation activation requires path-specific inspection despite an existing exact sibling-error oracle.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

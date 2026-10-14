@@ -17,7 +17,7 @@ Start here:
   Changed behavior: value.ok_or( Failure::Missing )?
   Missing discriminator: No exact error variant discriminator was detected
   Related test: src/lib.rs:16 observes_only_the_early_error (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Assert the exact error variant or payload instead of only is_err().
+  Next step: Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
     - reach yes: Related tests appear to reach check: observes_only_the_early_error
     - infection yes: Reachable tests can plausibly activate this changed behavior

@@ -59,7 +59,7 @@ pub(crate) fn probes_for_file_with_relations(
         index,
         changed_nodes: &changed_nodes,
     };
-    let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
+    let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
         &changed.path,
@@ -104,8 +104,12 @@ pub(crate) fn probes_for_file_with_relations(
                 subject.start_byte,
                 ProbeFamily::ErrorPath.as_str().to_string(),
             );
-            if !emitted_parser_shapes.contains(&key) {
-                emitted_parser_shapes.push(key);
+            {
+                // A changed opening line may already have seeded this subject.
+                // Replace that seed so deduplication cannot discard the closing
+                // boundary origin (and its changed-exit activation requirement).
+                let previous = emitted_parser_shapes.get(&key).copied();
+                emitted_parser_shapes.insert(key, previous.unwrap_or(probes.len()));
                 let canonical = ChangedLine {
                     line: subject.line,
                     new_side_line: subject.line,
@@ -124,7 +128,11 @@ pub(crate) fn probes_for_file_with_relations(
                 probe.owner = Some(subject.owner.clone());
                 let mut seeded = SeededProbe::from_probe(probe);
                 seeded.propagation_origin = Some(added.clone());
-                probes.push(seeded);
+                if let Some(previous) = previous {
+                    probes[previous] = seeded;
+                } else {
+                    probes.push(seeded);
+                }
             }
         }
         let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
@@ -178,10 +186,10 @@ pub(crate) fn probes_for_file_with_relations(
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
                 let key = (shape.start_byte, shape.family.as_str().to_string());
-                if emitted_parser_shapes.iter().any(|current| current == &key) {
+                if emitted_parser_shapes.contains_key(&key) {
                     continue;
                 }
-                emitted_parser_shapes.push(key);
+                emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
                 let parser_span = parser_span_for_canonical_shape(&canonical_text, &shape);
                 let canonical_line = ChangedLine {

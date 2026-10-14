@@ -43,7 +43,7 @@ Weakness
   - No exact error variant discriminator was detected
 
 Next step
-  Assert the exact error variant or payload instead of only is_err().
+  Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.
 Drill in:
   ripr explain --root <cwd>/fixtures/propagated_error_closing_early_path/input --diff <cwd>/fixtures/propagated_error_closing_early_path/diff.patch --mode fast probe:src_lib.rs:error_path:107ffe09
   ripr context --root <cwd>/fixtures/propagated_error_closing_early_path/input --diff <cwd>/fixtures/propagated_error_closing_early_path/diff.patch --mode fast --at probe:src_lib.rs:error_path:107ffe09
