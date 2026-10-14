@@ -576,3 +576,102 @@ fn a_deleted_guard_conjunct_keeps_the_arm_head() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn an_edit_inside_one_operand_of_a_compound_guard_drops_the_arm_head() -> Result<(), String> {
+    // Positive twin of the deleted-conjunct control (review on #7922): the
+    // `&&` chain is unchanged, so the edit is one comparison's, owned by
+    // the guard's predicate.
+    let lib = two_input_owner("        p if other > 0 && 100 < p => 1,\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if other > 0 && 100 < p => 1,",
+        "        p if other > 0 && 100 <= p => 1,",
+        OTHER_TESTS,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.probe.family.as_str() == "predicate"),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_raw_identifier_named_match_is_not_a_second_match() -> Result<(), String> {
+    // Review on #7922: `r#match` is a name, so the guard binding still
+    // reads the scrutinee's boundary inputs.
+    let lib = tier("    let r#match = 0;\n    let _ = r#match;\n")
+        .replace("p if 100 <= p", "p if 100 < p");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_macro_may_declare_the_guard_binding_as_a_constant() -> Result<(), String> {
+    // Control (review on #7922, #7863): `def!(p)` declares a constant `p`,
+    // so the pattern compares it, not the scrutinee.
+    let arms = "        p if 100 < p => 1,\n";
+    let lib = format!(
+        "macro_rules! def {{\n    ($n:ident) => {{\n        #[allow(non_upper_case_globals)]\n        const $n: i64 = 7;\n    }};\n}}\ndef!(p);\n\n{}",
+        two_input_owner(arms)
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => 1,",
+        "        p if 100 <= p => 1,",
+        OTHER_TESTS,
+    )?;
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "macro constant");
+    Ok(())
+}
+
+#[test]
+fn a_let_in_the_guard_may_rebind_the_guard_binding() -> Result<(), String> {
+    // Control (review on #7922): `p if let p = other && 100 < p` compares
+    // `other`, and the guard has no brace to reject it by.
+    let lib = two_input_owner("        p if let p = other && 100 < p => 1,\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if let p = other && 100 < p => 1,",
+        "        p if let p = other && 100 <= p => 1,",
+        OTHER_TESTS,
+    )?;
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "let guard");
+    Ok(())
+}
+
+#[test]
+fn an_added_guard_conjunct_keeps_the_arm_head() -> Result<(), String> {
+    // Twin of the deleted-conjunct control: adding `other > 0 &&` changes
+    // the connectives, so the arm head stays.
+    let lib = two_input_owner("        p if other > 0 && 100 < p => 1,\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if other > 0 && 100 < p => 1,",
+        "        p if 100 <= p => 1,",
+        OTHER_TESTS,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.probe.family.as_str() == "match_arm"),
+        "{findings:?}"
+    );
+    Ok(())
+}

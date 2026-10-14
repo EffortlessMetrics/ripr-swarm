@@ -212,12 +212,12 @@ pub(crate) fn probes_for_file_with_relations(
                             let predicate = canonical_probe_text(text, other.text);
                             // A deleted or added conjunct (`a && 100 <= p` to
                             // `100 < p`) is more than one comparison's edit,
-                            // so the arm head stays.
+                            // so the arm head stays; an edit inside one
+                            // operand of an unchanged `&&`/`||` chain is not.
                             other.family == ProbeFamily::Predicate
                                 && guard.contains(predicate.as_str())
-                                && !has_logical_connective(&predicate)
                                 && removed_span_of_shape(text, &predicate, removed)
-                                    .is_some_and(|span| !has_logical_connective(&span))
+                                    .is_some_and(|span| same_connectives(&predicate, &span))
                         })
                     })
             };
@@ -1105,6 +1105,22 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
         .map(|line| line.text.trim().to_string())
 }
 
+/// The two predicate texts join their operands with the same sequence of
+/// `&&` and `||`, so an edit between them stays inside one operand.
+fn same_connectives(after: &str, before: &str) -> bool {
+    // Masked, so `&&` or `||` inside a string or comment is not a connective.
+    let connectives = |text: &str| {
+        let text = crate::analysis::extract::mask_comments_and_strings(text);
+        text.match_indices("&&")
+            .chain(text.match_indices("||"))
+            .map(|(at, connective)| (at, connective.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>()
+    };
+    connectives(after) == connectives(before)
+}
+
 /// The span of `removed_line` that corresponds to `shape_text` within
 /// `added_line`, when the edit between the two lines falls inside the shape.
 /// Outside that case (the edit touches text around the shape, or the shape
@@ -1112,10 +1128,6 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
 /// whole old line. The shape text must occur once on the line: a repeat
 /// (`"a >= b"` in a literal before `if a >= b`) could align the cut with
 /// the wrong occurrence.
-fn has_logical_connective(text: &str) -> bool {
-    text.contains("&&") || text.contains("||")
-}
-
 fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
     if shape_text.is_empty() || added_line.matches(shape_text).count() != 1 {
         return None;

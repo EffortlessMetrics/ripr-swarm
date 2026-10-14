@@ -2739,9 +2739,11 @@ fn boundary_local_operand_parameter(
             || body_contains_direct_local_alias(&function.body, operand, parameter)
             // A bare pattern name may resolve to a constant in scope
             // (`const p: i64 = 0;`), which the guard then compares instead
-            // of the scrutinee; without the owner file that stays unread.
-            || (owner_source.is_some_and(|source| !may_name_constant(source, operand))
-                && body_contains_guard_binding_alias(&function.body, operand, parameter))
+            // of the scrutinee; without the owner file that stays unread,
+            // and so does a file whose items a macro may declare.
+            || (owner_source.is_some_and(|source| {
+                !may_name_constant(source, operand) && !may_declare_items_by_macro(source)
+            }) && body_contains_guard_binding_alias(&function.body, operand, parameter))
         {
             return Some(parameter.clone());
         }
@@ -2824,11 +2826,12 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     // The keyword as a token, so `match(other) {` and a `match` ending
-    // its line count too.
+    // its line count too; a raw identifier `r#match` is a name, not one.
     let matches = code
         .iter()
         .map(|line| {
-            line.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            line.replace("r#", "r_")
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
                 .filter(|word| *word == "match")
                 .count()
         })
@@ -2888,11 +2891,41 @@ fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool 
     let Some((condition, body)) = rest.split_once("=>") else {
         return false;
     };
+    // `|` covers `||` too: an or-guard is one predicate shape whose
+    // boundary has no single test value (`p == -1000 || 100 < p`), so the
+    // binding is left unread there as well.
     let rebinds = condition.contains(['{', '}', ';', '|'])
         || ["let", "for", "match", "while", "loop"]
             .iter()
             .any(|keyword| mentions_identifier(condition, keyword));
     !mentions_identifier(body, operand) && !rebinds
+}
+
+/// The file defines a `macro_rules!`, calls `include!`, or calls a macro
+/// at the top level, where it may declare items (`def_const!(p);` making a
+/// constant `p`) that no text search of the file finds (#7863).
+fn may_declare_items_by_macro(source: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    if masked.contains("macro_rules!") || masked.contains("include!") {
+        return true;
+    }
+    let mut depth = 0usize;
+    masked.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let name_end = trimmed
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+            .unwrap_or(trimmed.len());
+        let item_macro =
+            depth == 0 && name_end > 0 && trimmed[name_end..].trim_start().starts_with('!');
+        for ch in line.chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        item_macro
+    })
 }
 
 fn mentions_identifier(line: &str, name: &str) -> bool {

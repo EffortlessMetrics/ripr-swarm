@@ -219,7 +219,8 @@ When an edit lies wholly inside one comparison of an arm's guard
 (`n if 0 > n =>` from `n if n < 0 =>`), the line carries the guard's
 `predicate` finding alone. A deleted or added conjunct (`n if a && 0 > n`
 to `n if 0 > n`) is more than that comparison's edit, so the arm head
-stays.
+stays; an edit inside one operand of an unchanged `&&`/`||` chain is
+still the guard predicate's.
 Arm selection never evaluates guards, so an arm finding there can only
 read unconfirmed, while the predicate's boundary pairing is the
 discriminator the edit needs. The arm head is kept when the edit reaches
@@ -246,7 +247,8 @@ inputs and can name `p == 100` as missing. The operand stays unread when:
 - the binding's name may resolve to a constant (a `const` or `static` of
   that name in the owner file, or an import of it), since the pattern then
   compares the constant instead of binding the scrutinee, or the owner
-  file is unavailable;
+  file is unavailable or may declare items through a macro
+  (`macro_rules!`, `include!`, or a top-level macro call);
 - the binding is not a bare identifier.
 
 The old line such an edit replaced (its positional counterpart, not any
