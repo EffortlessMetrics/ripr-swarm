@@ -8701,16 +8701,41 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         "the refusal must point at the repair scope boundary:\n{stderr}"
     );
     // #7735: the pick-another-seam advice is a dead end when no seam can
-    // start a repair (e.g. inline-only crates), so the refusal must name
-    // the stub forward route `check --diff` already advertises and state
-    // the inline-test boundary with its remedy.
+    // start a repair (e.g. ambiguous inline-only crates), so the refusal
+    // must name the stub forward route `check` already advertises — pinned
+    // to the repair root, because this harness runs repair from outside the
+    // workspace and an unpinned route would resolve in the wrong directory,
+    // and with the probe family, so a line holding several gap families
+    // cannot stub another seam. The root renders with `/` separators on
+    // Windows (`root_path_display`), so accept either spelling.
     assert!(
-        stderr.contains("ripr agent stub --at FILE:LINE"),
-        "the refusal must name the stub forward route:\n{stderr}"
+        stderr.contains(&format!("ripr agent stub --root {root_arg}"))
+            || stderr.contains(&format!(
+                "ripr agent stub --root {}",
+                root_arg.replace('\\', "/")
+            )),
+        "the refusal must pin the stub route to the repair root:\n{stderr}"
     );
     assert!(
-        stderr.contains("inline `#[cfg(test)]` modules, which never qualify as a repair target"),
-        "the refusal must state the inline-test boundary:\n{stderr}"
+        stderr.contains("--at FILE:LINE --kind KIND"),
+        "the refusal must name the location-and-family stub route:\n{stderr}"
+    );
+    // The refusal states the inline boundary accurately: an ambiguous
+    // multi-module inline layout proposes no target, while one governed
+    // inline module would qualify (#5210 — demonstrated by this test's
+    // other arm, whose repair starts confined to that module).
+    assert!(
+        stderr
+            .contains("a crate whose inline tests are spread over several `#[cfg(test)]` modules"),
+        "the refusal must name the ambiguous inline layout:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("one governed inline module would qualify"),
+        "the refusal must state the single-module boundary accurately:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("never qualify as a repair target"),
+        "the refusal must not declare inline tests categorically ineligible:\n{stderr}"
     );
     assert!(
         stderr.contains("add a `tests/`-surface test file"),
