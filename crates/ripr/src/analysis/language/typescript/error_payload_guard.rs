@@ -309,18 +309,17 @@ impl ErrorChangeFacts {
 /// change the pinned reason must separate the two versions exactly as a
 /// thrown-literal payload does; without a readable old side it must match
 /// the changed line's own thrown message, because a reason this line never
-/// produces observes a different throw site, not this change.
+/// produces observes a different throw site, not this change. The matcher
+/// is an equality (`toBe`, `toEqual`, `toStrictEqual`), so the reason must
+/// equal a message: a substring of one passes on neither version.
 pub(crate) fn literal_rejection_credits(pinned: Option<&str>, facts: &ErrorChangeFacts) -> bool {
     let Some(value) = pinned.and_then(string_literal_value) else {
         return false;
     };
     if facts.message_only {
-        return facts.separates(|message| message.contains(&value));
+        return facts.separates(|message| message == value);
     }
-    facts
-        .new_message
-        .as_deref()
-        .is_some_and(|message| message.contains(&value))
+    facts.new_message.as_deref() == Some(value.as_str())
 }
 
 /// Whether the two thrown expressions differ only in literal values, and in
@@ -842,13 +841,29 @@ mod tests {
         }
         // A pinned rejection reason that only the old, readable message
         // holds separates the versions and keeps its credit.
+        // The reason must equal a message: a substring of the old one
+        // (`"input"`) passes on neither version.
         let shortened = ErrorChangeFacts::read(
-            Some(r#"return Promise.reject(new Error("bad " + "input"));"#),
-            r#"return Promise.reject(new Error("bad "));"#,
+            Some(r#"return Promise.reject("bad " + "input");"#),
+            r#"return Promise.reject("bad ");"#,
         );
         assert!(shortened.message_only);
-        assert!(literal_rejection_credits(Some(r#""input""#), &shortened));
+        assert!(literal_rejection_credits(
+            Some(r#""bad input""#),
+            &shortened
+        ));
+        assert!(literal_rejection_credits(Some(r#""bad ""#), &shortened));
+        assert!(!literal_rejection_credits(Some(r#""input""#), &shortened));
         assert!(!literal_rejection_credits(Some(r#""bad""#), &shortened));
+        // Off the message-only path (here an added line) the reason must
+        // equal the new message.
+        let unrelated = ErrorChangeFacts::read(None, r#"return Promise.reject("bad input");"#);
+        assert!(!unrelated.message_only);
+        assert!(literal_rejection_credits(
+            Some(r#""bad input""#),
+            &unrelated
+        ));
+        assert!(!literal_rejection_credits(Some(r#""input""#), &unrelated));
     }
 
     #[test]

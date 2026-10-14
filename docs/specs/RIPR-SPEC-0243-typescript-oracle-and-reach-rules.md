@@ -259,6 +259,10 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 `.rejects.toStrictEqual` with exactly one concrete literal argument instead
 read `exact_error_variant` / strong: they compare the rejected reason, so
 they match an error path and cannot credit a normal return value (#7315).
+The pinned reason credits a changed throw only when it equals that line's
+thrown message; on a message-only change (rule 4) it must equal exactly one
+of the old and new messages. A substring of a message passes on neither
+version, so it is not credit (2026-10-14).
 The existing literal admission also accepts safe all-literal objects.
 Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
 bindings and implicit globals retain the existing table and limitations;
