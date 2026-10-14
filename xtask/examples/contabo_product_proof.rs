@@ -49,6 +49,26 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
         }
         let rest = &source[start + marker.len()..];
         let block = rest.split("\n      - ").next().ok_or("missing step body")?;
+        for line in block
+            .lines()
+            .filter(|line| line.starts_with("        ") && !line.starts_with("         "))
+        {
+            let field = line.trim();
+            if field.is_empty()
+                || field.starts_with('#')
+                || field.starts_with("id:")
+                || field == "env:"
+                || field.starts_with("run:")
+            {
+                continue;
+            }
+            if *name == "PR evidence" && field == "if: github.event_name == 'pull_request'" {
+                continue;
+            }
+            return Err(format!(
+                "unsupported selected owner metadata: {name}: {field}"
+            ));
+        }
         let runs = repo_policy::extract_workflow_run_blocks(block);
         if runs.len() != 1 || runs[0].text.trim().is_empty() {
             return Err(format!(
@@ -79,7 +99,15 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             // Event expressions have exactly these projections for this detached
             // integration rehearsal; every other expression is unsupported.
             if value.contains("${{") {
-                if !["BASE_SHA", "HEAD_SHA", "GITHUB_PR_LABELS"].contains(&key) {
+                let supported = match key {
+                    "BASE_SHA" => "${{ github.event.pull_request.base.sha }}",
+                    "HEAD_SHA" => "${{ github.event.pull_request.head.sha }}",
+                    "GITHUB_PR_LABELS" => {
+                        "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+                    }
+                    _ => "",
+                };
+                if value != supported || supported.is_empty() {
                     return Err(format!("unsupported event projection: {key}"));
                 }
             } else {
@@ -297,7 +325,7 @@ mod tests {
     fn real_shell_preserves_failure_and_prevents_later_command() -> Result<(), String> {
         let step = Step {
             name: "negative".into(),
-            script: "exit 37\nprintf 'wrong success'".into(),
+            script: "bash -c 'exit 37'\nprintf 'wrong success'".into(),
             environment: vec![],
         };
         assert_eq!(execute(&step, "base", "head")?, 37);
@@ -307,6 +335,46 @@ mod tests {
             environment: vec![],
         };
         assert_eq!(execute(&positive, "base", "head")?, 0);
+        Ok(())
+    }
+    #[test]
+    fn unsupported_owner_projections_and_metadata_refuse() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
+        for changed in [
+            source.replace(
+                "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                "BASE_SHA: ${{ secrets.UNKNOWN }}",
+            ),
+            source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
+            source.replace(
+                "id: formatting",
+                "id: formatting\n        working-directory: other",
+            ),
+            source.replace("id: formatting", "id: formatting\n        if: false"),
+            source.replace("if: github.event_name == 'pull_request'", "if: false"),
+        ] {
+            assert_ne!(source, changed);
+            assert!(portfolio(&changed).is_err());
+        }
+        Ok(())
+    }
+    #[test]
+    fn actual_shim_prepares_cold_workspace_before_cargo() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let shim =
+            fs::read_to_string(root.join(".ci/contabo-product.sh")).map_err(|e| e.to_string())?;
+        let harness = |body: &str| Step {
+            name: "cold shim".into(),
+            script: format!(
+                "fixture=$(mktemp -d)\ntrap 'rm -rf -- \"$fixture\"' EXIT\ncd \"$fixture\"\ncargo() {{ test -d target || return 29; }}\n{body}"
+            ),
+            environment: vec![],
+        };
+        assert_eq!(execute(&harness(&shim), "base", "head")?, 0);
+        let wrong = shim.replace("mkdir -p target\n", "");
+        assert_ne!(shim, wrong);
+        assert_eq!(execute(&harness(&wrong), "base", "head")?, 29);
         Ok(())
     }
 }

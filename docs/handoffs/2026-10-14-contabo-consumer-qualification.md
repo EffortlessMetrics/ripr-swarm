@@ -42,7 +42,7 @@ central result envelope remain the authority for success/cancellation/timeout.
 `CARGO_TARGET_DIR` must equal `$RUNNER_TEMP/cargo-target`. Repository linker temp,
 nextest JUnit store (`.config/nextest.toml`), and RIPR reports intentionally remain
 workspace-relative under `target/`; these are not assumed to contain Cargo binaries.
-The adapter creates that local temp/report root and does not delete shared caches.
+The shim creates that local temp/report root before compiling the adapter; neither deletes shared caches.
 Central runner supervision/decontamination remains the cleanup owner.
 
 The legacy `routed-rust.yml` / `rust-gates.yml` required producer remains available
@@ -66,12 +66,15 @@ workflow-dispatch registration. This source PR stays Draft pending its own revie
 parent coordinates the source landing and subsequent bounded execution. Do not
 replace this with a Ready transition, speculative dispatch or settings activation.
 
-After source registration and full admission, resolve and retain exact `SUBJECT`
-and its reviewed `BASE`, then use:
+After source registration and full admission, resolve the existing reviewed
+`BRANCH` to exact `SUBJECT` and retain its reviewed `BASE`. GitHub's
+[dispatch ref contract](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+accepts a branch or tag name. Re-read branch custody immediately before dispatch;
+the adapter rejects a moved event SHA before product command execution. Then use:
 
 ```bash
 gh workflow run contabo-qualification.yml --repo EffortlessMetrics/ripr-swarm \
-  --ref "$SUBJECT" -f expected_sha="$SUBJECT" -f base_sha="$BASE"
+  --ref "$BRANCH" -f expected_sha="$SUBJECT" -f base_sha="$BASE"
 ```
 
 Read back the native workflow/run/attempt, actual checkout/tree, selected command
@@ -86,6 +89,6 @@ bounded qualification packet; #4840 separately observes actual native G later.
 Focused adapter tests exercise exact dispatch identity, the current command owner,
 missing-proof refusal and real-shell failure propagation. Source checks, local
 fixtures and independent review do not establish a real owned workload result.
-The four-line Bash shim is the required central entrypoint; Rust owns the adapter.
+The minimal Bash shim is the required central entrypoint; Rust owns the adapter.
 Revert this staged caller, adapter, shim and scoped policy/doc additions to remove
 rehearsal without changing the existing required producer or live settings.

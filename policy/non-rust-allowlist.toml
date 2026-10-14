@@ -881,5 +881,5 @@ kind = "ci-entrypoint"
 owner = "ci"
 surface = "ci"
 classification = "tooling"
-reason = "#4988: pinned EM CI requires a Bash script path; four-line shim delegates command ownership to Rust and existing Rust Gates."
+reason = "#4988: pinned EM CI requires a Bash script path; minimal shim prepares workspace temp and delegates command ownership to Rust and existing Rust Gates."
 covered_by = ["cargo test -p xtask --example contabo_product_proof"]
