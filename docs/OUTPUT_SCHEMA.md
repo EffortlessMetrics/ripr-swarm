@@ -9594,6 +9594,12 @@ decision report is read-only policy over existing repo exposure, PR guidance,
 GapRecord decisions, SARIF policy, labels, receipts, recommendation
 calibration, and optional imported mutation calibration artifacts.
 
+Colliding `--out` / `--out-md` destinations are refused at argument parsing
+with exit 2 and no writes, including an implicit `.md` destination equal to
+`--out`. RIPR-SPEC-0014 documents the cwd-based native lexical path contract
+and its filesystem alias limits. An explicit distinct `--out-md` permits a
+`.md`-named JSON destination; report formats do not depend on filename suffixes.
+
 The evaluator is:
 
 ```text
