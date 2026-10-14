@@ -1,4 +1,4 @@
-/// The largest value `add` ignores.
+/// The largest value left out of the list.
 pub const LIMIT: u32 = 10;
 
 /// Records `x` only when it is large.

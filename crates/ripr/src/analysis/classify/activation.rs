@@ -1701,8 +1701,9 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 
 /// RIPR-SPEC-0263 (#7132): name the `if` around a changed side effect or
 /// call as the missing discriminator when every related test calls the
-/// owner directly and every call's literal input provably leaves the guard
-/// false (`add(&mut v, 4)` against `if x > 10`). The probe then never runs
+/// owner directly and every call's input provably leaves the guard false
+/// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
+/// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
 /// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
 /// use of the owner, one computed input, a partial index, a same-named
@@ -1722,7 +1723,9 @@ fn missing_guard_entry_discriminator(
     }
     // The cheap text read first: most side effects sit under no readable
     // guard, and those need no workspace lookups.
-    let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    let guard = super::arm_selection::GuardEntry::establish(probe, owner, |name| {
+        super::arm_selection::named_integer_bound(index, owner, name)
+    })?;
     if !super::helper_transfer::callee_is_unique(&owner.name, index) {
         return None;
     }
