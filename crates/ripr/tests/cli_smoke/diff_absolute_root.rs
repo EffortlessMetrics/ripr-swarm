@@ -97,6 +97,10 @@ fn diff_json_absolute_root_keeps_changed_seams_workspace_relative() -> TestResul
         .as_array()
         .ok_or("rooted-CWD changed_seams must be an array")?;
     assert!(
+        !rooted_seams.is_empty(),
+        "rooted-CWD --root . lost the supported subject: {rooted_seams:?}"
+    );
+    assert!(
         rooted_seams
             .iter()
             .all(|seam| seam["file"] == "src/lib.rs" && seam["line"] == 2),
