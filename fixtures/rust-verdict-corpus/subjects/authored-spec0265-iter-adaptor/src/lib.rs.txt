@@ -1,0 +1,25 @@
+//! Closures in iterator adaptors whose tests miss the closure's boundary
+//! (RIPR-SPEC-0260 examples 4 and 5).
+
+pub fn count_positive(xs: &[i32]) -> usize {
+    xs.iter().filter(|x| **x > 0).count()
+}
+
+pub fn count_large(xs: &[i32]) -> usize {
+    xs.iter().filter(|x| **x > 100).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_two_positive_without_zero() {
+        assert_eq!(count_positive(&[3, 7]), 2);
+    }
+
+    #[test]
+    fn counts_nothing_in_an_empty_slice() {
+        assert_eq!(count_large(&[]), 0);
+    }
+}

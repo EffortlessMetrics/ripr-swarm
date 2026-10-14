@@ -2605,6 +2605,52 @@ pub(crate) fn assertion_root_binding_is_unrebound(
         })
 }
 
+/// Whether a `std::`- or `core::`-qualified macro path (`std::assert_eq`,
+/// `::core::assert`) names the standard macro as far as its file shows
+/// (#7857). The root must pass the drop-in rebinding checks and be
+/// available, and every glob import in the file must read an in-file
+/// module (`self::*`, or `super::*` inside an inline module), so no glob
+/// brings a `std` or `core` item from another file. Other drop-in crates
+/// (`pretty_assertions::`) also need a manifest check, which this file-local
+/// proof cannot make, so they stay unproved here.
+pub(crate) fn std_macro_root_is_unrebound(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    matches!(unrooted.split_once("::"), Some(("std" | "core", leaf)) if !leaf.contains("::"))
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && assertion_root_is_available(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .all(|tree| glob_reads_in_file_module(&tree))
+        })
+}
+
+/// `use self::*;`, or `use super::*;` inside an inline module: a glob whose
+/// source module is in the same file. Any other glob shape, including one
+/// nested in a use list, is not established.
+fn glob_reads_in_file_module(tree: &ast::UseTree) -> bool {
+    let Some(path) = tree.path() else {
+        return false;
+    };
+    if !tree
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::Use::can_cast(parent.kind()))
+    {
+        return false;
+    }
+    match path.syntax().text().to_string().as_str() {
+        "self" => true,
+        "super" => tree
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module.item_list().is_some()),
+        _ => false,
+    }
+}
+
 /// Qualified operand capture requires every statement macro in the same
 /// function to retain its independently established binding.
 pub(crate) fn assertion_root_is_unrebound(

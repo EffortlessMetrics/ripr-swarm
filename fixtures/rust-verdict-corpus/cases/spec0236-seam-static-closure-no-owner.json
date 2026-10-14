@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0236-seam-static-closure-no-owner",
+  "subject_id": "authored-spec0236-25",
+  "diff": "cases/spec0236-seam-static-closure-no-owner.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 1
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "static_closure_exact_assert",
+  "hard_case": "Built for RIPR-SPEC-0236 example 25, which it does not realize: no seam is inventoried for a closure in a static, and the closure has a related test, while example 25 needs reach_without_related_tests with an unresolved owner. The diff findings read infection_unknown and static_unknown with pick_large_order related.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub static PICK: fn(u64) -> u64 = |total| if total > 100 { 20 } else { 0 };",
+        "mutated_line": "pub static PICK: fn(u64) -> u64 = |total| if total > 100 { 20 } else { 0 };",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total == 100 now gives 0; 150 still gives 20"
+      },
+      {
+        "replacement": "pub static PICK: fn(u64) -> u64 = |total| if total >= 200 { 20 } else { 0 };",
+        "mutated_line": "pub static PICK: fn(u64) -> u64 = |total| if total >= 200 { 20 } else { 0 };",
+        "outcome": "tests_failed",
+        "failing_test": "tests::pick_large_order",
+        "equivalence_review": "not equivalent: 150 now gives 0"
+      },
+      {
+        "replacement": "pub static PICK: fn(u64) -> u64 = |total| if total >= 100 { 30 } else { 0 };",
+        "mutated_line": "pub static PICK: fn(u64) -> u64 = |total| if total >= 100 { 30 } else { 0 };",
+        "outcome": "tests_failed",
+        "failing_test": "tests::pick_large_order",
+        "equivalence_review": "not equivalent: the large-total value becomes 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "PICK(150) == 20 pins the value at 150 but not the 100 boundary of the closure in a static initializer. Spec cells: none labeled; the subject was built for RIPR-SPEC-0236 example 25, which stays latent (see the ledger waiver).",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

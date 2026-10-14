@@ -445,7 +445,11 @@ pub(crate) fn canonical_next_action_for_triage(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> Result<CanonicalNextActionV1, String> {
-    let root = output.root.display().to_string();
+    // Same slash-stable spelling as the top-level check JSON `root`.
+    // Raw `Path::display()` kept argv backslashes, so
+    // `document.root != canonical_next_action.subject.root` on Windows
+    // (#7730). Restart/command routes keep native spelling separately.
+    let root = display_path(&output.root);
     let scope = check_scope_descriptor(triage, output);
     let item_id = triage
         .selected
@@ -1247,6 +1251,117 @@ mod tests {
                 }
             }
             other => return Err(format!("scope stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #7730: `canonical_next_action.subject.root` must use the same
+    /// slash-stable renderer as the top-level JSON `root`, not raw
+    /// `Path::display()`. A backslash-typed spaced argv spelling must not
+    /// survive into the subject; a `.` root stays `.` so the JSON consumer
+    /// that matches `subject.root == "."` still holds.
+    #[test]
+    fn check_adapter_subject_root_uses_display_path_not_raw_display() -> Result<(), String> {
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+
+        let mut backslash_root = test_output(Vec::new());
+        // Join at runtime so the source does not contain a drive-letter
+        // machine path (`check-local-context`), while the constructed
+        // argv spelling still matches the #7730 Windows report.
+        backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
+        let raw = backslash_root.root.display().to_string();
+        // Independent slash-stable contract: forward-slash join of the
+        // same components, not `display_path` output.
+        let expected = ["C:", "tmp", "probe win space"].join("/");
+        if raw == expected {
+            return Err(format!(
+                "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
+            ));
+        }
+        if !raw.contains('\\') {
+            return Err(format!(
+                "fixture must keep a backslash argv spelling, got {raw:?}"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &backslash_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != expected {
+            return Err(format!(
+                "subject.root must be {expected:?}, got {:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root == raw {
+            return Err(format!("subject.root kept the raw argv spelling {raw:?}"));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != expected {
+            return Err(format!(
+                "serialized subject.root must be {expected:?}, got {}",
+                encoded["subject"]["root"]
+            ));
+        }
+
+        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
+        // shape instead of leaking `\\?\` into JSON identity.
+        let mut verbatim = test_output(Vec::new());
+        verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
+        let verbatim_raw = verbatim.root.display().to_string();
+        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        if verbatim_raw == verbatim_expected {
+            return Err(format!(
+                "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &verbatim,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != verbatim_expected {
+            return Err(format!(
+                "verbatim subject.root must be {verbatim_expected:?}, got {:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root.contains('\\') {
+            return Err(format!(
+                "verbatim subject.root must not retain backslashes, got {:?}",
+                action.subject().root
+            ));
+        }
+
+        // A `.` root stays `.`, so consumers that treat
+        // `subject.root == "."` still match after this change.
+        let mut dot_root = test_output(Vec::new());
+        dot_root.root = PathBuf::from(".");
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &dot_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != "." {
+            return Err(format!(
+                "dot root must stay '.', got {:?}",
+                action.subject().root
+            ));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != "." {
+            return Err(format!(
+                "serialized dot root must stay '.', got {}",
+                encoded["subject"]["root"]
+            ));
         }
         Ok(())
     }
