@@ -475,10 +475,10 @@ async function cleanupOwnedProcess(observed: ProcessObservation): Promise<void> 
   }
 }
 
-async function waitFor(predicate: () => boolean, label: string, timeout = 60_000,
+async function waitFor(predicate: () => boolean | Promise<boolean>, label: string, timeout = 60_000,
   context?: () => Promise<string> | string): Promise<void> {
   const deadline = Date.now() + timeout;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) {
       let suffix = '';
       try {
