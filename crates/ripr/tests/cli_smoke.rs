@@ -14718,6 +14718,61 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
 }
 
 #[test]
+fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), String> {
+    // Issue #7421 review: the missing producing-build identity must reach
+    // the operator at creation time on stdout, not only inside the ledger.
+    let workspace = unique_temp_workspace("baseline-create-unversioned");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let source = workspace.join("gate-decision-unversioned.json");
+    std::fs::write(
+        &source,
+        r#"{
+  "schema_version": "0.1",
+  "mode": "visible-only",
+  "decisions": [
+    {
+      "decision": "advisory",
+      "id": "ripr-gate-unversioned-smoke",
+      "seam_id": "unversioned-smoke",
+      "static_class": "weakly_gripped",
+      "placement": {"path": "src/unversioned.rs", "line": 9},
+      "evidence": {}
+    }
+  ]
+}"#,
+    )
+    .map_err(|e| format!("write source: {e}"))?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let source_arg = source.display().to_string();
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from",
+        &source_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("source gate-decision report carries no subject.analyzer_version"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Warnings: 1"), "{stdout}");
+
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"analyzer_version\": null"),
+        "{baseline}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
     let workspace = unique_temp_workspace("baseline-diff");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
