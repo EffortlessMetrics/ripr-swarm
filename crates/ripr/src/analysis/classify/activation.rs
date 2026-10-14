@@ -1467,6 +1467,12 @@ fn missing_guard_entry_discriminator(
     {
         return None;
     }
+    // The read macros are trusted by name, so a workspace that defines,
+    // imports or may glob in another macro under one of those names
+    // (`macro_rules! println { .. }`) leaves that trust unestablished.
+    if read_macro_name_rebound(index) {
+        return None;
+    }
     let mut inputs = Vec::new();
     for test in related_tests {
         if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
@@ -1647,6 +1653,31 @@ const READ_MACROS: &[&str] = &[
     "matches",
 ];
 
+/// Whether any indexed file binds a [`READ_MACROS`] name to something other
+/// than the standard macro: a `macro_rules!` definition, an import, or a
+/// glob or `#[macro_use]` that may bring one in. Uses the parser-backed
+/// macro binding scan the trusted-assertion reading uses; an out-of-line
+/// module counts as unresolved, which only withholds the guard reading.
+fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bool {
+    index.files().iter().any(|(path, file)| {
+        if file
+            .macro_candidates
+            .as_deref()
+            .is_some_and(|candidates| READ_MACROS.iter().all(|name| !candidates.may_bind(name)))
+        {
+            return false;
+        }
+        !crate::analysis::syntax::trusted_macro_binding_sites(
+            &file.source,
+            index.macro_scope_crates(),
+            READ_MACROS,
+            &|_, _| false,
+            &|krate| index.drop_in_manifests.verified(path, krate),
+        )
+        .is_empty()
+    })
+}
+
 /// Whether `body` invokes a macro other than [`READ_MACROS`], whose
 /// expansion is not read and may call any function.
 fn invokes_unread_macro(body: &str) -> bool {
@@ -1670,9 +1701,21 @@ fn invokes_unread_macro(body: &str) -> bool {
             .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
             .map_or(0, |(index, ch)| index + ch.len_utf8());
         let name = &masked[name_start..name_end];
+        // A path-qualified name (`util::println!`) is a read macro only
+        // under the standard crates.
+        let qualifier = masked[..name_start].trim_end();
+        let foreign_path = qualifier.ends_with("::")
+            && !["std::", "core::", "alloc::"].iter().any(|root| {
+                qualifier.strip_suffix(root).is_some_and(|head| {
+                    !head
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                })
+            });
         // `if !(done)` is a negation after a keyword, not a macro.
         !name.is_empty()
-            && !READ_MACROS.contains(&name)
+            && (foreign_path || !READ_MACROS.contains(&name))
             && !matches!(
                 name,
                 "if" | "while" | "match" | "return" | "in" | "else" | "break"

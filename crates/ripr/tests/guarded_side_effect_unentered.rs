@@ -388,7 +388,35 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
     let after_closed_if = |push: &str| {
         format!("pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{}}\n    {push}\n}}\n")
     };
+    // A local macro shadows a standard name and calls the owner back with
+    // 20; spelling alone does not make it the standard macro (#7852).
+    let shadowed = |push: &str, call: &str| {
+        format!(
+            "macro_rules! println {{\n    ($v:expr) => {{\n        add($v, 20)\n    }};\n}}\n\npub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    if x < 10 {{\n        {call};\n    }}\n}}\n"
+        )
+    };
+    // A path-qualified macro from another crate under a standard leaf name
+    // (`helpers::println!`) is not the standard macro either.
+    let qualified = |push: &str| {
+        format!(
+            "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    if x < 10 {{\n        helpers::println!(v);\n    }}\n}}\n"
+        )
+    };
     let cases = [
+        (
+            "shadowed println",
+            shadowed("v.push(x);", "println!(v)"),
+            shadowed("v.push(x * 1);", "println!(v)"),
+            9,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "qualified println",
+            qualified("v.push(x);"),
+            qualified("v.push(x * 1);"),
+            3,
+            test_calling("    add(&mut v, 4);"),
+        ),
         (
             "after a closed if",
             after_closed_if("v.push(x);"),
@@ -483,6 +511,26 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
             );
         }
     }
+    // A real standard macro in the owner keeps the guard reading.
+    let printing = |push: &str| {
+        format!(
+            "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    if x < 10 {{\n        println!(\"small {{x}}\");\n        std::println!(\"small\");\n    }}\n}}\n"
+        )
+    };
+    let printing_findings = custom_findings(
+        &printing("v.push(x);"),
+        &printing("v.push(x * 1);"),
+        3,
+        &test_calling("    add(&mut v, 4);"),
+    )?;
+    assert!(
+        printing_findings.iter().any(names_unentered_guard),
+        "standard println!: the guard must be named: {:?}",
+        printing_findings
+            .iter()
+            .map(|finding| &finding.ripr.infect)
+            .collect::<Vec<_>>()
+    );
     // The typed-receiver row discriminates only if the method reading names
     // the guard when its argument does miss it: `s.add(4, 11)` passes 4.
     let missing_method_test = method_test.replace("s.add(11, 4)", "s.add(4, 11)");

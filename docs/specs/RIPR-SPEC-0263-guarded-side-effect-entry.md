@@ -78,7 +78,11 @@ counterpart for side effects.
    over-refusal, never a false reading. An owner, or a function it
    reaches, that invokes a macro other than the standard assertion and
    formatting macros is refused too, since the expansion may call the owner
-   back. Any indexed file that names the owner as a value, rather than in a
+   back. Those macros are trusted by name only when no indexed file binds
+   one of their names to something else: a `macro_rules! println` definition,
+   an import, or a glob or `#[macro_use]` that may bring one in, read by the
+   parser-backed macro binding scan. A path-qualified call is trusted only
+   under `std::`, `core::` or `alloc::` (`helpers::println!` is unread). Any indexed file that names the owner as a value, rather than in a
    direct call, its `fn` header or a plain `use` path, is refused, since
    calls through that value run it under another name. Examples are a
    renamed import (`use crate::add as push_big;`), a stored pointer
@@ -144,7 +148,7 @@ counterpart for side effects.
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
    calls a helper that calls it back: no guard named (recursion). The same
    holds when a macro the owner, a helper it calls or a test helper invokes
-   calls it back, and when a test calls the owner through a value: a
+   calls it back (including a local macro named `println`), and when a test calls the owner through a value: a
    renamed import (`use crate::add as push_big;` then
    `push_big(&mut v, 20)`), a `static` pointer or a `const` table.
 
