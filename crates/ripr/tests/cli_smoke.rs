@@ -22,6 +22,8 @@ mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[path = "cli_smoke/closed_stderr.rs"]
+mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -70,6 +72,9 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_effect_aliases.rs"]
+mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;

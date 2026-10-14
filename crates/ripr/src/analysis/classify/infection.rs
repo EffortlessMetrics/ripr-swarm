@@ -1,7 +1,7 @@
 use super::super::rust_index::{TestSummary, extract_literals};
 use super::activation::{
-    ARM_UNSELECTED_REASON_PREFIX, boundary_constant_operand_name, comparison_operands,
-    has_observed_boundary_equality, is_computed_value_expression, owner_input_values,
+    boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
+    is_computed_value_expression, owner_input_values,
 };
 use crate::domain::*;
 
@@ -175,10 +175,12 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
             } else if let Some(unselected) = activation
                 .missing_discriminators
                 .iter()
-                .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+                .find(|fact| is_unselected_input_reason(&fact.reason))
             {
                 // RIPR-SPEC-0229: every related test's owner input selects a
-                // different arm, so none activates this one.
+                // different arm, so none activates this one. RIPR-SPEC-0263:
+                // every input leaves the enclosing guard false, so none runs
+                // the changed side effect.
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
