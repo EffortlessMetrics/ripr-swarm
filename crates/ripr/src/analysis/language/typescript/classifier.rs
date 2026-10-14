@@ -573,15 +573,20 @@ fn ts_observed_namespaced_owner_call(
             masked_observed
                 .match_indices(needle.as_str())
                 .any(|(at, _)| {
-                    // Whitespace before the receiver changes nothing about
-                    // its identity: `other. ns.price(` reads `other.ns`'s
-                    // member, so skip spaces before the receiver and reject
-                    // a member dot or a longer identifier.
-                    masked_observed[..at]
-                        .chars()
-                        .rev()
-                        .find(|c: &char| !c.is_whitespace())
-                        .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$') && c != '.')
+                    // Only a member dot reaching the receiver across
+                    // optional whitespace disqualifies (`other.ns(`,
+                    // `other. ns(`): keywords and values before a gap
+                    // (`await ns.price(150)`, `return ns.price(...)`)
+                    // still leave genuine namespace calls, since only dots
+                    // continue member access.
+                    let mut back = masked_observed[..at].chars().rev();
+                    match back.next() {
+                        None => true,
+                        Some('.') => false,
+                        Some(c) if c.is_alphanumeric() || c == '_' || c == '$' => false,
+                        Some(c) if !c.is_whitespace() => true,
+                        Some(_) => !matches!(back.find(|c| !c.is_whitespace()), Some('.')),
+                    }
                 })
         })
     })
@@ -2832,7 +2837,9 @@ fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBindin
 /// `before_match` — the receiver of a member call (`expect(pricing.` →
 /// `pricing`). A receiver spelled after another member dot (`other. ns`)
 /// is a member of that outer receiver, never a bare namespace receiver, so
-/// this returns an empty string (which no receiver list contains).
+/// this returns an empty string (which no receiver list contains). Anything
+/// else before an optional gap (keywords like `await`, values, `?`/`!`
+/// operators) leaves the receiver intact: only dots continue member access.
 fn receiver_before_dot(before_match: &str) -> String {
     let trimmed = before_match.trim_end();
     let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
@@ -2854,8 +2861,7 @@ fn receiver_before_dot(before_match: &str) -> String {
         .rev()
         .find(|c: &char| !c.is_whitespace())
     {
-        Some('.') | Some('?') | Some('!') => String::new(),
-        Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == '$' => String::new(),
+        Some('.') => String::new(),
         _ => receiver,
     }
 }

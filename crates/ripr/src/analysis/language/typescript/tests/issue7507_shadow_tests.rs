@@ -582,6 +582,35 @@ fn issue7507_return_type_use_is_not_a_shadow() -> Result<(), String> {
     Ok(())
 }
 
+/// A keyword before the namespace receiver (`await ns.price(150)`) leaves
+/// a genuine owner-module call: only a member dot disqualifies, never a
+/// keyword's trailing letter.
+#[test]
+fn issue7507_keyword_qualified_namespace_call_stays_exposed() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let source = "import * as ns from '../src/lib';\ntest('p', async () => {\n  expect(await ns.price(150)).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "await ns.price(150)")?;
+    if !relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err(format!(
+            "keyword-qualified namespace call must keep a trusted relation: {:?}",
+            relations_of(&owner, &tests)
+        ));
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if !matches!(finding.class, ExposureClass::Exposed) {
+        return Err(format!(
+            "keyword-qualified namespace call must stay exposed, got {:?}",
+            finding.class
+        ));
+    }
+    Ok(())
+}
+
 /// Whitespace after an unrelated member dot (`other. ns.price(150)`) reads
 /// `other.ns`'s member: the imported namespace receiver cannot be
 /// established from that spelling, so the assertion must not confirm
