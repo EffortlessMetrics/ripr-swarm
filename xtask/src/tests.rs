@@ -29440,6 +29440,7 @@ fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
             author: "droid".to_string(),
             state: "APPROVED".to_string(),
         }],
+        provider_review_observations: Default::default(),
     }
 }
 
@@ -53755,4 +53756,84 @@ fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Resul
         assert!(super::publish_precommit_policy_report(false).is_err());
         Ok(())
     })
+}
+
+#[test]
+fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), String> {
+    let sourcery = "Sorry @EffortlessSteven, you have reached your weekly rate limit of 500000 diff characters.\n\nRetry later.";
+    let gemini = "> [!WARNING]\r\n> You have reached your daily quota limit. Please wait up to 24 hours and I will start processing your requests again!";
+    let codex = "You have reached your Codex usage limits for code reviews.\nSee `settings` — no review ran.";
+    let rabbit = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n> ## Review details\n> Commits: aaa to bbb\n> Files selected: 6";
+    let fixture = serde_json::json!({
+        "number": 42, "title": "provider notices", "isDraft": false,
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "headRefName": "candidate", "baseRefName": "main",
+        "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
+        "latestReviews": [{"author": {"login": "sourcery-ai[bot]"}, "state": "COMMENTED", "body": sourcery,
+            "submittedAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "body": "Reviewed exact candidate."}],
+        "reviews": [{"author": {"login": "independent-reviewer"}, "state": "APPROVED", "submittedAt": "2026-10-14T02:00:00Z", "commit": {"oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+        "comments": [
+            {"author": {"login": "gemini-code-assist[bot]"}, "body": gemini, "url": "https://github.com/example/repo/pull/42#issuecomment-2", "createdAt": "2026-10-13T01:00:00Z"},
+            {"author": {"login": "chatgpt-codex-connector[bot]"}, "body": codex, "url": "https://github.com/example/repo/pull/42#issuecomment-3", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "coderabbitai[bot]"}, "body": rabbit, "url": "https://github.com/example/repo/pull/42#issuecomment-4", "createdAt": "2026-10-14T01:00:00Z"},
+            {"author": {"login": "human"}, "body": "The provider hit quota. I reviewed the code."}
+        ],
+        "statusCheckRollup": [{"__typename":"CheckRun", "name":"rust", "status":"COMPLETED", "conclusion":"SUCCESS"}]
+    });
+    let pr = super::collect_gh_pr_status_with(42, |program, args| {
+        assert_eq!(program, "gh");
+        assert_eq!(args.len(), 5);
+        assert_eq!(&args[..4], &["pr", "view", "42", "--json"]);
+        let fields: std::collections::BTreeSet<_> = args[4].split(',').collect();
+        for required in ["comments", "headRefOid", "latestReviews"] {
+            assert!(fields.contains(required), "collector omitted {required}");
+        }
+        Ok(fixture.to_string())
+    })?;
+    assert_eq!(pr.reviews.len(), 2);
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    let report: Value = serde_json::from_str(&gh_pr_status_json(&pr, &[], &readiness))
+        .map_err(|e| e.to_string())?;
+    let observations = &report["provider_review_observations"];
+    assert_eq!(
+        observations["snapshot_head"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(observations["quota_notice_count"], 4);
+    let responses = observations["responses"]
+        .as_array()
+        .ok_or("missing response observations")?;
+    assert_eq!(
+        responses.len(),
+        4,
+        "three issue comments and one review must survive collection"
+    );
+    for (response, original) in responses.iter().zip([sourcery, gemini, codex, rabbit]) {
+        assert_eq!(response["disposition"], "quota_exhausted");
+        assert_eq!(response["body"], original);
+        assert_eq!(response["subject_attribution"], "not_established");
+    }
+    assert_eq!(responses[0]["source_kind"], "review");
+    assert_eq!(
+        responses[0]["url"], "",
+        "latestReviews does not supply a review URL"
+    );
+    assert_eq!(responses[0]["timestamp"], "2026-10-14T01:00:00Z");
+    assert_eq!(responses[1]["source_kind"], "issue_comment");
+    assert_eq!(responses[1]["timestamp"], "2026-10-13T01:00:00Z");
+    assert_eq!(
+        responses[1]["url"],
+        "https://github.com/example/repo/pull/42#issuecomment-2"
+    );
+    assert!(observations.get("completed_review_count").is_none());
+    let markdown = gh_pr_status_markdown(&pr, &[], &readiness);
+    assert!(markdown.contains("Quota notices: 4 of 4 observed provider responses"));
+    assert!(markdown.contains("not evidence of review completion"));
+    assert!(markdown.contains("not attributed to the current head"));
+    assert_eq!(
+        readiness.safe_next_action, "merge",
+        "advisory provider disclosure must not silently become a new gate"
+    );
+    Ok(())
 }

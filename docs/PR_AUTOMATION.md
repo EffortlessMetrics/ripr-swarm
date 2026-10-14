@@ -495,6 +495,11 @@ safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
 `BEHIND` requests integration judgment after Draft, review-required and pending
 waits; it does not establish that a branch update is needed. It is advisory and
 never updates the branch, comments, approves, or merges.
+The provider-response section retains known quota notices and unknown substance
+from returned reviews/comments without treating either as review completion.
+Historical response subjects remain unattributed; the packet head is collection
+context only. This does not add a provider gate or change the advisory action.
+See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
