@@ -198,7 +198,7 @@ pub(in crate::analysis::language::python) fn observes_owner(
     calls_owner(text, test, owner).unwrap_or(true)
 }
 
-/// None is a different oracle shape; false is a list operand without proven
+/// None is a different oracle shape; false is a list operand without established
 /// owner identity. Relation and per-assertion alignment consume the same fact.
 pub(in crate::analysis::language::python) fn calls_owner(
     text: &str,
