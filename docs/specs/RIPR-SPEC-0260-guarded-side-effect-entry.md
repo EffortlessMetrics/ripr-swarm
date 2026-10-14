@@ -75,7 +75,9 @@ counterpart for side effects.
    enter the guard with a value no test passes. The self-mention check is
    textual, so a method that calls a same-named method on a field
    (`self.items.push(x)` inside `fn push`) is refused too; that is a known
-   over-refusal, never a false reading.
+   over-refusal, never a false reading. An owner that invokes a macro other
+   than the standard assertion and formatting macros is refused too, since
+   the expansion may call the owner back.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -92,7 +94,9 @@ counterpart for side effects.
 5. **Reading.** When rule 4 holds, the probe gets a missing discriminator
    whose reason opens with `No related test call enters guard` and names the
    guard (`if x > 10`) and the observed inputs. Infection reads `Weak`, so
-   the finding reads `weakly_exposed` instead of `exposed`. Related tests
+   the finding reads `weakly_exposed` instead of `exposed`, and the
+   recommended next step asks for a related test input that enters the
+   guard rather than a stronger assertion. Related tests
    that miss show `missing_input`, and the human text says "no test input
    enters `if x > 10`" and "use an input that enters `if x > 10`".
 6. **Fail closed.** Any unreadable piece keeps today's reading. The rule
@@ -130,7 +134,8 @@ counterpart for side effects.
 4. `let n = 4; add(&mut v, n);`: no guard named (fail closed).
 5. `if x > LIMIT`: no guard named (named bound).
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
-   calls a helper that calls it back: no guard named (recursion).
+   calls a helper that calls it back: no guard named (recursion). The same holds when a macro the owner invokes
+   calls it back.
 
 ## Test Mapping
 

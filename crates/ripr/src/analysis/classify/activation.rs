@@ -1453,7 +1453,9 @@ fn missing_guard_entry_discriminator(
     }
     // A helper the owner calls may call the owner back with a value that
     // enters the guard (mutual recursion), which no test input shows.
-    if owner_may_reenter(owner, &functions_by_name) {
+    // A macro the owner invokes may expand to a call back into the owner
+    // (`bump!(v)` → `add(v, 20)`), which neither check above can read.
+    if owner_may_reenter(owner, &functions_by_name) || invokes_unread_macro(&owner.body) {
         return None;
     }
     let mut inputs = Vec::new();
@@ -1524,23 +1526,6 @@ fn may_reach_owner_unread(
     owner: &str,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
 ) -> bool {
-    const READ_MACROS: &[&str] = &[
-        "assert",
-        "assert_eq",
-        "assert_ne",
-        "debug_assert",
-        "debug_assert_eq",
-        "debug_assert_ne",
-        "vec",
-        "format",
-        "print",
-        "println",
-        "eprint",
-        "eprintln",
-        "dbg",
-        "panic",
-        "matches",
-    ];
     // Follow helpers transitively: `check_none()` may call `inner(None)`,
     // which calls the owner. The test's own `fn name()` header reads as a
     // call to itself; only a different indexed function is a helper.
@@ -1572,7 +1557,33 @@ fn may_reach_owner_unread(
             );
         }
     }
-    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    invokes_unread_macro(&test.body)
+}
+
+/// The standard assertion and formatting macros whose expansion cannot
+/// call the owner.
+const READ_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "vec",
+    "format",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "dbg",
+    "panic",
+    "matches",
+];
+
+/// Whether `body` invokes a macro other than [`READ_MACROS`], whose
+/// expansion is not read and may call any function.
+fn invokes_unread_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter

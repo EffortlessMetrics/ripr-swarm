@@ -15058,6 +15058,7 @@ tests = [
   "crates/ripr/tests/guarded_side_effect_unentered.rs::an_input_that_enters_the_guard_keeps_the_exposed_reading",
   "crates/ripr/tests/guarded_side_effect_unentered.rs::one_entering_call_or_one_unread_input_names_no_guard",
   "crates/ripr/tests/guarded_side_effect_unentered.rs::an_unreadable_guard_names_nothing",
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::recursion_a_same_line_else_or_a_helper_names_no_guard",
   "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::parameter_comparison_reads_one_literal_bound_either_way_round",
   "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::comparison_holds_like_rust",
   "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::a_loop_or_rebinding_before_the_guard_refuses",

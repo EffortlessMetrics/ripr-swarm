@@ -143,6 +143,12 @@ fn a_literal_that_misses_the_guard_names_it_and_is_not_exposed() -> Result<(), S
                 "{guard}: the guard must be named: {:?}",
                 finding.ripr.infect
             );
+            // The repair is an input that enters the guard, not an assertion.
+            let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+            assert!(
+                step.starts_with("Add a related test input that enters `if "),
+                "{guard}: {step}"
+            );
         }
     }
     Ok(())
@@ -324,7 +330,37 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
             "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    fixup(v);\n}}\n\nfn fixup(v: &mut Vec<u32>) {{\n    if v.is_empty() {{\n        add(v, 50);\n    }}\n}}\n"
         )
     };
+    // A macro the owner invokes calls the owner back with 20, which enters
+    // the guard; the macro's expansion is not read.
+    let via_macro = |push: &str| {
+        format!(
+            "macro_rules! bump {{\n    ($v:expr) => {{\n        add($v, 20)\n    }};\n}}\n\npub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    if x < 10 {{\n        bump!(v);\n    }}\n}}\n"
+        )
+    };
+    // A typed receiver is not a call argument: `s.add(11, 4)` passes 11 as
+    // `x`, which enters the guard. A regression control: the signature
+    // reader already drops `self: Box<Self>`.
+    let typed_receiver = |push: &str| {
+        format!(
+            "pub struct S {{\n    pub v: Vec<u32>,\n}}\n\nimpl S {{\n    pub fn add(self: Box<Self>, x: u32, y: u32) -> Vec<u32> {{\n        let mut v = self.v;\n        if x > 10 {{\n            {push}\n        }}\n        v\n    }}\n}}\n"
+        )
+    };
+    let method_test = "use guarded_side_effect::S;\n\n#[test]\nfn adds() {\n    let s = Box::new(S { v: Vec::new() });\n    let v = s.add(11, 4);\n    assert_eq!(v, vec![11]);\n}\n";
     let cases = [
+        (
+            "macro recursion",
+            via_macro("v.push(x);"),
+            via_macro("v.push(x * 1);"),
+            9,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "typed receiver",
+            typed_receiver("v.push(x);"),
+            typed_receiver("v.push(x * 1);"),
+            9,
+            method_test.to_string(),
+        ),
         (
             "mutual recursion",
             mutual("v.push(x);"),
