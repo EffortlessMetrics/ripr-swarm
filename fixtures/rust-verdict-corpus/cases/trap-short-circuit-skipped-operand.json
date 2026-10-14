@@ -62,7 +62,7 @@
   },
   "reasoning": "both_zero_rejects_nonzero_x pins both_zero(1, 0) and both_zero(2, 0) to false. On both runs x == 0 is false, so && returns before the changed 0 == y runs; 2 of 5 listed mutants pass cargo test. RIPR-SPEC-0197's short-circuit tail rule admits the pin only on a call that evaluates every operand, and no call does, so the line keeps its gap.",
   "labeling_observation": {
-    "ripr_commit": "PENDING",
+    "ripr_commit": "fcc151c",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"

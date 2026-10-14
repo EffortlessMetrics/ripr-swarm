@@ -56,7 +56,7 @@
   },
   "reasoning": "in_band_table pins in_band(level, open) to want over [(3, true, true), (2, true, false), (5, false, false)]. The (3, true) row makes open true, so && runs the changed 3 <= level at its boundary 3; every listed mutant fails cargo test. RIPR-SPEC-0197's short-circuit tail rule admits the pin on that row.",
   "labeling_observation": {
-    "ripr_commit": "PENDING",
+    "ripr_commit": "fcc151c",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"
