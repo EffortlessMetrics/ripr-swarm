@@ -1375,8 +1375,9 @@ The run check reads values, not mutants: it shows the changed chain runs
 to its end on a pinned input, which is what rule 3 asks of any tail.
 Whether those inputs discriminate a boundary stays the infection stage's
 question. `grid-equality-table` (`day % 7 == 6 || day % 7 == 0` over a
-table) now has its pin, but its predicate keeps `infection_unknown` for
-computed operands, so it stays below `exposed`.
+table) stays below `exposed`: its predicate keeps `infection_unknown` for
+computed operands, and its return value still lacks a complete
+owner-bound propagation witness.
 
 ## Required Evidence
 
@@ -1748,7 +1749,8 @@ assertions. This repair shares the existing callback without that larger migrati
 - Short-circuit tails (#7969): `grid-equality-helper` moves from a false
   actionable gap to `credited`. In the `authored-spec0197-short-circuit`
   subject, `short-circuit-band-table` (`open && 3 <= level` over a table
-  whose `(3, true)` row runs both operands) reads `credited`, and
+  whose `(3, true)` row runs both operands) stays `credited` (it already
+  read `exposed` through table boundary pairing; the pin must not undo it), and
   `trap-short-circuit-skipped-operand` (`x == 0 && 0 == y` pinned only
   with `x != 0`) stays a gap. No other row changes.
 

@@ -139,7 +139,7 @@ impl Operand {
                 right,
             } => compare(&left.value(values)?, operator, &right.value(values)?)?,
         };
-        Some(if self.negations % 2 == 0 {
+        Some(if self.negations.is_multiple_of(2) {
             value
         } else {
             !value
@@ -457,10 +457,8 @@ mod tests {
     }
 
     #[test]
-    fn evaluates_operands_on_literal_values() {
-        let Some(chain) = tail("fn f(x: i32, y: i32) -> bool {", "x == 0 && y == 1") else {
-            panic!("chain");
-        };
+    fn evaluates_operands_on_literal_values() -> Result<(), String> {
+        let chain = tail("fn f(x: i32, y: i32) -> bool {", "x == 0 && y == 1").ok_or("chain")?;
         let value = |x: &str, y: &str| {
             chain.operands[0].evaluate(&[Some(x.to_string()), Some(y.to_string())])
         };
@@ -470,9 +468,8 @@ mod tests {
             chain.operands[0].evaluate(&[None, Some("1".to_string())]),
             None
         );
-        let Some(weekend) = tail("fn f(day: u8) -> bool {", "day % 7 == 6 || day % 7 == 0") else {
-            panic!("weekend");
-        };
+        let weekend =
+            tail("fn f(day: u8) -> bool {", "day % 7 == 6 || day % 7 == 0").ok_or("weekend")?;
         assert_eq!(
             weekend.operands[0].evaluate(&[Some("13".to_string())]),
             Some(true)
@@ -481,12 +478,11 @@ mod tests {
             weekend.operands[0].evaluate(&[Some("7".to_string())]),
             Some(false)
         );
-        let Some(negated) = tail("fn f(a: bool, b: u8) -> bool {", "!!!a || b > 1") else {
-            panic!("negated");
-        };
+        let negated = tail("fn f(a: bool, b: u8) -> bool {", "!!!a || b > 1").ok_or("negated")?;
         assert_eq!(
             negated.operands[0].evaluate(&[Some("true".to_string()), None]),
             Some(false)
         );
+        Ok(())
     }
 }
