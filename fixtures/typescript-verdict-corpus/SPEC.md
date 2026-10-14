@@ -100,7 +100,8 @@ The five `jest-spec0258-*` cases came last and were labeled the same way.
 Their two own subjects exist because each one's whole-package state is the
 point: a missing snapshot fails every `jest --ci` run of the unedited
 package, so `authored-ts-jest-snapshot-unwritten` runs `jest --ci=false`,
-where the run writes the entry from what the code returns; and
+where each run, started from the committed package without a `.snap`
+file, writes the entry from what the code returns; and
 `authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
 its `jest -u` script and rewrites the committed entry.
 

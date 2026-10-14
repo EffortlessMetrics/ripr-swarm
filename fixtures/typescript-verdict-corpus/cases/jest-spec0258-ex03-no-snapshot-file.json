@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "`priceSnapUnwritten(150)` returns 140; the edit returns 130. The subject commits no `__snapshots__` file, so a run outside CI writes the entry from the value the code returns and passes on the unedited and the edited package alike (under `--ci` the unedited package already fails, since a missing snapshot is not written there). RIPR-SPEC-0258 example 3: with no snapshot file the reading stays snapshot / medium. ripr reports `weakly_exposed`.",
+  "reasoning": "`priceSnapUnwritten(150)` returns 140; the edit returns 130. The subject commits no `__snapshots__` file, so a run outside CI writes the entry from the value the code returns and passes on the unedited and the edited package alike, each run starting from the committed, snapshot-free package (under `--ci` the unedited package already fails, since a missing snapshot is not written there). RIPR-SPEC-0258 example 3: with no snapshot file the reading stays snapshot / medium. ripr reports `weakly_exposed`.",
   "labeling_observation": {
     "ripr_commit": "3ea9a19",
     "full_checkout_verdict": "gap",
