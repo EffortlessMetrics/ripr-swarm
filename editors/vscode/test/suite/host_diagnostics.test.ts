@@ -139,7 +139,7 @@ suite('VS Code test host diagnostics', () => {
 
   test('caps an oversized host log to the per-file tail bound', () => {
     const marker = 'UNRESPONSIVE-TAIL';
-    const body = `${'a'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES + 2048)}\n${marker}\n`;
+    const body = `${'#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES + 2048)}\n${marker}\n`;
     writeLog(root, 'renderer.log', body);
     retainHostDiagnostics({
       artifactRoot: root,
@@ -157,14 +157,31 @@ suite('VS Code test host diagnostics', () => {
   test('keeps the original failing exit when diagnostic retention cannot write', () => {
     const blocker = path.join(root, 'not-a-directory');
     fs.writeFileSync(blocker, 'cannot-be-a-parent\n');
-    const result = finalizeHostRun({
-      artifactRoot: blocker,
-      userDataDir: path.join(blocker, USER_DATA_DIR_NAME),
-      error: new Error('CodeWindow: detected unresponsive')
-    });
-    assert.strictEqual(result.exitCode, 1);
-    assert.strictEqual(result.retention.retained, false);
-    assert.strictEqual(result.retention.reason, 'retention_failed');
+    const originalError = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      const result = finalizeHostRun({
+        artifactRoot: blocker,
+        userDataDir: path.join(blocker, USER_DATA_DIR_NAME),
+        error: new Error('CodeWindow: detected unresponsive')
+      });
+      assert.strictEqual(result.exitCode, 1);
+      assert.strictEqual(result.retention.retained, false);
+      assert.strictEqual(result.retention.reason, 'retention_failed');
+      assert.ok(
+        logged.some((args) => String(args[0]).includes('Failed to retain VS Code test host diagnostics')),
+        JSON.stringify(logged)
+      );
+      assert.ok(
+        logged.some((args) => String(args[0]).includes('Failed to run tests:')),
+        JSON.stringify(logged)
+      );
+    } finally {
+      console.error = originalError;
+    }
   });
 });
 

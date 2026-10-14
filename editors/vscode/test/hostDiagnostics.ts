@@ -51,10 +51,15 @@ export function resolveHostDiagnosticsDir(artifactRoot: string): string {
 }
 
 export function redactHostDiagnosticsText(text: string): string {
-  return text
-    .replace(COMPLETE_PEM, '[redacted-pem]')
-    .replace(PEM_TAIL, '[redacted-pem-tail]')
-    .replace(PEM_END_ONLY, '[redacted-pem-end]')
+  let redacted = text.replace(COMPLETE_PEM, '[redacted-pem]');
+  // PEM-tail matching is only safe when an END marker exists; otherwise a
+  // long base64-looking log tail can backtrack without bound.
+  if (redacted.includes('-----END ')) {
+    redacted = redacted
+      .replace(PEM_TAIL, '[redacted-pem-tail]')
+      .replace(PEM_END_ONLY, '[redacted-pem-end]');
+  }
+  return redacted
     .replace(GITHUB_TOKEN, '[redacted-token]')
     .replace(GITHUB_PAT, '[redacted-token]')
     .replace(ACCESS_TOKEN_URL, 'x-access-token:[redacted]');

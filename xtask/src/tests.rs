@@ -49090,7 +49090,7 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 }
 
 #[test]
-fn vscode_ci_job_retains_failure_only_host_diagnostics() -> Result<(), String> {
+fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
     let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .map_err(|err| format!("read ci.yml: {err}"))?;
