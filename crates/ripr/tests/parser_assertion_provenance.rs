@@ -81,11 +81,34 @@ fn unrelated_reason_literal_cannot_supply_parser_discrimination() -> Result<(), 
                 .any(|r| r["name"] == name && r["relation_reason"] == "direct_owner_call")
         );
     }
-    assert!(
-        rows.iter()
-            .filter(|r| r["name"] == "unrelated_plan_and_gate_oracles")
-            .all(|r| r["relation_reason"] == "same_test_file")
+    let decoys: Vec<_> = rows
+        .iter()
+        .filter(|r| r["name"] == "unrelated_plan_and_gate_oracles")
+        .collect();
+    assert_eq!(
+        decoys.len(),
+        2,
+        "both plan/gate oracle rows must remain visible"
     );
+    for (kind, oracle) in [
+        (
+            "exact_value",
+            "assert_eq!(plan_reason, \"rust_module_unresolved_target\");",
+        ),
+        ("relational_check", "assert!(gate_passed);"),
+    ] {
+        let matching: Vec<_> = decoys
+            .iter()
+            .filter(|r| r["oracle_kind"] == kind && r["oracle"] == oracle)
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "missing or duplicated {kind} decoy oracle"
+        );
+        assert_eq!(matching[0]["relation_reason"], "same_test_file");
+        assert_eq!(matching[0]["miss"], "no_call_path");
+    }
     Ok(())
 }
 
