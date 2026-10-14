@@ -445,7 +445,11 @@ pub(crate) fn canonical_next_action_for_triage(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> Result<CanonicalNextActionV1, String> {
-    let root = output.root.display().to_string();
+    // Same slash-stable spelling as the top-level check JSON `root`.
+    // Raw `Path::display()` kept argv backslashes, so
+    // `document.root != canonical_next_action.subject.root` on Windows
+    // (#7730). Restart/command routes keep native spelling separately.
+    let root = display_path(&output.root);
     let scope = check_scope_descriptor(triage, output);
     let item_id = triage
         .selected
@@ -1247,6 +1251,120 @@ mod tests {
                 }
             }
             other => return Err(format!("scope stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #7730: `canonical_next_action.subject.root` must use the same
+    /// slash-stable renderer as the top-level JSON `root`, not raw
+    /// `Path::display()`. A backslash-typed spaced argv spelling must not
+    /// survive into the subject; a `.` root stays `.` so the JSON consumer
+    /// that matches `subject.root == "."` still holds.
+    #[test]
+    fn check_adapter_subject_root_uses_display_path_not_raw_display() -> Result<(), String> {
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+
+        let mut backslash_root = test_output(Vec::new());
+        backslash_root.root = PathBuf::from(r"C:\tmp\probe win space");
+        let raw = backslash_root.root.display().to_string();
+        let stable = crate::output::path::display_path(&backslash_root.root);
+        if raw == stable {
+            return Err(format!(
+                "fixture lost its discriminator: raw display {raw:?} already matches display_path"
+            ));
+        }
+        if !raw.contains('\\') {
+            return Err(format!(
+                "fixture must keep a backslash argv spelling, got {raw:?}"
+            ));
+        }
+        if stable.contains('\\') {
+            return Err(format!(
+                "display_path must not retain backslashes, got {stable:?}"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &backslash_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != stable {
+            return Err(format!(
+                "subject.root must match display_path, got {:?}, expected {stable:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root == raw {
+            return Err(format!("subject.root kept the raw argv spelling {raw:?}"));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != stable {
+            return Err(format!(
+                "serialized subject.root must match display_path, got {}",
+                encoded["subject"]["root"]
+            ));
+        }
+
+        // Verbatim Windows prefix: display_path unifies separators (#5996
+        // `//?/` shape) instead of leaking `\\?\` into JSON identity.
+        let mut verbatim = test_output(Vec::new());
+        verbatim.root = PathBuf::from(r"\\?\C:\tmp\probe");
+        let verbatim_raw = verbatim.root.display().to_string();
+        let verbatim_stable = crate::output::path::display_path(&verbatim.root);
+        if verbatim_raw == verbatim_stable {
+            return Err(format!(
+                "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches display_path"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &verbatim,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != verbatim_stable {
+            return Err(format!(
+                "verbatim subject.root must match display_path, got {:?}, expected {verbatim_stable:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root.contains('\\') {
+            return Err(format!(
+                "verbatim subject.root must not retain backslashes, got {:?}",
+                action.subject().root
+            ));
+        }
+
+        // A `.` root stays `.` under display_path, so consumers that treat
+        // `subject.root == "."` still match after this change.
+        let mut dot_root = test_output(Vec::new());
+        dot_root.root = PathBuf::from(".");
+        if crate::output::path::display_path(&dot_root.root) != "." {
+            return Err("display_path of '.' must stay '.'".to_string());
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &dot_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != "." {
+            return Err(format!(
+                "dot root must stay '.', got {:?}",
+                action.subject().root
+            ));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != "." {
+            return Err(format!(
+                "serialized dot root must stay '.', got {}",
+                encoded["subject"]["root"]
+            ));
         }
         Ok(())
     }

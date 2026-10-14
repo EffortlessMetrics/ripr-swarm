@@ -15261,6 +15261,7 @@ tests = [
   "crates/ripr/src/app/repair_card.rs::tests::canonical_decision_and_reference_agree",
   "crates/ripr/src/app/agent_status.rs::tests::canonical_decision_selects_the_status_arm",
   "crates/ripr/src/output/human/triage.rs::tests::check_adapter_binds_the_ranked_winner_with_bounded_alternatives",
+  "crates/ripr/src/output/human/triage.rs::tests::check_adapter_subject_root_uses_display_path_not_raw_display",
   "crates/ripr/src/repair_card_digest.rs::tests::canonical_decision_moves_remint_the_digest",
   "crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision",
 ]
