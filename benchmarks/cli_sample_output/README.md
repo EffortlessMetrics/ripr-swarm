@@ -111,8 +111,10 @@ in flight for any normal hosted qualification. Rollback is this test/fixture,
 traceability and evidence package alone.
 
 Independent review found that the first checker normalized sibling fixture roots
-without binding them to the CLI CWD. Its sibling-root substitution control was
-accepted; the repaired checker binds that root and rejects the same control.
+without binding them to the CLI CWD. The initial reviewer control changed
+argument/CWD text while leaving returned descriptor paths unchanged; it did not
+establish a substituted read. A corrected descriptor-only sibling substitution
+is accepted by the original checker and rejected by the repaired root binding.
 All original raw traces independently used the intended root and remain valid.
 The first precommit stopped at file policy on the standalone JSON receipt; the
 receipt is now a Markdown data document, without a policy exception or gate change.
