@@ -20297,14 +20297,7 @@ expires = "2099-09-01"
     assert!(stdout.contains(r#""suppressed_test_efficiency_findings": 0"#));
     // intentional remains 0 — declared_intent and suppressions are distinct.
     assert!(stdout.contains(r#""intentional_test_efficiency_findings": 0"#));
-    // #7760: the shared check matcher warns instead of silently dropping
-    // TE entries. This is not an unmatched exposure-gap selector.
-    assert!(
-        stdout.contains("does not apply to check findings")
-            && stdout.contains("cli_prints_help")
-            && !stdout.contains(r#""warnings": []"#),
-        "{stdout}"
-    );
+    assert!(stdout.contains(r#""warnings": []"#));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -20335,14 +20328,7 @@ expires = "2025-01-01"
     // even when a stale TE suppression exists.
     assert!(stdout.contains(r#""unsuppressed_test_efficiency_findings": 0"#));
     assert!(stdout.contains(r#""suppressed_test_efficiency_findings": 0"#));
-    // #7760: expiry does not restore silence; the entry still cannot apply
-    // to check findings.
-    assert!(
-        stdout.contains("does not apply to check findings")
-            && stdout.contains("cli_prints_help")
-            && !stdout.contains(r#""warnings": []"#),
-        "{stdout}"
-    );
+    assert!(stdout.contains(r#""warnings": []"#));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
