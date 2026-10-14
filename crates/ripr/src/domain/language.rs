@@ -580,10 +580,11 @@ impl StaticLimitKind {
                  limitation, not a coverage claim."
             }
             StaticLimitKind::RustPanicOutcomeUnresolved => {
-                "A related Rust `#[should_panic]` test runs this code and passes only if it \
-                 panics, and this code can panic at or after the change, but ripr does not \
-                 resolve whether the changed code decides that panic. ripr does not claim a gap; \
-                 this is a named limitation, not a coverage claim."
+                "A related Rust `#[should_panic]` test contains a call to this code and passes \
+                 only if something panics, and this code can panic at or after the change, but \
+                 ripr does not resolve whether the panic comes from the changed code or from an \
+                 earlier call. ripr does not claim a gap; this is a named limitation, not a \
+                 coverage claim."
             }
         }
     }

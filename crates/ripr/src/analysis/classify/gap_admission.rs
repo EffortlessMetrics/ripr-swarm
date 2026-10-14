@@ -788,7 +788,7 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
         return false;
     }
     let next_step = format!(
-        "{} passes only if this code panics, and ripr does not resolve whether the changed code decides that panic, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call can panic first; add a test only if either fails.",
+        "{} calls this code and passes only if something panics, and ripr does not resolve whether the panic comes from the changed code or from an earlier call, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call can panic first; add a test only if either fails.",
         panicking.join(", ")
     );
     withhold_gap(
