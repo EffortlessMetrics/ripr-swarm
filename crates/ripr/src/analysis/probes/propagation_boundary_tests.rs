@@ -204,12 +204,18 @@ fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(
         path,
         added_lines: [5, 7]
             .into_iter()
-            .map(|line| ChangedLine {
-                line,
-                new_side_line: line,
-                text: source.lines().nth(line - 1).unwrap().to_string(),
+            .map(|line| {
+                Ok(ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text: source
+                        .lines()
+                        .nth(line - 1)
+                        .ok_or_else(|| format!("fixture has no line {line}"))?
+                        .to_string(),
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, String>>()?,
         removed_lines: Vec::new(),
     };
     let seeded = super::diff::probes_for_file_with_relations(Path::new("."), &changed, &index, &[]);
