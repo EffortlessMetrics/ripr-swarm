@@ -214,48 +214,51 @@ fn bound_as_parameter(masked: &str, name: &str) -> bool {
                 && !masked[at + name.len()..]
                     .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
         });
-    identifier_offsets(masked, name).into_iter().chain(spreads).any(|at| {
-        let after = &masked[at + name.len()..];
-        if after.trim_start().starts_with("=>") {
-            return true;
-        }
-        let mut depth = 0usize;
-        let Some(open) = masked[..at].char_indices().rev().find_map(|(index, c)| {
-            match c {
-                ')' | ']' | '}' => depth += 1,
-                '(' if depth == 0 => return Some(index),
-                '(' | '[' | '{' => depth = depth.saturating_sub(1),
-                _ => {}
+    identifier_offsets(masked, name)
+        .into_iter()
+        .chain(spreads)
+        .any(|at| {
+            let after = &masked[at + name.len()..];
+            if after.trim_start().starts_with("=>") {
+                return true;
             }
-            None
-        }) else {
-            return false;
-        };
-        let mut depth = 0usize;
-        let Some(close) = masked[open..].char_indices().find_map(|(index, c)| {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some(open + index + 1);
-                    }
+            let mut depth = 0usize;
+            let Some(open) = masked[..at].char_indices().rev().find_map(|(index, c)| {
+                match c {
+                    ')' | ']' | '}' => depth += 1,
+                    '(' if depth == 0 => return Some(index),
+                    '(' | '[' | '{' => depth = depth.saturating_sub(1),
+                    _ => {}
                 }
-                _ => {}
-            }
-            None
-        }) else {
-            return false;
-        };
-        let follows = masked[close..].trim_start();
-        let head = masked[..open].trim_end();
-        let word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
-        // `(name): T => ...` is an arrow; `owner(name) : x` ends a ternary.
-        follows.starts_with("=>")
-            || (follows.starts_with(':') && !head.ends_with(word))
-            || head.ends_with("function")
-            || head.trim_end_matches(word).trim_end().ends_with("function")
-    })
+                None
+            }) else {
+                return false;
+            };
+            let mut depth = 0usize;
+            let Some(close) = masked[open..].char_indices().find_map(|(index, c)| {
+                match c {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            return Some(open + index + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            }) else {
+                return false;
+            };
+            let follows = masked[close..].trim_start();
+            let head = masked[..open].trim_end();
+            let word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+            // `(name): T => ...` is an arrow; `owner(name) : x` ends a ternary.
+            follows.starts_with("=>")
+                || (follows.starts_with(':') && !head.ends_with(word))
+                || head.ends_with("function")
+                || head.trim_end_matches(word).trim_end().ends_with("function")
+        })
 }
 
 /// The entries of `return { ... }` on one line, trimmed.
@@ -560,7 +563,8 @@ mod tests {
         // The same body names another owner, so `markOk(cfg)` is a helper.
         assert_eq!(ts_test_local_object(body, "cfg", &["ready"]), None);
         assert_eq!(
-            ts_test_local_object("const cfg: Settings = { ok: true };", "cfg", &["ready"]).as_deref(),
+            ts_test_local_object("const cfg: Settings = { ok: true };", "cfg", &["ready"])
+                .as_deref(),
             Some("{ ok: true }")
         );
         assert_eq!(
@@ -596,7 +600,11 @@ mod tests {
             "const cfg = { ok: true }; if (cfg.ok == true) { log(cfg); }",
             "const cfg = { ok: true }; expect(ready([cfg][0])).toEqual(cfg);",
         ] {
-            assert_eq!(ts_test_local_object(body, "cfg", &["ready"]), None, "{body}");
+            assert_eq!(
+                ts_test_local_object(body, "cfg", &["ready"]),
+                None,
+                "{body}"
+            );
         }
         assert_eq!(
             ts_test_local_object("const cfgs = { ok: true };", "cfg", &["ready"]),

@@ -5186,10 +5186,7 @@ fn ts_owner_call_member_arguments(
         .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
     let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
     for rest in bare.chain(qualified).map(str::trim_start) {
-        let Some(arguments) = rest
-            .strip_prefix('(')
-            .and_then(balanced_call_arguments)
-        else {
+        let Some(arguments) = rest.strip_prefix('(').and_then(balanced_call_arguments) else {
             continue;
         };
         let Some(end) = call_list_end(rest) else {
@@ -5207,9 +5204,12 @@ fn ts_owner_call_member_arguments(
             .strip_prefix('[')
             .map(str::trim_start)
             .and_then(|inner| {
-                ['"', '\'']
-                    .into_iter()
-                    .find_map(|quote| inner.strip_prefix(quote)?.strip_prefix(key)?.strip_prefix(quote))
+                ['"', '\''].into_iter().find_map(|quote| {
+                    inner
+                        .strip_prefix(quote)?
+                        .strip_prefix(key)?
+                        .strip_prefix(quote)
+                })
             })
             .and_then(|after| after.trim_start().strip_prefix(']'))
             .is_some_and(|after| after.trim().is_empty());
