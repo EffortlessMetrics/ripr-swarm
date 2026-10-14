@@ -109,7 +109,15 @@ pub(super) fn owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
                     .syntax()
                     .descendants_with_tokens()
                     .filter_map(|node| node.into_token())
-                    .any(|token| matches!(token.text(), "format" | "Ok" | "Some" | "*"))
+                    .any(|token| matches!(token.text(), "format" | "Ok" | "Some"))
+                    || tokens(import.syntax())
+                        .iter()
+                        .any(|(_, token)| token == "*")
+                        && tokens(import.syntax())
+                            .into_iter()
+                            .map(|(_, token)| token)
+                            .collect::<String>()
+                            != "usecrate::*;"
             })
     }) {
         return None;

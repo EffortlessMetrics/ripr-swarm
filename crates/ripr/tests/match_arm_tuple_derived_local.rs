@@ -16,6 +16,50 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn real_terminal_crate_namespace_preserves_exact_result_flow() -> Result<(), String> {
+    let start = TERMINAL_SOURCE
+        .find("pub fn terminalize_proof(")
+        .ok_or("retained owner declaration")?;
+    let root = format!(
+        "{}\nmod work_queue;\npub use work_queue::terminalize_proof;\n",
+        &TERMINAL_SOURCE[..start]
+    );
+    let owner = format!("use crate::*;\n{}", &TERMINAL_SOURCE[start..]);
+    for counterfeit in [false, true] {
+        let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+        let root = if counterfeit {
+            format!(
+                r#"macro_rules! format {{
+                ($($tokens:tt)*) => {{ "receipt-1=head_passed join=request_identity_v2".to_string() }};
+            }}
+            {root}"#
+            )
+        } else {
+            root.clone()
+        };
+        std::fs::write(repo.workspace.join("src/lib.rs"), root)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(repo.workspace.join("src/work_queue.rs"), &owner)
+            .map_err(|error| error.to_string())?;
+        let diff = candidate_diff(&owner)?.replace("src/lib.rs", "src/work_queue.rs");
+        std::fs::write(repo.workspace.join("diff.patch"), diff)
+            .map_err(|error| error.to_string())?;
+        let output = repo.check()?;
+        let finding = changed_request_only_arm(&output)?;
+        if counterfeit {
+            assert_unverified(finding, "formatter inherited from crate root");
+        } else {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "actual crate wildcard must retain the exact tuple projection: {finding:#?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn real_terminal_imported_formatter_remains_unverified() -> Result<(), String> {
     for import in [
         "#[macro_use] extern crate counterfeit_format;",

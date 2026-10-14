@@ -7200,6 +7200,7 @@ tests = [
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_projection_is_current_and_deterministic_in_ready_and_deep",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_replaced_formatter_remains_unverified",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_imported_formatter_remains_unverified",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_crate_namespace_preserves_exact_result_flow",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/terminal_flow.rs::tests::terminal_literal_tokens_preserve_whitespace_and_ignore_only_trivia",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/terminal_flow.rs::tests::terminal_maps_refuse_duplicate_keys_and_nonliteral_values"
 ]

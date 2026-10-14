@@ -8,12 +8,34 @@
 
 use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
+use crate::analysis::syntax::macro_binding_scan;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 
 mod terminal_flow;
+
+/// Reuse the index's parser-owned macro candidates and binding scan. A crate
+/// wildcard may inherit the standard formatter only when no indexed source
+/// can replace it; opaque imports/expansions and incomplete source refuse.
+pub(super) fn terminal_formatter_unambiguous(context: &ProbeContext<'_>) -> bool {
+    context.workspace_complete
+        && context.index.files().values().all(|facts| {
+            !facts.used_lexical_fallback
+                && (facts
+                    .macro_candidates
+                    .as_deref()
+                    .is_some_and(|candidates| !candidates.may_bind("format"))
+                    || macro_binding_scan(
+                        &facts.source,
+                        context.index.macro_scope_crates(),
+                        &["format"],
+                        &|_| false,
+                    )
+                    .is_empty())
+        })
+}
 
 pub(super) fn terminal_owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
     terminal_flow::owner_match(function)
@@ -47,7 +69,8 @@ fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     }
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
-    let terminal = terminal_owner_match(&function).is_some();
+    let terminal =
+        terminal_owner_match(&function).is_some() && terminal_formatter_unambiguous(context);
     if !terminal && !canonical_owner_roles(&function)? {
         return Some(false);
     }

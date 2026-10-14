@@ -182,9 +182,13 @@ This extends static discrimination only for that grammar. Indirect serialized
 caller projections, multiple-receipt oracle evaluation and arbitrary result
 flow remain unsupported. The stage combiner retains ownership of the final
 classification. Local or imported replacement macros, extern crates and
-wildcard imports leave formatter provenance unresolved and refuse this
-terminal extension. Resolving the actual consumer's crate wildcard and
-indirect serialized oracle is separate retained acceptance under #1728.
+unknown wildcard imports refuse this terminal extension. The actual
+`use crate::*` boundary reuses the existing indexed macro candidates and
+parser-backed binding scan for `format`; every indexed file must remain
+parser-owned, and a possible formatter replacement anywhere in the index
+withholds the witness. A native public-API regression puts the retained owner
+in an out-of-line module and rejects a formatter inherited from its crate root.
+The indirect serialized oracle remains separate retained acceptance under #1728.
 No consumer rewrite, pin, suppression, threshold, release or
 adoption follows. Roll back the terminal grammar while retaining its public
 positive/negative regressions; the previously admitted precursor stays intact.
