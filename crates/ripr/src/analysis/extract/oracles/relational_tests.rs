@@ -966,6 +966,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(!(flag && matches!(r, Err(E::Bad)).eq(&true)));",
         "assert!((matches!(r, Err(E::Bad)).eq(&true)) ^ flag);",
         "assert_eq!(PartialEq::eq(&f::<{ A < B }>(), &x), false);",
+        "assert_eq!(/* c */ matches!(r, Err(E::Bad)).eq(&true), false);",
+        "assert_eq!(matches!(r, Err(E::Bad)) /* c */ .eq(&true), false);",
+        "assert_eq!((matches!(r, Err(E::Bad)) /* c */).eq(&true), false);",
+        "assert_eq!(matches!(matches!(r, Err(E::Bad)), true).eq(&true), false);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
