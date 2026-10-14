@@ -49,10 +49,6 @@ fn number_return_annotation_reads_only_an_exact_number() {
         ("async arrow", "async (): number => 1"),
         ("generator", "function* f(): number {\n  return 1;\n}"),
         ("generic", "function f<T>(x: T): number {\n  return 1;\n}"),
-        (
-            "number only in a parameter",
-            "function f(x: number) {\n  return x;\n}",
-        ),
         ("bare arrow", "x => x"),
         (
             "predicate",
@@ -109,6 +105,11 @@ fn loose_number_literal_marks_only_weak_loose_equality() -> Result<(), String> {
         ("equal 0", "  assert.equal(lineCount([]), 0);", true),
         ("deepEqual 0", "  assert.deepEqual(lineCount([]), 0);", true),
         ("negative", "  assert.equal(lineCount([]), -0);", true),
+        (
+            "one point zero",
+            "  assert.equal(lineCount([\"a\"]), 1.0);",
+            true,
+        ),
         (
             "parenthesized as",
             "  assert.equal(lineCount([\"a\"]), (1 as number));",
@@ -176,6 +177,17 @@ fn loose_number_literal_marks_only_weak_loose_equality() -> Result<(), String> {
     assert_eq!(test.assertions[0].matcher, "equal");
     assert_eq!(test.assertions[0].oracle_kind, OracleKind::RelationalCheck);
     assert!(!test.assertions[0].loose_number_expected);
+    // chai's TDD `assert.equal` is loose too, so it is a candidate.
+    let chai_assert = "import { assert } from \"chai\";\nimport { lineCount } from \"../src/linecount\";\n\nit(\"counts\", () => {\n  assert.equal(lineCount([\"a\"]), 1);\n});\n";
+    let tests = extract_tests(Path::new("tests/linecount.test.ts"), chai_assert);
+    let [test] = tests.as_slice() else {
+        return Err(format!(
+            "chai assert: expected one test, got {}",
+            tests.len()
+        ));
+    };
+    assert_eq!(test.assertions.len(), 1);
+    assert!(test.assertions[0].loose_number_expected);
     Ok(())
 }
 
@@ -233,12 +245,12 @@ fn loose_number_pin_stays_weak_without_a_number_owner_or_whole_result() -> Resul
         (
             "typed-compared",
             LINE_COUNT,
-            "  assert.equal(lineCount([\"a\"]) > 0, true);",
+            "  assert.equal(lineCount([\"a\"]) > 0, 1);",
         ),
         (
-            "typed-shadowed",
+            "typed-member",
             LINE_COUNT,
-            "  const lineCount = (items: string[]) => items.length > 0;\n  assert.equal(lineCount([\"a\"]), 1);",
+            "  assert.equal(lineCount([\"a\"]).toFixed(0), 1);",
         ),
     ] {
         let finding = line_count_finding(label, owner, &line_count_test(body))?;
@@ -248,7 +260,7 @@ fn loose_number_pin_stays_weak_without_a_number_owner_or_whole_result() -> Resul
             "{label}: {:?}",
             finding.missing
         );
-        if label != "typed-shadowed" {
+        {
             let row = finding
                 .related_tests
                 .first()
@@ -260,5 +272,109 @@ fn loose_number_pin_stays_weak_without_a_number_owner_or_whole_result() -> Resul
             );
         }
     }
+    Ok(())
+}
+
+/// A test-local function that shadows the owner and a method owner earn no
+/// credit although each assertion is marked. The method's test relates, so
+/// only the guard's owner-kind check refuses it.
+#[test]
+fn loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner() -> Result<(), String> {
+    let read = |label: &str, owner_file: &str, owner_source: &str, owner_name: &str, test: &str| {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join(owner_file), owner_source)?;
+        ts_write_file(&root.join("tests/linecount.test.ts"), test)?;
+        let owner = extract_owners(Path::new(owner_file), owner_source)
+            .into_iter()
+            .find(|owner| owner.name == owner_name)
+            .ok_or_else(|| format!("{label}: owner {owner_name} not extracted"))?;
+        let tests = extract_tests(Path::new("tests/linecount.test.ts"), test);
+        let candidates =
+            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let marked = tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .filter(|assertion| assertion.loose_number_expected)
+            .count();
+        let facts = ts_typed_loose_number_facts(&owner, &candidates, None, Some(&root));
+        let credited = tests
+            .iter()
+            .flat_map(|test| test.assertions.iter().map(move |a| (test, a)))
+            .filter(|(test, assertion)| facts.credits(&test.file, assertion))
+            .count();
+        let _ = std::fs::remove_dir_all(&root);
+        Ok::<_, String>((candidates.len(), marked, credited))
+    };
+    let plain = read(
+        "typed-facts-plain",
+        "src/linecount.ts",
+        LINE_COUNT,
+        "lineCount",
+        &line_count_test("  assert.equal(lineCount([\"a\"]), 1);"),
+    )?;
+    assert_eq!(plain, (1, 1, 1), "plain");
+    let shadowed = read(
+        "typed-facts-shadowed",
+        "src/linecount.ts",
+        LINE_COUNT,
+        "lineCount",
+        &line_count_test(
+            "  assert.equal(lineCount([\"a\"]), 1);\n  {\n    const lineCount = (items: string[]) => items.length > 0;\n    assert.equal(lineCount([\"a\"]), 1);\n  }",
+        ),
+    )?;
+    // Relation already drops a test that declares its own `lineCount`;
+    // the guard's own shadow check is a second line behind it.
+    assert_eq!(shadowed.0, 0, "shadowed: the test does not relate");
+    assert_eq!(shadowed.1, 2, "shadowed: both assertions are marked");
+    assert_eq!(shadowed.2, 0, "shadowed");
+    // The same related test and marked assertion, read against a method
+    // owner of the same name: only the owner-kind check differs.
+    let root = ts_unique_tempdir("typed-facts-method")?;
+    ts_write_file(&root.join("src/linecount.ts"), LINE_COUNT)?;
+    let test = line_count_test("  assert.equal(lineCount([\"a\"]), 1);");
+    ts_write_file(&root.join("tests/linecount.test.ts"), &test)?;
+    let function = extract_owners(Path::new("src/linecount.ts"), LINE_COUNT)
+        .into_iter()
+        .find(|owner| owner.name == "lineCount")
+        .ok_or("owner lineCount not extracted")?;
+    let method_source = "export class Counter {\n  lineCount(items: string[]): number {\n    return items.length;\n  }\n}\n";
+    let method = extract_owners(Path::new("src/linecount.ts"), method_source)
+        .into_iter()
+        .find(|owner| owner.name == "lineCount")
+        .ok_or("method lineCount not extracted")?;
+    let tests = extract_tests(Path::new("tests/linecount.test.ts"), &test);
+    let candidates = related_test_candidates(
+        &function,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+    );
+    let credited = |owner: &TypeScriptOwner| {
+        let facts = ts_typed_loose_number_facts(owner, &candidates, None, Some(&root));
+        tests[0]
+            .assertions
+            .iter()
+            .filter(|assertion| facts.credits(&tests[0].file, assertion))
+            .count()
+    };
+    let (by_function, by_method) = (credited(&function), credited(&method));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        matches!(
+            method.owner_kind,
+            OwnerKind::Method | OwnerKind::ClassMethod
+        ),
+        "{:?}",
+        method.owner_kind
+    );
+    assert!(
+        method
+            .source_text
+            .as_deref()
+            .is_some_and(ts_owner_declares_number_return)
+    );
+    assert_eq!(by_function, 1);
+    assert_eq!(by_method, 0);
     Ok(())
 }

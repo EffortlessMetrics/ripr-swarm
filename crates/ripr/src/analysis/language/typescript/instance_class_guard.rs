@@ -41,19 +41,24 @@ const BUILTIN_CLASSES: [&str; 17] = [
 /// (RIPR-SPEC-0250).
 #[derive(Debug, Default)]
 pub(crate) struct PinFacts {
-    /// Test file, assertion line, observed expression and matcher of each pin.
-    credited: Vec<(PathBuf, usize, String, String)>,
+    /// Test file, assertion line, observed expression, matcher and expected
+    /// value of each pin. The expected value keeps a second assertion with
+    /// the same matcher on the same line and subject from sharing the pin.
+    credited: Vec<(PathBuf, usize, String, String, Option<String>)>,
 }
 
 impl PinFacts {
     /// `true` when `assertion` in the test at `file` is a credited pin.
     pub(crate) fn credits(&self, file: &Path, assertion: &TypeScriptAssertion) -> bool {
-        self.credited.iter().any(|(path, line, observed, matcher)| {
-            path == file
-                && *line == assertion.line
-                && *matcher == assertion.matcher
-                && assertion.observed_expression.as_deref() == Some(observed.as_str())
-        })
+        self.credited
+            .iter()
+            .any(|(path, line, observed, matcher, expected)| {
+                path == file
+                    && *line == assertion.line
+                    && *matcher == assertion.matcher
+                    && assertion.observed_expression.as_deref() == Some(observed.as_str())
+                    && assertion.expected_value_or_variant == *expected
+            })
     }
 
     /// Record `assertion` in the test at `file` as a credited pin.
@@ -64,6 +69,7 @@ impl PinFacts {
                 assertion.line,
                 observed,
                 assertion.matcher.clone(),
+                assertion.expected_value_or_variant.clone(),
             ));
         }
     }

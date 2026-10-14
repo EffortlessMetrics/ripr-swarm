@@ -4,14 +4,19 @@
 //! Rule 2 leaves `assert.equal(x, 1)` weak because `true == 1` and
 //! `"1" == 1`. Those coercions need a non-number on the left. When the owner
 //! declares its return type as exactly `number` and the assertion observes
-//! the whole result of one owner call, `==` compares two numbers, which is
-//! `===`, so the assertion pins the value as `strictEqual` would.
+//! the whole result of one owner call, `==` compares two numbers, which
+//! answers as `===` does, so the assertion pins the value.
+//!
+//! Only function and arrow owners qualify. A method's result is reached
+//! through a receiver, and the whole-result check reads only `f(...)`,
+//! `ns.f(...)` or a local bound to one, so a same-named free function the
+//! test imports could otherwise borrow the method's annotation.
 
 use super::*;
 
 /// `true` when the owner source declares its return type as exactly
-/// `number`: `function f(x: T): number {`, `(x: T): number => ...` or a
-/// method `m(): number {`. A generic parameter list, an `async` or
+/// `number`: `function f(x: T): number {` or `(x: T): number => ...`.
+/// A generic parameter list, an `async` or
 /// generator owner, and any other annotation (`number | string`,
 /// `Promise<number>`, none at all) read `false`.
 pub(crate) fn ts_owner_declares_number_return(owner_source: &str) -> bool {
@@ -78,7 +83,10 @@ pub(crate) fn ts_typed_loose_number_facts(
     {
         return facts;
     }
-    if !owner
+    if !matches!(
+        owner.owner_kind,
+        OwnerKind::Function | OwnerKind::ArrowFunction
+    ) || !owner
         .source_text
         .as_deref()
         .is_some_and(ts_owner_declares_number_return)

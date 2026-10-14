@@ -145,21 +145,24 @@ callback, where a nested declaration could shadow the name. A
 body, reads its own top-level `const`s the same way, and never its
 parent's.
 
-Amended 2026-10-14 (#6654, typed owner): `==` between two numbers is
-`===`, so a finite number literal the list above refuses (`0`, `1`,
+Amended 2026-10-14 (#6654, typed owner): `==` between two numbers
+answers as `===` does, so a finite number literal the list above refuses (`0`, `1`,
 `-0`, `1.0`), optionally negated, parenthesized or under `as`, also
 reads `exact_value` / strong when the owner's own source declares its
-return type as exactly `number` (`function f(...): number`, an arrow
-`(...): number =>`, or a method `m(): number`) and the assertion
-observes the whole result of one owner call (`f(...)`, `ns.f(...)`, or
-a local bound once to that call). A generic, `async` or generator
-owner, any other annotation (`number | boolean`, `Promise<number>`,
-`number[]`) or none, a wrapped or compared result
-(`Math.min(f(x), 5)`, `f(x) > 0`), a test that declares its own `f`,
-a variable expected value, and chai's negated `.not.to.equal(1)` keep
-`relational_check` / weak. The declared type is trusted: an owner that
-returns `true` through an `any` cast is out of scope, as it is for every
-other TypeScript type ripr reads.
+return type as exactly `number` (`function f(...): number` or an arrow
+`(...): number =>`) and the assertion observes the whole result of one
+owner call (`f(...)`, `ns.f(...)`, or a local bound once to that call).
+A method owner, a generic, `async` or generator owner, any other
+annotation (`number | boolean`, `Promise<number>`, `number[]`) or none,
+a wrapped, compared or member-read result (`Math.min(f(x), 5)`,
+`f(x) > 0`, `f(x).toFixed(0)`), a test that declares its own `f`, a
+variable expected value (even a test-local `const one = 1`, which
+example 10 does not resolve because `1` is coercible), and chai's
+negated `.not.to.equal(1)` keep `relational_check` / weak. chai's TDD
+`assert.equal` is loose `==` too and qualifies. The declared type is
+trusted: an owner whose body returns a non-number despite it (an `any`
+cast, an implicitly `any` value such as `JSON.parse(s).count`) is out
+of scope, as it is for every other TypeScript type ripr reads.
 
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
@@ -252,9 +255,14 @@ and the rejected alternative. Recorded on #6654.
    Rejected: read every legacy `equal(x, 1)` strong, which credits
    `assert.equal(isEmpty(x), 1)` against a boolean. Rejected: infer the
    result type from the returned expression, which needs type inference
-   ripr does not do. Rejected: keep `0` and `1` weak, which leaves
-   `nodetest-legacy-equal-literal-one` (a discriminated test) a false
-   gap.
+   ripr does not do. Rejected: method owners, because the whole-result
+   check reads only `f(...)` and `ns.f(...)`, so a same-named free
+   function the test calls could borrow a method's annotation. Pins are
+   keyed by test file, line, observed expression, matcher and expected
+   value, so a second assertion on the same line with another expected
+   value does not share the credit. Rejected: keep `0` and `1` weak,
+   which leaves `nodetest-legacy-equal-literal-one` (a discriminated
+   test) a false gap.
 
 ## Required Evidence
 
@@ -318,10 +326,11 @@ and the rejected alternative. Recorded on #6654.
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
    computed key, with a `__proto__` key, or against a variable other than
-   the test-local `const` of example 10: `relational_check` / weak
-   (but see example 11 for `0` and `1` on a `number` owner).
+   the test-local `const` of example 10: `relational_check` / weak.
    chai `assert.equal(x, "silver")` reads strong and
-   `assert.equal(x, 1)` weak, as legacy `node:assert` does.
+   `assert.equal(x, 1)` weak, as legacy `node:assert` does. Example 11
+   reads `0` and `1` (from either library) strong on the whole result
+   of an owner declared to return `number`.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
    multi-line template holding an object's text: `snapshot` / strong,
    no `typescript_snapshot_discriminator_unresolved`.
@@ -347,7 +356,9 @@ and the rejected alternative. Recorded on #6654.
     `const n = lineCount(["a"]); assert.equal(n, 1)`: `exact_value` /
     strong, `exposed`. The same with no return annotation,
     `: number | boolean`, `Math.min(lineCount(["a"]), 5)`,
-    `lineCount(["a"]) > 0` against `true`, or a test-local `lineCount`:
+    `lineCount(["a"]) > 0` or `lineCount(["a"]).toFixed(0)` against `1`,
+    a test-local `lineCount`, or a class method `lineCount(): number`
+    with the test calling a same-named function from another module:
     `relational_check` / weak.
 
 ## Test Mapping
