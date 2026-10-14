@@ -1271,7 +1271,7 @@ fn value_fact_json(
             out,
             indent + 1,
             "source_file",
-            &crate::output::path::display_path(source_file),
+            &crate::output::path::display_path_text(source_file),
             true,
         );
     }

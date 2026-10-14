@@ -1287,7 +1287,10 @@ The evidence-first fields are additive in schema `0.2`:
   `provenance` field described below. This is a low-probability edge case; a
   future schema could use `"file:line"` composite keys.
 - Per-value objects may carry **optional `source_file`** (#7805), the
-  producer-owned originating file. Ordinary Rust diff-test source values retain
+  producer-owned originating file as stable path text (including the existing
+  percent encoding for reserved percent signs and native non-UTF8 bytes).
+  The public struct field is `Option<String>`, so metadata serialization does
+  not require the native filename to be UTF-8. Ordinary Rust diff-test source values retain
   their indexed test file. This additive field appears in both observed-value
   arrays and SARIF; it grants no assertion execution, oracle admission, or
   classification credit. Use it with `line` and the value-specific `provenance`

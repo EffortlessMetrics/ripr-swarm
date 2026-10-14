@@ -837,7 +837,8 @@ fn value_facts(values: &[ValueFact]) -> Value {
                     "context": value.context.as_str()
                 });
                 if let Some(source_file) = &value.source_file {
-                    fact["source_file"] = json!(crate::output::path::display_path(source_file));
+                    fact["source_file"] =
+                        json!(crate::output::path::display_path_text(source_file));
                 }
                 fact
             })
@@ -849,13 +850,12 @@ fn value_facts(values: &[ValueFact]) -> Value {
 mod source_file_tests {
     use super::*;
     use crate::domain::ValueContext;
-    use std::path::PathBuf;
 
     #[test]
     fn source_identity_is_optional_and_preserves_the_existing_value_cap() {
         let mut facts = (1..=40)
             .map(|line| ValueFact {
-                source_file: Some(PathBuf::from("tests/receipt.rs")),
+                source_file: Some("tests/receipt.rs".to_owned()),
                 line,
                 text: format!("assert_eq!(receipt({line}), {line});"),
                 value: line.to_string(),
