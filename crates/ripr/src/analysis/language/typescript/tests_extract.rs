@@ -70,7 +70,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         if !ret.errors.is_empty() {
             return Vec::new();
         }
-        let imports = extract_imports_from_statements(&ret.program.body);
+        let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
         let mut scope = TestScope {
@@ -1608,6 +1608,36 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
 
 /// Whether a test callback's first parameter is an object pattern that binds
 /// `expect` under its own name (`({ expect }) => ...`).
+/// `call_text` with the registration callback's own parameter list blanked
+/// (same length, spaces): the runner-context destructuring
+/// (`test("x", ({ expect }) => ...)`, RIPR-SPEC-0243 rule 3) must not read
+/// as a body-local shadow of `expect` in the whole-body scan. Offsets are
+/// taken from the AST spans, so a parse-derived slice always aligns.
+fn call_text_without_callback_params(
+    call_text: &str,
+    call: &oxc_ast::ast::CallExpression<'_>,
+    callback: &oxc_ast::ast::Argument<'_>,
+) -> String {
+    let params_span = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.params.span,
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.params.span,
+        _ => return call_text.to_string(),
+    };
+    let base = call.span.start as usize;
+    let start = (params_span.start as usize)
+        .saturating_sub(base)
+        .min(call_text.len());
+    let end = (params_span.end as usize)
+        .saturating_sub(base)
+        .max(start)
+        .min(call_text.len());
+    let mut blanked = String::with_capacity(call_text.len());
+    blanked.push_str(call_text.get(..start).unwrap_or_default());
+    blanked.extend(std::iter::repeat_n(' ', end - start));
+    blanked.push_str(call_text.get(end..).unwrap_or_default());
+    blanked
+}
+
 fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) -> bool {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
@@ -1841,13 +1871,18 @@ pub(crate) fn test_name_and_assertions_from_call(
         });
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
-    // re-declares it.
+    // re-declares it. The callback's own parameter list is blanked before the
+    // whole-body shadow scan, so the sanctioned context destructuring never
+    // reads as a body-local shadow of `expect`; a re-declaration inside the
+    // body still blocks the exemption.
     let bindings = if first_parameter_destructures_expect(callback)
         && !body_declarations
             .iter()
             .any(|declared| declared == "expect")
-        && !super::related_tests::local_identifier_declared_in_test_body(call_text, "expect")
-    {
+        && !super::related_tests::local_identifier_declared_in_test_body(
+            &call_text_without_callback_params(call_text, call, callback),
+            "expect",
+        ) {
         bindings.with_context_expect()
     } else {
         bindings

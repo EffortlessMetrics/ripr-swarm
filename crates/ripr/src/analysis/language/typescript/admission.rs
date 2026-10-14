@@ -109,6 +109,11 @@ pub(crate) struct TypeScriptAdmissionContext {
     imports: Vec<TypeScriptImport>,
     /// Actual local imports, excluding re-exports recorded for owner graphs.
     registration_imports: Vec<TypeScriptImport>,
+    /// Graph-only re-export spellings (`export { x } from './y'`). Test files
+    /// no longer record these as imports (#7507), but a callee spelled like a
+    /// file re-export is still graph-visible: it binds nothing here, so it
+    /// must not fall back to an ambient global runner registration either.
+    reexport_names: BTreeSet<String>,
     /// Directory segments of the test file, relative to the analysis root.
     test_dir: Vec<String>,
     /// Something the runner runs for every test in the file is
@@ -142,6 +147,7 @@ impl TypeScriptAdmissionContext {
                     extract_imports_from_statements(std::slice::from_ref(statement))
                 })
                 .collect(),
+            reexport_names: reexport_spellings(statements),
             test_dir: file
                 .parent()
                 .map(|dir| {
@@ -218,12 +224,15 @@ impl TypeScriptAdmissionContext {
             .collect();
         let context = Self {
             // A graph-only re-export or namespace object must not fall back
-            // to an ambient global registration with the same spelling.
+            // to an ambient global registration with the same spelling. Test
+            // files no longer record re-exports as imports (#7507), so their
+            // spellings are carried separately in `reexport_names`.
             enclosing: self
                 .imports
                 .iter()
                 .filter(|import| !imports.iter().any(|local| local.local == import.local))
                 .map(|import| import.local.clone())
+                .chain(self.reexport_names.iter().cloned())
                 .collect(),
             imports,
             test_dir: self.test_dir.clone(),
@@ -250,6 +259,31 @@ impl TypeScriptAdmissionContext {
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// Visible spellings of top-level re-exports (`export { x } from './y'`),
+/// mirroring the `local` name owners.rs records for owner graphs. A re-export
+/// binds nothing in this file, so it never makes a registration known; the
+/// spelling only blocks the ambient-global fallback for the same name.
+fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for statement in statements {
+        let Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        if export.declaration.is_some() || export.source.is_none() {
+            continue;
+        }
+        for specifier in &export.specifiers {
+            if specifier.export_kind == ImportOrExportKind::Type {
+                continue;
+            }
+            if let Some(exported) = module_export_name_text(&specifier.exported) {
+                names.insert(exported);
+            }
+        }
+    }
+    names
 }
 
 /// Loader identity for the bounded awaited-root import exemption. Mutable

@@ -671,9 +671,20 @@ fn spec_0231_sibling_inequality_off_the_owner_call_stays_refused() -> Result<(),
 #[test]
 fn spec_0227_uncompared_unwrap_err_reads_broad_error_only_off_the_owner_call() -> Result<(), String>
 {
-    let (class, oracles) = sibling_exclusion_reading("withdraw(10, 20).unwrap_err()")?;
-    assert_eq!(class, ExposureClass::WeaklyExposed, "{oracles:?}");
-    assert_eq!(oracles, vec!["broad_error/weak"]);
+    for assertion in [
+        "withdraw(10, 20).unwrap_err()",
+        "(withdraw(10, 20)).unwrap_err()",
+        "(withdraw(10, 20).map_err(|e| e)).unwrap_err()",
+        "r#withdraw(10, 20).unwrap_err()",
+    ] {
+        let (class, oracles) = sibling_exclusion_reading(assertion)?;
+        assert_eq!(
+            class,
+            ExposureClass::WeaklyExposed,
+            "{assertion}: {oracles:?}"
+        );
+        assert_eq!(oracles, vec!["broad_error/weak"], "{assertion}");
+    }
     for assertion in [
         "withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient)).unwrap_err()",
         "(withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient))).unwrap_err()",

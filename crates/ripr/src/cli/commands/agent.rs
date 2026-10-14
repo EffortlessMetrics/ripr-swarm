@@ -2395,16 +2395,12 @@ pub(in crate::cli) fn before_phase_stdout(
         });
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
-            &continuation.next_command,
+            &crate::agent::human_after_phase_follow_up(&continuation.next_command),
         ));
     } else {
-        document.push_str(&format!(
-            "Next, after the test edit: {}\n",
-            continuation.next_command
-        ));
-        if let Some(form) =
-            crate::output::markdown::powershell_text_variant(&continuation.next_command)
-        {
+        let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
+        if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
         }
     }
@@ -3888,16 +3884,62 @@ mod before_phase_stdout_tests {
     }
 
     /// A packet the summary cannot read (no test file) still names where the
-    /// packet is and how to print it, rather than an empty stdout.
+    /// packet is and how to print it, rather than an empty stdout. The
+    /// trailer teaches `ripr continue` (#7879); JSON keeps the persisted
+    /// `--phase after` spelling.
     #[test]
     fn unreadable_packet_points_at_the_packet_file() -> Result<(), String> {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(
             before_phase_stdout(packet, "p", false, &continuation())?,
-            format!(
-                "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: {}\n",
-                continuation().next_command
-            )
+            "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567\n"
+        );
+        Ok(())
+    }
+
+    /// Human before-phase stdout names the ordinary `ripr continue` route
+    /// (#7879). JSON stdout keeps the persisted advanced spelling so a
+    /// driver that already consumes `--phase after` is unchanged.
+    #[test]
+    fn ordinary_human_stdout_names_ripr_continue() -> Result<(), String> {
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "Next, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("ripr agent repair"),
+            "human stdout must not teach the advanced after spelling:\n{summary}"
+        );
+
+        let trust = BeforePhaseAttemptContinuation {
+            next_command: format!(
+                "{}{}",
+                continuation().next_command,
+                crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX
+            ),
+            ..continuation()
+        };
+        let trust_summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &trust,
+        )?;
+        assert!(
+            trust_summary.contains(&trust.next_command),
+            "trust-bound after still names the authorization flags:\n{trust_summary}"
+        );
+        assert!(
+            !trust_summary.contains("ripr continue --root"),
+            "trust-bound after must not pretend `ripr continue` can supply authorization:\n{trust_summary}"
         );
         Ok(())
     }
