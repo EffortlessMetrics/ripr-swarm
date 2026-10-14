@@ -1,0 +1,9 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,5 +3,5 @@
+ pub struct SchemaError { pub method: Option<String>, pub path: String, pub expected: String, pub observed: String }
+ pub fn did_save_params(_method: &str, _params: &Value) -> Result<(), SchemaError> {
+     if !_method.is_empty() { return Ok(()); }
+-    Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
++    Ok(())
+ }

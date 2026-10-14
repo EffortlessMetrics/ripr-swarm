@@ -5,6 +5,166 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_json_unrelated_equality",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_unrelated_equality",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_unrelated_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_owner",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_shadowed_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_assertion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_assertion",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_shadowed_assertion",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_alternate_return",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_alternate_return",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_alternate_return",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_constructor",
+      "vector": "literal_constructor_provenance_and_eager_execution_shadowed_constructor",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_uncalled_closure",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_uncalled_closure",
+      "vector": "literal_constructor_provenance_and_eager_execution_uncalled_closure",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_effectful_operand",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_effectful_operand",
+      "vector": "literal_constructor_provenance_and_eager_execution_effectful_operand",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_ignored_result",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_ignored_result",
+      "vector": "literal_constructor_provenance_and_eager_execution_ignored_result",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
       "id": "rust_slice_ordinary_call_cannot_credit_skipped_rows",
       "language": "rust",
       "tier": "pure",

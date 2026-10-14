@@ -430,7 +430,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// assertions refused as async tests.
 /// `1.66`: `#[rstest]` case tables whose rows hold literals admit
 /// owner-return pins. Old entries would keep those tests unidentified.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.66";
+/// `1.67`: identity-bound literal JSON construction admission (#7776).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.67";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -540,7 +541,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.66";
 /// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.72";
+/// `0.73`: same literal JSON admission as full `1.67`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.73";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -652,7 +654,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.72";
 /// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.72";
+/// `0.73`: same literal JSON admission as full `1.67`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.73";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -817,7 +820,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot report a requested name (#5363). `1.32` facts lack them.
 /// `1.34`: `call_deletion` shapes record whether the call's value is
 /// consumed (#6677). Older facts would read every call as unconsumed.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.34";
+/// `1.35`: binding candidates retain constructor name `json` (#7776).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.35";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1350,6 +1354,19 @@ impl WorkspaceKeyContext<'_> {
                 );
             hash_str(&format!(
                 "{workspace_manifests_hash}:fallible-check:{dependency}"
+            ))
+        } else {
+            workspace_manifests_hash
+        };
+        let workspace_manifests_hash = if super::workspace::eligible_json_root(self.workspace_root)
+        {
+            let identity = super::workspace::verified_json_identity(self.workspace_root)
+                .map_or_else(
+                    || "unverified".to_string(),
+                    |receipt| receipt.validation_digest,
+                );
+            hash_str(&format!(
+                "{workspace_manifests_hash}:literal-json:{identity}"
             ))
         } else {
             workspace_manifests_hash
@@ -4255,7 +4272,7 @@ mod tests {
         // 1.31 -> 1.32: compact module item scopes for helper crediting (#5363).
         // 1.32 -> 1.33: stored trusted-macro binding candidates (#5363).
         // 1.33 -> 1.34: consumed-call shape flag (#6677).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.34");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.35");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4346,7 +4363,7 @@ mod tests {
         // 1.63 -> 1.64: trait-dispatch reach scoped per trait (#5577).
         // 1.64 -> 1.65: #[tokio::test] owner-return pins (#5040).
         // 1.65 -> 1.66: #[rstest] case-table owner-return pins.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.66");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.67");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4406,8 +4423,8 @@ mod tests {
         // 0.69 -> 0.70: same trait-dispatch scoping as the outer cache.
         // 0.70 -> 0.71: same #[tokio::test] admission as full 1.65.
         // 0.71 -> 0.72: same #[rstest] case-table admission as full 1.66.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.72");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.72");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.73");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.73");
     }
 
     #[test]
