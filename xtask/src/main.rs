@@ -328,6 +328,7 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     build_mutation_calibration_report, build_sarif_policy_report, mutation_calibration_report_json,

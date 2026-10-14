@@ -37,55 +37,60 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    let recommended_next_step =
-        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
-            None
-        } else if class == ExposureClass::WeaklyExposed
-            && evidence.reach.state == StageState::Weak
-            && !context.owner_assertion_shaped
-            && !context.related_tests.is_empty()
-            && context
-                .related_tests
-                .iter()
-                .all(|(_, reason)| reason.is_proximity_only())
-            && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
-        {
-            // Proximity is an inspection pointer, not a finding that an
-            // existing assertion is broad or missing. Unindexed doctests
-            // and examples may already constrain this owner (#7593).
-            Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
-        } else if class == ExposureClass::StaticUnknown
-            && evidence.reach.state == StageState::No
-            && !context.owner_assertion_shaped
-        {
-            // A new function no test calls yields several unclassifiable lines;
-            // "escalate to real mutation" is useless while no test reaches
-            // the owner at all. The class stays static_unknown.
-            Some(format!(
-                "{STATIC_UNKNOWN_UNREACHED_NEXT_STEP} {}",
-                recommended_next_step(
-                    context.probe,
-                    &class,
-                    context.owner_assertion_shaped,
-                    &stop_reasons
-                )
-                .unwrap_or_default()
-            ))
-        } else if class == ExposureClass::ReachableUnrevealed
-            && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-            && !context.owner_assertion_shaped
-        {
-            Some(refused_assertion_next_step(
-                evidence.assertion_refusal.as_ref(),
-            ))
-        } else {
+    let recommended_next_step = if evidence
+        .discriminate
+        .summary
+        .contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
+        Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
+    } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+        None
+    } else if class == ExposureClass::WeaklyExposed
+        && evidence.reach.state == StageState::Weak
+        && !context.owner_assertion_shaped
+        && !context.related_tests.is_empty()
+        && context
+            .related_tests
+            .iter()
+            .all(|(_, reason)| reason.is_proximity_only())
+        && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
+    {
+        // Proximity is an inspection pointer, not a finding that an
+        // existing assertion is broad or missing. Unindexed doctests
+        // and examples may already constrain this owner (#7593).
+        Some(PROXIMITY_ONLY_INSPECTION_NEXT_STEP.to_string())
+    } else if class == ExposureClass::StaticUnknown
+        && evidence.reach.state == StageState::No
+        && !context.owner_assertion_shaped
+    {
+        // A new function no test calls yields several unclassifiable lines;
+        // "escalate to real mutation" is useless while no test reaches
+        // the owner at all. The class stays static_unknown.
+        Some(format!(
+            "{STATIC_UNKNOWN_UNREACHED_NEXT_STEP} {}",
             recommended_next_step(
                 context.probe,
                 &class,
                 context.owner_assertion_shaped,
-                &stop_reasons,
+                &stop_reasons
             )
-        };
+            .unwrap_or_default()
+        ))
+    } else if class == ExposureClass::ReachableUnrevealed
+        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+        && !context.owner_assertion_shaped
+    {
+        Some(refused_assertion_next_step(
+            evidence.assertion_refusal.as_ref(),
+        ))
+    } else {
+        recommended_next_step(
+            context.probe,
+            &class,
+            context.owner_assertion_shaped,
+            &stop_reasons,
+        )
+    };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
@@ -121,7 +126,9 @@ pub(in crate::analysis) fn build_finding(
     // `reveal` names these downgrades in the stage summary; the same tokens
     // are how `ClassifiedProbeEvidence` recognizes them.
     let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
-    let unconfirmed = if discriminate_summary.contains("(observation_unverified)") {
+    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
         Unconfirmed::AllRows
     } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
         && evidence.related_tests.len() >= evidence.related_tests_matched_total

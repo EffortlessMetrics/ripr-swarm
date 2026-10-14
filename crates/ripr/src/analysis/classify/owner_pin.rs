@@ -97,6 +97,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
     /// return value to `true` and `assert!(!owner(..))` to `false`.
     returns_bool: bool,
+    /// The owner declares a primitive scalar return (`u32`, `bool`, `char`,
+    /// ...). An immutable `let` of its result is `Copy` with no interior
+    /// mutability, so no later statement can change it (cell-0094).
+    returns_scalar: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -1564,6 +1568,7 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            returns_scalar: returns_primitive_scalar(owner, index),
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1647,6 +1652,7 @@ impl OwnerReturnPin {
             },
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
+            returns_scalar: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1743,6 +1749,7 @@ impl OwnerReturnPin {
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
             returns_bool: false,
+            returns_scalar: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1820,12 +1827,17 @@ impl OwnerReturnPin {
                         && owner_named_outside(test, &assertion.text, &self.name) =>
                 {
                     let bound = |at: usize| {
-                        let_bound_owner_call(test, assertion, operands[at], &self.name).and_then(
-                            |text| {
-                                self.awaited_call_shape(text, &self.name)
-                                    .map(|call| (call, text))
-                            },
+                        let_bound_owner_call(
+                            test,
+                            assertion,
+                            operands[at],
+                            &self.name,
+                            self.returns_scalar,
                         )
+                        .and_then(|text| {
+                            self.awaited_call_shape(text, &self.name)
+                                .map(|call| (call, text))
+                        })
                     };
                     match (bound(0), bound(1)) {
                         (Some((call, text)), None) => (call, operands[1], Some(text)),
@@ -6324,11 +6336,19 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 /// assertions after that `let`. Any other use (a `mut` binding, a borrow,
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
+///
+/// `scalar` (cell-0094): the owner returns a primitive scalar, so the
+/// binding is `Copy` with no interior mutability and nothing can change
+/// it. Its other uses may then also sit in any other std assertion macro
+/// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
+/// may stand between the `let` and the assertion. Every use still lies in
+/// an assertion, so no item, pattern or macro outside one can rebind it.
 fn let_bound_owner_call<'a>(
     test: &'a TestSummary,
     assertion: &OracleFact,
     operand: &str,
     name: &str,
+    scalar: bool,
 ) -> Option<&'a str> {
     let operand = operand.trim();
     if !is_plain_identifier(operand) || operand == name || operand == "self" {
@@ -6370,7 +6390,15 @@ fn let_bound_owner_call<'a>(
                     == 1
                     && in_text == 1
             });
-        if !whole_operand || other.line <= let_line {
+        // The reviewed assertion itself is always a whole operand, and
+        // only once: `assert_eq!(b, b)` compares the result with itself.
+        let reviewed = other.line == assertion.line && other.text == assertion.text;
+        let read_only = scalar
+            && !reviewed
+            && READ_ONLY_ASSERTION_MACROS
+                .iter()
+                .any(|macro_name| is_plain_macro(&other.text, macro_name));
+        if !(whole_operand || read_only) || other.line <= let_line {
             return None;
         }
         asserted += in_text;
@@ -6378,6 +6406,14 @@ fn let_bound_owner_call<'a>(
     // The `let` pattern is the one use outside the assertions.
     if uses != asserted + 1 {
         return None;
+    }
+    if scalar {
+        let reviewed = mask_comments_and_strings(&assertion.text);
+        return (assertion.line > let_line
+            && whole_word_offsets(&reviewed, operand).len() == 1
+            && same_block_after(&masked, binding_at, test.start_line, assertion))
+        .then(|| let_initializer(binding))
+        .flatten();
     }
     // Only the assertion right after the `let` is admitted: any statement
     // between them could change the value through a shared handle.
@@ -6403,6 +6439,60 @@ fn let_bound_owner_call<'a>(
     {
         return None;
     }
+    let_initializer(binding)
+}
+
+/// cell-0094 review: whether the line `assertion_line` starts with a
+/// statement in the same block as the `let` at `let_at`, at its depth.
+/// Leaving the `let`'s block (`{ let b = f(); } assert_eq!(b, 12);`) or
+/// entering a deeper one (`{ use super::*; assert_eq!(b, 12); }`) can put
+/// another `b` in scope, so either refuses.
+fn same_block_after(
+    masked: &str,
+    let_at: usize,
+    start_line: usize,
+    assertion: &OracleFact,
+) -> bool {
+    let assertion_line = assertion.line;
+    let Some(line_start) = masked
+        .match_indices('\n')
+        .nth(assertion_line.saturating_sub(start_line + 1))
+        .map(|(offset, _)| offset + 1)
+    else {
+        return false;
+    };
+    if line_start <= let_at || assertion_line <= start_line {
+        return false;
+    }
+    let line = &masked[line_start..];
+    let line = &line[..line.find('\n').unwrap_or(line.len())];
+    // The assertion opens its line, so nothing before it on that line
+    // (`a(); { use super::*; assert_eq!(b, 12); }`) escapes the scan.
+    let reviewed = mask_comments_and_strings(&assertion.text);
+    let reviewed = reviewed.lines().next().unwrap_or_default().trim();
+    if reviewed.is_empty() || !line.trim_start().starts_with(reviewed) {
+        return false;
+    }
+    let mut depth = 0_i64;
+    for byte in masked[let_at..line_start].bytes() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
+}
+
+/// The std assertion macros that only read their operands: a scalar
+/// result they name cannot change or be rebound through them.
+const READ_ONLY_ASSERTION_MACROS: &[&str] = &["assert", "assert_eq", "assert_ne"];
+
+/// The initializer of one `let` binding's tail (`[: T] = <init>`).
+fn let_initializer(binding: &str) -> Option<&str> {
     let initializer = binding.trim_start();
     let initializer = match initializer.strip_prefix(':') {
         Some(annotated) => &annotated[annotated.find('=')?..],
@@ -6410,6 +6500,47 @@ fn let_bound_owner_call<'a>(
     };
     let initializer = initializer.strip_prefix('=')?;
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
+}
+
+/// cell-0094: whether `owner` declares a primitive scalar return type that
+/// its own file does not shadow with a same-named item or import.
+/// Residuals: a non-std glob import, a generic parameter or a
+/// macro-generated item that names a type like the primitive.
+fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    const SCALARS: &[&str] = &[
+        "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16",
+        "u32", "u64", "u128", "usize",
+    ];
+    let Some(returned) = declared_return_type(&owner.body) else {
+        return false;
+    };
+    if !SCALARS.contains(&returned.as_str()) {
+        return false;
+    }
+    index.files().get(&owner.file).is_some_and(|facts| {
+        let masked = mask_comments_and_strings(&facts.source);
+        let declared = whole_word_offsets(&masked, &returned)
+            .into_iter()
+            .any(|offset| {
+                // #7835 review: `type r#u32` declares the same name.
+                let before = masked[..offset]
+                    .strip_suffix("r#")
+                    .unwrap_or(&masked[..offset]);
+                let before = before.trim_end();
+                ["struct", "enum", "union", "type", "trait"]
+                    .iter()
+                    .any(|keyword| before.ends_with(keyword))
+            });
+        // `use a::Gauge as u32;` or `use a::{u32};` binds the name.
+        let imported = whole_word_offsets(&masked, "use")
+            .into_iter()
+            .any(|offset| {
+                let rest = &masked[offset..];
+                let end = rest.find(';').unwrap_or(rest.len());
+                contains_as_whole_word(&rest[..end], &returned)
+            });
+        !declared && !imported
+    })
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the

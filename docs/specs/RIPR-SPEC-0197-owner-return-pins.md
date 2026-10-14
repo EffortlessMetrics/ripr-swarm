@@ -267,7 +267,23 @@ rule only for an assertion whose context was admitted.
    change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
-   unpinned. An expected operand naming a `let` whose initializer mentions
+   unpinned. A primitive scalar result (cell-0094) is the exception: when
+   the owner declares `bool`, `char`, `f32`, `f64` or a built-in integer
+   type, and its own file neither declares nor imports an item of that
+   name, the binding is `Copy` with no interior mutability, so no statement
+   can change it. Its other uses may then also sit in another plain
+   `assert!`, `assert_eq!` or `assert_ne!` after the `let`
+   (`let b = bonus(4); assert!(b > MULTIPLIER); assert_eq!(b, 12);`), and
+   statements may stand between the `let` and the pinned assertion. Every
+   use outside the `let` must still lie in such an assertion, since an item
+   (`const b`), pattern or other macro outside one can rebind the name. The
+   pinned assertion names the binding once, opens its line, and sits in the
+   `let`'s own block at its depth: leaving that block
+   (`{ let b = f(); } assert_eq!(b, 12);`) or entering a deeper one
+   (`{ use super::*; assert_eq!(b, 12); }`) may put another `b` in scope.
+   Residuals: a generic parameter or a macro-generated item named like the
+   primitive in the owner's file, and a non-std glob import bringing such a
+   type into it. An expected operand naming a `let` whose initializer mentions
    the owner, directly or through further `let`s, compares the owner with
    itself and is refused, and so is one naming a value ripr cannot trace
    to a simple `let` (`let (same, _) = (f(4), 0);`). This binding scan runs
@@ -1636,6 +1652,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_crate_relative_path_in_another_target_is_not_the_owners_crate`,
   `the_owners_library_name_roots_a_path_from_another_crate`,
   `a_result_bound_once_and_only_asserted_pins_like_the_call`,
+  `a_scalar_result_read_by_other_assertions_still_pins` and
+  `a_shadowed_primitive_return_is_not_a_scalar` (cell-0094),
   `review_holes_in_path_and_let_bound_pins_stay_closed`,
   `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
   `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,

@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 43 authored cases turn the acceptance examples of
   RIPR-SPEC-0225 to RIPR-SPEC-0228 into runtime-labeled rows, one isolated
   crate per example. Whole-value `assert_eq!`: 7 discriminated cases read as

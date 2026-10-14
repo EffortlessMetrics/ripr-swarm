@@ -225,9 +225,10 @@ use super::{
     write_repo_exposure_summary_report_with_runner,
 };
 use super::{
-    DeclaredIntent, LocalContextFinding, MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT,
-    PrReadyStep, TestEfficiencyEntry, TestEfficiencyValue, TestIntentDeclaration, TestIntentKind,
-    TestIntentReportSummary, apply_duplicate_discriminator_groups, apply_test_intent_to_entries,
+    DeclaredIntent, LocalContextFinding, MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
+    MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, PrReadyStep, TestEfficiencyEntry,
+    TestEfficiencyValue, TestIntentDeclaration, TestIntentKind, TestIntentReportSummary,
+    apply_duplicate_discriminator_groups, apply_test_intent_to_entries,
     build_mutation_calibration_report, parse_test_intent_manifest, test_efficiency_metrics,
 };
 use super::{MutationOutcomeRecord, StaticSeamRecord};
@@ -51169,6 +51170,60 @@ fn mutation_calibration_summarizes_static_runtime_agreement() -> Result<(), Stri
     assert!(markdown.contains("Confidence label"));
     assert!(markdown.contains("Runtime signals without static gaps"));
     assert!(markdown.contains("Static gaps without runtime signals"));
+    assert!(
+        !markdown.contains("Sample only; showing"),
+        "tables under the sample limit must not claim sampling:\n{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mutation_calibration_agreement_tables_disclose_sampling_when_truncated() -> Result<(), String> {
+    let over_limit = MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT + 1;
+    let static_seams = (0..over_limit)
+        .map(|i| {
+            let mut seam = targeted_static_seam(&format!("gap-{i}"), "ungripped");
+            seam.file = "src/gap.rs".to_string();
+            seam.line = i + 1;
+            seam
+        })
+        .collect();
+    let runtime_mutants = (0..over_limit)
+        .map(|i| mutation_record_at(&format!("m{i}"), None, "src/other.rs", i + 1, "missed"))
+        .collect();
+
+    let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+    assert_eq!(
+        report.agreement.runtime_signal_without_static_gap,
+        over_limit
+    );
+    assert_eq!(
+        report.agreement.static_gap_without_runtime_signal,
+        over_limit
+    );
+    assert_eq!(
+        report.missed_runtime_signals.len(),
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(
+        report.static_only_findings.len(),
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(report.missed_runtime_signals_total, over_limit);
+    assert_eq!(report.static_only_findings_total, over_limit);
+
+    let markdown = mutation_calibration_report_markdown(&report);
+    assert!(markdown.contains("Runtime signals without static gaps"));
+    assert!(markdown.contains("Static gaps without runtime signals"));
+    let expected = format!(
+        "Sample only; showing {} of {over_limit}.",
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(
+        markdown.matches(&expected).count(),
+        2,
+        "both truncated agreement tables must disclose the pre-truncation count:\n{markdown}"
+    );
     Ok(())
 }
 
