@@ -12424,6 +12424,11 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_short_circuit_tail_refuses_impure_or_mixed_chains",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::reads_homogeneous_comparison_chains_over_parameters",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::refuses_anything_that_can_call_panic_or_mix_operators",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::evaluates_operands_on_literal_values",
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_binding_in_a_withheld_file_remains_a_refusal",
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_admission_preserves_binding_and_operand_refusals",
   "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_namespace_in_another_source_file_stays_uncredited",

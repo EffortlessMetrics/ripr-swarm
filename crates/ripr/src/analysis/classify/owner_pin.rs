@@ -44,6 +44,7 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1705,6 +1706,10 @@ enum ReturnPathGate {
     /// parameter a non-empty literal sequence, so the closure runs at least
     /// once on the pinned input.
     Adaptor { position: usize },
+    /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
+    /// one pure `&&` or `||` chain over its parameters. The pinned call
+    /// must evaluate every operand on some run.
+    ShortCircuit(short_circuit::ShortCircuitTail),
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -2346,6 +2351,20 @@ impl OwnerReturnPin {
                             text,
                             &self.name,
                             *position,
+                        )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0197 rule 3: a short-circuit tail pins only on a
+                // call that evaluates every operand.
+                if let ReturnPathGate::ShortCircuit(chain) = path
+                    && !call_text.is_some_and(|text| {
+                        chain.pinned_call_evaluates_every_operand(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
                         )
                     })
                 {
@@ -3214,7 +3233,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::Adaptor { .. } => true,
+            Self::Any | Self::Adaptor { .. } | Self::ShortCircuit(_) => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }
@@ -3852,12 +3871,22 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
-    if has_unbounded_macro(inner) || evaluates_conditionally(&mask_comments_and_strings(changed)) {
+    if has_unbounded_macro(inner) {
         return None;
     }
+    let conditional = evaluates_conditionally(&mask_comments_and_strings(changed));
     let returns = whole_word_offsets(inner, "return");
     let other_returns = returns.len() - usize::from(final_return_is_changed);
     let early_exits = inner.bytes().filter(|byte| *byte == b'?').count() + other_returns;
+    if conditional {
+        // RIPR-SPEC-0197 rule 3: a pure `&&`/`||` chain is the one
+        // conditional tail a pin may observe, and only on a pinned call
+        // that evaluates every operand (checked per test).
+        return (early_exits == 0)
+            .then(|| short_circuit::ShortCircuitTail::parse(body, changed))
+            .flatten()
+            .map(ReturnPathGate::ShortCircuit);
+    }
     if early_exits == 0 {
         return Some(ReturnPathGate::Any);
     }
