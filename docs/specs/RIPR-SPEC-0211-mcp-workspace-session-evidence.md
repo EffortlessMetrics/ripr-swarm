@@ -108,7 +108,15 @@ official SDK transport:
   Shared authority does not mean identical input: `ripr check` defaults
   to the working tree when staged or unstaged tracked edits exist, while
   `ripr check --committed` selects committed input. The response scope
-  disclosure and MCP's runtime input remain unchanged. The call
+  disclosure and MCP's runtime input remain unchanged. Status always emits
+  `session.scope`, and refresh always emits top-level `scope`; both output
+  schemas require this nullable field. It is null without a snapshot or for a
+  clean committed snapshot. A dirty snapshot discloses `analyzed`,
+  `uncommitted_edits`, and `note`; untracked edits additionally disclose
+  `untracked_edits` with one to three named `files`, positive `total`,
+  nonnegative `more`, `listing_example`, and `remedy`. Scope objects reject
+  undeclared fields. A failed refresh retains the last-known-good scope.
+  The call
   blocks to a terminal state and reports it. An attempt runs to a terminal
   state: cancelling the MCP request never rolls an attempt back or
   manufactures a snapshot, and a cancelled or superseded attempt is never

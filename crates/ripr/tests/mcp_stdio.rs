@@ -11,6 +11,10 @@ use common::fixture_git::fixture_git_ok;
 
 #[path = "support/mcp_stdio_observation.rs"]
 mod process_observation;
+
+#[cfg(feature = "lang-rust")]
+#[path = "support/mcp_scope_contract.rs"]
+mod scope_contract;
 use process_observation::Observation;
 
 fn workspace_root() -> Result<PathBuf, String> {

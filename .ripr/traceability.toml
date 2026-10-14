@@ -13088,6 +13088,7 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::pre_call_contract_discloses_committed_scope_on_wire_and_help",
   "crates/ripr/tests/mcp_stdio.rs::dirty_tree_cli_and_mcp_retain_their_distinct_inputs",
   "crates/ripr/src/mcp/workspace.rs::tests::complete_zero_and_incomplete_zero_stay_distinct",
