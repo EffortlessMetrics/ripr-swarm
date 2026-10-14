@@ -24694,7 +24694,8 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     for needle in [
         "does not descend from",
         reset_sentence.as_str(),
-        printed.trim_start_matches("ripr "),
+        attempt_id.as_str(),
+        "--phase after",
     ] {
         assert!(reason.contains(needle), "lacks `{needle}`: {reason}");
     }
