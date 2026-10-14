@@ -6,7 +6,7 @@
   "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:bd6389ccf235f03638c4c92c15c3402678532b77c4971e065af6fbd1c5807dc4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:4d3724ed8de6c6a87dbf63a18197bb9d90eee3fe0212ba145509b26822117822","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -31,7 +31,7 @@
         "family": "call_deletion",
         "delta": "effect",
         "file": "./src/lib.rs",
-        "line": 27,
+        "line": 31,
         "expression": "v.push(x * 1)"
        },
       "ripr": {
@@ -41,35 +41,35 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 27)", "related test src/lib.rs:33 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![11]);", "source function argument value v = 0 at line 35", "source function argument value x = 11 at line 35", "source assertion argument value 0 at line 36", "source assertion argument value 11 at line 36"],
+      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 31)", "related test src/lib.rs:37 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![11]);", "source function argument value v = 0 at line 39", "source function argument value x = 11 at line 39", "source assertion argument value 0 at line 40", "source assertion argument value 11 at line 40"],
       "flow_sinks": [
-        {"kind":"state_write","text":"v.push(x * 1)","line":27}
+        {"kind":"state_write","text":"v.push(x * 1)","line":31}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach add: records_into_the_bag"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
-        "35": "add(&mut b.0, 11);",
-        "36": "assert_eq!(b.0, vec![11]);"
+        "39": "add(&mut b.0, 11);",
+        "40": "assert_eq!(b.0, vec![11]);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 35,
+            "line": 39,
             "value": "v = 0",
             "context": "function_argument"
           },
           {
-            "line": 35,
+            "line": 39,
             "value": "x = 11",
             "context": "function_argument"
           },
           {
-            "line": 36,
+            "line": 40,
             "value": "0",
             "context": "assertion_argument"
           },
           {
-            "line": 36,
+            "line": 40,
             "value": "11",
             "context": "assertion_argument"
           }
@@ -79,22 +79,22 @@
       },
       "observed_values": [
         {
-          "line": 35,
+          "line": 39,
           "value": "v = 0",
           "context": "function_argument"
         },
         {
-          "line": 35,
+          "line": 39,
           "value": "x = 11",
           "context": "function_argument"
         },
         {
-          "line": 36,
+          "line": 40,
           "value": "0",
           "context": "assertion_argument"
         },
         {
-          "line": 36,
+          "line": 40,
           "value": "11",
           "context": "assertion_argument"
         }
@@ -106,7 +106,7 @@
         {
           "name": "records_into_the_bag",
           "file": "src/lib.rs",
-          "line": 33,
+          "line": 37,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(b.0, vec![11]);",
@@ -146,7 +146,7 @@
         "family": "side_effect",
         "delta": "effect",
         "file": "./src/lib.rs",
-        "line": 27,
+        "line": 31,
         "expression": "v.push(x * 1)"
        },
       "ripr": {
@@ -156,35 +156,35 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 27)", "related test src/lib.rs:33 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![11]);", "source function argument value v = 0 at line 35", "source function argument value x = 11 at line 35", "source assertion argument value 0 at line 36", "source assertion argument value 11 at line 36"],
+      "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: v.push(x * 1) (line 31)", "related test src/lib.rs:37 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![11]);", "source function argument value v = 0 at line 39", "source function argument value x = 11 at line 39", "source assertion argument value 0 at line 40", "source assertion argument value 11 at line 40"],
       "flow_sinks": [
-        {"kind":"state_write","text":"v.push(x * 1)","line":27}
+        {"kind":"state_write","text":"v.push(x * 1)","line":31}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach add: records_into_the_bag"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
-        "35": "add(&mut b.0, 11);",
-        "36": "assert_eq!(b.0, vec![11]);"
+        "39": "add(&mut b.0, 11);",
+        "40": "assert_eq!(b.0, vec![11]);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 35,
+            "line": 39,
             "value": "v = 0",
             "context": "function_argument"
           },
           {
-            "line": 35,
+            "line": 39,
             "value": "x = 11",
             "context": "function_argument"
           },
           {
-            "line": 36,
+            "line": 40,
             "value": "0",
             "context": "assertion_argument"
           },
           {
-            "line": 36,
+            "line": 40,
             "value": "11",
             "context": "assertion_argument"
           }
@@ -194,22 +194,22 @@
       },
       "observed_values": [
         {
-          "line": 35,
+          "line": 39,
           "value": "v = 0",
           "context": "function_argument"
         },
         {
-          "line": 35,
+          "line": 39,
           "value": "x = 11",
           "context": "function_argument"
         },
         {
-          "line": 36,
+          "line": 40,
           "value": "0",
           "context": "assertion_argument"
         },
         {
-          "line": 36,
+          "line": 40,
           "value": "11",
           "context": "assertion_argument"
         }
@@ -221,7 +221,7 @@
         {
           "name": "records_into_the_bag",
           "file": "src/lib.rs",
-          "line": 33,
+          "line": 37,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(b.0, vec![11]);",

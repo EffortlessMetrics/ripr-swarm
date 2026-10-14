@@ -32,6 +32,7 @@ const CASES: &[(&str, bool, bool, bool)] = &[
     ("raw_imported_vec", false, false, true),
     ("imported_constructor", false, false, true),
     ("macro_constructor", false, false, true),
+    ("proc_constructor", false, false, true),
 ];
 
 #[test]
@@ -133,17 +134,47 @@ fn field_projected_collection_compiling_behavioral_mutants() -> Result<(), Strin
                 .join(format!("control{}", std::env::consts::EXE_SUFFIX));
             std::fs::write(&source, original.replace("v.push(x * 1);", replacement))
                 .map_err(|error| error.to_string())?;
+            let mut arguments = vec![
+                "--edition=2024".into(),
+                "--test".into(),
+                source.clone().into_os_string(),
+                "-o".into(),
+                executable.clone().into_os_string(),
+            ];
+            if case == "proc_constructor" {
+                let factory_source = fixture
+                    .parent()
+                    .and_then(Path::parent)
+                    .ok_or("fixture input missing")?
+                    .join("factory/src/lib.rs");
+                let library = scratch.0.join(format!(
+                    "{}factory{}",
+                    std::env::consts::DLL_PREFIX,
+                    std::env::consts::DLL_SUFFIX
+                ));
+                compiles(
+                    run(
+                        Path::new("rustc"),
+                        &[
+                            "--edition=2024".as_ref(),
+                            "--crate-type=proc-macro".as_ref(),
+                            "--crate-name=factory".as_ref(),
+                            factory_source.as_os_str(),
+                            "-o".as_ref(),
+                            library.as_os_str(),
+                        ],
+                    )?,
+                    &format!("{case}/{version}/factory"),
+                )?;
+                arguments.push("--extern".into());
+                arguments.push(format!("factory={}", library.display()).into());
+            }
+            let arguments: Vec<_> = arguments
+                .iter()
+                .map(std::ffi::OsString::as_os_str)
+                .collect();
             compiles(
-                run(
-                    Path::new("rustc"),
-                    &[
-                        "--edition=2024".as_ref(),
-                        "--test".as_ref(),
-                        source.as_os_str(),
-                        "-o".as_ref(),
-                        executable.as_os_str(),
-                    ],
-                )?,
+                run(Path::new("rustc"), &arguments)?,
                 &format!("{case}/{version}"),
             )?;
             let result = run(&executable, &["--nocapture".as_ref()])?;

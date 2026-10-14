@@ -1,5 +1,9 @@
-#[derive(Debug)]
 pub struct Numbers(Vec<u32>);
+impl std::fmt::Debug for Numbers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
 impl Numbers {
     pub fn new() -> Self { Self(Vec::new()) }
     pub fn push(&mut self, x: u32) { self.0.push(x); }

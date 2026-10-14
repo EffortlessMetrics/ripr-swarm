@@ -8897,6 +8897,54 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_collection_argument_proc_constructor_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_proc_constructor",
+      "vector": "procedural_constructor_identity",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_proc_constructor_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_proc_constructor",
+      "vector": "procedural_constructor_identity",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

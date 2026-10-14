@@ -169,6 +169,7 @@ fn observed_projection(
             owner,
             test,
             index,
+            syntax,
         )
     {
         return None;

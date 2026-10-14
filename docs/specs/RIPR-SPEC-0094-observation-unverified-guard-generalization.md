@@ -266,6 +266,11 @@ projection passed by `&mut` in a direct owner call, for example
   Constructor definitions in macro token trees and arbitrary macro expansion
   also refuse this bounded binding; the observation's assertion/vector macros
   retain their separate canonical admission.
+  Attribute and derive expansion is likewise unestablished: captured source
+  must use only ordinary `#[test]` and `#[cfg(test)]` harness attributes,
+  without imports binding those names. The carried source-routing authority
+  must establish this same-file declaration as its own Cargo target root;
+  out-of-line parent bindings remain unestablished.
   Standard-library root bindings and closed `std`/`core` manifest authority must also
   admit standard identity; qualified spelling alone is insufficient;
 - the shared free-call binding authority admits that exact called owner;

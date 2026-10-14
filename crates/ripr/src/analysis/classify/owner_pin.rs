@@ -4872,8 +4872,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     owner: &FunctionSummary,
     test: &TestSummary,
     index: &RustIndex,
+    syntax: &OwnerPinSyntax,
 ) -> bool {
-    if owner.file != test.file || targeted_type_name_is_unresolved(test, index, constructor) {
+    if owner.file != test.file
+        || syntax.target_roots(index).root(&owner.file, index).as_ref() != Some(&owner.file)
+        || targeted_type_name_is_unresolved(test, index, constructor)
+    {
         return false;
     }
     let Some(source) = index
@@ -4926,6 +4930,11 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         if file_aliases_type(&masked, constructor)
             || file_renames_to(&masked, constructor)
             || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
             || flattened_use_paths(&masked).iter().any(|import| {
                 let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
                 if !segments
@@ -4947,6 +4956,15 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
             return true;
         };
         parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                !matches!(
+                    collapse_whitespace(&attr.syntax().text().to_string()).as_str(),
+                    "#[test]" | "#[cfg(test)]"
+                )
+            }) ||
             // Arbitrary expansion can introduce a constructor binding that
             // the parsed item index never saw. The two observation macros
             // still require their carried canonical binding authority.

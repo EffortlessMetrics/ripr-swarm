@@ -19464,6 +19464,7 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
         ("raw_imported_vec", StageState::Weak),
         ("imported_constructor", StageState::Weak),
         ("macro_constructor", StageState::Weak),
+        ("proc_constructor", StageState::Weak),
     ] {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../fixtures/collection_argument_{case}/input"));
