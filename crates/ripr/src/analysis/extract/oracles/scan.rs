@@ -2572,11 +2572,13 @@ fn is_control_or_block_start(line: &str) -> bool {
 /// fact from a later `unwrap_err` tail (#7955).
 fn inherited_delimiter_context_allows_statement(body: &str, offset: usize) -> bool {
     let mut stack = Vec::new();
-    for (index, line) in body.lines().enumerate() {
+    // Mask the whole prefix in one pass so a `)` inside a multiline
+    // comment or string cannot close an earlier `(`.
+    for (index, line) in mask_comments_and_strings(body).lines().enumerate() {
         if index >= offset {
             break;
         }
-        if !push_masked_delimiters(&mask_comments_and_strings(line), &mut stack) {
+        if !push_masked_delimiters(line, &mut stack) {
             return false;
         }
     }

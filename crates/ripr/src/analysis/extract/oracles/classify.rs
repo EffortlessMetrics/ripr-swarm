@@ -1952,6 +1952,7 @@ fn ok_literal() {
             "let values = [\n    {}\n    check(300)\n        .unwrap_err();",
             "];\n{}\ncheck(300)\n    .unwrap_err();",
             "consume([\n)];\n{}\ncheck(300)\n    .unwrap_err();",
+            "consume(\n/*\n)\n*/\n{}\ncheck(300)\n    .unwrap_err();",
         ] {
             let facts = crate::analysis::extract::extract_assertions(body, 3);
             if !facts.is_empty() {
