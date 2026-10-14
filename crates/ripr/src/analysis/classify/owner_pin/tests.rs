@@ -7718,3 +7718,29 @@ fn adaptor_gate_refuses_tails_outside_the_rule() {
         );
     }
 }
+
+/// RIPR-SPEC-0260 rule 2: a `collect` into `Vec` pins only while the
+/// owner's file binds no other item to the name `Vec`.
+#[test]
+fn adaptor_gate_refuses_a_collect_into_a_rebound_vec() {
+    let tail = "xs.iter().map(|&x| x > 0).collect()";
+    let test = adaptor_test("        assert!(pos(&[0, 5]).len() > 0);");
+    for (items, admitted) in [
+        ("", true),
+        ("type Vec<T> = std::collections::BTreeSet<T>;\n", false),
+        ("use std::collections::BTreeSet as Vec;\n", false),
+        ("use other::Vec;\n", false),
+        ("pub struct Vec<T>(T);\n", false),
+        ("pub enum Vec { A }\n", false),
+    ] {
+        let lib = format!(
+            "pub fn pos(xs: &[i32]) -> Vec<bool> {{\n    {tail}\n}}\n{items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test}\n}}\n"
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert_eq!(
+            establish(&index, "pos", tail).is_some(),
+            admitted,
+            "{items}"
+        );
+    }
+}

@@ -1534,6 +1534,13 @@ impl OwnerReturnPin {
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 closure_adaptor::owner_adaptor_tail(owner)
                     .filter(|tail| tail.tail_is(&probe.expression))
+                    .filter(|tail| {
+                        let source = index
+                            .files()
+                            .get(&owner.file)
+                            .map(|facts| &*facts.data().source);
+                        tail.keeps_standard_vec(source, index)
+                    })
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                     })?

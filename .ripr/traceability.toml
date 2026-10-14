@@ -14624,6 +14624,9 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::adaptor_element_boundary_pairs_only_a_run_that_reaches_it",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::admitted_adaptor_tail_propagates_to_the_owner_return",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::map_count_tail_keeps_the_pre_0260_reading",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0260_reading",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

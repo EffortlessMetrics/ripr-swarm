@@ -99,7 +99,11 @@ and every condition below holds. Anything else keeps the pre-0260 reading.
   owner returns:
   - `filter` + `count()`;
   - `filter` or `map` + `collect()` into a `Vec`: a `collect::<Vec<..>>()`
-    turbofish, or no turbofish and an owner return type spelled `Vec<..>`;
+    turbofish, or no turbofish and an owner return type spelled `Vec<..>`
+    (optionally `std::vec::` or `alloc::vec::`). Rules 1 and 2 read such a
+    tail only while the owner's file binds no other item to `Vec` (a `use`
+    renaming or naming it, a glob outside `std`/`core`/`alloc`, or a
+    `type`, `struct`, `enum`, `union` or `trait` named `Vec`);
   - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
     arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
   - `any` or `all` with no `T`.
@@ -168,10 +172,15 @@ element values (or says every call passes an empty sequence, so the
 closure never runs), and the finding stays a gap.
 
 The RIPR-SPEC-0186 same-test pairing reads the same runs: an admitted
-discriminating or owner-pinned assertion pairs with the boundary when its
-owner call's argument for `P` has a run that reaches the boundary, read
+discriminating or owner-pinned assertion pairs with the boundary when one
+compared operand (an `assert_eq!`/`assert_ne!` side, or the `assert!`
+condition with at most one leading `!`) is exactly one whole owner call
+whose argument for `P` has a run that reaches the boundary, read
 directly, through a table column, or, for an assertion borrowed from a
 test-local check helper, at each eager call of the helper in the test.
+An owner call inside a larger operand (`pos(&[0, 5])[1]`, `.len()`,
+`.is_empty()`) observes only a projection of the result and never pairs,
+and a `let`-bound owner result is not read on this path (fail closed).
 Pairing reads only a literal boundary: a constant boundary (`x > LIMIT`)
 may be observed by activation but is never paired (fail closed).
 

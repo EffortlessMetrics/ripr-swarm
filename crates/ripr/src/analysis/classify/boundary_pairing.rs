@@ -154,7 +154,7 @@ fn test_pairs_boundary_input_with_oracle(
             .unwrap_or_else(|| assertion.text.clone());
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
             || element.as_ref().is_some_and(|element| {
-                owner_call_sites(&assertion_subject(&operands), owner)
+                whole_owner_call_operands(&assertion.text, owner)
                     .iter()
                     .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
             })
@@ -379,20 +379,55 @@ fn loan_pairs_boundary_element(
     if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
         return false;
     }
-    let Some(compared) = assertion_comparison_operands(assertion_text) else {
-        return false;
+    whole_owner_call_operands(assertion_text, owner)
+        .iter()
+        .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
+}
+
+/// The argument lists of the asserted operands that are exactly one whole
+/// owner call: an `assert_eq!` / `assert_ne!` side, or the `assert!`
+/// condition with at most one leading `!`. A call inside a larger operand
+/// (`pos(&[0, 5])[1]`, `pos(xs).len()`, `pos(xs).is_empty()`) observes only
+/// a projection of the owner's result, which may not tell the changed
+/// closure value apart, so it never pairs with an element boundary
+/// (RIPR-SPEC-0260 rule 1).
+fn whole_owner_call_operands(assertion_text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+        Some(compared) => compared.iter().map(|operand| operand.to_string()).collect(),
+        None => {
+            let Some(index) = find_marker(assertion_text, "assert!(") else {
+                return Vec::new();
+            };
+            let Some(inner) = delimited_contents_at(assertion_text, index + "assert!".len()) else {
+                return Vec::new();
+            };
+            let condition = super::owner_pin::closure_adaptor::top_level_arguments(&inner)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let condition = condition.trim();
+            vec![
+                condition
+                    .strip_prefix('!')
+                    .map_or(condition, str::trim_start)
+                    .to_string(),
+            ]
+        }
     };
-    compared.iter().any(|operand| {
-        let operand = operand.trim();
-        let lists = owner_call_argument_lists(operand, &owner.name);
-        let [(_, arguments)] = lists.as_slice() else {
-            return false;
-        };
-        operand.starts_with(&format!("{}(", owner.name))
-            && delimited_contents_at(operand, owner.name.len())
-                .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len())
-            && arguments_feed_boundary_element(test, Some(loan), arguments, element)
-    })
+    operands
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as
@@ -3336,10 +3371,34 @@ mod tests {
             "x > 0",
             "assert_eq!(gate(&[0]), 1);"
         ));
+        // Only a whole owner call pairs: an index, `len` or `is_empty` of
+        // the result is a projection that may not tell `>` from `>=`.
+        let map = "xs.iter().map(|&x| x > 0).collect::<Vec<_>>()";
+        assert!(pairs(
+            map,
+            "x > 0",
+            "assert_eq!(gate(&[0, 5]), [false, true]);"
+        ));
+        assert!(pairs(
+            map,
+            "x > 0",
+            "assert_ne!([true, true], gate(&[0, 5]));"
+        ));
+        for projection in [
+            "assert_eq!(gate(&[0, 5])[1], true);",
+            "assert_eq!(gate(&[0, 5]).len(), 2);",
+            "assert!(!gate(&[0, 5]).is_empty());",
+            "assert_eq!(gate(&[0, 5]).first(), Some(&false));",
+        ] {
+            assert!(!pairs(map, "x > 0", projection), "{projection}");
+        }
         // `any` stops at 5 before the boundary element decides.
         let any = "xs.iter().any(|&x| x > 0)";
         assert!(pairs(any, "x > 0", "assert_eq!(gate(&[-2, 0]), false);"));
         assert!(!pairs(any, "x > 0", "assert_eq!(gate(&[5, 0]), true);"));
+        // The `assert!` condition, with at most one `!`, is the operand.
+        assert!(pairs(any, "x > 0", "assert!(!gate(&[-2, 0]));"));
+        assert!(!pairs(any, "x > 0", "assert!(gate(&[-2, 0]) == false);"));
     }
 
     fn gate_owner() -> FunctionSummary {

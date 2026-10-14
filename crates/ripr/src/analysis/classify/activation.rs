@@ -1248,8 +1248,13 @@ fn adaptor_element_view(
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<ElementView> {
+    let source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| &*facts.data().source);
     let tail = super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
-        .filter(|tail| tail.closure_body_is(&probe.expression))?;
+        .filter(|tail| tail.closure_body_is(&probe.expression))
+        .filter(|tail| tail.keeps_standard_vec(source, index))?;
     let (element, boundary) = match (tail.reads_element(left), tail.reads_element(right)) {
         (true, false) => (left, right),
         (false, true) => (right, left),

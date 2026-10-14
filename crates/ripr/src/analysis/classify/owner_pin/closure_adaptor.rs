@@ -51,9 +51,44 @@ pub(in crate::analysis::classify) struct AdaptorTail {
     /// When the closure body is one comparison of the binding: its operator
     /// and whether the binding is the left operand.
     comparison: Option<(String, bool)>,
+    /// Whether the tail's `collect` relies on the bare name `Vec` meaning
+    /// the standard vector, which the owner's file may rebind.
+    collects_named_vec: bool,
 }
 
 impl AdaptorTail {
+    /// Whether the tail's result keeps every closure value in the owner's
+    /// file `source`: a `collect` that names a bare `Vec` holds only while
+    /// that file binds no other item to `Vec` (`use .. as Vec`, `use x::Vec`,
+    /// a glob outside `std` / `core` / `alloc`, `type Vec`, `struct Vec`,
+    /// `enum Vec`, `union Vec`, `trait Vec`). An unread file fails closed.
+    pub(in crate::analysis::classify) fn keeps_standard_vec(
+        &self,
+        source: Option<&str>,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> bool {
+        if !self.collects_named_vec {
+            return true;
+        }
+        let Some(source) = source else {
+            return false;
+        };
+        let masked = mask_comments_and_strings(source);
+        let declares = ["struct", "enum", "union", "type", "trait"]
+            .iter()
+            .any(|keyword| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        super::starts_with_word(
+                            masked[offset + keyword.len()..].trim_start(),
+                            "Vec",
+                        )
+                    })
+            });
+        !declares && !super::declaring_file_rebinds(source, "Vec", false, index)
+    }
+
     /// Whether `operand` is the closure binding read as one element of `P`:
     /// `x`, `*x` or `**x`, never more `*` than the pattern leaves.
     pub(in crate::analysis::classify) fn reads_element(&self, operand: &str) -> bool {
@@ -190,6 +225,9 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
         _ => None,
     };
     let comparison = binding_comparison(&closure_body, &binding, layers - pattern_refs);
+    let collects_named_vec = terminal
+        .as_ref()
+        .is_some_and(|terminal| method_name(terminal).as_deref() == Some("collect"));
     Some(AdaptorTail {
         parameter,
         position,
@@ -203,6 +241,7 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
             .count(),
         deciding,
         comparison,
+        collects_named_vec,
     })
 }
 
@@ -253,6 +292,10 @@ fn collects_into_vec(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> bool
         },
     };
     let target = collapse(&target);
+    let target = ["std::vec::", "alloc::vec::"]
+        .iter()
+        .find_map(|prefix| target.strip_prefix(prefix))
+        .unwrap_or(&target);
     target.starts_with("Vec<") && target.ends_with('>')
 }
 
@@ -425,6 +468,11 @@ fn call_argument_texts(text: &str, name: &str) -> Option<Vec<String>> {
         .find(|end| masked[*end..].starts_with('('))?;
     let close = super::matching_close(&masked, open, b'(', b')')?;
     Some(split_top_level(&text[open + 1..close]))
+}
+
+/// The top-level comma-separated parts of `text`.
+pub(in crate::analysis::classify) fn top_level_arguments(text: &str) -> Vec<String> {
+    split_top_level(text)
 }
 
 fn split_top_level(text: &str) -> Vec<String> {

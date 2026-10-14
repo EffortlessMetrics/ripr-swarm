@@ -36,8 +36,29 @@ const COMPLETE: &str = "Complete propagation witness reaches returned value";
 /// The `return_value` and `predicate` findings for a change of the owner's
 /// tail (line 2) from `old` to `new`.
 fn findings(new: &str, old: &str, test: &str) -> Result<(Value, Value), String> {
+    owner_findings("count_positive(xs: &[i32]) -> usize", new, old, test)
+}
+
+/// [`findings`] for an owner with the signature `signature`.
+fn owner_findings(
+    signature: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<(Value, Value), String> {
+    file_findings(signature, new, old, test, "")
+}
+
+/// [`owner_findings`] with `items` placed after the owner.
+fn file_findings(
+    signature: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+    items: &str,
+) -> Result<(Value, Value), String> {
     let source = format!(
-        "pub fn count_positive(xs: &[i32]) -> usize {{\n    {new}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn owner_is_checked() {{\n        {test}\n    }}\n}}\n"
+        "pub fn {signature} {{\n    {new}\n}}\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn owner_is_checked() {{\n        {test}\n    }}\n}}\n"
     );
     let diff = format!(
         "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    {old}\n+    {new}\n"
@@ -115,5 +136,65 @@ fn map_count_tail_keeps_the_pre_0260_reading() -> Result<(), String> {
     assert_ne!(returned["classification"], "exposed", "{returned}");
     assert_ne!(propagate(&predicate), "yes", "{predicate}");
     assert_ne!(predicate["classification"], "exposed", "{predicate}");
+    Ok(())
+}
+
+#[test]
+fn element_boundary_pairs_only_the_whole_owner_call() -> Result<(), String> {
+    // Every assertion passes the boundary element 0, but only the first
+    // compares the whole owner result; an index, `len` or `is_empty` of it
+    // cannot tell `x > 0` from `x >= 0`.
+    let signature = "pos(xs: &[i32]) -> Vec<bool>";
+    let new = "xs.iter().map(|&x| x > 0).collect()";
+    let old = "xs.iter().map(|&x| x >= 0).collect()";
+    let (_, whole) = owner_findings(
+        signature,
+        new,
+        old,
+        "assert_eq!(pos(&[0, 5]), [false, true]);",
+    )?;
+    assert_eq!(whole["classification"], "exposed", "{whole}");
+    // Element pairing reads no `let`-bound result (fail closed), so the
+    // bound projections below stay unpaired even if a whole-result binding
+    // were ever paired.
+    for test in [
+        "assert_eq!(pos(&[0, 5])[1], true);",
+        "assert_eq!(pos(&[0, 5]).len(), 2);",
+        "assert!(!pos(&[0, 5]).is_empty());",
+        "let r = pos(&[0, 5]);\n        assert_eq!(r[1], true);",
+        "let r = pos(&[0, 5]);\n        assert_eq!(r.len(), 2);",
+        "let r = pos(&[0, 5]);\n        assert_eq!(r, [false, true]);",
+    ] {
+        let (_, predicate) = owner_findings(signature, new, old, test)?;
+        assert_ne!(
+            predicate["classification"], "exposed",
+            "{test}: {predicate}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn collect_into_a_rebound_vec_keeps_the_pre_0260_reading() -> Result<(), String> {
+    // A `Vec` the owner's file binds to a set loses order and multiplicity.
+    let signature = "pos(xs: &[i32]) -> Vec<bool>";
+    let new = "xs.iter().map(|&x| x > 0).collect()";
+    let old = "xs.iter().map(|&x| x >= 0).collect()";
+    let test = "assert_eq!(pos(&[0, 5]), [false, true].into_iter().collect::<Vec<_>>());";
+    for (items, rebound) in [
+        ("", false),
+        ("\ntype Vec<T> = std::collections::BTreeSet<T>;\n", true),
+        ("\nuse std::collections::BTreeSet as Vec;\n", true),
+        ("\npub struct Vec<T>(T);\n", true),
+    ] {
+        // The return value is compared whole, so its reading does not
+        // depend on the closure; the element boundary does.
+        let (_, predicate) = file_findings(signature, new, old, test, items)?;
+        assert_eq!(
+            predicate["classification"] == "exposed",
+            !rebound,
+            "{items}: {predicate}"
+        );
+    }
     Ok(())
 }
