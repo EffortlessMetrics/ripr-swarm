@@ -2363,9 +2363,18 @@ fn extract_parser_oracles(
         else {
             continue;
         };
-        if name != "unwrap" && name != "expect" {
-            continue;
-        }
+        // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
+        // and read smoke; an `unwrap_err()` whose value is never compared
+        // panics on the `Ok` side, so it observes the `Err` side
+        // (decision 2). Its statement shape is decided by the same
+        // `uncompared_unwrap_err` the line scanner uses.
+        let (kind, strength) = match name.as_str() {
+            "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
+            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+                (OracleKind::BroadError, OracleStrength::Weak)
+            }
+            _ => continue,
+        };
         let range = method_call.syntax().text_range();
         let text = slice_text(text, range.start(), range.end())
             .trim()
@@ -2373,8 +2382,8 @@ fn extract_parser_oracles(
             .to_string();
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
-            kind: OracleKind::SmokeOnly,
-            strength: OracleStrength::Smoke,
+            kind,
+            strength,
             observed_tokens: extract_identifier_tokens(&text),
             text,
             ok_value_observed: None,
@@ -2496,6 +2505,31 @@ fn extract_parser_oracles(
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     assertions
+}
+
+/// Whether this `unwrap_err()` call is the whole value of a statement that
+/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
+/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
+/// adapters admit the same shapes.
+fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
+    let Some(statement) = method_call.syntax().parent() else {
+        return false;
+    };
+    if ast::LetStmt::cast(statement.clone()).is_none()
+        && ast::ExprStmt::cast(statement.clone()).is_none()
+    {
+        return false;
+    }
+    let range = statement.text_range();
+    let statement_text = slice_text(text, range.start(), range.end());
+    let block_end = statement
+        .parent()
+        .map_or(range.end(), |block| block.text_range().end());
+    let rest = slice_text(text, range.end(), block_end);
+    crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
+        let call = method_call.syntax().text().to_string();
+        value.split_whitespace().eq(call.split_whitespace())
+    })
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see

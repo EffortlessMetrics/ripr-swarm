@@ -553,6 +553,25 @@ impl OwnerPinSyntax {
         self.refusal(test, assertion, index).is_none()
     }
 
+    /// The context gates every assertion shares (parser-backed file,
+    /// resolved module composition) with no visible binding that may rebind
+    /// `assert!`, `assert_ne!` or `matches!` on the assertion's line.
+    /// RIPR-SPEC-0231 sibling exclusion credits an `assert_ne!` or
+    /// `assert!(!matches!(..))` only through it.
+    pub(in crate::analysis) fn admits_assertion_context(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        self.context_ambiguities(test, assertion.line, index)
+            .is_ok_and(|ambiguous| {
+                !["assert", "assert_ne", "matches"]
+                    .iter()
+                    .any(|name| ambiguous.contains(*name))
+            })
+    }
+
     /// The test-local check helper an `assertion` this admission admits is
     /// borrowed from (#6482); `None` for the test's own assertion or one it
     /// refuses.
