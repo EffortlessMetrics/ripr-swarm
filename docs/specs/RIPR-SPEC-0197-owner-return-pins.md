@@ -1125,19 +1125,27 @@ refuses any macro in the path.
 ### Unchanged closures in a returned tail (#6578)
 
 In `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` only
-`25 * 2` changed. The closure is the same in both versions and runs the same
-way on every input, so it neither decides whether the changed operand runs
-nor stands between it and the return. `ChangedSpan` in
+`25 * 2` changed. The closure is the same in both versions, the changed
+operand of the outer `+` runs on every input, and its value reaches the
+sum without passing through the closure. `ChangedSpan` in
 `classify/changed_span.rs` takes the probe's paired old line, strips the
 longest common prefix and suffix, parses the new line as one tail
 expression and finds the smallest node covering the differing text.
 
-1. The return-path gate (rule 3) then reads only that node and the nodes
-   enclosing it up to and including the tail: the change is conditional
-   when its own text is, or when an enclosing node is a closure, `if`,
-   `match`, loop, `&&`/`||`, or the argument list of a skipping combinator
-   (or of a method call it cannot name). `x.map_or(51, |v| v)` still
-   refuses: the changed `51` is a `map_or` argument.
+1. The return-path gate (rule 3) reads a tail its whole-text check refuses
+   more closely, and admits it only in one narrow shape. The changed span
+   holds no closure, block, item, `&&`/`||`, assignment, or text the rule-3
+   check reads as conditional. Every node from it up to and including the
+   tail is an operator that evaluates all its operands (arithmetic,
+   comparison or bitwise; not `&&`, `||` or an assignment), a parenthesis,
+   prefix operator, cast or argument list, or a call to a named function or
+   method that is not a skipping combinator and holds no closure anywhere.
+   A closure beside the change in a call can discard or transform it
+   (`items.iter().map(|l| ..)` with `items` changed, `fold(51, |acc, l| ..)`),
+   a skipping combinator may never run it (`x.map_or(51, |v| v)`), and a
+   block around it (labeled `break`, `const` item, `async`) can skip or
+   rebind it, so each refuses. A call through a non-path callee
+   (`(Option::map_or)(x, 51, f)`) cannot be named and refuses.
 2. The current-path propagation witness, which refuses any closure text in
    the path, completes a direct return witness for a `return_value` probe
    whose whole changed expression is the owner's return-value sink on the
@@ -1148,6 +1156,10 @@ expression and finds the smallest node covering the differing text.
    expression, or when the tail binds a name outside every closure (a
    `let`, `if let`, `match` arm or `for`, which can carry the change into a
    closure that may not run), both read the whole expression as before.
+
+Limit: the old text keeps a final `return ` keyword the gate strips from
+the new one, so a final `return <tail>;` is read whole and keeps its
+refusal.
 
 ### Same-named module-level functions (#6544)
 

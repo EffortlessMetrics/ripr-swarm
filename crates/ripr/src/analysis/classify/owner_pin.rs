@@ -3663,7 +3663,7 @@ fn return_path_gate_from(
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
-    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(&changed, before) {
+    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(changed, before) {
         return None;
     }
     let returns = whole_word_offsets(inner, "return");
