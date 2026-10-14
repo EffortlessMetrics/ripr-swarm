@@ -2660,15 +2660,13 @@ fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> 
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens)
-        .any(|(name, plain)| {
-            !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
-        })
-        || tokens.windows(3).enumerate().any(|(at, window)| {
-            window[0].text() == "json"
-                && window[1].text() == "!"
-                && !literal_json_tokens(&tokens[at + 2..])
-        })
+    }) || nested_invocations(&tokens).any(|(name, plain)| {
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+    }) || tokens.windows(3).enumerate().any(|(at, window)| {
+        window[0].text() == "json"
+            && window[1].text() == "!"
+            && !literal_json_tokens(&tokens[at + 2..])
+    })
 }
 
 /// A bare `matches!` or `format!` in a macro operand expands to one `match`
