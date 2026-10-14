@@ -583,6 +583,7 @@ mod tests {
             "cfg.reset?.();",
             "[cfg.ok] = [false];",
             "for (cfg.key in source) {}",
+            "for ([cfg.ok] of pairs) {}",
         ] {
             assert!(written(text, false), "{text}");
         }
@@ -643,6 +644,8 @@ mod tests {
             "const cfg = { ok: true }; [cfg.ok] = [false];",
             "const cfg = { ok: true }; ({ a: cfg.ok } = src);",
             "const cfg = { ok: true }; for (cfg.ok of flags) {}",
+            "const cfg = { ok: false }; for ([cfg.ok] of [[true]]) {}",
+            "const cfg = { ok: false }; for ({ a: cfg.ok } of rows) {}",
             "const cfg = { ok: true }; Object.assign(cfg, { ok: false });",
             // a callback parameter of the same name shadows the binding
             "const cfg = { ok: true }; [{}].forEach((cfg) => check(ready(cfg)));",

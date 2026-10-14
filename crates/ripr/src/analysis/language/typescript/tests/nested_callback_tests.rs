@@ -442,14 +442,26 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
         ),
         "  return { ...cfg, ok: true };",
     )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert!(
         finding
             .missing
             .iter()
-            .all(|line| !line.contains("same value")),
+            .any(|line| line.contains("no tested input is shown to lack it")
+                && !line.contains("same value")),
         "{:?}",
         finding.missing
     );
+    // A destructuring loop target writes the member, so an input that starts
+    // without the value is not read as lacking it.
+    let finding = settings_finding(
+        "spread-local-loop-destructured",
+        &test(
+            "const cfg = { ok: false };\n  for ([cfg.ok] of [[true]]) {}\n  expect(ready(cfg)).toEqual({ ok: true });",
+        ),
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     // The added direction reads the same way.
     let added =
         "export function ready(cfg: { ok: boolean }) {\n  return { ...cfg, ok: true };\n}\n";

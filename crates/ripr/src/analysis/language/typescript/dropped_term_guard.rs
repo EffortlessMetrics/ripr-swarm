@@ -561,7 +561,9 @@ fn inside_destructuring_target(body: &str, at: usize) -> bool {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => {
                 if depth == 0 {
-                    if assigns_after(body[at + index + 1..].trim_start()) {
+                    // `[x.k] = xs` assigns; `for ([x.k] of xs)` loops into it.
+                    let next = body[at + index + 1..].trim_start();
+                    if assigns_after(next) || loop_target(next) {
                         return true;
                     }
                 } else {
