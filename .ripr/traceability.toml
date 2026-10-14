@@ -7209,7 +7209,8 @@ fixtures = [
   "fixtures/match_arm_blind",
   "fixtures/match_arm_observer",
   "fixtures/match_arm_tuple_derived_return_before_assertion",
-  "fixtures/match_arm_tuple_terminal_imported_formatter"
+  "fixtures/match_arm_tuple_terminal_imported_formatter",
+  "fixtures/match_arm_tuple_terminal_inherited_constructor"
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
