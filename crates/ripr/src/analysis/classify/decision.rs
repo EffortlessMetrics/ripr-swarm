@@ -286,25 +286,28 @@ pub(in crate::analysis) fn recommended_next_step(
 /// #7393: the family templates presume an assertion shape the related test
 /// may not have — "instead of only is_err()" when no `is_err()` exists, or
 /// "replace broad assertions" when the related test already is an
-/// `assert_eq!`. When the strongest credited related oracle is already exact,
-/// name what is actually missing (a boundary input, an error-arm input), the
-/// way the predicate probe's missing-discriminator evidence does.
+/// `assert_eq!`. When the strongest reach-establishing related oracle is
+/// already exact, name what is actually missing (a boundary input, an
+/// error-arm input), the way the predicate probe's missing-discriminator
+/// evidence does.
 ///
-/// Only credited rows are eligible: a row whose oracle supports the finding's
-/// class (`miss: None`) or whose only gap is the input
-/// ([`RelatedTestMiss::MissingInput`]). A row ripr could not credit (no call
-/// path, no observing assertion, an unconfirmed observation) never dictates
-/// the owner finding's advice, and a row whose assertion is not exact
-/// (`MissingExactAssertion`, `WeakAssertion`) keeps the family template
-/// because there the assertion shape IS the gap. The oracle must also be
+/// The caller annotates each row's miss reason first, so this selection
+/// reads the same final rows the JSON/human projections render. A row is
+/// eligible only when it establishes reach to the changed owner
+/// ([`RelationReason::establishes_reach`]; a `SameTestFile` or
+/// token-coincidence row never dictates the owner finding's advice) and its
+/// annotated miss is not `missing_exact_assertion` (there the assertion
+/// shape IS the gap). An observation-unconfirmed row stays eligible: the
+/// suite's exact assertion exists and the step names the input, which is
+/// honester than presuming a broad assertion. The oracle must also be
 /// admitted as strong: a syntactic `assert_eq!` the classifier downgraded
 /// (for example a self-computed expected value) does not establish an
 /// independent exact discriminator, so "keep the exact assertion" would be
 /// wrong advice for it.
 ///
-/// Returns None when the strongest eligible related oracle is not an admitted
-/// strong exact one (the family template stands), when no eligible row
-/// exists, or for families whose templates already name the gap.
+/// Returns None when the strongest eligible related oracle is not an
+/// admitted strong exact one (the family template stands), when no eligible
+/// row exists, or for families whose templates already name the gap.
 /// Wrapper-error seams and changed `Err(...)` constructions keep their
 /// dedicated guidance at the caller.
 pub(in crate::analysis) fn exact_oracle_gap_next_step(
@@ -312,13 +315,18 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     class: &ExposureClass,
     related: &[RelatedTest],
     missing: &[MissingDiscriminatorFact],
+    owner_is_function: bool,
 ) -> Option<String> {
     if *class != ExposureClass::WeaklyExposed || related.is_empty() {
         return None;
     }
-    let candidates = related
-        .iter()
-        .filter(|test| matches!(test.miss, None | Some(RelatedTestMiss::MissingInput)));
+    let candidates = related.iter().filter(|test| {
+        !test.is_unmatched()
+            && test
+                .relation_reason
+                .is_none_or(|reason| reason.establishes_reach(owner_is_function))
+            && test.miss != Some(RelatedTestMiss::MissingExactAssertion)
+    });
     let strongest = candidates.max_by_key(|test| test.oracle_strength.rank())?;
     // An exact-kind oracle admitted as strong pins an independent expected
     // output; anything weaker (a broad error check, a smoke assertion, an
@@ -935,6 +943,16 @@ mod tests {
         strength: OracleStrength,
         miss: Option<RelatedTestMiss>,
     ) -> RelatedTest {
+        related_test_full(name, kind, strength, miss, RelationReason::DirectOwnerCall)
+    }
+
+    fn related_test_full(
+        name: &str,
+        kind: OracleKind,
+        strength: OracleStrength,
+        miss: Option<RelatedTestMiss>,
+        relation_reason: RelationReason,
+    ) -> RelatedTest {
         RelatedTest {
             name: name.to_string(),
             file: std::path::PathBuf::from("src/lib.rs"),
@@ -942,7 +960,7 @@ mod tests {
             oracle: None,
             oracle_kind: kind,
             oracle_strength: strength,
-            relation_reason: Some(RelationReason::DirectOwnerCall),
+            relation_reason: Some(relation_reason),
             relation_confidence: Some(RelationConfidence::High),
             miss,
         }
@@ -973,6 +991,7 @@ mod tests {
                 OracleStrength::Strong,
             )],
             &missing("p == 0"),
+            true,
         );
         let step = step.as_deref().unwrap_or("");
         assert!(step.contains("already asserts an exact value"), "{step}");
@@ -995,6 +1014,7 @@ mod tests {
                 OracleStrength::Strong,
             )],
             &[],
+            true,
         );
         let step = step.as_deref().unwrap_or("");
         assert!(step.contains("already asserts an exact value"), "{step}");
@@ -1020,6 +1040,7 @@ mod tests {
                     OracleStrength::Strong
                 )],
                 &[],
+                true,
             ),
             None
         );
@@ -1032,6 +1053,7 @@ mod tests {
                     related_test("broad", OracleKind::BroadError, OracleStrength::Strong),
                 ],
                 &[],
+                true,
             ),
             None
         );
@@ -1041,6 +1063,7 @@ mod tests {
                 &ExposureClass::WeaklyExposed,
                 &[],
                 &[],
+                true,
             ),
             None
         );
@@ -1054,6 +1077,7 @@ mod tests {
                     OracleStrength::Strong
                 )],
                 &[],
+                true,
             ),
             None
         );
@@ -1073,6 +1097,7 @@ mod tests {
                 Some(RelatedTestMiss::MissingInput),
             )],
             &[],
+            true,
         );
         let step = step.as_deref().unwrap_or("");
         assert!(step.contains("already asserts an exact value"), "{step}");
@@ -1080,6 +1105,28 @@ mod tests {
             step.contains("where the changed branch behaves differently"),
             "{step}"
         );
+    }
+
+    // An observation-unconfirmed row that does establish reach stays
+    // eligible: the suite's exact assertion exists and the gap is the input,
+    // so naming the input is honester than presuming a broad assertion
+    // (#7393's own parse_port scenario).
+    #[test]
+    fn unconfirmed_observation_on_a_reach_row_keeps_the_step() {
+        let step = exact_oracle_gap_next_step(
+            &probe(ProbeFamily::ReturnValue, "Ok(p) if p > 0"),
+            &ExposureClass::WeaklyExposed,
+            &[related_test_with_miss(
+                "parses_valid_port",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                Some(RelatedTestMiss::ObservationUnconfirmed),
+            )],
+            &[],
+            true,
+        );
+        let step = step.as_deref().unwrap_or("");
+        assert!(step.contains("already asserts an exact value"), "{step}");
     }
 
     // A syntactic assert_eq! the classifier downgraded (a self-computed
@@ -1097,35 +1144,35 @@ mod tests {
                     OracleStrength::Weak,
                 )],
                 &[],
+                true,
             ),
             None
         );
     }
 
-    // An exact assertion ripr could not credit for this finding (no call
-    // path, an unconfirmed observation) never dictates the owner advice,
-    // even when it would outrank the credited rows.
+    // A row that does not establish reach to the changed owner (same test
+    // file, token coincidence) never dictates the owner advice, even when
+    // its assertion is exact and strong (#7542: the weak direct oracle's
+    // gap must not be erased by an unrelated exact test).
     #[test]
-    fn uncredited_rows_do_not_dictate_the_step() {
-        for miss in [
-            RelatedTestMiss::NoCallPath,
-            RelatedTestMiss::NoAssertion,
-            RelatedTestMiss::AssertionNotObserving,
-            RelatedTestMiss::AssertionNotCredited,
-            RelatedTestMiss::WeakAssertion,
-            RelatedTestMiss::MissingExactAssertion,
-            RelatedTestMiss::ObservationUnconfirmed,
+    fn non_reach_rows_do_not_dictate_the_step() {
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::WeakTokenSubstring,
         ] {
             assert_eq!(
                 exact_oracle_gap_next_step(
                     &probe(ProbeFamily::ReturnValue, "Ok(p) if p > 0"),
                     &ExposureClass::WeaklyExposed,
                     &[
-                        related_test_with_miss(
+                        related_test_full(
                             "unrelated_exact",
                             OracleKind::ExactValue,
                             OracleStrength::Strong,
-                            Some(miss),
+                            None,
+                            reason,
                         ),
                         related_test(
                             "owed_positive",
@@ -1134,10 +1181,34 @@ mod tests {
                         ),
                     ],
                     &[],
+                    true,
                 ),
                 None,
-                "miss {miss:?} must not select the exact-oracle step"
+                "relation {reason:?} must not select the exact-oracle step"
             );
         }
+    }
+
+    // A reach-establishing row whose annotated miss is
+    // `missing_exact_assertion` observes the behavior but does not pin the
+    // exact value the change alters: there the assertion shape IS the gap,
+    // so the family template stands.
+    #[test]
+    fn missing_exact_assertion_row_keeps_the_family_template() {
+        assert_eq!(
+            exact_oracle_gap_next_step(
+                &probe(ProbeFamily::ReturnValue, "Ok(p) if p > 0"),
+                &ExposureClass::WeaklyExposed,
+                &[related_test_with_miss(
+                    "pins_sibling_field",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                    Some(RelatedTestMiss::MissingExactAssertion),
+                )],
+                &[],
+                true,
+            ),
+            None
+        );
     }
 }

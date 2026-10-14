@@ -46,15 +46,27 @@ alone:
   with the exact assertion kept. When the finding carries a missing
   discriminator fact, the step appends it the way the predicate probe's
   evidence does (`Missing discriminator: \`...\``).
-- Only credited rows are eligible: the oracle must belong to a row whose
-  oracle supports the finding's class, or whose only recorded gap is the
-  input (`missing_input`). A row ripr could not credit (no call path, no
-  observing assertion, an unconfirmed observation) never dictates the owner
-  finding's advice, and the oracle must be admitted as `strong`: a syntactic
-  `assert_eq!` the classifier downgraded (for example a self-computed
-  expected value) does not establish an independent exact discriminator, so
-  "keep the exact assertion" would be wrong advice for it and the family
-  template stands.
+- Only reach-establishing rows are eligible: the row's relation reason must
+  establish reach to the changed owner
+  (`RelationReason::establishes_reach`; `direct_owner_call`,
+  `helper_owner_call`, `reexport_chain_followed`, or
+  `assertion_target_affinity` on a non-function owner). A row that never
+  establishes reach (`same_test_file`, `same_module`, `owner_named_test`,
+  `weak_token_substring`, `import_path_affinity`,
+  `fixture_owner_affinity`, `seam_callee_call`) never dictates the owner
+  finding's advice, no matter how exact its oracle — that is the
+  RIPR-SPEC-0094 token-coincidence control. A row whose annotated miss is
+  `missing_exact_assertion` is also ineligible: there the assertion shape
+  IS the gap. An `observation_unconfirmed` row stays eligible when it
+  establishes reach: the suite's exact assertion exists and the step names
+  the input, which is honester than presuming a broad assertion. Finally,
+  the oracle must be admitted as `strong`: a syntactic `assert_eq!` the
+  classifier downgraded (for example a self-computed expected value) does
+  not establish an independent exact discriminator, so "keep the exact
+  assertion" would be wrong advice for it and the family template stands.
+  `build_finding` annotates each row's miss before selecting the step, so
+  this eligibility reads the same final rows the JSON/human projections
+  render.
 - When the strongest related oracle is not exact (broad error check, smoke
   assertion, unreadable shape), or no related test row exists, the existing
   family template stands unchanged; that advice is honest for those shapes.
@@ -71,10 +83,16 @@ step names the test, prescribes the input, and appends the missing
 discriminator), the return-value variant without a missing discriminator, and
 the controls: a broad related oracle keeps the family template, a stronger
 broad oracle outranking an exact one keeps it, empty related rows keep it,
-and a non-`weakly_exposed` class emits nothing. Twenty-four fixture goldens
-re-bless with `expected/CHANGELOG.md` reasons; each drift is confined to the
-`recommended_next_step` string and its human rendering, with classifications,
-stage states and evidence facts unchanged.
+and a non-`weakly_exposed` class emits nothing, plus the reach-based
+eligibility controls: non-reach rows never dictate the step, an
+`observation_unconfirmed` row that establishes reach stays eligible, and a
+`missing_exact_assertion` row keeps the family template. Twenty-four fixture
+goldens re-bless with `expected/CHANGELOG.md` reasons; each drift is confined
+to the `recommended_next_step` string and its human rendering, with
+classifications, stage states and evidence facts unchanged. The later
+reach-based eligibility refinement re-blesses
+`fixtures/owner_parameter_token_coincidence` under the same confinement: its
+`same_test_file` token-coincidence row no longer dictates the step.
 
 ## Non-Goals
 
@@ -107,6 +125,15 @@ fact, and it does not cover probe families outside `error_path` and
   covers the return-value step without one.
 - `analysis::classify::decision::tests::non_exact_oracle_keeps_the_family_template`
   covers the broad-oracle, outranked, empty, and non-weak controls.
+- `analysis::classify::decision::tests::non_reach_rows_do_not_dictate_the_step`
+  covers the RIPR-SPEC-0094 token-coincidence control: `same_test_file`,
+  `same_module`, `owner_named_test`, and `weak_token_substring` rows never
+  dictate the step.
+- `analysis::classify::decision::tests::unconfirmed_observation_on_a_reach_row_keeps_the_step`
+  covers the reach-establishing `observation_unconfirmed` row staying
+  eligible.
+- `analysis::classify::decision::tests::missing_exact_assertion_row_keeps_the_family_template`
+  covers the `missing_exact_assertion` exclusion.
 - `fixtures/human_full_shared_parse_port` and the re-blessed golden set
   cover the rendered output end to end.
 
@@ -114,10 +141,11 @@ fact, and it does not cover probe families outside `error_path` and
 
 - `crates/ripr/src/analysis/classify/decision.rs::exact_oracle_gap_next_step`
   owns the oracle-shape selection and step wording.
-- `crates/ripr/src/analysis/classifier/finding.rs::build_finding` invokes it
+- `crates/ripr/src/analysis/classifier/finding.rs::build_finding` annotates
+  each related row's miss before invoking the step selector, then invokes it
   only for `weakly_exposed` findings after the wrapper-seam and `Err(...)`
-  construction special cases, passing the related tests and the activation
-  missing discriminators.
+  construction special cases, passing the annotated related tests, the
+  activation missing discriminators, and whether the owner is a function.
 
 ## Metrics
 

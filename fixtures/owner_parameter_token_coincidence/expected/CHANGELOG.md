@@ -77,3 +77,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (7)
+
+Reason:
+RIPR-SPEC-0259 reach-based eligibility: SameTestFile token-coincidence row (subtotal_multiplies, RIPR-SPEC-0094 must-not-credit) no longer dictates the step; weak direct row tax_is_owed keeps the family template, which is the honest advice for its broad positivity check.
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
