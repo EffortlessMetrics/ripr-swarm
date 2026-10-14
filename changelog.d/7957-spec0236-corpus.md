@@ -1,5 +1,5 @@
 <!-- section: Internal / CI -->
-- The Rust verdict corpus gains eleven runtime-labeled cases built from the
+- The Rust verdict corpus gains ten runtime-labeled cases built from the
   RIPR-SPEC-0236 probes (predicate-boundary seams reached through a `Display`
   impl, a direct assert, an unasserted caller, an integration-test chain, the
   same chain with tests named `snapshot_checkout` and `mock_checkout`, a macro
