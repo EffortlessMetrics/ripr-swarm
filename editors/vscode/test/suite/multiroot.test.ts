@@ -245,12 +245,29 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       const client = controller.client!;
       assert.ok(client.serverProcess?.pid, 'selected session must own a real server process');
       // Interactive save refreshes deliberately defer expensive seam evidence.
-      // Drive the existing public full-refresh command; it does not select roots.
-      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
-      const statusAfterRefresh = await bounded(client.sendRequest('workspace/executeCommand', {
+      // Drive the existing public full-refresh command; it does not select
+      // roots. A refresh issued while the session-start save refresh is still
+      // settling can complete without committing a new attempt (observed on
+      // CI: the attempt counter stays at the save's attempt while an
+      // identical command issued later commits a full attempt), so confirm
+      // the commit by the published attempt id and re-issue when the command
+      // produced none — the same recovery a developer performs by running the
+      // command again.
+      const attemptBeforeRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
-      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string } };
-      const attemptAfterFirstRefresh = statusAfterRefresh.analysis_status?.attempt_id;
+      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
+        .analysis_status?.attempt_id;
+      let attemptAfterRefresh = attemptBeforeRefresh;
+      for (let issued = 0; issued < 3 && attemptAfterRefresh === attemptBeforeRefresh; issued++) {
+        await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+        attemptAfterRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
+          command: 'ripr.collectWorkspaceStatus', arguments: [],
+        }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
+          .analysis_status?.attempt_id;
+      }
+      assert.notStrictEqual(attemptAfterRefresh, attemptBeforeRefresh,
+        'the explicit full refresh must commit a new analysis attempt');
+      const attemptAfterFirstRefresh = attemptAfterRefresh;
       const status = await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
       }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
