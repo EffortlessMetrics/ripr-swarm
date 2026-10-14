@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (4)
+
+Reason:
+RIPR-SPEC-0197: whitespace-clean diff context changes only the input identity digest; mutation, coordinates, evidence and verdicts remain unchanged.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
