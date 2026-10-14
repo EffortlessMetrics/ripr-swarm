@@ -140,12 +140,12 @@ fn a_replacement_without_the_old_family_keeps_deleted_error_behavior() -> Result
 #[test]
 fn one_constructor_span_cannot_consume_two_old_constructor_edits() -> Result<(), String> {
     let probes = git_probes(
-        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let _ = (Some(1), Some(2));\n    (None, None)\n}\n",
-        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let _ = (Some(3), Some(4));\n    (None, None)\n}\n",
+        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let t = (Some(1), Some(2));\n    (None, None)\n}\n",
+        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let t = (Some(3), Some(4));\n    (None, None)\n}\n",
     )?;
     assert_eq!(
         historical(&probes, ProbeFamily::ReturnValue),
-        vec!["let _ = (Some(1), Some(2));"],
+        vec!["let t = (Some(1), Some(2));"],
         "{probes:?}"
     );
     // This bounded repair does not change the parser's one-shape-per-family selector.
