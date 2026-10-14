@@ -288,8 +288,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    When the literal at that position of a call to the helper provably
    selects the changed arm, the helper's exact assertion credits it
    (`check_color('S', "black")` with `assert_eq!(suit_color(suit), want)`).
-   Only the scalar literals `loan_call_literals` reads are lent; a
-   variable, an expression or a call argument lends nothing. This credits
+   Only the scalar literals `loan_call_literals` reads are lent, and only
+   when every argument of that helper call is one, so
+   `check_color('S', want)` lends nothing; a variable, an expression or a
+   call argument lends nothing. This credits
    only: a helper call still blocks naming an arm as unselected
    (decision 3). Rejected: keep helper arguments unresolved, which reads
    a helper-wrapped table of literal checks as unproven.

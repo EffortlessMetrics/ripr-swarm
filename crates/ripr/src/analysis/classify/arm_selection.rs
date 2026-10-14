@@ -774,7 +774,8 @@ impl ArmSelector {
     /// `suit_color('S')`: the helper's compared operand is exactly a direct
     /// owner call whose scrutinee argument is one of the helper's plain,
     /// never-rebound parameters, the expected side does not name the owner,
-    /// and some eager call to the helper, alone on its line, passes only
+    /// and some eager call to the helper, on a line holding only calls of
+    /// that same text, passes only
     /// scalar literals and fills that parameter with an input selecting
     /// this arm. That call runs the helper's assertion on its own owner
     /// call, so it is a selecting call with an exact oracle on its result.
@@ -1141,6 +1142,8 @@ fn without_comments(text: &str) -> Option<String> {
             let in_string = strings
                 .iter()
                 .any(|(start, end)| index >= *start && index < *end)
+                // A char span's end is its closing quote's offset, so it
+                // is inclusive where a string span's end is exclusive.
                 || chars
                     .iter()
                     .any(|(start, end)| index >= *start && index <= *end);

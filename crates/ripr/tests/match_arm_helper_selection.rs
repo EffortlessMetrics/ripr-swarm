@@ -181,6 +181,17 @@ fn a_helper_lent_literal_for_another_arm_does_not_expose_it() -> Result<(), Stri
             "`'H'` selects the red arm, not the changed one: {:?}",
             finding.ripr.reveal.discriminate
         );
+        // Decision 5 credits only: a helper call never names the arm as
+        // unselected, even when its lent literal selects another arm.
+        assert!(
+            !finding
+                .ripr
+                .infect
+                .summary
+                .contains("No related test call selects arm"),
+            "a helper-lent literal must not name the arm as unselected: {:?}",
+            finding.ripr.infect
+        );
     }
     Ok(())
 }
