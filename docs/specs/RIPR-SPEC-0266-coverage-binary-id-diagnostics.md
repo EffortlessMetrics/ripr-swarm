@@ -66,6 +66,10 @@ coverage failure.
 
 ## Required Evidence
 
+- Exercise the genuine retained 160-byte header/ID from run 38613901957 with
+  matching LLVM: retain its bytes and failed merge outcome; associate only a
+  controlled exact-ID instrumented ELF, never claiming a historical producer.
+
 - Parse 33 valid IDs and verify the first 32 are retained with explicit
   partiality; verify a retained exact match remains visible and absent IDs
   remain unavailable under partial scope.
@@ -111,6 +115,9 @@ The committed controls in
   `fifo_replacement_is_nonblocking_and_never_read` and
   `final_mapping_json_budget_includes_profile_scope_metadata`: unavailable
   layouts, scan budgets, file custody and serialized-byte limits.
+- `retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_failure`:
+  genuine recurrence prefix, real LLVM rejection, exact instrumented association
+  and unchanged retained bytes; controlled ELF inputs are not historical attribution.
 - `mapping_failure_cannot_abort_the_original_profile_manifest`: preservation
   of the original failed-profile evidence.
 - `real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata`: native

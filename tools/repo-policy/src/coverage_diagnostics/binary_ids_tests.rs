@@ -141,6 +141,85 @@ fn mock_replay(args: &[String]) -> Result<Value> {
     ))
 }
 #[test]
+fn retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_failure() -> Result<()>
+{
+    // Genuine first 160 bytes supplied from run 38613901957, artifact 11919569558.
+    // Archive SHA256: b9c3e8be69a634a904e01755cbf0513a95b293b12ce952f622d36bece996389d.
+    // Retained 65536-byte prefix SHA256: 46391932755c51850d3954e70223ce5455c1a341de72fcae932a8b2a7f6e6702.
+    // This stimulus contains only the retained header/ID, not the historical full file.
+    let retained: [u8; 160] = [
+        0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17, 0x69, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaf, 0x3b, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x29, 0x40, 0x04,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x22, 0xf6, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe8, 0x37,
+        0xd8, 0x2e, 0x09, 0xaa, 0xff, 0xff, 0x24, 0xb2, 0xd2, 0xcc, 0xf6, 0x55, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xd0, 0xf6, 0x05, 0x24, 0xb0, 0xf7, 0x07, 0xde, 0xca, 0x8f, 0x76, 0xd9, 0xad, 0x8c,
+        0x4c, 0x58, 0xac, 0x98, 0x08, 0xc9, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let id = &retained[136..156];
+    let expected = "d0f60524b0f707deca8f76d9ad8c4c58ac9808c9";
+    assert_eq!(hex(id), expected);
+    assert_eq!(
+        format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(retained)),
+        "27ab275bf87b3cad72b9c9b3744affdf31798fb6278c6a0406cb837be13c166f"
+    );
+    assert_eq!(profile_ids(&retained)["ids"], json!([expected]));
+    assert_eq!(profile_ids(&retained)["status"], "available");
+    // Independently bounded raw64-v10 declared extent; original EOF was in counters.
+    let data_end = 128 + 32 + u64le(&retained, 24)? * 64;
+    let counters_end = data_end + u64le(&retained, 40)? * 8;
+    let minimum = counters_end + ((u64le(&retained, 72)? + 7) & !7);
+    assert_eq!(minimum, 2_647_048);
+    assert!(data_end < 2_150_400 && 2_150_400 < counters_end);
+
+    let f = fixture()?;
+    let profile = f.0.join("retained-header-123-456_0.profraw");
+    fs::write(&profile, retained).map_err(|e| e.to_string())?;
+    let list = f.0.join("ripr-swarm-profraw-list");
+    fs::write(&list, format!("{}\n", profile.display())).map_err(|e| e.to_string())?;
+    // Controlled ELF fixtures test association; neither is the historical producer.
+    write_executable(&f.0.join("debug/deps/exact"), &elf_bytes(id, true))?;
+    write_executable(&f.0.join("debug/deps/wrong"), &elf_bytes(&[0x42; 20], true))?;
+    write_executable(
+        &f.0.join("debug/deps/uninstrumented"),
+        &elf_bytes(id, false),
+    )?;
+    let out = f.0.join("evidence");
+    let report = capture(&f.0, &list, &out, tool)?;
+    assert_eq!(report["merge_replay"]["exit"], 1);
+    assert_eq!(report["original_coverage_outcome"], "failure");
+    assert_eq!(report["captured"][0]["retained_bytes"], 160);
+    assert_eq!(
+        report["captured"][0]["binary_ids"]["ids"],
+        json!([expected])
+    );
+    assert_eq!(report["executable_mapping"]["ids"][0]["status"], "matched");
+    assert_eq!(report["executable_mapping"]["ids"][0]["ambiguous"], false);
+    assert_eq!(
+        report["executable_mapping"]["candidates"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        report["executable_mapping"]["candidates"][0]["relative_path"],
+        "debug/deps/exact"
+    );
+    assert_eq!(report["executable_mapping"]["non_candidates"], 1);
+    assert_eq!(fs::read(&profile).map_err(|e| e.to_string())?, retained);
+    assert_eq!(
+        fs::read(out.join("profile-00.prefix.profraw")).map_err(|e| e.to_string())?,
+        retained
+    );
+    assert!(out.join("manifest.json").is_file());
+    Ok(())
+}
+
+#[test]
 fn raw_binary_ids_are_exact_and_unknown_layouts_are_explicit() {
     let id = [0xab; 20];
     let bytes = raw(&id);
