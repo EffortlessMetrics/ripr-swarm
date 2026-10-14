@@ -2108,7 +2108,7 @@ impl OwnerReturnPin {
                                 exact_integer_projection(operands[at], operands[other])
                                     .filter(|_| !ord_method_rebindable(operands[at], test, index))
                                     .and_then(|call| self.awaited_call_shape(call, &self.name))
-                                    .map(|call| (call, operands[other]))
+                                    .map(|call| (call, operands[other], None))
                             })
                         })
                         .flatten()
@@ -2121,7 +2121,7 @@ impl OwnerReturnPin {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 single_element_index(operands[at])
                                     .and_then(|call| self.awaited_call_shape(call, &self.name))
-                                    .map(|call| (call, operands[other]))
+                                    .map(|call| (call, operands[other], None))
                             })
                         })
                         .flatten()
