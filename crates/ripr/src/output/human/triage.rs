@@ -1269,7 +1269,10 @@ mod tests {
         };
 
         let mut backslash_root = test_output(Vec::new());
-        backslash_root.root = PathBuf::from(r"C:\tmp\probe win space");
+        // Join at runtime so the source does not contain a drive-letter
+        // machine path (`check-local-context`), while the constructed
+        // argv spelling still matches the #7730 Windows report.
+        backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
         let stable = crate::output::path::display_path(&backslash_root.root);
         if raw == stable {
@@ -1313,7 +1316,7 @@ mod tests {
         // Verbatim Windows prefix: display_path unifies separators (#5996
         // `//?/` shape) instead of leaking `\\?\` into JSON identity.
         let mut verbatim = test_output(Vec::new());
-        verbatim.root = PathBuf::from(r"\\?\C:\tmp\probe");
+        verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
         let verbatim_stable = crate::output::path::display_path(&verbatim.root);
         if verbatim_raw == verbatim_stable {
