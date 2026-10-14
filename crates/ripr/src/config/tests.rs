@@ -89,6 +89,102 @@ fn semantic_config_diagnostic_names_profile_expected_values() {
     assert_eq!(diagnostic.expected_values, ["actionable", "full"]);
 }
 
+/// A typo in `[perl].producer` must fail at parse like the other closed
+/// enums. The runtime `is_managed_perl_producer` allowlist stays the single
+/// accepted set; `check.rs:1504` uses `"custom"` only as a non-managed
+/// predicate token, not as a documented `ripr.toml` value.
+#[test]
+fn perl_producer_typo_fails_closed_with_key_named_error() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"perllspp\"\n") {
+        Ok(_) => return Err("typo producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.config_path.as_deref() != Some("perl.producer") {
+        return Err(format!("config_path: {:?}", diagnostic.config_path));
+    }
+    if diagnostic.location_status != ConfigLocationStatus::Exact {
+        return Err(format!("location_status: {:?}", diagnostic.location_status));
+    }
+    if diagnostic.invalid_value.as_deref() != Some("\"perllspp\"") {
+        return Err(format!("invalid_value: {:?}", diagnostic.invalid_value));
+    }
+    if diagnostic.expected_values != ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        return Err(format!("expected_values: {:?}", diagnostic.expected_values));
+    }
+    if !diagnostic
+        .message
+        .contains("perl.producer `perllspp` is not supported")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    if !diagnostic
+        .message
+        .contains("expected perl-ripr-facts, perllsp, or perl-lsp")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_custom_is_not_a_documented_unmanaged_value() -> Result<(), String> {
+    let error = match parse_config("[perl]\nproducer = \"custom\"\n") {
+        Ok(_) => return Err("custom is not an accepted ripr.toml producer".to_string()),
+        Err(error) => error,
+    };
+    if !error.contains("perl.producer `custom` is not supported") {
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_accepted_managed_values_and_omission_parse() -> Result<(), String> {
+    for value in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        let config = parse_config(&format!("[perl]\nproducer = \"{value}\"\n"))
+            .map_err(|err| format!("{value} must parse: {err}"))?;
+        if config.perl().producer() != Some(value) {
+            return Err(format!("{value} parsed as {:?}", config.perl().producer()));
+        }
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} must remain on the existing managed allowlist"
+            ));
+        }
+    }
+    let omitted = parse_config("[perl]\ntimeout_ms = 1000\n")
+        .map_err(|err| format!("omitted producer remains valid: {err}"))?;
+    if omitted.perl().producer().is_some() {
+        return Err(format!(
+            "omitted producer must stay None, got {:?}",
+            omitted.perl().producer()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_diagnostic_expected_values_match_managed_allowlist() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"nope\"\n") {
+        Ok(_) => return Err("unknown producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.expected_values.is_empty() {
+        return Err("editor/LSP expected-values must name the closed set".to_string());
+    }
+    for value in &diagnostic.expected_values {
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} listed as expected but is not a managed producer"
+            ));
+        }
+    }
+    if crate::app::is_managed_perl_producer("nope") {
+        return Err("control: the rejected value must stay unmanaged".to_string());
+    }
+    Ok(())
+}
+
 fn temp_root(name: &str) -> Result<PathBuf, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1351,9 +1447,13 @@ proptest! {
         max_related_tests in any::<usize>(),
         suppression_path in valid_repository_paths(),
         resolve_tsconfig_paths in any::<bool>(),
-        producer in any::<String>(),
+        producer in prop::option::of(prop::sample::select(vec![
+            "perl-ripr-facts".to_string(),
+            "perllsp".to_string(),
+            "perl-lsp".to_string(),
+        ])),
         executable in any::<String>(),
-        timeout_ms in any::<u64>(),
+        timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
         let raw = RawConfig {
@@ -1400,7 +1500,7 @@ proptest! {
                 resolve_tsconfig_paths: Some(resolve_tsconfig_paths),
             }),
             perl: Some(RawPerlConfig {
-                producer: Some(producer),
+                producer: spanned_value(producer),
                 executable: Some(executable),
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
