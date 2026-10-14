@@ -9933,7 +9933,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             .count()
             != 5
             || candidate
-                .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+                .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()
                 != 3
             || candidate.contains("release-upload-assets")

@@ -136,19 +136,40 @@ rule only for an assertion whose context was admitted.
    contradicts the whole test. `#[rstest]` (or `rstest::rstest`, or a bare
    `rstest` bound by one explicit, unrenamed `use rstest::rstest`) takes no
    arguments and appears once; every parameter is an identifier binding (`mut`
-   allowed, no `ref` or `@` pattern) carrying exactly `#[case]`; every row
-   follows `#[rstest]` and holds one value per parameter, each a non-string
+   allowed, no `ref` or `@` pattern) carrying exactly `#[case]` or no
+   attribute at all; every row follows `#[rstest]` and holds one value per
+   `#[case]` parameter, each a non-string
    literal, `-literal`, `true` or `false` (a string literal reaches the
    parameter through `FromStr`, which runs user code). A parameterless
-   `#[rstest]` with no rows runs its body once, like `#[test]`. `rstest` must be the crate in
+   `#[rstest]` with no rows runs its body once, like `#[test]`. An unmarked
+   parameter is a fixture: rstest fills it once by calling the same-named
+   `#[fixture]` function before the body runs (a missing fixture does not
+   compile). A fixture may be the owner call's argument or its receiver, and
+   a receiver parameter `[mut] name: T` is typed by its annotation `T`, as
+   `let name: T = ..;` is, provided nothing in the body rebinds the name.
+   A fixture never supplies the expected value: the fixture body sits outside
+   the test and may call the owner. In a test with a fixture, an expected
+   operand that names a fixture parameter, or any name the body binds (a
+   `let`, closure, `for` or match binding, which may hold a fixture value
+   through an assignment or mutation, a rebound `#[case]` parameter
+   included), refuses; unrebound `#[case]` parameters and names bound
+   outside the test pass. A test with a fixture lends no check-helper
+   assertion: the helper's expected value is its own parameter, which the
+   test may fill from a fixture. A generic test (type parameters or a `where`
+   clause) refuses, since rstest may infer an annotated type parameter from
+   the fixture (cluster 12a, #6578). `rstest` must be the crate in
    the test's module under the `serial_test` rule, jointly with the other
    trusted crates; its `#[rstest]` and `#[fixture]` attributes, and a case
    row on a function whose `#[rstest]` above it consumes the row, count as
    emitting only items named after the function they decorate, so a function
    named after a checked crate refuses. A bare `#[case]` anywhere else, or in
    a module whose `use` binds `case`, is an unknown attribute macro. A computed row value (which could
-   call the owner), `#[rstest(..)]` arguments, fixture-injected or
-   `#[values]` parameters refuse. Every other attribute (`ignore`,
+   call the owner), `#[rstest(..)]` arguments, and parameters carrying any
+   other attribute (`#[values]`, `#[from]`, `#[with]`, `#[future]`,
+   `#[by_ref]`, `#[files]`) refuse, as do a `mut` `#[case]` parameter (the
+   body may reassign it, `expected = want;`, which no binding scan reads)
+   and an `impl Trait` parameter (an anonymous type parameter rstest may
+   infer from a fixture). Every other attribute (`ignore`,
    `timeout`, other async runtime tests, other parameterizing macros such as
    `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
