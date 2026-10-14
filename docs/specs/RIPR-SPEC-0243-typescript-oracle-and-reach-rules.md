@@ -310,7 +310,8 @@ does not count). The message argument is the first argument of
 optional type arguments (`new errors.ParseError(...)`, `errors.make(...)`,
 `make<T>(...)`). Otherwise it is the whole thrown or rejected operand: a
 literal, a name, a ternary, a sequence (`throw (log(e), e)`) or an
-unclosed line. A shape the reader cannot split falls back to the whole
+unclosed line. No message is read from a sequence, since it throws its
+last operand. A shape the reader cannot split falls back to the whole
 operand rather than refusing, because a refused split leaves the
 ladder's credit in place, and a shape it cannot read may only remove
 credit. A changed string literal, a changed `${...}`
@@ -324,7 +325,9 @@ operand that does not open with a call (a ternary choosing between two
 `new` expressions) is part of the operand, so such a change counts, which
 only removes credit. A respelling whose literals join to the same
 message on both sides (`"unsupported currency"` against
-`"unsupported " + "currency"`, or `"ab" + "c"` against `"a" + "bc"`) does not count either; a respelling that
+`"unsupported " + "currency"`) does not count either; the exception
+applies only when the changed tokens lie inside the message argument, so
+a changed literal in a later argument still counts and gains no credit; a respelling that
 needs runtime values to compare (two interpolations) is not recognised
 and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
 before that, only changed string literals counted). On such a change a

@@ -250,10 +250,18 @@ impl ErrorChangeFacts {
                     without_trailing_semicolon(old_throw),
                     without_trailing_semicolon(new_throw),
                 );
+                // The same-message exception stays on the argument path:
+                // on the literal path a changed later argument (`cause:
+                // "x"` against `cause: "y"`) reads the same first-argument
+                // message, and lifting `message_only` there would leave
+                // the ladder's credit on a test that passes on both sides.
                 old_prefix == new_prefix
                     && (literals_alone_differ(old_throw, new_throw)
-                        || message_argument_alone_differs(old_throw, new_throw))
-                    && !same_readable_message(old_message.as_deref(), new_message.as_deref())
+                        || (message_argument_alone_differs(old_throw, new_throw)
+                            && !same_readable_message(
+                                old_message.as_deref(),
+                                new_message.as_deref(),
+                            )))
             }
             _ => false,
         };
@@ -465,21 +473,23 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
         && word == "("
     {
         rest = rest.get(1..)?;
+        // `throw (log("a"), e)`: a top-level comma in the parentheses is
+        // the sequence operator; the thrown value is the last operand.
+        if has_top_level_comma(rest) {
+            return None;
+        }
     }
     if let [LineToken::Other(word), ..] = rest
         && word == "new"
     {
         rest = rest.get(1..)?;
     }
-    // `Ident(` opens a constructor or factory call: read its first argument.
-    if let [LineToken::Other(callee), LineToken::Other(open), ..] = rest
-        && open == "("
-        && callee
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-    {
-        rest = rest.get(2..)?;
+    // `Ident(` (or `a.b<T>(`) opens a constructor or factory call: read its
+    // first argument, located as `split_message_argument` locates it.
+    let mut called = false;
+    if let Some(argument) = call_argument_start(rest, 0) {
+        rest = rest.get(argument..)?;
+        called = true;
     }
     let mut message = String::new();
     let mut expect_operand = true;
@@ -491,11 +501,34 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
         }
         match token {
             LineToken::Other(op) if op == "+" => expect_operand = true,
-            LineToken::Other(end) if end == ")" || end == ";" || end == "," => break,
+            LineToken::Other(end) if end == ")" || end == ";" => break,
+            // Outside a call a comma is the sequence operator (`throw "x",
+            // e`), and the thrown value is a later operand.
+            LineToken::Other(comma) if comma == "," && called => break,
             _ => return None,
         }
     }
     (!expect_operand).then_some(message)
+}
+
+/// Whether a top-level `,` comes before the `)` that closes the group
+/// `tokens` opens inside.
+fn has_top_level_comma(tokens: &[LineToken]) -> bool {
+    let mut depth = 0usize;
+    for token in tokens {
+        match token {
+            LineToken::Other(open) if open == "(" || open == "[" || open == "{" => depth += 1,
+            LineToken::Other(close) if close == ")" || close == "]" || close == "}" => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            LineToken::Other(comma) if comma == "," && depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Built-in error classes whose `name` is their class name.
@@ -744,13 +777,37 @@ mod tests {
         let primitive =
             ErrorChangeFacts::read(Some(r#"throw "limit " + max;"#), r#"throw "limit ";"#);
         assert!(primitive.message_only);
-        // A literal respelling that reads the same message on both sides
-        // is a rewrite on the literal path too.
-        let regrouped = ErrorChangeFacts::read(
-            Some(r#"throw new Error("ab" + "c");"#),
-            r#"throw new Error("a" + "bc");"#,
+        // A changed literal in a later argument stays message-only, so a
+        // payload on the unchanged first-argument message does not
+        // separate the versions and gains no credit.
+        let later = ErrorChangeFacts::read(
+            Some(r#"throw new Error("bad", { cause: "x" });"#),
+            r#"throw new Error("bad", { cause: "y" });"#,
         );
-        assert!(!regrouped.message_only);
+        assert!(later.message_only);
+        assert!(!error_payload_credits(
+            &payload(TypeScriptErrorPayloadKind::ThrowsLiteral, r#""bad""#),
+            &later
+        ));
+        // A generic factory's message is read past its type arguments.
+        let generic_read =
+            ErrorChangeFacts::read(Some(r#"throw make<A>("a");"#), r#"throw make<A>("b");"#);
+        assert!(generic_read.message_only);
+        assert_eq!(generic_read.old_message.as_deref(), Some("a"));
+        // A sequence throws its last operand, so no message is read from
+        // an earlier one.
+        for (old, new) in [
+            (r#"throw (log("a"), e);"#, r#"throw (log("b"), e);"#),
+            (r#"throw ("x", "b");"#, r#"throw ("y", "b");"#),
+            (r#"throw "x", "b";"#, r#"throw "y", "b";"#),
+        ] {
+            let facts = ErrorChangeFacts::read(Some(old), new);
+            assert_eq!(
+                (facts.old_message, facts.new_message),
+                (None, None),
+                "{old}"
+            );
+        }
         // A dotted or generic callee that stays the same keeps the change
         // inside its first argument; a shape the split cannot name a call
         // in (a sequence, an unclosed line) is read whole. Either way the
