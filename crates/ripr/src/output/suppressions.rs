@@ -811,6 +811,21 @@ pub struct CheckSuppressionOutcome {
     pub warnings: Vec<String>,
 }
 
+/// Exposure-gap rows from a mixed suppression manifest.
+///
+/// Finding-exposure badges match only these entries so `test_efficiency` rows
+/// stay with [`apply_test_efficiency_suppressions`] and do not inherit the
+/// explicit check-policy inapplicable-kind warning (#7760).
+pub(crate) fn exposure_gap_suppression_entries(
+    entries: &[SuppressionEntry],
+) -> Vec<SuppressionEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.kind == SuppressionKind::ExposureGap)
+        .cloned()
+        .collect()
+}
+
 /// Applies exposure-gap suppression entries to check findings (#1441).
 ///
 /// Matching rules, in entry order (the first matching entry names the
@@ -824,7 +839,13 @@ pub struct CheckSuppressionOutcome {
 /// [`apply_exposure_suppressions`]. Entries that match nothing surface as
 /// warnings too. `test_efficiency` entries are not applied — they select
 /// test-efficiency report rows, not check findings — and each one surfaces
-/// as a warning so a mixed policy cannot silently look empty (#7760).
+/// as a warning so a mixed **explicit** `--suppression-policy` cannot silently
+/// look empty (#7760).
+///
+/// Finding-exposure badges share this matcher for `exposure_gap` rows only.
+/// Pass [`exposure_gap_suppression_entries`] so implicit badge policy does not
+/// inherit the inapplicable-kind warning; `test_efficiency` rows stay with
+/// [`apply_test_efficiency_suppressions`].
 pub fn apply_check_suppressions(
     candidates: &[CheckSuppressionCandidate],
     entries: &[SuppressionEntry],
