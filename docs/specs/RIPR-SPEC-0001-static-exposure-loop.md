@@ -279,7 +279,9 @@ that opens an empty closure, as in `unwrap_or_else(|| 0)`, is not one), the
 same reading the guard-only arm filter uses. It replaces only boundary
 credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
-an unchanged chain keeps its boundary credit. The rule reads one changed
+an unchanged chain keeps its boundary credit. Because it compares only the
+connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
+&& b`) or regrouping a chain is not yet caught. The rule reads one changed
 line: a chain that rustfmt splits across lines (`if other > 0` over `&&
 100 <= points`) pairs only its first old line as `before`, so it is not yet
 covered (#7945).
