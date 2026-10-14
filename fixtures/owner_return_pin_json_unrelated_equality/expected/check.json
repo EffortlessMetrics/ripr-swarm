@@ -1,0 +1,265 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/owner_return_pin_json_unrelated_equality/input",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:65ccba2dcd461e22aa991bab2e102b5fb7660ea8e7374a97ee2b2a70d66cd198","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:error_path:3c99e167",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:error_variant:error_path:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:error_variant:error_path:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:3c99e167",
+        "family": "error_path",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses weak relational check oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
+      "missing": ["No exact error variant discriminator was detected"],
+      "assertion_texts": {
+        "4": "assert_eq!(2,2);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "2",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "2",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert_eq!(2,2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
+      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:9659b9fa",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "ok"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:9659b9fa",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Ok(())"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Ok(())"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:4 checks uses weak relational check oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Ok(())","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: Ok(())", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "4": "assert_eq!(2,2);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "2",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "2",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert_eq!(2,2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:94904a64",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:94904a64",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:4 checks uses weak relational check oracle: assert_eq!(2,2);", "source assertion argument value 2 at line 4"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "4": "assert_eq!(2,2);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "2",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "2",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert_eq!(2,2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}

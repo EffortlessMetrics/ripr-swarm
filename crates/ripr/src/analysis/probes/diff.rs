@@ -349,6 +349,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
+    let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         let text = removed.text.trim();
         if should_ignore_changed_line(text) || skip_removed[removed_index] {
@@ -394,7 +395,8 @@ pub(crate) fn probes_for_file_with_relations(
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
-            if has_matching_added_line(removed, &family, changed, &added_bounds)
+            if (has_matching_added_line(removed, &family, changed, &added_bounds)
+                || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -1016,6 +1018,48 @@ fn has_matching_added_line(
                 .iter()
                 .any(|token| removed_tokens.iter().any(|other| other == token))
         })
+}
+
+/// #7807: absence of long identifier tokens is not absence of a replacement.
+/// Admit an exact old line/family only when an emitted probe at its positional
+/// counterpart faithfully carries the edit. A whole old `before` beside a
+/// smaller `after` is insufficient: one selected constructor may not own all
+/// edits on that line. Uneven blocks and unrepresented families stay historical.
+fn represented_short_replacements(
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> std::collections::BTreeSet<(usize, &'static str)> {
+    let counterparts = changed.replacement_counterparts();
+    let added_at = changed
+        .added_lines
+        .iter()
+        .map(|line| (line.new_side_line, line))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut represented = std::collections::BTreeSet::new();
+    for seeded in probes {
+        let probe = &seeded.probe;
+        let Some(removed) = counterparts.get(&probe.location.line) else {
+            continue;
+        };
+        if !extract_identifier_tokens(&removed.text).is_empty() {
+            continue;
+        }
+        let Some(added) = added_at.get(&probe.location.line) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (&probe.before, &probe.after) else {
+            continue;
+        };
+        let old_span = if after == added.text.trim() {
+            Some(removed.text.trim().to_string())
+        } else {
+            removed_span_of_shape(added.text.trim(), after, removed.text.trim())
+        };
+        if old_span.as_deref() == Some(before.as_str()) {
+            represented.insert((removed.line, probe.family.as_str()));
+        }
+    }
+    represented
 }
 
 /// #6675: a removed line whose adjacent added replacement holds exactly the

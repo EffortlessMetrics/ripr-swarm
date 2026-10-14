@@ -126,7 +126,11 @@ file may register or replace it:
   uses no `.not` or `.rejects` modifier.
 
 Any other shape keeps the RIPR-SPEC-0243 `unknown` reading. The class still
-follows the RIPR-SPEC-0243 ladder, including the observation guard.
+follows the RIPR-SPEC-0243 ladder, including the observation guard. A
+credited matcher also carries reference identity on the assertion, so
+RIPR-SPEC-0246 rule 1 treats it like `toBe` for a copy-for-identity
+change. That property is not inferred from `exact_value`: `toEqual`
+shares that kind and does not pin identity.
 
 ### Decisions
 
@@ -252,6 +256,9 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
   `custom_matcher_another_registration_may_replace_stays_unknown` pins
   example 3;
   `custom_matcher_assertion_shape_must_compare_one_value` pins example 4.
+- `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
+  pins that a credited matcher carries reference identity for
+  RIPR-SPEC-0246 rule 1.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-cents-custom-matcher` reads `credited`.
 
@@ -261,7 +268,12 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
   `strict_equality_matchers` reads the registrations.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `expect_assertion_from_expression` reads a registered strict matcher as
-  `exact_value` / strong; `TypeScriptAssertionBindings` carries the names.
+  `exact_value` / strong and sets `compares_reference_identity`;
+  `TypeScriptAssertionBindings` carries the names.
+- `crates/ripr/src/analysis/language/typescript/types.rs`:
+  `TypeScriptAssertion::compares_reference_identity`.
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_test_pins_identity` reads that property (RIPR-SPEC-0246 rule 1).
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: binds
   the names once per test file.
 

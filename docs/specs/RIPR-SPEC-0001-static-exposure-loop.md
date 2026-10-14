@@ -35,6 +35,17 @@ closes a block opened outside its run (a lone inserted or removed
 moves existing code between branches, so it keeps its probe and the change
 never reads as "no behavioral candidates" (#4216 row 5).
 
+An equal-sized replacement with no retained long identifier token does not
+seed a second historical finding when an emitted candidate probe of the same
+family already represents that exact old line (#7807). Pairing uses the Git
+block's old/new coordinates and requires faithful `before`/`after` evidence:
+the candidate covers the whole added line, or a byte-aligned cut of the old
+line equals its `before`. A whole old line attached to a smaller constructor
+does not establish that every edit was represented. Uneven blocks, unrepresented
+families and ambiguous edits retain historical evidence. This rule changes
+removed-side reconciliation only; parser selection and constructor identities
+remain separate authorities.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without

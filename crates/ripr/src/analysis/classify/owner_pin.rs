@@ -227,11 +227,20 @@ impl WithheldMacroBindings {
         if self.any_name {
             return true;
         }
-        let drop_in_verified = |krate: &str| drop_ins.verified(path, krate);
+        let drop_in_verified = |krate: &str| {
+            if krate == "serde_json" {
+                drop_ins.verified_literal_json(path)
+            } else {
+                drop_ins.verified(path, krate)
+            }
+        };
         let root = withheld_crate_root(path);
-        for (name, site) in
-            macro_binding_scan(source, packages, NON_RETURNING_MACROS, &drop_in_verified)
-        {
+        for (name, site) in macro_binding_scan(
+            source,
+            packages,
+            &assertion_context_macros(),
+            &drop_in_verified,
+        ) {
             if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
                 self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
@@ -826,6 +835,12 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        // Recheck provenance for every admission even when syntax is memoized.
+        if facts.source.contains("json")
+            && !index.drop_in_manifests.verified_literal_json(&test.file)
+        {
+            ambiguous.insert("json".to_string());
+        }
         ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
         Ok(ambiguous)
@@ -884,7 +899,7 @@ impl OwnerPinSyntax {
             .map(|(condition, _)| err_return_guard_key(condition));
         let file_refusal = by_file
             .entry(test.file.clone())
-            .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
+            .or_insert_with(|| owner_pin_assertions(&facts.source, &assertion_context_macros()))
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
@@ -1319,7 +1334,7 @@ fn workspace_macro_binding_site(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Option<(PathBuf, MacroBindingSite)> {
-    if !NON_RETURNING_MACROS.contains(&name) {
+    if !assertion_context_macros().contains(&name) {
         return None;
     }
     // Every file may be parsed for this one name, which was a quarter of a
@@ -1400,7 +1415,7 @@ fn test_macro_binding_site(
     memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
-    if !NON_RETURNING_MACROS.contains(&name) {
+    if !assertion_context_macros().contains(&name) {
         return None;
     }
     let facts = index.files().get(&test.file)?;
@@ -1439,7 +1454,13 @@ fn macro_binding_sites(
         index.macro_scope_crates(),
         &[name],
         &|line, declaration| module_resolved(path, line, declaration),
-        &|krate| index.drop_in_manifests.verified(path, krate),
+        &|krate| {
+            if krate == "serde_json" {
+                index.drop_in_manifests.verified_literal_json(path)
+            } else {
+                index.drop_in_manifests.verified(path, krate)
+            }
+        },
     )
 }
 
@@ -1455,6 +1476,7 @@ fn trusted_macro_sites_in(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
+    let context_macros = assertion_context_macros();
     type ScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
     let scan = |files: &[ScanFile<'_>]| -> Vec<(PathBuf, String, MacroBindingSite)> {
         files
@@ -1468,9 +1490,15 @@ fn trusted_macro_sites_in(
                 trusted_macro_binding_sites(
                     source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &context_macros,
                     &|line, declaration| module_resolved(path, line, declaration),
-                    &|krate| index.drop_in_manifests.verified(path, krate),
+                    &|krate| {
+                        if krate == "serde_json" {
+                            index.drop_in_manifests.verified_literal_json(path)
+                        } else {
+                            index.drop_in_manifests.verified(path, krate)
+                        }
+                    },
                 )
                 .into_iter()
                 .map(|(name, site)| ((*path).clone(), name, site))
@@ -1509,7 +1537,7 @@ fn trusted_macro_sites_in(
         })
         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source));
     absorb(scan(&likely), &mut global);
-    if global.len() < NON_RETURNING_MACROS.len() {
+    if global.len() < context_macros.len() {
         absorb(scan(&rest), &mut global);
     }
     (global, scoped, by_root)
@@ -3801,6 +3829,16 @@ fn final_statement(masked: &str, end: usize) -> Option<(usize, usize)> {
 /// [`crate::analysis::syntax::MacroBindingCandidates`] can report.
 const NON_RETURNING_MACROS: &[&str] = TRUSTED_MACRO_NAMES;
 
+// `json` is a construction candidate only in assertion context. It must never
+// enter the owner-side generic non-returning list: an opaque owner macro can exit.
+fn assertion_context_macros() -> Vec<&'static str> {
+    NON_RETURNING_MACROS
+        .iter()
+        .copied()
+        .chain(["json"])
+        .collect()
+}
+
 /// Trusted names whose trust is the test-side binding scan's alone (#6578).
 /// `expect!` is no `std` macro: outside a test that verifies
 /// `use expect_test::expect;`, a bare `expect!` is a crate's own (a try-style
@@ -3832,9 +3870,13 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
             continue;
         }
         let before = masked[..offset].trim_end();
+        // Step past the whole boundary character: a non-ASCII one is more
+        // than one byte, and `position + 1` would split it (#7926 review).
         let start = before
-            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .map_or(0, |position| position + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, character)| !(character.is_ascii_alphanumeric() || *character == '_'))
+            .map_or(0, |(position, character)| position + character.len_utf8());
         let name = &before[start..];
         if !is_plain_identifier(name) || NEGATING_KEYWORDS.contains(&name) {
             continue;
@@ -5328,17 +5370,91 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
         })
 }
 
-/// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like. Related-test reach shares the
-/// single-file rename refusal (#7067).
+/// Whether the file renames some item to `name` (`use a::b as name;`,
+/// `extern crate a as name;`), so `name` may not be the item it looks like.
+/// Related-test reach shares the single-file rename refusal (#7067).
+///
+/// Only an `as` inside a `use` or `extern crate` item renames: a cast
+/// (`letters as u32`) or a qualified path (`<T as Clone>::clone`) in plain
+/// code binds no name, so it does not make `u32` or `Clone` something
+/// else. Lexical, so a `use` in any module, function body or macro body
+/// counts. An `as` inside a macro invocation's arguments or an attribute
+/// counts too: the macro may expand it into a `use`
+/// (`import!(other::Fake as u32);`), and ripr does not expand macros.
 pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "as")
+    let spans = rename_item_spans(&masked);
+    whole_word_offsets(&masked, "as").into_iter().any(|offset| {
+        starts_with_word(masked[offset + "as".len()..].trim_start(), name)
+            && spans.iter().any(|span| span.contains(&offset))
+    })
+}
+
+/// The byte spans in `masked` where an `as` may rename: every `use ..;`
+/// and `extern crate ..;` item, from the keyword to its `;` (or the end of
+/// the text when the `;` is missing, which keeps an unterminated item
+/// renaming), every macro invocation's delimited arguments and every
+/// attribute (`#[..]`, `#![..]`). An unmatched delimiter runs to the end of
+/// the text, which fails closed.
+fn rename_item_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let delimited = |open_at: usize| {
+        let (open, close) = match bytes[open_at] {
+            b'(' => (b'(', b')'),
+            b'[' => (b'[', b']'),
+            _ => (b'{', b'}'),
+        };
+        open_at..matching_close(masked, open_at, open, close).unwrap_or(masked.len())
+    };
+    // Any `name!` followed by a delimiter, whatever the name: a Unicode or
+    // keyword-like macro name still expands its arguments (#7926 review).
+    // A negation such as `if !(x)` adds a span too, which only refuses more.
+    let macro_spans = masked.match_indices('!').filter_map(|(bang, _)| {
+        let named = masked[..bang]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|character| character.is_alphanumeric() || character == '_');
+        let after = masked[bang + 1..].trim_start();
+        (named && after.starts_with(['(', '[', '{'])).then(|| delimited(masked.len() - after.len()))
+    });
+    let attribute_spans = masked.match_indices('#').filter_map(|(hash, _)| {
+        let after = masked[hash + 1..].trim_start();
+        let after = after.strip_prefix('!').map_or(after, str::trim_start);
+        after
+            .starts_with('[')
+            .then(|| delimited(masked.len() - after.len()))
+    });
+    let mut spans: Vec<std::ops::Range<usize>> = macro_spans.chain(attribute_spans).collect();
+    spans.extend(rename_statement_spans(masked));
+    spans
+}
+
+/// The `use ..;` and `extern crate ..;` items of [`rename_item_spans`].
+fn rename_statement_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let item_end = |from: usize| {
+        masked[from..]
+            .find(';')
+            .map_or(masked.len(), |end| from + end)
+    };
+    // `impl Trait + use<'a>` (precise capturing) is not an import.
+    let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
-        .any(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .filter(|offset| !masked[offset + "use".len()..].trim_start().starts_with('<'))
+        .map(|offset| offset..item_end(offset))
+        .collect();
+    spans.extend(
+        whole_word_offsets(masked, "extern")
+            .into_iter()
+            .filter(|offset| {
+                starts_with_word(masked[offset + "extern".len()..].trim_start(), "crate")
+            })
+            .map(|offset| offset..item_end(offset)),
+    );
+    spans
 }
 
 /// An alias cannot be excluded merely because its spelling differs from an
