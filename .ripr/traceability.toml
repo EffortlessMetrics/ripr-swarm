@@ -6940,6 +6940,9 @@ spec = "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md
 tests = [
   # Â§7.4 validator-parity tests
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_complete_finding_passes_shared_validator",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::unconfirmed_strong_effect_observers_fail_shared_packet_validation",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::effect_refusal_preserves_other_packet_target_paths",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::return_only_aliases_do_not_observe_the_changed_effect",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_verify_command_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_missing_oracle_expected_returns_none",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::validator_parity_dynamic_oracle_returns_none",
@@ -7513,6 +7516,12 @@ id = "RIPR-SPEC-0098"
 name = "TypeScript exposed observation guard"
 spec = "docs/specs/RIPR-SPEC-0098-typescript-exposed-observation-guard.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::return_only_aliases_do_not_observe_the_changed_effect",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::an_actual_effect_observer_survives_owner_aliases",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::alias_substrings_and_comments_keep_the_conservative_effect_rule",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::unrelated_or_shadowed_imports_remain_real_effect_observers",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::a_free_export_does_not_supply_a_same_named_methods_alias",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::a_value_change_keeps_its_alias_discriminator",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_swallowed_console_log_exposed_downgrade",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_returnvalue_genuinely_observed_control",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::ts_sibling_assertion_non_owner_prevents_downgrade",
@@ -14773,6 +14782,12 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::return_only_aliases_do_not_observe_the_changed_effect",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::an_actual_effect_observer_survives_owner_aliases",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::alias_substrings_and_comments_keep_the_conservative_effect_rule",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::unrelated_or_shadowed_imports_remain_real_effect_observers",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::a_free_export_does_not_supply_a_same_named_methods_alias",
+  "crates/ripr/tests/cli_smoke/typescript_effect_aliases.rs::a_value_change_keeps_its_alias_discriminator",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::awaited_roots_retain_call_identity_and_complete_extraction",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::awaited_unwalked_root_keeps_the_partial_extraction_disclosure",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_nanoid_consumer_credits_the_same_assertion_as_a_bare_root",
@@ -14811,6 +14826,7 @@ tests = [
 fixtures = [
   "fixtures/typescript-verdict-corpus",
   "fixtures/javascript_awaited_registration",
+  "fixtures/typescript_effect_owner_alias",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",

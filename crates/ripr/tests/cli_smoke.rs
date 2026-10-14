@@ -70,6 +70,9 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_effect_aliases.rs"]
+mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
