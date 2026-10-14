@@ -2503,7 +2503,7 @@ fn is_call_path(callee: &str) -> bool {
 /// Whether `.unwrap_err()` reads the error side of the statement's first
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
-/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+/// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 fn receiver_keeps_call_error(masked: &str) -> bool {
     let masked = masked.trim_end();
     let receiver = masked.strip_suffix(".unwrap_err()").or_else(|| {
@@ -2625,9 +2625,11 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`
+    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
+    // zero-argument `expect_err()` is a mock's expectation for a method
+    // named `err`, not `Result::expect_err`.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') {
+    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
         return false;
     }
     // Find last `.expect_err(`
@@ -2773,7 +2775,7 @@ fn is_assertion_line(line: &str) -> bool {
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)
-        || without_expect_err(line).contains("expect_")
+        || mask_comments_and_strings(&without_expect_err(line)).contains("expect_")
         || line.contains(".expect(")
         || line.contains(".unwrap(")
         || line.contains("should_panic")

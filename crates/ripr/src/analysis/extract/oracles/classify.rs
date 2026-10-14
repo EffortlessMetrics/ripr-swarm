@@ -1770,6 +1770,30 @@ fn ok_literal() {
                 "mock.expect_err_report().times(1);",
                 vec![(MockExpectation, Medium)],
             ),
+            // mockall's `expect_<method>` for a method named `err` takes no
+            // message: it stays a mock expectation.
+            (
+                "mock_expectation_for_err_method",
+                "mock.expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_configured",
+                "mock.expect_err().returning(|| ());",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` text in the message is not a mock expectation name.
+            (
+                "expect_err_expect_word_message",
+                "check(300).expect_err(\"expect_error\");",
+                vec![(BroadError, Weak)],
+            ),
+            // An effect word in the message is not an effect observer.
+            (
+                "expect_err_effect_word_message",
+                "check(300).expect_err(\"state not sent\");",
+                vec![(BroadError, Weak)],
+            ),
         ];
         assert_both_adapters_read(&cases)
     }

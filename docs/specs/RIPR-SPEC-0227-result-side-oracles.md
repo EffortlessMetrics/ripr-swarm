@@ -348,9 +348,11 @@ Source: `check` as in Problem.
   reads `weakly_exposed` with that oracle.
 - Decision 2, bare `expect_err(..)`:
   `classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err`
-  (both adapters read it exactly as `unwrap_err()`; `.expect_err(` no
-  longer satisfies the `expect_` mock-expectation name sniff, while a
-  mock's own `expect_*` call still does) (#7604).
+  (both adapters read it exactly as `unwrap_err()`; `.expect_err(<message>)`
+  and `expect_` text inside strings or comments no longer satisfy the
+  `expect_` mock-expectation name sniff, while a mock's own `expect_*` call,
+  including mockall's zero-argument `expect_err()`, still does) (#7604).
+  A multi-line statement reads only on the parser path (#7955).
 - Planned: oracle-scan unit tests for `should_panic`.
 
 ## Implementation Mapping

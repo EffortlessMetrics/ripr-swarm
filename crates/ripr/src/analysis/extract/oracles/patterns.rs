@@ -1197,18 +1197,35 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// `line` with every `.expect_err(` call name removed, so an `expect_`
-/// name sniff sees only the other `expect_*` calls.
+/// `line` with every `Result::expect_err(<message>)` call name removed, so
+/// an `expect_` name sniff sees only the other `expect_*` calls. A
+/// zero-argument `expect_err()` is a mock's expectation for a method named
+/// `err` (mockall's `expect_<method>`), so it stays.
 pub(super) fn without_expect_err(line: &str) -> String {
-    line.replace(".expect_err(", ".(")
+    const CALL: &str = ".expect_err(";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(index) = rest.find(CALL) {
+        let after = &rest[index + CALL.len()..];
+        out.push_str(&rest[..index]);
+        out.push_str(if after.trim_start().starts_with(')') {
+            CALL
+        } else {
+            ".("
+        });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     // `r.expect_err(..)` is a `Result` read, not a mock expectation
-    // (RIPR-SPEC-0227 decision 2, #7604).
-    let has_expectation_call =
-        without_expect_err(&lower).contains("expect_") && lower.contains('(');
+    // (RIPR-SPEC-0227 decision 2, #7604), and `expect_` text in a message
+    // or comment names nothing.
+    let code = mask_comments_and_strings(&without_expect_err(&lower));
+    let has_expectation_call = code.contains("expect_") && lower.contains('(');
     let has_mock_verification_call = lower.contains("mock")
         && [
             ".assert_",
@@ -1239,6 +1256,8 @@ pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
     ]
     .iter()
     .any(|token| lower.contains(token));
+    // `r.expect_err("state")` reads the `Result`, not an effect (#7604).
+    let lower = without_expect_err(&lower);
     has_observer_token && (lower.contains("assert") || lower.contains("expect"))
 }
 
@@ -1261,7 +1280,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
         "counter",
         "recorded",
     ];
-    let lower = line.to_ascii_lowercase();
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     if !(lower.contains("assert") || lower.contains("expect")) {
         return false;
     }
