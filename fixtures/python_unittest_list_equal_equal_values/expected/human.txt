@@ -1,0 +1,39 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_unittest_list_equal_equal_values/input
+config: <cwd>/fixtures/python_unittest_list_equal_equal_values/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python: 1.
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: preview language, advisory only (preview_limited)
+  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
+  File: src/labels.py:2
+  Language: python
+  Language status: preview
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:src/labels.py:labels:return_value:return_value:[1_true]
+  Changed behavior: return [1, True]
+  Missing discriminator: A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python…
+  Related test: tests/test_labels.py:4 test_labels
+  Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+    - reach yes: 1 related Python test(s) found for owner `labels`
+    - infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_unittest_list_equal_equal_values/input --diff <cwd>/fixtures/python_unittest_list_equal_equal_values/diff.patch --mode fast probe:src_labels.py:python_preview:c34c7239
+  ripr context --root <cwd>/fixtures/python_unittest_list_equal_equal_values/input --diff <cwd>/fixtures/python_unittest_list_equal_equal_values/diff.patch --mode fast --at probe:src_labels.py:python_preview:c34c7239
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

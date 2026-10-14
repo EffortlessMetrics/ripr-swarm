@@ -33,9 +33,11 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         help::print_gate_help();
         return Ok(());
     }
-    // The sole subcommand is implied when the command runs bare:
-    // `ripr <cmd>` behaves like `ripr <cmd> "evaluate"` (#2013).
+    // The sole subcommand is implied when the command runs bare, or when the
+    // first token is a flag rather than a subcommand name (#2013, #7740):
+    // `ripr gate --pr-guidance ...` behaves like `ripr gate evaluate --pr-guidance ...`.
     let (subcommand, rest) = match args.split_first() {
+        Some((first, _)) if first.starts_with('-') => ("evaluate", args),
         Some((subcommand, rest)) => (subcommand.as_str(), rest),
         None => ("evaluate", &[][..]),
     };
@@ -208,6 +210,19 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     }
 
     let out_md = out_md.unwrap_or_else(|| output::gate::markdown_path_for(&out));
+    // Destinations follow the invoking cwd, independently of --root. Resolve
+    // relative/absolute spellings without traversing the filesystem, then use
+    // the shared native lexical comparison (no symlink/case-folding guarantee).
+    let absolute_out =
+        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}"))?;
+    let absolute_out_md = std::path::absolute(&out_md)
+        .map_err(|err| format!("gate could not resolve --out-md: {err}"))?;
+    if output::path::same_output_leaf(&absolute_out, &absolute_out_md) {
+        return Err(
+            "gate --out and --out-md must not be the same path; choose distinct JSON and Markdown destinations"
+                .to_string(),
+        );
+    }
     require_existing_gate_root(&root)?;
     Ok(GateOptions {
         input: output::gate::GateEvaluateInput {
@@ -456,6 +471,12 @@ mod tests {
             ))
         );
         assert_eq!(
+            gate(&args(&["foo"])),
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"foo\"; expected `evaluate`".to_string()
+            ))
+        );
+        assert_eq!(
             parse_gate_options(&args(&["--mode", "strict"])),
             Err("unknown gate mode `strict`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string())
         );
@@ -492,6 +513,58 @@ mod tests {
                 mode_explicit: false,
             })
         );
+    }
+
+    #[test]
+    fn gate_leading_flags_dispatch_to_evaluate() -> Result<(), CommandError> {
+        // `ripr gate --pr-guidance <path> --mode visible-only` must imply
+        // evaluate (#7740), not treat `--pr-guidance` as a subcommand. The
+        // missing-guidance config_error path is enough to bind dispatch without
+        // depending on a successful producer.
+        let dir = unique_command_test_dir("gate-leading-flags");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
+        let missing = dir.join("missing-guidance.json");
+        let out = dir.join("gate-decision.json");
+        let root = dir.display().to_string();
+        let missing_arg = missing.display().to_string();
+        let out_arg = out.display().to_string();
+        let flag_argv = args(&[
+            "--pr-guidance",
+            &missing_arg,
+            "--mode",
+            "visible-only",
+            "--root",
+            &root,
+            "--out",
+            &out_arg,
+        ]);
+        let mut evaluate_argv = vec!["evaluate".to_string()];
+        evaluate_argv.extend(flag_argv.iter().cloned());
+        let flag_result = gate(&flag_argv);
+        let evaluate_result = gate(&evaluate_argv);
+        assert_ne!(
+            flag_result,
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"--pr-guidance\"; expected `evaluate`".to_string()
+            )),
+            "leading --pr-guidance must not be a subcommand"
+        );
+        assert_eq!(
+            flag_result, evaluate_result,
+            "leading flags must dispatch like an explicit evaluate subcommand"
+        );
+        let Err(error) = flag_result else {
+            return Err(CommandError::Failure(
+                "expected a config_error failure, got Ok".to_string(),
+            ));
+        };
+        assert!(
+            matches!(&error, CommandError::Failure(message) if message.contains(GATE_STATUS_CONFIG_ERROR)),
+            "config_error must carry the Failure variant: {error:?}"
+        );
+        assert_eq!(error.exit_code(), crate::cli::EXIT_COULD_NOT_COMPLETE);
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gate dir: {err}"))?;
+        Ok(())
     }
 
     #[test]

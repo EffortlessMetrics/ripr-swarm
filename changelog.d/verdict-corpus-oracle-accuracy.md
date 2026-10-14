@@ -1,15 +1,15 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: oracle-strength accuracy is now measured apart from the
   line verdict. A case may label the related-test oracle kind and strength
   a spec adopts (`expected_oracle`); the report's new `oracle_accuracy`
   section scores ripr's strongest reported entry as match, overclaim,
-  underclaim, kind_mismatch or unobserved. All 30 RIPR-SPEC-0231 cases and
-  six RIPR-SPEC-0227 `is_err()`/`unwrap_err()` cases are labeled: 33/36
-  match, 0/36 overclaim and 3/36 underclaim (ripr relates the test but
+  underclaim, kind_mismatch or unobserved. All 31 RIPR-SPEC-0231 cases and
+  six RIPR-SPEC-0227 `is_err()`/`unwrap_err()` cases are labeled: 34/37
+  match, 0/37 overclaim and 3/37 underclaim (ripr relates the test but
   reads no oracle) today; the five RIPR-SPEC-0231 rule 1 inequality
   overclaims were fixed by #6670 and reblessed in #7631, the `ensure!`
-  disjunction overclaim by #7558, and the `matches!` conjunct overclaim by
-  #7695. `cargo xtask verdict-corpus check` fails
+  disjunction overclaim by #7558, the `matches!` conjunct overclaim by
+  #7695, and the nested `matches!` overclaim by #7715. `cargo xtask verdict-corpus check` fails
   when matches fall below or overclaims rise above the `[oracle]` floor and
   ceiling in `spec-coverage.toml`, and the dx-scoreboard trust board tracks
   `trust.verdict_corpus_oracle_accuracy` (target 1.0) and

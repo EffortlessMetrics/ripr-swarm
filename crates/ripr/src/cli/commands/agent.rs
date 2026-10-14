@@ -397,6 +397,25 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     }
 }
 
+/// Policy omission needs inspection of the policy, not a new seam listing.
+/// Shared with the card's typed remedy so prose and machine guidance agree.
+pub(super) fn policy_omitted_seam_remedy_route(root: &Path, seam_id: &str) -> String {
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.to_string_lossy(),
+    ));
+    format!(
+        "ripr agent brief --root {root} --seam-id {} --json",
+        crate::agent::loop_commands::shell_arg(seam_id)
+    )
+}
+
+pub(super) fn policy_omitted_seam_hint(root: &Path, seam_id: &str) -> String {
+    let remedy = policy_omitted_seam_remedy_route(root, seam_id);
+    format!(
+        "Inspect the agent policy with `{remedy}`; re-listing cannot change this policy decision."
+    )
+}
+
 fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, CoreError> {
     let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
     render_agent_packet_with_context(
@@ -449,11 +468,9 @@ fn render_agent_packet_for_seam_with_report(
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        // #4332: a policy-omitted seam is a dead end without the listing
-        // route; name it like the not-found refusals do.
         return Err(CoreError::from(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
-            unknown_seam_id_hint(root, seam_id)
+            policy_omitted_seam_hint(root, seam_id)
         )));
     }
 

@@ -1,0 +1,11 @@
+diff --git a/src/announceMail.ts b/src/announceMail.ts
+index 0000000..1111111 100644
+--- a/src/announceMail.ts
++++ b/src/announceMail.ts
+@@ -5,5 +5,5 @@
+ };
+ 
+ export function announceMail(id: number): void {
+-  mailer.send("order " + id);
++  mailer.send("order " + (id + 1));
+ }

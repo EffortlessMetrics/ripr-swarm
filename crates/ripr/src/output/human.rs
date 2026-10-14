@@ -811,9 +811,9 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 advisory.file_count, file_label, language,
             ));
         } else if !advisory.enabled {
-            let language_lowercase = advisory.language.to_lowercase();
+            let enabled_line = preview_enablement_toml(&output.root, &advisory.language);
             out.push_str(&format!(
-                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
+                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
                 advisory.file_count, file_label, language,
             ));
             if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
@@ -840,6 +840,35 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
             ));
         }
     }
+}
+
+/// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
+/// Names Rust only when the analyzed root actually has Rust markers (#7648).
+fn preview_enablement_toml(root: &Path, language: &str) -> String {
+    let rust_detected = crate::domain::rust_markers_at(root);
+    let to_add = match crate::domain::LanguageId::from_wire(language) {
+        Some(crate::domain::LanguageId::JavaScript) => crate::domain::LanguageId::TypeScript,
+        Some(id) => id,
+        None => {
+            let mut names = Vec::new();
+            if rust_detected {
+                names.push("rust");
+            }
+            names.push(language);
+            return crate::domain::format_languages_enabled_toml(&names);
+        }
+    };
+    let enabled: &[crate::domain::LanguageId] = if rust_detected {
+        &[crate::domain::LanguageId::Rust]
+    } else {
+        &[]
+    };
+    let suggestion = crate::domain::enablement_tip_languages(enabled, rust_detected, [to_add]);
+    let names: Vec<&str> = suggestion
+        .iter()
+        .map(crate::domain::LanguageId::as_str)
+        .collect();
+    crate::domain::format_languages_enabled_toml(&names)
 }
 
 /// Render per-language run-status lines for languages that did not complete
@@ -2106,7 +2135,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json.\n"
+                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -2114,6 +2143,81 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    #[test]
+    fn hidden_identity_completeness_requires_unbounded_json() -> Result<(), String> {
+        let findings = (0..26)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{index}");
+                finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                finding.probe.id = ProbeId(format!("probe-{index}"));
+                if index == 0 {
+                    finding.probe.expression = "x".repeat(1_000_001);
+                }
+                finding
+            })
+            .collect::<Vec<_>>();
+        let output = bounded_output_with_findings(findings);
+        let bounded: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&output))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
+        assert_eq!(bounded["summary"]["findings"], 26);
+        assert_eq!(
+            bounded["run_limitations"][0]["downstream_consumable"],
+            false
+        );
+        let full = crate::output::json::render_with_config(
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+        );
+        let full: serde_json::Value =
+            serde_json::from_str(&full).map_err(|error| error.to_string())?;
+        assert_eq!(full["findings"].as_array().map(Vec::len), Some(26));
+        assert_eq!(full["findings"][25]["id"], "finding-25");
+        let human = render(&output);
+        assert!(
+            human.contains("25 lower-priority finding(s) omitted"),
+            "{human}"
+        );
+        assert!(human.contains("5 more omitted finding(s)"), "{human}");
+        assert!(
+            human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+            "full identity recovery must remove the JSON budget: {human}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_identity_window_discloses_only_a_real_tail() {
+        for (total, remainder) in [(0, 0), (1, 0), (21, 0), (22, 1)] {
+            let findings = (0..total)
+                .map(|index| {
+                    let mut finding = sample_finding();
+                    finding.id = format!("finding-{index}");
+                    finding.probe.id = ProbeId(format!("probe-{index}"));
+                    finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let human = render(&bounded_output_with_findings(findings));
+            assert_eq!(
+                human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            assert_eq!(
+                human.contains("more omitted finding(s)"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            if remainder > 0 {
+                assert!(human.contains("1 more omitted finding(s)"), "{human}");
+            }
+        }
     }
 
     /// #4395(b): mixed-repo remainder must name the omitted preview-language
@@ -5635,8 +5739,12 @@ mod tests {
             // Adapter compiled in: the ripr.toml edit is real, but it is not
             // sufficient on its own — a fact packet/exporter is still needed.
             assert!(
-                rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
-                "expected copy-paste TOML block; got:\n{rendered}"
+                rendered.contains("[languages]\nenabled = [\"perl\"]"),
+                "a non-Rust root must not be told to enable Rust; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(r#""rust""#),
+                "default rust must not leak into a Perl-only tip; got:\n{rendered}"
             );
             assert!(
                 rendered.contains("Perl also needs a fact packet"),
@@ -5652,6 +5760,7 @@ mod tests {
             );
             assert!(
                 !rendered.contains("Enable it in ripr.toml")
+                    && !rendered.contains("enabled = [\"perl\"]")
                     && !rendered.contains("enabled = [\"rust\", \"perl\"]"),
                 "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
             );
@@ -5713,8 +5822,12 @@ mod tests {
         );
         if cfg!(feature = "lang-python") {
             assert!(
-                rendered.contains(r#"enabled = ["rust", "python"]"#),
-                "expected python-specific copy-paste TOML block; got:\n{rendered}"
+                rendered.contains(r#"enabled = ["python"]"#),
+                "expected python-specific copy-paste TOML block without rust; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(r#""rust""#),
+                "a non-Rust root must not be told to enable Rust; got:\n{rendered}"
             );
         } else {
             // Adapter NOT compiled in: config load rejects `python`, so the
@@ -5725,10 +5838,63 @@ mod tests {
                 "expected not-compiled Python disclosure; got:\n{rendered}"
             );
             assert!(
-                !rendered.contains(r#"enabled = ["rust", "python"]"#),
+                !rendered.contains(r#"enabled = ["python"]"#)
+                    && !rendered.contains(r#"enabled = ["rust", "python"]"#),
                 "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
             );
         }
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn render_not_enabled_disclosure_keeps_rust_when_root_has_rust_markers() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-tip-rust-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create rust root: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"mixed\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: root.clone(),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: vec![PreviewLanguageAdvisory {
+                language: "python".to_string(),
+                file_count: 1,
+                sample_paths: vec!["app/models.py".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            }],
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let rendered = render(&output);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            rendered.contains(r#"enabled = ["rust", "python"]"#),
+            "mixed repos keep rust in the check tip; got:\n{rendered}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -6758,8 +6924,9 @@ mod tests {
         assert!(not_enabled.contains(expected), "{not_enabled}");
         if cfg!(feature = "lang-typescript") {
             assert!(
-                not_enabled.contains("enabled = [\"rust\", \"typescript\"]"),
-                "{not_enabled}"
+                not_enabled.contains("enabled = [\"typescript\"]")
+                    && !not_enabled.contains(r#""rust""#),
+                "a non-Rust root must suggest typescript only: {not_enabled}"
             );
             assert!(
                 not_enabled

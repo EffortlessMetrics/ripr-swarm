@@ -1983,10 +1983,10 @@ fn is_identifier(text: &str) -> bool {
 /// into one `#[test]` per row that binds the row's values to the parameters
 /// and runs the body. Admitted only when `rstest` is the crate in the test's
 /// module, `#[rstest]` takes no arguments and appears once, every parameter
-/// is a plain binding marked `#[case]` and nothing else, and every row
-/// follows `#[rstest]` and holds one scalar literal per parameter. Fixtures,
-/// `#[values]` matrices, `#[future]`, timeouts and computed case values
-/// (which could call the owner) refuse.
+/// is a plain binding marked `#[case]` or an unmarked fixture, and every row
+/// follows `#[rstest]` and holds one scalar literal per `#[case]` parameter.
+/// `#[values]` matrices, `#[future]`, other parameter attributes, timeouts
+/// and computed case values (which could call the owner) refuse.
 fn rstest_runs_body(
     attr: &ast::Attr,
     kind: RstestAttribute,
@@ -2035,30 +2035,54 @@ fn rstest_runs_body(
     }
 }
 
-/// The number of parameters when each is a plain `ident: Type` binding
-/// marked by exactly one `#[case]` attribute; `None` otherwise.
+/// The number of `#[case]` parameters when every parameter is a plain
+/// `ident: Type` binding that is either marked by exactly one `#[case]`
+/// attribute or carries no attribute at all; `None` otherwise. #6578: an
+/// unmarked parameter is a fixture, which rstest fills by calling the
+/// same-named `#[fixture]` function once before the body runs (a missing
+/// fixture does not compile). Any other parameter attribute (`#[values]`,
+/// `#[from]`, `#[with]`, `#[future]`, `#[files]`, `#[by_ref]`) changes how
+/// often or with what the body runs, so it refuses, as does a generic test.
 fn case_parameters(function: &ast::Fn) -> Option<usize> {
+    // A generic test lets rstest infer a type parameter from a fixture, so
+    // a parameter annotation may name a type parameter, not a type.
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
     let list = function.param_list()?;
     if list.self_param().is_some() {
         return None;
     }
     let mut count = 0;
     for param in list.params() {
-        let attrs: Vec<_> = param.attrs().collect();
-        let [case] = attrs.as_slice() else {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
             return None;
         };
-        if case.excl_token().is_some()
-            || !matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
-            || case.simple_name().as_deref() != Some("case")
-        {
+        if pat.ref_token().is_some() || pat.pat().is_some() {
             return None;
         }
-        match param.pat()? {
-            ast::Pat::IdentPat(pat) if pat.ref_token().is_none() && pat.pat().is_none() => {}
+        // An `impl Trait` parameter is an anonymous type parameter, which
+        // rstest may infer from a fixture as it does a named one.
+        if matches!(param.ty(), Some(ast::Type::ImplTraitType(_))) {
+            return None;
+        }
+        let attrs: Vec<_> = param.attrs().collect();
+        match attrs.as_slice() {
+            [] => {}
+            // A `mut` case value may be reassigned in the body
+            // (`expected = want;`), which no binding scan sees, so a case
+            // row's literal reaches the assertion only through an immutable
+            // parameter (#6578 review).
+            [case]
+                if case.excl_token().is_none()
+                    && pat.mut_token().is_none()
+                    && matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
+                    && case.simple_name().as_deref() == Some("case") =>
+            {
+                count += 1;
+            }
             _ => return None,
         }
-        count += 1;
     }
     Some(count)
 }

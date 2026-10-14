@@ -2,10 +2,10 @@
  * Pure status-bar render helpers extracted from client.ts (#2554).
  *
  * These functions map a `RiprStatusKind` / `RiprStatusState` to the
- * status-bar text, summary, and theme-color pair. They have no dependence on
- * `RiprClientController` instance state and no dependency on the line-renderer
- * cluster (`statusTooltip`, `repairFirstStatusLines`, …) that stays in
- * `client.ts`. Behavior is unchanged.
+ * status-bar text, summary, theme-color pair, and main-item visibility.
+ * They have no dependence on `RiprClientController` instance state and no
+ * dependency on the line-renderer cluster (`statusTooltip`,
+ * `repairFirstStatusLines`, …) that stays in `client.ts`.
  */
 import * as vscode from 'vscode';
 
@@ -78,6 +78,20 @@ export interface FirstUsefulActionStatus {
 export interface StatusBarColors {
   background: vscode.ThemeColor;
   foreground: vscode.ThemeColor;
+}
+
+/**
+ * Whether the main status-bar item should occupy shared status-bar space.
+ *
+ * Hide only `disabled`: `ripr.enabled` already documents that it controls
+ * status, and the user has explicitly opted out of editor analysis. Keep
+ * `noWorkspace` visible. Opening a loose file is not an opt-out; the item
+ * remains the persistent next-step cue (`ripr: open workspace`) because the
+ * walkthrough is one-shot and this change adds no visibility setting.
+ * Error and warning states stay visible so they can still demand attention.
+ */
+export function shouldShowMainStatusBar(kind: RiprStatusKind): boolean {
+  return kind !== 'disabled';
 }
 
 /**

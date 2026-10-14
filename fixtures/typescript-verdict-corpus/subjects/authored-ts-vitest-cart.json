@@ -22,8 +22,40 @@
       "sha256": "e2cab9786feacb1e9ad5021b79e3fb76857619a8658a0325ea005aac9a5d0d03"
     },
     {
+      "path": "src/unitPriceApple.ts",
+      "sha256": "d201a6b27369631338e69c6059342c6b48ed2d1fa8862e452577f4a237edb192"
+    },
+    {
+      "path": "src/unitPriceLocal.ts",
+      "sha256": "a8f190f08724d3e83b728f5a3abcc0e1c56be0e74c0f6dfd14dc6a021f8ed12f"
+    },
+    {
+      "path": "src/unitPriceNull.ts",
+      "sha256": "cfc2f2acb01767dd84bea393714958d443ba4d01dd80296dddd1f826a828bb9e"
+    },
+    {
+      "path": "src/unitPriceRegion.ts",
+      "sha256": "531ae8290f6fdcf599df78694dfffd866bb91cad5010e04031e88827f7221b1f"
+    },
+    {
       "path": "test/cart.test.ts",
       "sha256": "6ef25329c85bae850321f9507cc5bf2cee90eab48d9ff967d57525c7760789c4"
+    },
+    {
+      "path": "test/unitPriceApple.test.ts",
+      "sha256": "9ff87ea73d99a3fad208c9036a4e976ab74085259b3c58527bbe4492ee28c341"
+    },
+    {
+      "path": "test/unitPriceLocal.test.ts",
+      "sha256": "190d300059e760f57464b60e63d2d14f0901822d96bb05842e59d7069964d2a0"
+    },
+    {
+      "path": "test/unitPriceNull.test.ts",
+      "sha256": "c48c75fea3cf63cc41474df2f6b68676adf682ce55df4be771b6e9327048ed78"
+    },
+    {
+      "path": "test/unitPriceRegion.test.ts",
+      "sha256": "1e5c06f11ba3205abf4c680fb9c74ba56cb755c4fc92d0a38173a363b517058b"
     },
     {
       "path": "tsconfig.json",

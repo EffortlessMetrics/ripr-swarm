@@ -54,7 +54,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         print_init_dry_run(&plan);
         return Ok(());
     }
-    apply_init_plan(&plan)
+    apply_init_plan(&plan, &options.root)
 }
 
 /// Warn when the planned `ripr.toml` sits where implicit `ripr check` will
@@ -337,7 +337,7 @@ fn ensure_creatable_parent(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
+fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
     let mut wrote_any = false;
     for target in plan {
         match target.action {
@@ -362,10 +362,23 @@ fn apply_init_plan(plan: &[InitTarget]) -> Result<(), String> {
         }
     }
     if wrote_any {
+        // #7791: follow-ups keep the directory init selected, including a
+        // relative root, when copied from another working directory.
+        let bound = crate::agent::loop_commands::bound_root_path(root);
+        let root_arg = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::root_path_display(&bound),
+        );
+        let doctor = format!("ripr doctor --root {root_arg}");
+        let check = format!("ripr check --root {root_arg}");
         println!();
         println!(
-            "Next: run `ripr doctor` to verify your setup, then `ripr check` to analyze your branch against its default branch."
+            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
         );
+        for command in [&doctor, &check] {
+            if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+                println!("(PowerShell) {powershell}");
+            }
+        }
     }
     Ok(())
 }
@@ -1026,7 +1039,7 @@ mod tests {
         let plan = init_plan(&opts)?;
         assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
         assert_eq!(plan[1].action, InitAction::Overwrite);
-        apply_init_plan(&plan)?;
+        apply_init_plan(&plan, &opts.root)?;
         let config = std::fs::read_to_string(root.join(CONFIG_FILE_NAME))
             .map_err(|err| format!("read config failed: {err}"))?;
         assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");

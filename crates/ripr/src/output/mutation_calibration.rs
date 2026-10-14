@@ -114,7 +114,9 @@ pub(crate) struct MutationCalibrationReport {
     agreement: MutationCalibrationAgreement,
     precision_notes: Vec<String>,
     missed_runtime_signals: Vec<MutationCalibrationRuntimeSignal>,
+    missed_runtime_signals_total: usize,
     static_only_findings: Vec<MutationCalibrationStaticOnlyFinding>,
+    static_only_findings_total: usize,
     matched: Vec<MutationCalibrationMatch>,
     ambiguous_file_line: Vec<AmbiguousMutationCalibrationMatch>,
     ambiguous_span_overlap: Vec<AmbiguousMutationCalibrationMatch>,
@@ -369,6 +371,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.missed_runtime_signals.is_empty() {
         out.push_str("No imported runtime gap signals lacked a matching static gap.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.missed_runtime_signals.len(),
+            report.missed_runtime_signals_total,
+        );
         out.push_str("| Runtime mutant | Location | Runtime outcome | Static class | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- | --- |\n");
         for record in &report.missed_runtime_signals {
@@ -395,6 +402,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.static_only_findings.is_empty() {
         out.push_str("No static gap seams lacked a runtime gap signal in this import.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.static_only_findings.len(),
+            report.static_only_findings_total,
+        );
         out.push_str("| Seam | Class | Location | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- |\n");
         for record in &report.static_only_findings {
@@ -662,13 +674,17 @@ fn build_mutation_calibration_report(
         .cloned()
         .collect::<Vec<_>>();
 
-    let (agreement, precision_notes, missed_runtime_signals, static_only_findings) =
+    let (agreement, precision_notes, mut missed_runtime_signals, mut static_only_findings) =
         mutation_calibration_agreement(
             &static_seams,
             &matched,
             ambiguous_file_line.iter().chain(&ambiguous_span_overlap),
             &unmatched_mutants,
         );
+    let missed_runtime_signals_total = missed_runtime_signals.len();
+    let static_only_findings_total = static_only_findings.len();
+    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
+    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
 
     let mut report = MutationCalibrationReport {
         static_seams_total: static_seams.len(),
@@ -679,7 +695,9 @@ fn build_mutation_calibration_report(
         agreement,
         precision_notes,
         missed_runtime_signals,
+        missed_runtime_signals_total,
         static_only_findings,
+        static_only_findings_total,
         matched,
         ambiguous_file_line,
         ambiguous_span_overlap,
@@ -934,15 +952,18 @@ fn mutation_calibration_agreement<'a>(
         }
     }
 
-    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
-    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
-
     (
         agreement,
         mutation_calibration_precision_notes(),
         missed_runtime_signals,
         static_only_findings,
     )
+}
+
+fn push_agreement_sample_note(out: &mut String, shown: usize, total: usize) {
+    if total > shown {
+        out.push_str(&format!("Sample only; showing {shown} of {total}.\n\n"));
+    }
 }
 
 fn mutation_calibration_precision_notes() -> Vec<String> {
@@ -1896,6 +1917,84 @@ mod tests {
         assert!(markdown.contains("Confidence label"));
         assert!(markdown.contains("Runtime signals without static gaps"));
         assert!(markdown.contains("Static gaps without runtime signals"));
+        assert!(
+            !markdown.contains("Sample only; showing"),
+            "tables under the sample limit must not claim sampling:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agreement_tables_disclose_sampling_when_truncated() -> Result<(), String> {
+        let over_limit = AGREEMENT_SAMPLE_LIMIT + 1;
+        let static_seams = (0..over_limit)
+            .map(|i| static_seam(&format!("gap-{i}"), "ungripped", "src/gap.rs", i + 1))
+            .collect();
+        let runtime_mutants = (0..over_limit)
+            .map(|i| {
+                runtime(
+                    &format!("m{i}"),
+                    None,
+                    Some("src/other.rs"),
+                    Some(i + 1),
+                    "missed",
+                )
+            })
+            .collect();
+
+        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        assert_eq!(
+            report.agreement.runtime_signal_without_static_gap,
+            over_limit
+        );
+        assert_eq!(
+            report.agreement.static_gap_without_runtime_signal,
+            over_limit
+        );
+        assert_eq!(report.missed_runtime_signals.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.static_only_findings.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.missed_runtime_signals_total, over_limit);
+        assert_eq!(report.static_only_findings_total, over_limit);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let expected = format!(
+            "Sample only; showing {} of {over_limit}.",
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        let sample_notes = markdown.matches(&expected).count();
+        assert_eq!(
+            sample_notes, 2,
+            "both truncated agreement tables must disclose the pre-truncation count:\n{markdown}"
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Runtime signals without static gaps").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Static gaps without runtime signals").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("failed to parse calibration JSON: {err}"))?;
+        assert_eq!(
+            value["missed_runtime_signals"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert_eq!(
+            value["static_only_findings"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert!(
+            value.get("missed_runtime_signals_total").is_none()
+                && value.get("static_only_findings_total").is_none()
+                && value["metrics"]
+                    .get("missed_runtime_signals_total")
+                    .is_none()
+                && value["metrics"].get("static_only_findings_total").is_none(),
+            "sampling totals must stay markdown-side without new JSON fields:\n{json}"
+        );
         Ok(())
     }
 
@@ -2773,6 +2872,16 @@ mod tests {
         let mut record = runtime(id, None, Some(file), Some(start.0), "missed");
         record.span = Some(RuntimeSpan { start, end });
         record
+    }
+
+    fn markdown_table_data_rows<'a>(markdown: &'a str, heading: &str) -> Vec<&'a str> {
+        let Some(rest) = markdown.split(heading).nth(1) else {
+            return Vec::new();
+        };
+        rest.lines()
+            .take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
+            .filter(|line| line.starts_with("| `"))
+            .collect()
     }
 
     fn static_seam(id: &str, grip_class: &str, file: &str, line: usize) -> StaticSeamRecord {

@@ -56,8 +56,8 @@ The contract is:
   route;
 - static decisions use RIPR static evidence vocabulary and never claim runtime
   adequacy;
-- every gate run writes deterministic JSON and Markdown before returning a
-  non-zero exit code for a blocking decision.
+- every gate evaluation with distinct output destinations writes deterministic
+  JSON and Markdown before returning a non-zero exit code for a blocking decision.
 
 ## Behavior
 
@@ -84,6 +84,17 @@ The command writes:
 target/ripr/reports/gate-decision.json
 target/ripr/reports/gate-decision.md
 ```
+
+`--out` and `--out-md` must select distinct output destinations. If `--out-md`
+is omitted, its path is `--out` with the extension replaced by `.md`; thus
+`--out report.md` requires an explicit, distinct `--out-md`. A collision is an
+argument error (exit 2), refused before evaluation or either output write,
+leaving existing bytes untouched and creating no output directories.
+The comparison makes paths absolute relative to the invoking cwd (not
+`--root`) and applies the shared native lexical `.` / `..` normalization.
+It does not resolve ancestor symlinks, compare hard links or case-fold names;
+it does not guarantee filesystem alias detection. Distinct parent/local paths
+and, on Unix, backslash filenames versus directory separators remain distinct.
 
 The evaluator must not:
 
@@ -557,6 +568,10 @@ Initial implementation should add tests for:
 
 - gate mode parsing and default `visible-only` behavior;
 - decision JSON and Markdown rendering;
+- output destination collisions and distinct-format controls through the real
+  CLI (`crates/ripr/tests/cli_smoke/output_leaf_identity.rs::gate_*`): identical
+  explicit paths, dot segments, relative/absolute aliases and implicit Markdown
+  collision preserve sentinel bytes with exit 2 and no reported write;
 - acknowledgement label handling;
 - baseline comparison behavior;
 - `pr_evidence` candidate and limitation projection for targeted mutation;

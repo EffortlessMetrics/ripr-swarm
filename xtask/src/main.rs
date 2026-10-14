@@ -328,6 +328,7 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     build_mutation_calibration_report, build_sarif_policy_report, mutation_calibration_report_json,
@@ -3317,15 +3318,15 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if readiness.behind_main {
-        return "rebase";
-    }
     if pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
     {
         return "wait";
+    }
+    if readiness.behind_main {
+        return "inspect integration";
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {
@@ -3791,6 +3792,8 @@ fn pr_triage_stale_draft_findings(prs: &[PrTriagePullRequest], today: i64) -> Ve
         .collect()
 }
 
+const PR_BEHIND_RECOMMENDED_ACTION: &str = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+
 fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding> {
     prs.iter()
         .filter(|pr| pr.merge_state_status.eq_ignore_ascii_case("BEHIND"))
@@ -3804,8 +3807,7 @@ fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding
                 format_pr_triage_ref(pr),
                 pr.merge_state_status
             )],
-            recommended_action: "Update the branch before relying on CI or merge-readiness state."
-                .to_string(),
+            recommended_action: PR_BEHIND_RECOMMENDED_ACTION.to_string(),
         })
         .collect()
 }
@@ -3916,12 +3918,6 @@ fn pr_triage_queue_disposition(
             "duplicate or stale work needs canonical owner selection",
             "Choose the canonical branch, refresh the stale draft, or close superseded variants.",
         )
-    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
-        (
-            "needs_rebase",
-            "branch is behind its base",
-            "Update the branch before relying on CI or merge-readiness state.",
-        )
     } else if pr_has_finding(findings, pr.number, "policy-sensitive surface") {
         (
             "do_not_touch_wrong_lane",
@@ -3942,6 +3938,12 @@ fn pr_triage_queue_disposition(
             "needs_review",
             "PR is draft or still requires review",
             "Finish review before merge or further queue disposition.",
+        )
+    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
+        (
+            "needs_integration_review",
+            "branch is behind its base; material integration judgment is pending",
+            PR_BEHIND_RECOMMENDED_ACTION,
         )
     } else if pr.merge_state_status.eq_ignore_ascii_case("CLEAN") {
         (

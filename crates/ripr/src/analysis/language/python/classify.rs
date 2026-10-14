@@ -442,6 +442,17 @@ pub(super) fn classify_change_for_owner(
         })
         .flatten();
     let mut guarded_arm_downgraded = false;
+    // An existing exact-list assertion cannot justify prescribing the same
+    // assertion again when this bounded path cannot prove unequal values.
+    let unproven_list_equality = !alignment.observes()
+        && related.iter().any(|test| {
+            test.oracle_strength == OracleStrength::Strong
+                && test
+                    .oracle
+                    .as_deref()
+                    .is_some_and(super::oracles::unittest_list::literal_text)
+        })
+        && !super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
 
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if static_limit
         .is_some()
@@ -598,10 +609,17 @@ pub(super) fn classify_change_for_owner(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
-                owner.name
-            )],
+            vec![if unproven_list_equality {
+                format!(
+                    "A strong Python list oracle reaches `{}`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence.",
+                    owner.name
+                )
+            } else {
+                format!(
+                    "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
+                    owner.name
+                )
+            }],
         )
     } else {
         (
@@ -729,6 +747,7 @@ pub(super) fn classify_change_for_owner(
     let missing_discriminators = if static_limit.is_none()
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
+        && !unproven_list_equality
     {
         if boundary_downgraded {
             // The boundary downgrade names the equality that would activate the
@@ -850,7 +869,9 @@ pub(super) fn classify_change_for_owner(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
-    let repair_placement = python_repair_placement(&class, &related_candidates);
+    let repair_placement = (!unproven_list_equality)
+        .then(|| python_repair_placement(&class, &related_candidates))
+        .flatten();
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
         0.6
     } else if matches!(class, ExposureClass::StaticUnknown) {
