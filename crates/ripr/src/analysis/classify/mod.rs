@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
+mod changed_span;
 mod context;
 mod decision;
 mod effect_carrier;

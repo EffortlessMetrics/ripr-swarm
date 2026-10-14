@@ -948,12 +948,20 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
                 "uri": "ripr://workspace/missing"
             }
         }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "missing-snapshot", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://snapshot/snapshot:sha256:absent" }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?,
     ]
     .concat();
     let output = run_mcp(&root, &[&request_bytes])?;
     let responses = response_lines(&output)?;
-    if responses.len() != 4 {
-        return Err(format!("expected 4 MCP responses, got {}", responses.len()));
+    if responses.len() != 6 {
+        return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
     let expected: [(&str, i64); 3] = [
         ("unknown-tool", -32601),
@@ -972,6 +980,99 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
                 "rejection for {id} must echo the request id: {response}"
             ));
         }
+    }
+    let by_id = responses
+        .iter()
+        .map(|response| {
+            response
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id, response))
+                .ok_or_else(|| format!("response lost its string id: {response}"))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+    if by_id.len() != 6 {
+        return Err("resource recovery responses must have distinct ids".to_string());
+    }
+    let discover = by_id.get("discover").ok_or("missing discovery response")?;
+    if !discover.get("result").is_some_and(Value::is_object) || discover.get("error").is_some() {
+        return Err(format!(
+            "discovery failed before recovery controls: {discover}"
+        ));
+    }
+    let snapshot = by_id
+        .get("missing-snapshot")
+        .ok_or("missing snapshot response")?;
+    if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+        || snapshot.pointer("/error/message").and_then(Value::as_str)
+            != Some("unavailable snapshot resource: no_snapshot")
+        || snapshot.pointer("/error/data/code").and_then(Value::as_str) != Some("no_snapshot")
+        || snapshot.pointer("/error/data/available").is_some()
+        || snapshot.pointer("/error/data/resource_templates").is_some()
+    {
+        return Err(format!(
+            "recognized snapshot lost its typed refusal: {snapshot}"
+        ));
+    }
+    let status = by_id
+        .get("recovered-status")
+        .ok_or("missing status recovery response")?;
+    if status.get("error").is_some()
+        || status
+            .pointer("/result/contents/0/uri")
+            .and_then(Value::as_str)
+            != Some("ripr://workspace/status")
+    {
+        return Err(format!(
+            "valid status read failed after resource miss: {status}"
+        ));
+    }
+    let status_text = status
+        .pointer("/result/contents/0/text")
+        .and_then(Value::as_str)
+        .ok_or("recovered status omitted JSON document")?;
+    let status_document: Value =
+        serde_json::from_str(status_text).map_err(|error| error.to_string())?;
+    if status_document
+        .pointer("/workspace/authority/source_edit_capability")
+        .and_then(Value::as_str)
+        != Some("none")
+        || status_document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            != Some("ripr-mcp-workspace-status-v1")
+        || status_document
+            .pointer("/session/attempt_state")
+            .and_then(Value::as_str)
+            != Some("no_snapshot")
+    {
+        return Err(format!(
+            "recovered status lost its read-only contract: {status_document}"
+        ));
+    }
+    // Literal consumer contract, independent of the production template registry.
+    let miss = by_id
+        .get("unknown-resource")
+        .ok_or("missing unknown-resource response")?;
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
+        || miss.pointer("/error/data/resource_templates")
+            != Some(&json!([
+                "ripr://snapshot/{snapshot_id}",
+                "ripr://gap/{canonical_id}",
+                "ripr://repair-attempt/{attempt_id}",
+                "ripr://receipt/{receipt_id}",
+                "ripr://repair-card/{canonical_id}"
+            ]))
+    {
+        return Err(format!(
+            "resource miss changed structured recovery routes: {miss}"
+        ));
+    }
+    if miss.pointer("/error/message").and_then(Value::as_str) != Some(expected_message) {
+        return Err(format!(
+            "unknown-resource message hides valid recovery routes: {miss}"
+        ));
     }
     Ok(())
 }

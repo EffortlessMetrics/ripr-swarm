@@ -163,7 +163,8 @@ pub(in crate::analysis) fn current_path_witness(
                 || (question_mark_sink.is_none()
                     && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
-                    && !opaque_path_text(&sink.text)))
+                    && !opaque_path_text(&sink.text)
+                    || unchanged_closure_tail(probe, sink)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
@@ -1406,6 +1407,37 @@ fn is_effect_sink_kind(kind: &FlowSinkKind) -> bool {
     )
 }
 
+/// #6578: a `return_value` probe whose changed line is the owner's returned
+/// expression, identical to the return sink, where the only opaque syntax
+/// is a closure the diff leaves unchanged and the changed part sits outside
+/// every closure (`it.map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2`).
+/// The closure runs the same way in both versions, so the changed operand
+/// reaches the returned value as in a closure-free tail.
+fn unchanged_closure_tail(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    if probe.family != ProbeFamily::ReturnValue
+        || sink.kind != FlowSinkKind::ReturnValue
+        || sink.line != probe.location.line
+        || normalize_semantic_text(&probe.expression) != normalize_semantic_text(&sink.text)
+    {
+        return false;
+    }
+    let lower = probe.expression.to_ascii_lowercase();
+    let only_closures = !(lower.contains("dyn ")
+        || lower.contains("box<dyn")
+        || names_ffi_boundary(&lower)
+        || lower.contains("extern ")
+        || has_macro_invocation(&lower));
+    only_closures
+        && super::changed_span::ChangedSpan::of(&probe.expression, probe.before.as_deref())
+            .is_some_and(|span| !span.under_closure())
+        // The changed part must also run on every input: `x.map_or(51, |v|
+        // v)` reaches the return with `51` only when `x` is `None`.
+        && !super::owner_pin::changed_part_evaluates_conditionally(
+            &probe.expression,
+            probe.before.as_deref(),
+        )
+}
+
 fn opaque_path_text(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     lower.contains("dyn ")
@@ -2086,6 +2118,83 @@ mod tests {
                 None,
                 "{body}"
             );
+        }
+    }
+
+    /// #6578: an owner tail whose only opaque syntax is a closure the diff
+    /// leaves unchanged completes like a closure-free tail.
+    #[test]
+    fn an_unchanged_closure_in_a_returned_tail_completes_the_witness() {
+        let tail = |fee: &str| format!("lines.iter().map(|l| l.cents).sum::<u64>() + {fee}");
+        let changed = |after: &str, before: Option<&str>, family: ProbeFamily| {
+            let mut probe = probe(family, after);
+            probe.before = before.map(str::to_string);
+            probe
+        };
+        let witness = |probe: &Probe, sink_text: &str, sink_line: usize| {
+            current_path_witness(
+                probe,
+                &[sink(FlowSinkKind::ReturnValue, sink_text, sink_line)],
+            )
+            .is_some_and(|witness| {
+                witness.completeness == PathCompleteness::Complete
+                    && witness.edges[0].status == EdgeStatus::Established
+            })
+        };
+        let after = tail("25 * 2");
+        let before = tail("50");
+        let positive = changed(&after, Some(&before), ProbeFamily::ReturnValue);
+        assert!(witness(&positive, &after, 10));
+        // Not without the old text, on another line, for a sink that is not
+        // the whole changed expression, or for another family.
+        assert!(!witness(
+            &changed(&after, None, ProbeFamily::ReturnValue),
+            &after,
+            10
+        ));
+        assert!(!witness(&positive, &after, 11));
+        assert!(!witness(
+            &positive,
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+            10
+        ));
+        assert!(!witness(
+            &changed(&after, Some(&before), ProbeFamily::Predicate),
+            &after,
+            10
+        ));
+        // The change inside the closure, a macro, `dyn` elsewhere, or a
+        // changed operand a combinator may skip.
+        for (after, before) in [
+            (
+                "lines.iter().map(|l| l.cents + 1).sum::<u64>()",
+                "lines.iter().map(|l| l.cents + 2).sum::<u64>()",
+            ),
+            (
+                "lines.iter().map(|l| l.cents).sum::<u64>() + m!(51)",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + m!(50)",
+            ),
+            ("f(&|l: &dyn Fn()| l) + 51", "f(&|l: &dyn Fn()| l) + 50"),
+            // A combinator decides whether the changed default runs.
+            ("x.map_or(51, |v| v) + 3", "x.map_or(50, |v| v) + 3"),
+            // The change removed a closure that may have given the same
+            // value.
+            (
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+            ),
+            // The changed receiver or argument flows through a closure.
+            (
+                "items.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+            ),
+            (
+                "lines.iter().fold(51, |acc, l| acc + l.cents)",
+                "lines.iter().fold(50, |acc, l| acc + l.cents)",
+            ),
+        ] {
+            let probe = changed(after, Some(before), ProbeFamily::ReturnValue);
+            assert!(!witness(&probe, after, 10), "{after}");
         }
     }
 

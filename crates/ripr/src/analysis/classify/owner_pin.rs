@@ -1830,10 +1830,19 @@ impl OwnerReturnPin {
         }
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
-        let path = match return_path_gate(&owner.body, &probe.expression, changed_line) {
+        let path = match return_path_gate_from(
+            &owner.body,
+            &probe.expression,
+            probe.before.as_deref(),
+            changed_line,
+        ) {
             Some(path) => path,
             // RIPR-SPEC-0265 rule 2: only a changed return value that is the
             // whole admitted adaptor tail; the test side reads the input.
+            // This fallback implements that spec's amendment of the pin's
+            // closure refusal ("a closure in the tail no longer refuses it
+            // on this shape") and must stay unguarded: 0265's keeping-pair
+            // registry is what tells a closure-carried change apart there.
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                     .filter(|tail| tail.tail_is(&probe.expression))
@@ -3924,7 +3933,20 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
 /// `changed_line` is the changed line's offset from the body's first line;
 /// the tail must span it, so an identical expression elsewhere in the body
 /// is not mistaken for the changed one.
+#[cfg(test)]
 fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option<ReturnPathGate> {
+    return_path_gate_from(body, expression, None, changed_line)
+}
+
+/// [`return_path_gate`] with the changed line's old text, when the diff
+/// pairs one: only the part that differs must be evaluated on every input
+/// (see [`changed_part_evaluates_conditionally`]).
+fn return_path_gate_from(
+    body: &str,
+    expression: &str,
+    before: Option<&str>,
+    changed_line: usize,
+) -> Option<ReturnPathGate> {
     let masked = mask_comments_and_strings(body);
     let open = body_block_open(&masked)?;
     let close = matching_close(&masked, open, b'{', b'}')?;
@@ -3975,11 +3997,12 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
     if has_unbounded_macro(inner) {
         return None;
     }
-    let conditional = evaluates_conditionally(&mask_comments_and_strings(changed));
     let returns = whole_word_offsets(inner, "return");
     let other_returns = returns.len() - usize::from(final_return_is_changed);
     let early_exits = inner.bytes().filter(|byte| *byte == b'?').count() + other_returns;
-    if conditional {
+    // The uncollapsed expression: collapsing would also merge whitespace
+    // inside a string literal that the change touched.
+    if changed_part_evaluates_conditionally(expression, before) {
         // RIPR-SPEC-0197 rule 3: a pure `&&`/`||` chain is the one
         // conditional tail a pin may observe, and only on a pinned call
         // that evaluates every operand (checked per test).
@@ -4203,6 +4226,115 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
 const NEGATING_KEYWORDS: &[&str] = &[
     "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as",
 ];
+
+/// #6578: whether the part of the changed tail that differs from its old
+/// text (`before`) is evaluated only on some inputs, or passes through code
+/// that may not use it. In `lines.iter().map(|l| l.cents).sum::<u64>() + 50`
+/// → `.. + 25 * 2` the closure is unchanged and the changed operand of the
+/// outer `+` runs on every input and reaches the sum directly, so the
+/// closure does not make the change conditional.
+///
+/// Only a tail the whole-text check refuses is read more closely, and it is
+/// admitted only in one narrow shape: the changed span (the text between
+/// the longest common prefix and suffix) holds no closure, block,
+/// assignment or conditional text, and every node from it up to and
+/// including the tail is an operator that evaluates all its operands
+/// (arithmetic, comparison or bitwise; not `&&`, `||` or an assignment), a
+/// parenthesis, prefix operator or cast, or a call to a named function or
+/// method that is no skipping combinator and holds no closure anywhere. A
+/// closure beside the change in a call (`items.iter().map(|l| ..)` with
+/// `items` changed, `fold(51, |a, l| ..)`) may discard or transform it, and
+/// a block, labeled `break`, `const` or `async` around it may skip or
+/// rebind it, so each refuses. Without a paired old text, or when the tail
+/// does not parse as one expression, the whole tail is read as before.
+pub(super) fn changed_part_evaluates_conditionally(changed: &str, before: Option<&str>) -> bool {
+    if !evaluates_conditionally(&mask_comments_and_strings(changed)) {
+        return false;
+    }
+    let Some(span) = super::changed_span::ChangedSpan::of(changed, before) else {
+        return true;
+    };
+    // What the change removed may itself have been a closure, block, macro
+    // or branch that gave the same value (`(|| 51)()` → `51`), so it must
+    // be as plain as what replaced it. The removed text may start inside a
+    // string, so it is read unmasked: a quoted `|` or `if` also refuses.
+    let removed = span.removed.as_str();
+    if evaluates_conditionally(removed)
+        || removed.contains(['|', '{', '!', '?'])
+        || has_keyword(
+            removed,
+            &["return", "break", "async", "unsafe", "const", "static"],
+        )
+    {
+        return true;
+    }
+    if evaluates_conditionally(&mask_comments_and_strings(
+        &span.covering.text().to_string(),
+    )) || span.covering.descendants().any(|node| {
+        ast::ClosureExpr::can_cast(node.kind())
+            || ast::BlockExpr::can_cast(node.kind())
+            || ast::Item::can_cast(node.kind())
+            || is_short_circuit_or_assignment(&node)
+    }) {
+        return true;
+    }
+    !span
+        .enclosing()
+        .iter()
+        .all(|(ancestor, _)| evaluates_every_operand(ancestor))
+}
+
+/// Whether `text` holds one of `keywords` as a whole word.
+fn has_keyword(text: &str, keywords: &[&str]) -> bool {
+    text.split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|word| keywords.contains(&word))
+}
+
+/// A `&&`/`||` or an assignment (`=`, `+=`, ..) operator.
+fn is_short_circuit_or_assignment(node: &SyntaxNode) -> bool {
+    ast::BinExpr::cast(node.clone()).is_some_and(|binary| {
+        binary.op_token().is_some_and(|op| {
+            let op = op.text();
+            op == "&&"
+                || op == "||"
+                || (op.ends_with('=') && !matches!(op, "==" | "!=" | "<=" | ">="))
+        })
+    })
+}
+
+/// Whether `node`, enclosing the changed span, evaluates every operand and
+/// passes the changed one on without a closure or skipping combinator.
+fn evaluates_every_operand(node: &SyntaxNode) -> bool {
+    // An argument list is judged by the call that holds it.
+    if ast::ArgList::can_cast(node.kind())
+        || ast::ParenExpr::can_cast(node.kind())
+        || ast::PrefixExpr::can_cast(node.kind())
+        || ast::CastExpr::can_cast(node.kind())
+    {
+        return true;
+    }
+    if ast::BinExpr::can_cast(node.kind()) {
+        return !is_short_circuit_or_assignment(node);
+    }
+    let name = if let Some(method) = ast::MethodCallExpr::cast(node.clone()) {
+        method.name_ref().map(|name| name.text().to_string())
+    } else if let Some(call) = ast::CallExpr::cast(node.clone()) {
+        match call.expr() {
+            Some(ast::Expr::PathExpr(path)) => path
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|name| name.text().to_string()),
+            _ => None,
+        }
+    } else {
+        return false;
+    };
+    name.is_some_and(|name| !CONDITIONAL_COMBINATORS.contains(&name.as_str()))
+        && !node
+            .descendants()
+            .any(|inner| ast::ClosureExpr::can_cast(inner.kind()))
+}
 
 /// Whether the changed tail evaluates some of its parts only on some
 /// inputs: a closure or `|`/`||`/`&&` operator, a branch or loop, or a

@@ -30,8 +30,8 @@ Linked PRs:
 
 Support-tier impact:
 
-- No tier change. TypeScript stays Preview. Rule 1 removes credit: a
-  finding may move from `exposed` to `weakly_exposed`. Rule 2 adds credit
+- No tier change. TypeScript stays Preview. Rules 1 and 3 remove credit:
+  a finding may move from `exposed` to `weakly_exposed`. Rule 2 adds credit
   in every repository, for three callback forms that run before the test
   settles. Corpus mutation evidence (#6686) motivated it: in those forms
   the uncredited reading was a false actionable verdict, and a collected
@@ -137,6 +137,52 @@ failure does not fail the parent); and any body the rule 11 row reader
 refuses. A subtest with no name, a non-literal name, or options without a
 name is also refused.
 
+**Rule 3. A dropped spread override needs an input that lacks it.**
+(Added 2026-10-14.) When the changed line's removed and added text are
+`return { ...x, <entries> }` on one line, the first entry of both is the
+same spread `...x` of an owner parameter `x`, and one side has exactly one
+more entry `k: L`, a plain or quoted key with a literal value (a number,
+a string with no escape and no quote character inside, `true`, `false`
+or `null`; numbers compare by value and sign, so `-0` is not `0`), and
+`k` is not `__proto__` (which sets the prototype), the change only sets
+or drops that field. Other entries must be `key: value` pairs (a
+shorthand entry stops the rule), match in order, and hold no second
+spread and no second `k`; the object may hold no comment outside a
+string. The owner must never rebind `x` (the RIPR-SPEC-0248 rule 1
+stability check), write, delete or call a member of `x` (`x.reset()`
+hands `x` to the method as `this`), or pass `x` itself to a call, since the object it spreads would then not be the input the test
+wrote. An input whose `k` already holds `L` comes back equal on both
+versions, however exact the matcher is.
+
+The rule reads every owner call whose whole result a strong
+`exact_value`, `whole_object_equality` or snapshot assertion observes (as
+RIPR-SPEC-0248 rule 1 does). Its argument for `x` is read when it is an
+object literal, inline or a name the test binds once by
+`const name = { ... }` (a type annotation is allowed) and by no `let` or
+`var`, at the top of a block that holds every later mention. The name
+must otherwise appear only after it, as a member read, or as a whole
+argument of `expect`, of a matcher on `expect(...)` (`.toEqual(cfg)`,
+`.not.toBe(cfg)`) or of the owner call (bare, renamed or through its
+module). Any other use (a member write, including a destructuring or
+`for` loop target, or a `delete`, a cast, an alias, a
+helper or method call, including a call of one of its members such as
+`cfg.arm()`, an array or object entry, a callback or `catch`
+parameter of the same name) makes the input unreadable, and so does an
+entry whose value is a function, which the test could call to set the
+field.
+That input lacks the field when it has no `k` entry and no spread,
+computed, method or accessor entry, or when its last `k` entry holds
+another literal. A strong assertion whose subject is exactly the `k`
+member of an owner call (`owner(cfg).k`, `owner(cfg)?.k`,
+`owner(cfg)["k"]`, with nothing after it and no `await`) also counts when
+its input lacks the field; on any other input it is not an observation. If
+one such input lacks the field, the ladder result stands. Otherwise, when
+at least one whole-result call is observed, an `exposed` ladder result
+reads `weakly_exposed`, whether every input carries `k: L` or some input
+cannot be read. With no observed whole-result call the ladder result
+stands. Rule 3 runs after RIPR-SPEC-0243 rule 8 and before RIPR-SPEC-0248
+rule 1, on the same value seams.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -166,10 +212,29 @@ and the rejected alternative.
    changed here. Three corpus cases stay false actionable until a
    follow-up decides whether a literal expected value makes loose equality
    exact. Recorded on #6654.
+6. **Spread override (rule 3, 2026-10-14).** Adopted: demote when calls
+   are observed and none passes an input shown to lack the field,
+   including when an input cannot be read, matching RIPR-SPEC-0248 rule 1.
+   With no observed call the ladder stands, so a test that only asserts a
+   member (`expect(ready(cfg).ok).toBe(true)`) keeps its credit, even when
+   its input already carries the field: that case remains a known false
+   `exposed`. The input read is textual and fails closed: any use of the
+   bound name beyond a read or a whole owner, `expect` or matcher argument
+   makes the input unreadable (`weakly_exposed`), and so does an input it
+   cannot read, such as an escaped string or `undefined`. Both remove
+   credit, never add it. A member pin that continues past the key
+   (`owner(cfg).k ?? true`) is no witness, since it can pass on both
+   versions. Member pins through a local (`const r = owner(cfg);
+   expect(r.ok)`) and `toHaveProperty` / `toMatchObject` assertions are
+   not read as witnesses either, so an input they would separate can still
+   be demoted. Rejected:
+   leave example 3 at `exposed`, which credits a test that passes on both
+   versions; and demote every dropped override, which would remove credit
+   from tests whose input lacks the field.
 
 ## Required Evidence
 
-- Rule 1 moves no finding to a stronger class.
+- Rules 1 and 3 move no finding to a stronger class.
 - Rule 2 moves a finding to a stronger class only through an assertion it
   collects, and each collected assertion keeps its original line.
 - On the TypeScript verdict corpus, false verdicts fall from 21/101 to
@@ -195,7 +260,9 @@ and the rejected alternative.
    `expect(ready(cfg)).toEqual(cfg)`: `weakly_exposed`.
 2. The same change, test `expect(ready(cfg)).toBe(cfg)`: `exposed`.
 3. `return { ...cfg, ok: true }` becomes `return { ...cfg }`, test
-   `toEqual(cfg)`: the ladder result, `exposed`.
+   `const cfg = { name: "bo", ok: true }; expect(markOk(cfg)).toEqual(cfg)`:
+   rule 1 does not apply; rule 3 reads `weakly_exposed` (it read `exposed`
+   before rule 3).
 4. `[150, 200].forEach((v) => { expect(price(v)).toBe(140); })`: two
    assertions, observing `price(150)` and `price(200)`.
 5. `cases.forEach(...)`, `[150, n].forEach(...)` or `[].forEach(...)`: no
@@ -219,11 +286,25 @@ and the rejected alternative.
     asserts `expect(ready(cfg)).toBeSame(cfg)`: `exposed`. The same change
     with `toEqual`, with `pass: r == e`, with `toBeSame(null)`, or with a
     comment between `expect` and `.extend`, stays `weakly_exposed`.
+12. As example 3 with `cfg = { name: "bo", ok: false }`, or
+    `expect(ready({ name: "bo" })).toEqual({ name: "bo", ok: true })`:
+    `exposed`. With one input carrying `ok: true` and another `ok: false`:
+    `exposed`.
+13. As example 3 with `const cfg = load()` or `const cfg = { ...base }`:
+    `weakly_exposed`. Dropping two fields (`{ ...cfg, ok: true, extra: 1 }`
+    to `{ ...cfg }`) is not rule 3.
+14. As example 3 with `const cfg: Settings = { name: "bo" }`, or with a
+    second assertion `expect(markOk({ name: "bo" }).ok).toBe(true)`:
+    `exposed`. With `cfg.ok = false` written after the binding,
+    `withOk(cfg)`, or a pin `markOk({ name: "bo" }).ok ?? true`:
+    `weakly_exposed`. With an owner that runs `cfg.ok = false` or
+    `normalize(cfg)` before the return: the ladder result, `exposed`.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 11.
+  pins examples 1 to 14; `spread_override_guard.rs` unit tests pin the
+  rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows.
 
 ## Implementation Mapping
@@ -237,6 +318,10 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `expect_assertion_from_expression` sets the property for a credited
   RIPR-SPEC-0262 matcher; `collect_nested_callback_assertions` (rule 2).
+- `crates/ripr/src/analysis/language/typescript/spread_override_guard.rs`:
+  `SpreadOverride`, `ts_test_local_object`; `dropped_term_guard.rs`:
+  `ts_members_written`; `classifier.rs`: `ts_spread_override_unseen`,
+  `ts_owner_call_member_arguments` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 

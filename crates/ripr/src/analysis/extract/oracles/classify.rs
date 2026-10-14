@@ -1828,6 +1828,26 @@ fn ok_literal() {
                 "mock.expect_err().returning(|| ());",
                 vec![(MockExpectation, Medium)],
             ),
+            // A call receiver does not make a zero-argument `expect_err()`
+            // a `Result::expect_err`, with or without inner whitespace.
+            (
+                "mock_expectation_for_err_method_on_a_constructor",
+                "MockFoo::new().expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_spaced",
+                "MockFoo::new().expect_err( );",
+                vec![(MockExpectation, Medium)],
+            ),
+            // A comment is not an argument.
+            (
+                "mock_expectation_for_err_method_with_a_comment",
+                "MockFoo::new().expect_err(/* setup */);",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` in a comment is not a mock expectation name.
+            ("expect_word_in_comment", "run(); // expect_called", vec![]),
             // `expect_` text in the message is not a mock expectation name.
             (
                 "expect_err_expect_word_message",

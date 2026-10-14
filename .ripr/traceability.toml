@@ -12469,6 +12469,14 @@ tests = [
   "crates/ripr/tests/expect_test_owner_pins.rs::every_parsed_inline_expect_spelling_pins_the_owner",
   "crates/ripr/tests/expect_test_owner_pins.rs::other_expect_test_and_snapshot_shapes_keep_their_medium_grade",
   "crates/ripr/tests/expect_test_owner_pins.rs::a_captured_identifier_format_tail_propagates",
+  "crates/ripr/src/analysis/classify/changed_span.rs::the_span_is_the_smallest_node_around_the_differing_text",
+  "crates/ripr/src/analysis/classify/changed_span.rs::a_closure_is_seen_only_around_or_inside_the_change",
+  "crates/ripr/src/analysis/classify/changed_span.rs::no_span_without_an_old_text_or_one_tail_expression",
+  "crates/ripr/src/analysis/classify/changed_span.rs::the_removed_text_and_string_whitespace_are_kept",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unchanged_closure_leaves_the_changed_operand_unconditional",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::an_unchanged_closure_in_a_returned_tail_completes_the_witness",
+  "crates/ripr/tests/unchanged_closure_tail.rs::a_changed_operand_beside_an_unchanged_closure_is_exposed",
+  "crates/ripr/tests/unchanged_closure_tail.rs::a_change_the_closure_decides_or_carries_stays_unrevealed",
   "crates/ripr/tests/constant_tail_propagation.rs::exact_pin_on_a_constant_owner_tail_is_exposed",
   "crates/ripr/tests/constant_tail_propagation.rs::weak_oracle_on_a_constant_owner_tail_keeps_its_gap",
   "crates/ripr/tests/fallible_owner_return.rs::frozen_fallible_literal_helper_exposes_exact_owner_return",
@@ -12729,6 +12737,7 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/changed_span.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/output/observed_values.rs",
   "crates/ripr/src/output/human/evidence_lines.rs",
@@ -13285,6 +13294,9 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport",
+  "crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status",
+  "crates/ripr/tests/mcp_sdk.rs::official_sdk_discovery_client_lists_calls_and_reads_status",
   "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
@@ -14315,6 +14327,7 @@ tests = [
   "crates/ripr/tests/question_mark_side_flip.rs::a_removed_question_mark_line_is_never_exposed",
   "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::macro_definitions_and_inner_cfg_make_a_test_file_unreadable",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err",
 ]
 fixtures = []
 code = [
@@ -14404,6 +14417,13 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::receiver_scrutinee_reads_glob_imported_variants",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_arms_compare_by_value",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::char_literal_arms_compare_by_value",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::integer_scrutinee_arithmetic_evaluates_the_input",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_value_equal_literal_respelling_reads_as_unchanged",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_constant_row_table_lends_its_cells_to_the_owner_call",
+  "crates/ripr/tests/match_arm_table_selection.rs::a_table_row_that_selects_the_respelled_arm_exposes_it",
+  "crates/ripr/tests/match_arm_table_selection.rs::a_table_with_no_selecting_row_does_not_expose_the_arm",
+  "crates/ripr/tests/match_arm_table_selection.rs::a_table_built_at_run_time_does_not_expose_the_arm",
+  "crates/ripr/tests/match_arm_table_selection.rs::a_table_test_that_shadows_binds_or_borrows_does_not_expose_the_arm",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_that_selects_the_arm_exposes_it",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_helper_lent_literal_for_another_arm_does_not_expose_it",
   "crates/ripr/tests/match_arm_helper_selection.rs::a_variable_helper_argument_does_not_expose_the_arm",
