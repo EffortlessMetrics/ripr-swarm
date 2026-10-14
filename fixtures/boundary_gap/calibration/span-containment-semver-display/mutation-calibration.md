@@ -66,8 +66,8 @@ No runtime mutant span was contained by equal or crossing innermost seam spans.
 
 | Location | Mutation operator | Runtime outcome | Reason | Test command |
 | --- | --- | --- | --- | --- |
-| src/display.rs:20 | * | caught | `no_containing_seam` | unknown |
-| src/display.rs:20 | - | caught | `no_containing_seam` | unknown |
+| src/display.rs:20 | BinaryOperator | caught | `no_containing_seam` | unknown |
+| src/display.rs:20 | BinaryOperator | caught | `no_containing_seam` | unknown |
 
 ## Static Seams Without Runtime Data
 

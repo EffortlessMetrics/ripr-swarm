@@ -41,6 +41,7 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
@@ -102,6 +103,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// ...). An immutable `let` of its result is `Copy` with no interior
     /// mutability, so no later statement can change it (cell-0094).
     returns_scalar: bool,
+    /// A [`Self::returns_scalar`] owner whose return type is a built-in
+    /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
+    /// meaning on it (trap-ceiling-wide-min-control).
+    returns_integer: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -110,13 +115,52 @@ pub(in crate::analysis) struct OwnerReturnPin {
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
     /// Same-named module-level rivals in the owner's package, settled per
     /// test by the call's spelled path (#6544). `None` when there are none.
-    identity: Option<OwnerCallIdentity>,
+    /// Shared per analysis run with the relation stage's identity (#7716).
+    identity: Option<std::sync::Arc<OwnerCallIdentity>>,
+}
+
+/// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
+/// rooted spellings, whether the file can rebind that root.
+#[derive(Clone, Debug, Default)]
+struct StdRootedCalls {
+    calls: BTreeSet<String>,
+    unrebound: BTreeSet<String>,
+}
+
+const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+    "std::assert_eq",
+    "core::assert_eq",
+    "::std::assert_eq",
+    "::core::assert_eq",
+];
+
+impl StdRootedCalls {
+    fn of(source: &str) -> Self {
+        let Some(file) = parse_clean_source_file(source) else {
+            return Self::default();
+        };
+        let root = file.tree().syntax().clone();
+        Self {
+            calls: std_rooted_assert_eq_calls(&root),
+            unrebound: STD_ROOTED_ASSERT_EQ
+                .iter()
+                .filter(|path| {
+                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                })
+                .map(|path| (*path).to_string())
+                .collect(),
+        }
+    }
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
+    /// of those roots the file itself leaves unrebound (#7857). Parsed once
+    /// per file, not once per assertion.
+    std_rooted: RefCell<BTreeMap<PathBuf, StdRootedCalls>>,
     fallible_dependencies:
         RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
@@ -885,6 +929,28 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        Some(match self.context_refusal(test, assertion, index)? {
+            AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
+                match value_guard_subject(&condition, &assertion.text) {
+                    Some(subject) => AssertionRefusal::ValueGuard {
+                        condition,
+                        subject: subject.to_string(),
+                    },
+                    None => {
+                        AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition))
+                    }
+                }
+            }
+            refusal => refusal,
+        })
+    }
+
+    fn context_refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -892,6 +958,31 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
+        // #7857: a `std`/`core`-rooted `assert_eq!` needs the same root proof
+        // as targeted call syntax (manifest, crate provenance) plus the
+        // test's real file, which a generated test's expansion does not show.
+        // The escape scan admits every such call in the file's tests and
+        // helpers on file-local evidence, so each one anywhere in the file
+        // needs the proof, not only the credited assertion: an unproved
+        // `std::assert_eq!` may expand to an early return that skips it.
+        let rooted = self
+            .std_rooted
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| StdRootedCalls::of(&facts.source))
+            .clone();
+        let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .into_iter()
+            .chain(rooted.calls)
+            .collect();
+        if let Some(path) = qualified.into_iter().find(|path| {
+            !(rooted.unrebound.contains(path)
+                && self.targeted_macro_binding_is_unambiguous(test, assertion.line, path, index))
+        }) {
+            return Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::OpaqueMacro(path),
+            ));
+        }
         let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
@@ -1171,9 +1262,24 @@ pub(in crate::analysis) enum AssertionRefusal {
         name: String,
         site: Option<(PathBuf, MacroBindingSite)>,
     },
+    /// The test's only `return` sits under `if <condition> { return; }`,
+    /// whose condition compares `subject` (the call the assertion compares)
+    /// with a literal and does not hold for the value the assertion
+    /// expects: the assertion runs for that value, and whether it runs for
+    /// another depends on a value ripr does not evaluate.
+    ValueGuard { condition: String, subject: String },
 }
 
 impl AssertionRefusal {
+    /// The call a [`Self::ValueGuard`] reads, so a caller can require it to
+    /// be the owner's.
+    pub(in crate::analysis) fn value_guard_subject(&self) -> Option<&str> {
+        match self {
+            Self::ValueGuard { subject, .. } => Some(subject),
+            _ => None,
+        }
+    }
+
     /// Whether the refusal rests on a limit of ripr's own reading (the file,
     /// module, test identity, or a binding that only *may* rebind), rather
     /// than on a shape that can keep the assertion from running or rebind it
@@ -1183,6 +1289,9 @@ impl AssertionRefusal {
     pub(in crate::analysis) fn is_analyzer_limit(&self) -> bool {
         match self {
             Self::LexicalFallback | Self::UnresolvedModule(_) | Self::IncludedFile { .. } => true,
+            // trap-tally-reached-assert-control: the guard spares the
+            // expected value, so the assertion's reach is value-dependent.
+            Self::ValueGuard { .. } => true,
             // A gated `mod` declaration may be `cfg(any())`, which never runs.
             Self::ModuleDeclaration { .. } => false,
             Self::Syntax(refusal) => match refusal {
@@ -1200,6 +1309,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::MacroOperandExit(_)
                 | AssertionContextRefusal::ClosureExit
                 | AssertionContextRefusal::ConditionalPath(_)
+                | AssertionContextRefusal::GuardedReturn(_)
                 | AssertionContextRefusal::MacroBinding(_) => false,
             },
             // A definition or `use` of the name in reach is a real rebinding;
@@ -1275,6 +1385,9 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ConditionalPath(construct) => {
                     format!("the assertion is inside {construct}")
                 }
+                AssertionContextRefusal::GuardedReturn(condition) => format!(
+                    "the assertion is inside a block that an earlier `if {condition} {{ return; }}` can skip"
+                ),
                 AssertionContextRefusal::MacroBinding(name) => {
                     format!("`{name}!` may be redefined somewhere in the workspace")
                 }
@@ -1282,6 +1395,9 @@ impl AssertionRefusal {
                     "the test's source changed while ripr was reading it".into()
                 }
             },
+            Self::ValueGuard { condition, subject } => format!(
+                "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
+            ),
             Self::MacroBinding { name, site } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
@@ -1634,6 +1750,12 @@ enum ReturnPathGate {
     /// `PartialEq`, so every field of the clone is compared with the
     /// original's.
     CloneReceiver,
+    /// RIPR-SPEC-0265 rule 2: the changed tail is the owner's whole body,
+    /// `P.iter().A(|x| E)[.T()]`, whose closure runs once per element of
+    /// the parameter at `position`. The pinned call must pass that
+    /// parameter a non-empty literal sequence, so the closure runs at least
+    /// once on the pinned input.
+    Adaptor { position: usize },
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -1703,12 +1825,24 @@ impl OwnerReturnPin {
         }
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
-        let path = return_path_gate_from(
+        let path = match return_path_gate_from(
             &owner.body,
             &probe.expression,
             probe.before.as_deref(),
             changed_line,
-        )?;
+        ) {
+            Some(path) => path,
+            // RIPR-SPEC-0265 rule 2: only a changed return value that is the
+            // whole admitted adaptor tail; the test side reads the input.
+            None if matches!(probe.family, ProbeFamily::ReturnValue) => {
+                closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+                    .filter(|tail| tail.tail_is(&probe.expression))
+                    .map(|tail| ReturnPathGate::Adaptor {
+                        position: tail.position,
+                    })?
+            }
+            None => return None,
+        };
         // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
         // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
         // `fn Ok` in the owner's file can build a second source of the
@@ -1726,10 +1860,10 @@ impl OwnerReturnPin {
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
         let identity = match call.kind() {
-            CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+            CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
             CallKind::Method | CallKind::Associated => None,
         };
-        if other_definition_competes(owner, index, call.kind(), identity.as_ref()) {
+        if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
             return None;
         }
         Some(Self {
@@ -1738,6 +1872,9 @@ impl OwnerReturnPin {
             path,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
+            returns_integer: returns_primitive_scalar(owner, index)
+                && declared_return_type(&owner.body)
+                    .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1822,6 +1959,7 @@ impl OwnerReturnPin {
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1921,6 +2059,7 @@ impl OwnerReturnPin {
             }),
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1971,10 +2110,13 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
-        // A nested `format!` is read only as a rendered scalar pin.
-        let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
-        let reads_assert_eq =
-            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
+        // A nested `format!` is read only as a rendered scalar pin, and a
+        // nested `vec!` only as a single-element index.
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let reads_assert_eq = renders
+            || indexes
+            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -1988,7 +2130,9 @@ impl OwnerReturnPin {
             _ => None,
         };
         let mut unwrapped = false;
-        let (call, expected) = if reads_assert_eq {
+        // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
+        // so an adaptor gate can read the argument the call passes.
+        let (call, expected, call_text): (_, _, Option<&str>) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -2002,18 +2146,46 @@ impl OwnerReturnPin {
                             // #7905: every NaN payload renders as `NaN`.
                             .filter(|_| operands[other].trim() != "\"NaN\"")
                             .and_then(|call| self.awaited_call_shape(call, &self.name))
-                            .map(|call| (call, operands[other]))
+                            .map(|call| (call, operands[other], None))
                     })
                 })
-                .flatten();
+                .flatten()
+                // trap-ceiling-wide-min-control / trap-muffle-times-one-control:
+                // a projection that keeps every value of an integer owner the
+                // literal expected value can name.
+                .or_else(|| {
+                    (self.returns_integer && matches!(self.path, ReturnPathGate::Any) && !renders)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                exact_integer_projection(operands[at], operands[other])
+                                    .filter(|_| !ord_method_rebindable(operands[at], test, index))
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other], None))
+                            })
+                        })
+                        .flatten()
+                })
+                // trap-pile-first-element-control: `vec![call][0]` is the
+                // call's own value.
+                .or_else(|| {
+                    (self.returns_scalar && matches!(self.path, ReturnPathGate::Any) && indexes)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                single_element_index(operands[at])
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other], None))
+                            })
+                        })
+                        .flatten()
+                });
             let unwrapped_direct = unwrap_wrapper.and_then(|_| {
                 let shape = |at: usize| {
                     unwrapped_call(operands[at])
                         .and_then(|call| self.awaited_call_shape(call, &self.name))
                 };
                 match (shape(0), shape(1)) {
-                    (Some(call), None) => Some((call, operands[1])),
-                    (None, Some(call)) => Some((call, operands[0])),
+                    (Some(call), None) => Some((call, operands[1], None)),
+                    (None, Some(call)) => Some((call, operands[0], None)),
                     _ => None,
                 }
             });
@@ -2022,10 +2194,12 @@ impl OwnerReturnPin {
                 self.awaited_call_shape(operands[1], &self.name),
                 rendered,
             ) {
-                (_, _, Some(pin)) if renders => pin,
+                (_, _, Some(pin)) if renders || indexes => pin,
+                // A `vec!` elsewhere (the expected value, the message) leaves
+                // the direct readings below.
                 _ if renders => return false,
-                (Some(call), None, _) => (call, operands[1]),
-                (None, Some(call), _) => (call, operands[0]),
+                (Some(call), None, _) => (call, operands[1], Some(operands[0])),
+                (None, Some(call), _) => (call, operands[0], Some(operands[1])),
                 (None, None, Some(pin)) => pin,
                 (None, None, _) if unwrapped_direct.is_some() => {
                     let Some(pair) = unwrapped_direct else {
@@ -2051,34 +2225,39 @@ impl OwnerReturnPin {
                             &self.name,
                             self.returns_scalar,
                         )
-                        .and_then(|call| self.awaited_call_shape(call, &self.name))
+                        .and_then(|text| {
+                            self.awaited_call_shape(text, &self.name)
+                                .map(|call| (call, text))
+                        })
                     };
                     match (bound(0), bound(1)) {
-                        (Some(call), None) => (call, operands[1]),
-                        (None, Some(call)) => (call, operands[0]),
+                        (Some((call, text)), None) => (call, operands[1], Some(text)),
+                        (None, Some((call, text))) => (call, operands[0], Some(text)),
                         // RIPR-SPEC-0225 rule 1: `let c = owner(..);` named
                         // only by its `let` and this comparison.
                         (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
                             let bound_whole = |at: usize| {
                                 let initializer =
                                     bound_owner_initializer(test, operands[at], &self.name)?;
-                                owner_call_shape(initializer, &self.name)
+                                self.awaited_call_shape(initializer, &self.name)
                                     .map(|call| (call, false))
                                     .or_else(|| {
                                         unwrap_wrapper
                                             .and(unwrapped_call(initializer))
-                                            .and_then(|call| owner_call_shape(call, &self.name))
+                                            .and_then(|call| {
+                                                self.awaited_call_shape(call, &self.name)
+                                            })
                                             .map(|call| (call, true))
                                     })
                             };
                             match (bound_whole(0), bound_whole(1)) {
                                 (Some((call, unwraps)), None) => {
                                     unwrapped = unwraps;
-                                    (call, operands[1])
+                                    (call, operands[1], None)
                                 }
                                 (None, Some((call, unwraps))) => {
                                     unwrapped = unwraps;
-                                    (call, operands[0])
+                                    (call, operands[0], None)
                                 }
                                 _ => return false,
                             }
@@ -2093,8 +2272,8 @@ impl OwnerReturnPin {
                 self.awaited_call_shape(left, &self.name),
                 self.awaited_call_shape(right, &self.name),
             ) {
-                (Some(call), None) => (call, right.as_str()),
-                (None, Some(call)) => (call, left.as_str()),
+                (Some(call), None) => (call, right.as_str(), Some(left.as_str())),
+                (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
                 _ => return false,
             }
         } else if !is_guard
@@ -2122,7 +2301,11 @@ impl OwnerReturnPin {
             }) {
                 return false;
             }
-            (call, matches_operands[1].as_str())
+            (
+                call,
+                matches_operands[1].as_str(),
+                Some(matches_operands[0].as_str()),
+            )
         } else if let Some(operands) = inline_expect_operands(&assertion.text) {
             // #6578: `expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`
             // compares the actual text with the inline literal and panics on
@@ -2132,7 +2315,11 @@ impl OwnerReturnPin {
             let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
                 return false;
             };
-            (call, expect_operands[1].as_str())
+            (
+                call,
+                expect_operands[1].as_str(),
+                Some(expect_operands[0].as_str()),
+            )
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
@@ -2149,7 +2336,7 @@ impl OwnerReturnPin {
             let Some(call) = self.awaited_call_shape(operand, &self.name) else {
                 return false;
             };
-            (call, expected)
+            (call, expected, Some(operand))
         } else {
             return false;
         };
@@ -2161,9 +2348,8 @@ impl OwnerReturnPin {
         // calls eagerly (#6482). A harness trial's body is only its
         // registration, and an assertion attributed to it from anywhere else
         // sees bindings that are not in it.
-        let helper = syntax
-            .helper_loan(test, assertion, index)
-            .map(|loan| loan.helper);
+        let loan = syntax.helper_loan(test, assertion, index);
+        let helper = loan.as_ref().map(|loan| loan.helper.clone());
         let in_body = (test.start_line..=test.end_line).contains(&assertion.line);
         if in_body == helper.is_some() {
             return false;
@@ -2195,6 +2381,16 @@ impl OwnerReturnPin {
                 return false;
             };
             Some(literal)
+        } else if let ReturnPathGate::WholeValueField(gate) = &self.path
+            && reads_assert_eq
+            && helper.is_none()
+            && let Some(literal) =
+                expected_binding::expected_item_literal(index, expected, &gate.type_name)
+        {
+            // SPEC-0225 decision 7: `expected()` and `T { .., ..T::default() }`
+            // read as the one literal each stands for; the gates below check
+            // that literal.
+            Some(literal)
         } else {
             None
         };
@@ -2212,9 +2408,7 @@ impl OwnerReturnPin {
             (false, _) => expected,
         };
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
-        if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
-            || (owner_named_outside(test, &assertion.text, &self.name)
-                && expected_binding_calls_owner(test, expected, &self.name))
+        if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
         {
             return false;
@@ -2246,6 +2440,21 @@ impl OwnerReturnPin {
             ) => return false,
             (path, _) => {
                 if !path.admits(expected) {
+                    return false;
+                }
+                // RIPR-SPEC-0265 rule 2: the pinned call must run the
+                // closure at least once.
+                if let ReturnPathGate::Adaptor { position } = path
+                    && !call_text.is_some_and(|text| {
+                        closure_adaptor::pinned_call_runs_closure(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                        )
+                    })
+                {
                     return false;
                 }
                 // The expected `Err(..)` / `Ok(..)` / `Some(..)` / `None`
@@ -3111,7 +3320,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any => true,
+            Self::Any | Self::Adaptor { .. } => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }
@@ -5577,9 +5786,52 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
-/// `assert_eq!` whose only nested macros are `format!`, which
-/// [`rendered_scalar_operand`] reads.
-fn is_assert_eq_of_render(text: &str) -> bool {
+/// [`is_plain_macro`], or the same single invocation under a `std` or `core`
+/// root (`std::assert_eq!(..)`, `::core::assert_eq!(..)`). Admission
+/// credits the qualified form only when [`OwnerPinSyntax`] proves the root
+/// unrebound (#7857).
+fn is_plain_or_std_macro(text: &str, macro_name: &str) -> bool {
+    is_plain_macro(text, macro_name) || std_rooted_macro_path(text, macro_name).is_some()
+}
+
+/// The whitespace-free path of every `std`/`core`-rooted `assert_eq!` call
+/// under `root` (#7857).
+fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.path())
+        .map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+        })
+        .filter(|path| STD_ROOTED_ASSERT_EQ.contains(&path.as_str()))
+        .collect()
+}
+
+/// The whitespace-free path (`std::assert_eq`, `::core::assert_eq`) when
+/// `text` is one `macro_name` invocation under a `std` or `core` root.
+fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [(name, _)] = invocations.as_slice() else {
+        return None;
+    };
+    let offset = masked.find(macro_name)?;
+    let root: String = masked[..offset]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    (*name == macro_name && matches!(root.as_str(), "std::" | "core::" | "::std::" | "::core::"))
+        .then(|| format!("{root}{macro_name}"))
+}
+
+/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// [`rendered_scalar_operand`] reads, or `vec!`, which
+/// [`single_element_index`] reads).
+fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
@@ -5587,7 +5839,7 @@ fn is_assert_eq_of_render(text: &str) -> bool {
     };
     *first == "assert_eq"
         && !nested.is_empty()
-        && nested.iter().all(|(name, _)| *name == "format")
+        && nested.iter().all(|(name, _)| *name == expansion)
         && masked
             .find("assert_eq")
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
@@ -6624,10 +6876,11 @@ pub(in crate::analysis) fn pin_scope_needs(
     // Same rivals `establish` settles per test (#6544): once indexed they no
     // longer refuse, but files that define more of them still widen scope.
     let identity = match kind {
-        CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+        CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
         CallKind::Method | CallKind::Associated => None,
     };
-    needs.competing_definitions = !other_definition_competes(owner, index, kind, identity.as_ref());
+    needs.competing_definitions =
+        !other_definition_competes(owner, index, kind, identity.as_deref());
     needs
 }
 
@@ -7152,6 +7405,293 @@ fn rendered_scalar_operand(operand: &str) -> Option<&str> {
     }
 }
 
+const INTEGER_TYPES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
+
+/// trap-ceiling-wide-min-control: the call inside `operand` when the
+/// projection still pins it against the literal `expected` value `e`:
+/// `call.min(k)` with `e < k` (a result of `e` below the bound means the
+/// call returned `e`), `call.max(k)` with `e > k`, and `call * 1`,
+/// `1 * call`, `call + 0` or `0 + call`, which keep every value. Both
+/// numbers are plain decimal literals; anything else refuses.
+fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a str> {
+    let decimal = |text: &str| -> Option<u128> {
+        let text = text.trim();
+        // `_12` is an identifier, not a literal: the first byte is a digit.
+        (text.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+        .then(|| text.replace('_', "").parse().ok())
+        .flatten()
+    };
+    let expected = decimal(expected)?;
+    let operand = operand.trim();
+    for (method, keeps) in [
+        (
+            ".min(",
+            (|e: u128, k: u128| e < k) as fn(u128, u128) -> bool,
+        ),
+        (".max(", |e, k| e > k),
+    ] {
+        if let Some(at) = operand.rfind(method)
+            && let Some(bound) = operand[at + method.len()..].strip_suffix(')')
+            && let Some(bound) = decimal(bound)
+        {
+            return keeps(expected, bound).then_some(operand[..at].trim_end());
+        }
+    }
+    let after = |text: &'a str, operator: char, identity: char| {
+        text.strip_suffix(identity)?
+            .trim_end()
+            .strip_suffix(operator)
+            .map(str::trim_end)
+    };
+    let before = |text: &'a str, operator: char, identity: char| {
+        text.strip_prefix(identity)?
+            .trim_start()
+            .strip_prefix(operator)
+            .map(str::trim_start)
+    };
+    after(operand, '*', '1')
+        .or_else(|| after(operand, '+', '0'))
+        .or_else(|| before(operand, '*', '1'))
+        .or_else(|| before(operand, '+', '0'))
+        .filter(|call| !call.is_empty())
+}
+
+/// `.min(k)` and `.max(k)` on an integer resolve to the prelude's `Ord`
+/// only while nothing rebinds that name: a local `trait Ord` (or an import
+/// of one, including through a foreign glob) shadows it, and
+/// `no_implicit_prelude` drops it. A workspace that declares its own
+/// `fn min`/`fn max`, names `Ord` in a `use` or a `trait` item, drops the
+/// prelude, or whose test file globs a foreign module refuses the
+/// projection rather than crediting a method it may not bind (#7932
+/// review). `* 1` and `+ 0` keep std's operator impls, which coherence
+/// forbids redefining for a primitive.
+fn ord_method_rebindable(operand: &str, test: &TestSummary, index: &RustIndex) -> bool {
+    let method = match (operand.contains(".min("), operand.contains(".max(")) {
+        (false, false) => return false,
+        (true, false) => "min",
+        (false, true) => "max",
+        (true, true) => return true,
+    };
+    let Some(test_source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.clone())
+    else {
+        return true;
+    };
+    if may_saturate_macro_ambiguity(&test_source) {
+        return true;
+    }
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    // `keyword` as a whole word, followed by whitespace and `then`, which
+    // `then` matches by its whole leading word or (for `use`) its item text.
+    let declares = |masked: &str, keyword: &str, then: &dyn Fn(&str) -> bool| {
+        masked.match_indices(keyword).any(|(offset, _)| {
+            let rest = &masked[offset + keyword.len()..];
+            let item = rest.trim_start();
+            masked[..offset]
+                .bytes()
+                .next_back()
+                .is_none_or(|byte| !ident(byte))
+                && item.len() < rest.len()
+                && then(item)
+        })
+    };
+    let leading = |word: &'static str| {
+        move |item: &str| {
+            item.strip_prefix(word)
+                .is_some_and(|tail| !tail.bytes().next().is_some_and(ident))
+        }
+    };
+    let names_ord =
+        |item: &str| contains_as_whole_word(item.split(';').next().unwrap_or(item), "Ord");
+    index.files().iter().any(|(_, facts)| {
+        let masked = mask_comments_and_strings(&facts.data().source);
+        masked.contains("no_implicit_prelude")
+            || declares(&masked, "fn", &leading(method))
+            || declares(&masked, "trait", &leading("Ord"))
+            || declares(&masked, "use", &names_ord)
+    })
+}
+
+/// trap-pile-first-element-control: the call inside `vec![call][0]`, a
+/// one-element vector indexed at zero, which is the call's own value. A
+/// repeat form (`vec![call; n]`), a second element or any other index
+/// refuses.
+fn single_element_index(operand: &str) -> Option<&str> {
+    let inner = operand
+        .trim()
+        .strip_suffix("[0]")?
+        .trim_end()
+        .strip_prefix("vec![")?
+        .strip_suffix(']')?;
+    // A `;` in a string or comment is not the repeat separator.
+    if mask_comments_and_strings(inner).contains(';') {
+        return None;
+    }
+    match split_top_level_arguments(inner)?.as_slice() {
+        [call] => Some(call.trim()),
+        [call, rest] if rest.trim().is_empty() => Some(call.trim()),
+        _ => None,
+    }
+}
+
+/// The callee of `subject` when it is one bare call `name(..)` whose first
+/// parenthesis closes at its end: no path, receiver, projection or operator
+/// around it (`weight(4).wrapping_sub(weight(4))`, `other::weight(4)`), so
+/// the compared value is the call's own return (#7974 review).
+pub(in crate::analysis) fn direct_call_name(subject: &str) -> Option<&str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let name = subject[..open].trim_end();
+    let mut chars = name.chars();
+    if !chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (at, byte) in subject.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (at + 1 == subject.len()).then_some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// trap-tally-reached-assert-control: the compared call when `assertion` is
+/// `assert_eq!(subject, e)` (either order, `e` an integer literal) and
+/// `condition` is `subject <op> k` or `k <op> subject` (one comparison,
+/// `k` an integer literal) that does not hold at `e`, so an
+/// `if condition { return; }` before it spares the expected value. `None`
+/// when the guard fires at `e` (left to the guarded-return refusal) or
+/// either shape is anything else.
+fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a str> {
+    let integer = |text: &str| -> Option<i128> {
+        let text = text.trim();
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        (digits.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && digits.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+        .then(|| text.replace('_', "").parse().ok())
+        .flatten()
+    };
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    if !is_plain_macro(assertion, "assert_eq") {
+        return None;
+    }
+    let operands = assertion_comparison_operands(assertion)?;
+    let (subject, expected) = match (integer(operands[0]), integer(operands[1])) {
+        (None, Some(expected)) => (operands[0].trim(), expected),
+        (Some(expected), None) => (operands[1].trim(), expected),
+        _ => return None,
+    };
+    // `compact` drops whitespace inside a string or char literal too, so a
+    // call with one stays out (#7974 review).
+    if direct_call_name(subject).is_none()
+        || subject.contains(['"', '\''])
+        || ["&&", "||", "::<", "->"]
+            .iter()
+            .any(|op| condition.contains(op))
+    {
+        return None;
+    }
+    // The one comparison operator outside brackets.
+    let bytes = condition.as_bytes();
+    let mut depth = 0usize;
+    let mut found = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b'<' | b'>' | b'=' | b'!' if depth == 0 => {
+                let width = if bytes.get(at + 1) == Some(&b'=') {
+                    2
+                } else {
+                    1
+                };
+                let operator = &condition[at..at + width];
+                if !matches!(operator, "<" | ">" | "<=" | ">=" | "==" | "!=") || found.is_some() {
+                    return None;
+                }
+                found = Some((at, operator));
+                at += width;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let (at, operator) = found?;
+    let (left, right) = (&condition[..at], &condition[at + operator.len()..]);
+    // Read the guard as `subject <op> k`; `k < subject` is `subject > k`.
+    let (operator, bound) = if compact(left) == compact(subject) {
+        (operator, integer(right)?)
+    } else if compact(right) == compact(subject) {
+        let flipped = match operator {
+            "<" => ">",
+            ">" => "<",
+            "<=" => ">=",
+            ">=" => "<=",
+            same => same,
+        };
+        (flipped, integer(left)?)
+    } else {
+        return None;
+    };
+    // The guard must spare a wrong value, or the assertion runs only when
+    // it passes and the test is a certain gap (#7932 tally review): `!=`
+    // returns for every wrong value. ripr does not know the integer type,
+    // so `e - 1` counts only where every type holding `e` holds it too
+    // (`e >= 1`, or a negative `e` above every signed minimum), and
+    // `e + 1` only where `e` is no type's maximum; a neighbour on the
+    // threshold's side is a value of the guard's own type.
+    let maxima: [i128; 9] = [
+        i8::MAX.into(),
+        u8::MAX.into(),
+        i16::MAX.into(),
+        u16::MAX.into(),
+        i32::MAX.into(),
+        u32::MAX.into(),
+        i64::MAX.into(),
+        u64::MAX.into(),
+        i128::MAX,
+    ];
+    let minima: [i128; 5] = [
+        i8::MIN.into(),
+        i16::MIN.into(),
+        i32::MIN.into(),
+        i64::MIN.into(),
+        i128::MIN,
+    ];
+    let below = expected >= 1 || (expected < 0 && !minima.contains(&expected));
+    let above = !maxima.contains(&expected);
+    let spares_wrong = match operator {
+        // Fires only at `k`: every other wrong value runs the assertion.
+        "==" => bound != expected,
+        // Spares `v <= k`, or `v <= k - 1` for `>=`.
+        ">" => expected < bound || (expected == bound && below),
+        ">=" => expected < bound && (expected.checked_add(1)? < bound || below),
+        // Spares `v >= k`, or `v >= k + 1` for `<=`.
+        "<" => expected > bound || (expected == bound && above),
+        "<=" => expected > bound && (expected.checked_sub(1)? > bound || above),
+        _ => false,
+    };
+    spares_wrong.then_some(subject)
+}
+
 /// A plain `"..."` string literal with no escapes or inner quotes.
 fn is_plain_string_literal(text: &str) -> bool {
     text.trim()
@@ -7199,6 +7739,22 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
             });
         !declared && !imported
     })
+}
+
+/// Whether the expected operand of `assertion` in `test` reaches the owner
+/// `name`: it names the owner, or names a test binding whose initializer
+/// does (`assert_eq!(f(4), f(2) + f(2))`, `let e = f(4); assert_eq!(f(4),
+/// e)`), so the assertion compares the owner with itself. Shared by the
+/// owner-return pin and RIPR-SPEC-0265 element pairing.
+pub(in crate::analysis::classify) fn expected_reaches_owner(
+    test: &TestSummary,
+    assertion: &str,
+    expected: &str,
+    name: &str,
+) -> bool {
+    contains_as_whole_word(&mask_comments_and_strings(expected), name)
+        || (owner_named_outside(test, assertion, name)
+            && expected_binding_calls_owner(test, expected, name))
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the

@@ -59,6 +59,7 @@ use std::{
 mod boundary;
 mod classify;
 mod deleted_lines;
+mod guard_activation;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -946,6 +947,10 @@ impl PythonAdapter {
                     &all_owners,
                     &all_tests,
                     no_behavior,
+                    workspace_read
+                        .sources
+                        .get(&changed.path)
+                        .map(String::as_str),
                 ) {
                     findings.push(finding);
                 }

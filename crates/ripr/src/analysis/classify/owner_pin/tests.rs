@@ -3253,6 +3253,200 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
     }
 }
 
+/// #7857: a `std::`/`core::`-qualified `assert_eq!` runs as the standard
+/// macro unless its root may be rebound, so it is admitted like the bare
+/// form. The proof needs the package manifests (a Cargo rename of `std`),
+/// the test's own file (a rebinding module, import or `extern crate`
+/// rename, a glob from another file, `no_implicit_prelude`, the invocation
+/// of a macro that generates the test) and the usual execution path.
+#[test]
+fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-plain",
+        &[("Cargo.toml", &manifest(""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest(
+                "std = { package = \"fake-std\", version = \"1\" }\ncore = { package = \"fake-core\", version = \"1\" }\n",
+            ),
+        )],
+    )?;
+    let test = |assertion: &str| format!("#[test]\nfn weighs() {{\n    {assertion}\n}}\n");
+    let opaque = |path: &str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::OpaqueMacro(path.to_string()),
+        ))
+    };
+    for (tests, path) in [
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("::core::assert_eq!(weight(4), 12);")
+            ),
+            "::core::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("core::assert_eq!(weight(4), 12);")
+            ),
+            "core::assert_eq",
+        ),
+        // The parser keeps the spacing of the path.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std :: assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\nmod tests {{\n    use super::*;\n{}}}\n",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            None,
+            "{tests}"
+        );
+        // Without a manifest, or with `std`/`core` bound to another package,
+        // the root is unproved.
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&aliased)),
+            opaque(path),
+            "{tests}"
+        );
+        assert_eq!(weight_refusal(&tests, &[]), opaque(path), "{tests}");
+    }
+    // The fact reader already drops a call whose root the file rebinds.
+    for prefix in [
+        "mod std {}\n",
+        "use demo as std;\n",
+        "extern crate demo as std;\n",
+    ] {
+        let tests = format!(
+            "{prefix}use demo::weight;\n{}",
+            test("std::assert_eq!(weight(4), 12);")
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert!(index.tests().at(0).assertions.is_empty(), "{tests}");
+    }
+    for (tests, refusal) in [
+        // A glob from another file may bring a `std` item.
+        (
+            format!("use demo::*;\n{}", test("std::assert_eq!(weight(4), 12);")),
+            opaque("std::assert_eq"),
+        ),
+        (
+            format!(
+                "#![no_implicit_prelude]\nuse demo::weight;\n{}",
+                test("::std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("::std::assert_eq"),
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("if weight(1) > 9 { std::assert_eq!(weight(4), 12); }")
+            ),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ConditionalPath("an `if` branch"),
+            )),
+        ),
+        // `#![no_std]` without `extern crate std` leaves no `std` root.
+        (
+            format!(
+                "#![no_std]\nuse demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("std::assert_eq"),
+        ),
+        // Other drop-in roots need their own manifest check, which this
+        // gate does not make.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("pretty_assertions::assert_eq!(weight(4), 12);")
+            ),
+            opaque("pretty_assertions::assert_eq"),
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            refusal,
+            "{tests}"
+        );
+    }
+    // An unproved qualified call anywhere in the file may expand to an early
+    // return, so a later bare assertion is refused too (#7938 review).
+    let bare_after = |root: &Path| {
+        let tests = format!(
+            "use demo::weight;\n{}",
+            test("std::assert_eq!(1, 1);\n    assert_eq!(weight(4), 12);")
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| {
+            test.assertions
+                .iter()
+                .find(|assertion| assertion.text.starts_with("assert_eq!(weight"))
+        });
+        assert!(assertion.is_some(), "{tests}");
+        OwnerPinSyntax::default().refusal(test?, assertion?, &index)
+    };
+    assert_eq!(bare_after(&plain), None);
+    assert_eq!(bare_after(&aliased), opaque("std::assert_eq"));
+    // A generated test is checked against its expansion, which shows
+    // neither the file's glob nor the generating invocation; the real file
+    // shows both. The bare form is the control: the same generated test is
+    // admitted, so the refusal is the qualified root's.
+    let generated = |assertion: &str| {
+        let tests = format!(
+            "use demo::*;\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            {assertion}\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        assert!(
+            test.is_some_and(|test| !test.assertions.is_empty()),
+            "{tests}"
+        );
+        let test = test?;
+        OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    };
+    assert_eq!(generated("assert_eq!(weight(4), 12);"), None);
+    assert_eq!(
+        generated("std::assert_eq!(weight(4), 12);"),
+        opaque("std::assert_eq")
+    );
+    Ok(())
+}
+
 #[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
@@ -3885,6 +4079,156 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
         );
     }
     Ok(())
+}
+
+#[test]
+fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
+    // trap-tally-reached-assert-control / trap-steps-early-return.
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for guard in [
+        "if weight(4) > 1000 { return; }",
+        "if 1000 < weight(4) { return; }",
+        "if weight(4) == 0 {\n    return;\n}",
+        "if weight( 4 ) >= 13 { return }",
+        "if weight(4) > 12 { return; }",
+        "if weight(4) <= 11 { return; }",
+        "if weight(4) < -1 { return; }",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert_eq!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject),
+            Some("weight(4)"),
+            "{guard}"
+        );
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    for guard in [
+        // The guard fires at the expected value: left to the guarded-return
+        // refusal.
+        "if weight(4) < 1000 { return; }",
+        "if weight(4) == 12 { return; }",
+        "if weight(4) >= 12 { return; }",
+        // The guard returns for every wrong value: a certain gap.
+        "if weight(4) != 12 { return }",
+        "if 12 != weight(4) { return; }",
+        // Another call, another operand shape, or a compound condition.
+        "if weight(5) > 1000 { return; }",
+        "if other(4) > 1000 { return; }",
+        "if weight(4) > LIMIT { return; }",
+        "if weight(4) > 1000 && true { return; }",
+        "if weight(4) > 10 > false { return; }",
+        "if !(weight(4) < 1000) { return; }",
+        // Anything else in the guard, an `else`, a second return, a value.
+        "if weight(4) > 1000 { println!(\"x\"); return; }",
+        "if weight(4) > 1000 { return; } else {}",
+        "if weight(4) > 1000 { return; }\nif weight(4) > 2000 { return; }",
+        "let _ = (); if weight(4) > 1000 { return (); }",
+        "{ if weight(4) > 1000 { return; } }",
+        "return;",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(found.is_some(), "{guard}");
+        assert!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject)
+                .is_none(),
+            "{guard}"
+        );
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // The guard reads the call the assertion compares, against a literal.
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_eq!(weight(4), TWELVE);");
+    assert!(found.is_some_and(|refusal| refusal.value_guard_subject().is_none()));
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_ne!(weight(4), 13);");
+    assert!(found.is_none_or(|refusal| refusal.value_guard_subject().is_none()));
+    // Whitespace inside a literal argument is not layout, and the compared
+    // value must be the call's own return: no projection, receiver or path
+    // (#7974 review).
+    for (guard, pin) in [
+        (
+            "if weight(4).wrapping_sub(weight(4)) > 1000 { return; }",
+            "assert_eq!(weight(4).wrapping_sub(weight(4)), 0);",
+        ),
+        (
+            "if weight(4).min(5) > 1000 { return; }",
+            "assert_eq!(weight(4).min(5), 5);",
+        ),
+        (
+            "if other::weight(4) > 1000 { return; }",
+            "assert_eq!(other::weight(4), 12);",
+        ),
+        (
+            "if (weight(4)) > 1000 { return; }",
+            "assert_eq!((weight(4)), 12);",
+        ),
+        (
+            "if weight(\"a b\") > 1000 { return; }",
+            "assert_eq!(weight(\"ab\"), 12);",
+        ),
+        (
+            "if weight(' ') > 1000 { return; }",
+            "assert_eq!(weight(' '), 12);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.value_guard_subject().is_none()),
+            "{guard}"
+        );
+    }
+    // ripr does not know the type, so a neighbour of `e` outside the guard's
+    // spared side may not exist: an unsigned count at 0, a `u8` at 255.
+    for (guard, pin) in [
+        ("if weight(4) > 0 { return; }", "assert_eq!(weight(4), 0);"),
+        ("if weight(4) >= 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 255 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) <= 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // A neighbour on the spared side, or one every type holds, is enough.
+    for (guard, pin) in [
+        ("if weight(4) > 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) < 100 { return; }",
+            "assert_eq!(weight(4), 101);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
 }
 
 #[test]
@@ -6037,6 +6381,43 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
     ] {
         assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
     }
+    // #7940 review: an async owner's unwrap reads through `.await`, inline
+    // and once-bound alike; the un-awaited future does not.
+    let awaited = guarded.replace("pub fn parse", "pub async fn parse");
+    assert_ne!(awaited, guarded);
+    for (body, pins) in [
+        (
+            format!("assert_eq!(parse(\"3\").await, Ok({literal}));"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").await.unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").await.unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+        (
+            format!("let c = parse(\"3\");\nassert_eq!(c, Ok({literal}));"),
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use demo::{{parse, Config, Count}};\n#[tokio::test]\nasync fn pins() {{\n{body}\n}}\n"
+        );
+        let (index, pin) = whole_value_pin(&awaited, "parse", &tests);
+        assert!(
+            pin.is_some(),
+            "the async whole-value field pin must establish"
+        );
+        let admits = pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty());
+        assert_eq!(admits, pins, "{body}");
+    }
     // A bare-tail owner has no wrapped value to unwrap.
     assert!(!whole_value_admits(
         CONFIG_LIB,
@@ -6111,6 +6492,243 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
     assert!(pin.is_none(), "{none_const}");
 }
 
+/// RIPR-SPEC-0225 decision 7, acceptance examples 6 and 7: a zero-argument
+/// helper returning a bare literal, and a functional update whose base is
+/// the one manual `Default` returning a bare literal, read as that literal.
+#[test]
+fn an_expected_helper_or_default_base_reads_as_its_literal() {
+    let admits = |lib: &str, items: &str, body: &str| {
+        let tests = format!("use demo::*;\n{items}#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(lib, "build", &tests);
+        assert!(
+            pin.is_some(),
+            "the whole-value field pin must establish: {lib}"
+        );
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let helper = |body: &str| format!("fn expected() -> Config {{\n    {body}\n}}\n");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let call = "assert_eq!(build(3), expected());";
+    assert!(admits(CONFIG_LIB, &helper(literal), call));
+    assert!(admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert_eq!(expected(), build(3));"
+    ));
+    // A helper that computes, takes an argument, or is not the only `fn
+    // expected` (or not a plain item) gives no credit.
+    for (items, body) in [
+        (
+            helper(&format!("let c = {literal};\n    c")),
+            call.to_string(),
+        ),
+        (
+            helper(r#"Config { retries: build(3).retries, name: "x".into(), count: Count(3) }"#),
+            call.to_string(),
+        ),
+        (helper("build(3)"), call.to_string()),
+        (
+            helper(&format!("let _ = build(3);\n    {literal}")),
+            call.to_string(),
+        ),
+        (
+            format!("fn expected(n: u32) -> Config {{\n    {literal}\n}}\n"),
+            "assert_eq!(build(3), expected(4));".to_string(),
+        ),
+        (
+            format!(
+                "{}mod more {{\n    {}}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            format!(
+                "{}macro_rules! make {{\n    () => {{ {} }};\n}}\nmod hidden {{\n    make!();\n}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            helper(literal),
+            format!("let expected = || build(3);\n{call}"),
+        ),
+        (format!("#[inline]\n{}", helper(literal)), call.to_string()),
+        (format!("async {}", helper(literal)), call.to_string()),
+        (
+            helper(literal),
+            "assert_eq!(build(3), more::expected());".to_string(),
+        ),
+    ] {
+        assert!(!admits(CONFIG_LIB, &items, &body), "{items}{body}");
+    }
+    // The helper's own literal must name `retries` independently.
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(r#"Config { name: "x".into(), count: Count(3), retries: four() }"#),
+        call
+    ));
+
+    let default_of = |body: &str| {
+        format!(
+            "{CONFIG_LIB}impl Default for Config {{\n    fn default() -> Self {{\n        {body}\n    }}\n}}\n"
+        )
+    };
+    let defaulted = default_of(r#"Config { retries: 4, name: String::new(), count: Count(3) }"#);
+    let update = r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#;
+    assert!(admits(&defaulted, "", update));
+    assert!(admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+    ));
+    assert!(admits(
+        &default_of(r#"Self { retries: 4, name: String::new(), count: Count(3) }"#),
+        "",
+        update
+    ));
+    // The test's explicit field wins over the default's.
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { retries: four(), ..Config::default() });"#
+    ));
+    for lib in [
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#),
+        default_of("build(3)"),
+        default_of(
+            r#"let c = Config { retries: 4, name: String::new(), count: Count(3) };
+        c"#,
+        ),
+        default_of(r#"Config { retries: 4, ..base() }"#),
+        format!(
+            "{defaulted}impl Config {{\n    pub fn default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        format!("{defaulted}pub trait Default {{\n    fn default() -> Self;\n}}\n"),
+        CONFIG_LIB.replace(
+            "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+            "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+        ),
+    ] {
+        assert!(!admits(&lib, "", update), "{lib}");
+    }
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..base() });"#
+    ));
+    // Review (#7954): a glob from outside the workspace, in the test or
+    // reaching it through another workspace file, may bind `expected` or
+    // `Default` to an item the index cannot read.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("use other::*;\n{}", helper(literal)),
+        call
+    ));
+    // `None` when the pin itself refuses: a foreign glob the library
+    // re-exports already withholds the type name's reach.
+    let through = |lib: &str, helpers: &str, body: &str| {
+        let lib = format!("{lib}pub mod helpers;\npub use crate::helpers::*;\n");
+        let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, &lib), (HELPERS, helpers), (TESTS, &tests)]);
+        field_pin_of(&index, &lib, "build", "retries: n + 1,", "retries: n + 1,")
+            .map(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let fixtures = format!("{CONFIG_LIB}mod fixtures {{\n    {}}}\n", helper(literal));
+    for (lib, body) in [(fixtures.as_str(), call), (defaulted.as_str(), update)] {
+        assert_eq!(through(lib, "", body), Some(true), "{lib}");
+        assert_ne!(
+            through(lib, "pub use other::*;\n", body),
+            Some(true),
+            "{lib}"
+        );
+        // A standard-library glob leaves the pin standing; decision 7
+        // still refuses to read through a glob it cannot list, and so
+        // through a workspace path whose segment an import binds.
+        for helpers in [
+            "pub use std::fmt::*;\n",
+            "extern crate other as ext;\npub use self::ext::*;\n",
+            "pub use other::prelude;\npub use self::prelude::*;\n",
+        ] {
+            assert_eq!(through(lib, helpers, body), Some(false), "{helpers}{lib}");
+        }
+        assert_eq!(
+            through(lib, "pub mod inner {}\npub use self::inner::*;\n", body),
+            Some(true),
+            "{lib}"
+        );
+    }
+    // Review (#7954): `fn r#default` is `default`; an inherent one wins
+    // `Config::default()` over the trait's literal.
+    assert!(!admits(
+        &format!(
+            "{defaulted}impl Config {{\n    pub fn r#default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
+    // Review: a `#[cfg]`-disabled explicit field leaves the default's
+    // computed value in force, so it may not override it in the merge.
+    let computed =
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#);
+    assert!(admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    assert!(!admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { #[cfg(any())] retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    // A raw-identifier helper, an attributed `impl Default`, or a derived
+    // `Default` beside an inherent `default` gives no credit.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("fn r#expected() -> Config {{\n    {literal}\n}}\n"),
+        "assert_eq!(build(3), r#expected());"
+    ));
+    // The one `impl Default` is another type's, and an `==` assertion or a
+    // borrowed check helper is not decision 7's `assert_eq!` shape.
+    assert!(!admits(
+        &format!(
+            "{CONFIG_LIB}pub struct Other {{\n    pub retries: u32,\n}}\nimpl Default for Other {{\n    fn default() -> Self {{\n        Self {{ retries: 4 }}\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert!(build(3) == expected());"
+    ));
+    let derived = CONFIG_LIB.replace(
+        "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+        "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+    );
+    for lib in [
+        defaulted.replace(
+            "impl Default for Config",
+            "#[cfg(any())]\nimpl Default for Config",
+        ),
+        format!(
+            "{derived}impl Config {{\n    pub fn default() -> Self {{\n        Config {{ retries: 4, name: String::new(), count: Count(3) }}\n    }}\n}}\n"
+        ),
+    ] {
+        assert_ne!(lib, defaulted);
+        assert!(
+            !admits(
+                &lib,
+                "",
+                r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+            ),
+            "{lib}"
+        );
+    }
+}
+
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
 /// that names the changed field with an independent value pins it,
 /// directly, through `Ok(..)` and through a once-used `let` of the owner
@@ -6136,8 +6754,9 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
     ));
 }
 
-/// RIPR-SPEC-0225 "No credit" and acceptance examples 6-8, 10, 12, 13 and
-/// 15: a dependent binding or helper, a functional update, another call,
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 8, 10, 12, 13 and
+/// 15: a dependent binding, an unresolvable helper or functional-update base
+/// (`CONFIG_LIB` declares neither `expected` nor a `Default`), another call,
 /// `assert_ne!`, a value copied from the result, a `let mut` or a second use
 /// of the binding, a mismatched wrapper, and a dependent expected value give
 /// no credit.
@@ -6515,7 +7134,7 @@ fn a_path_that_may_leave_the_owners_crate_is_not_a_pin() {
         "assert_eq!(heavy::weight(4), 12);",
         "assert_eq!(::demo::weight(4), 12);",
         // Something after the call.
-        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(crate::weight(4) + 1, 13);",
         // A segment that is not a declared module.
         "assert_eq!(crate::fast::weight(4), 12);",
         // `super` only leads.
@@ -7827,7 +8446,7 @@ fn associated_function_pin_refuses_other_names_for_the_type() {
         ("use demo::Gauge;", "assert_ne!(Gauge::reading(), 41);"),
         (
             "use demo::Gauge;",
-            "assert_eq!(Gauge::reading().min(99), 42);",
+            "assert_eq!(Gauge::reading().saturating_sub(1), 41);",
         ),
     ] {
         let tests = gauge_test(prelude, body);
@@ -8017,6 +8636,129 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
     Ok(())
 }
 
+/// RIPR-SPEC-0265: an owner whose whole body is one closure in an iterator
+/// adaptor over a slice parameter, with one same-file test.
+fn adaptor_lib(tail: &str, test_items: &str) -> String {
+    format!(
+        "pub fn count_positive(xs: &[i32]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test_items}\n}}\n"
+    )
+}
+
+const FILTER_TAIL: &str = "xs.iter().filter(|&&x| x > 0).count()";
+
+fn adaptor_test(body: &str) -> String {
+    format!("    #[test]\n    fn counts() {{\n{body}\n    }}")
+}
+
+/// RIPR-SPEC-0265 rule 2: the pinned call must run the closure at least
+/// once on a literal sequence ripr reads.
+#[test]
+fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
+    let lib = adaptor_lib(
+        FILTER_TAIL,
+        &adaptor_test(
+            "        assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);\n        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[1, 2][..]), 2);\n        let v = [1, 2];\n        assert_eq!(count_positive(&v), 2);\n        assert_eq!(2, count_positive(&[5, 6]));",
+        ),
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count_positive", FILTER_TAIL);
+    assert!(pin.is_some(), "the adaptor tail must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);".to_string(),
+            "assert_eq!(2, count_positive(&[5, 6]));".to_string(),
+        ]
+    );
+}
+
+/// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
+/// non-empty sequence.
+#[test]
+fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
+    for (rows, admitted) in [
+        ("[(&[], 0), (&[1, -1], 1)]", true),
+        ("[(&[], 0), (&[], 0)]", false),
+        // One row ripr cannot read as a literal sequence refuses the pin,
+        // even beside a non-empty literal row.
+        ("[(&[1, -1], 1), (&[0; 2], 0)]", false),
+        ("[(&[1, -1], 1), (&[3u32], 1)]", false),
+    ] {
+        let lib = adaptor_lib(
+            FILTER_TAIL,
+            &adaptor_test(&format!(
+                "        let cases: [(&[i32], usize); 2] = {rows};\n        for (xs, want) in cases {{\n            assert_eq!(count_positive(xs), want);\n        }}"
+            )),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", FILTER_TAIL);
+        assert!(pin.is_some(), "the adaptor tail must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), admitted, "{rows}");
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2 owner side: only the admitted tail, changed as a
+/// whole, establishes the adaptor gate.
+#[test]
+fn adaptor_gate_refuses_tails_outside_the_rule() {
+    let test = adaptor_test("        assert_eq!(count_positive(&[1]), 1);");
+    for (tail, changed) in [
+        ("xs.iter().filter(|&&x| x > 0 && x < 9).count()", None),
+        (
+            "xs.iter().filter(|&&x| [1].iter().any(|&y| y == x)).count()",
+            None,
+        ),
+        (
+            "xs.iter().filter(|&&x| if x > 0 { true } else { false }).count()",
+            None,
+        ),
+        ("xs.iter().position(|&x| x > 0).unwrap_or(0)", None),
+        ("xs.iter().fold(0, |n, &x| n + usize::from(x > 0))", None),
+        ("xs.to_vec().iter().filter(|&&x| x > 0).count()", None),
+        // Consumers that drop closure values: `map` + `count` ignores
+        // them, `filter` + `sum` drops an additive identity unseen.
+        ("xs.iter().map(|&x| x > 0).count()", None),
+        ("xs.iter().filter(|&&x| x > 0).sum()", None),
+        // The predicate alone is not the owner's return value.
+        (FILTER_TAIL, Some("x > 0")),
+    ] {
+        let lib = adaptor_lib(tail, &test);
+        let index = index(&[(LIB, &lib)]);
+        assert!(
+            establish(&index, "count_positive", changed.unwrap_or(tail)).is_none(),
+            "{tail}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2: a `collect` into `Vec` pins only while the
+/// owner's file binds no other item to the name `Vec`.
+#[test]
+fn adaptor_gate_refuses_a_collect_into_a_rebound_vec() {
+    let tail = "xs.iter().map(|&x| x > 0).collect()";
+    let test = adaptor_test("        assert!(pos(&[0, 5]).len() > 0);");
+    for (items, admitted) in [
+        ("", true),
+        ("type Vec<T> = std::collections::BTreeSet<T>;\n", false),
+        ("use std::collections::BTreeSet as Vec;\n", false),
+        ("use other::Vec;\n", false),
+        ("pub struct Vec<T>(T);\n", false),
+        ("pub enum Vec { A }\n", false),
+    ] {
+        let lib = format!(
+            "pub fn pos(xs: &[i32]) -> Vec<bool> {{\n    {tail}\n}}\n{items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test}\n}}\n"
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert_eq!(
+            establish(&index, "pos", tail).is_some(),
+            admitted,
+            "{items}"
+        );
+    }
+}
+
 #[test]
 fn a_scalar_rendering_compared_with_exact_text_pins() {
     // trap-shine-debug-exact-control: the std `Debug` or `Display` text of
@@ -8076,4 +8818,155 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
     let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");";
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn an_integer_projection_that_keeps_the_value_pins() {
+    // trap-ceiling-wide-min-control / trap-muffle-times-one-control: a
+    // result below a `.min` bound (above a `.max` bound) is the call's own
+    // value, and `* 1` / `+ 0` keep every value.
+    for body in [
+        "assert_eq!(crate::weight(4).min(100), 12);",
+        "assert_eq!(12, crate::weight(4).min(1_000));",
+        "assert_eq!(crate::weight(4)\n            .min(100), 12);",
+        "assert_eq!(crate::weight(4).max(3), 12);",
+        "assert_eq!(crate::weight(4) * 1, 12);",
+        "assert_eq!(1 * crate::weight(4), 12);",
+        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(0 + crate::weight(4), 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // The bound clamps, or the projection loses the value.
+        "assert_eq!(crate::weight(4).min(12), 12);",
+        "assert_eq!(crate::weight(4).min(1), 1);",
+        "assert_eq!(crate::weight(4).max(12), 12);",
+        "assert_eq!(crate::weight(4).max(20), 20);",
+        "assert_eq!(crate::weight(4) * 0, 0);",
+        "assert_eq!(crate::weight(4) * 10, 120);",
+        "assert_eq!(crate::weight(4) + 10, 22);",
+        "assert_eq!(crate::weight(4) - 0, 12);",
+        "assert_eq!(crate::weight(4) / 1, 12);",
+        // A bound or expected value ripr does not read as a literal.
+        "assert_eq!(crate::weight(4).min(LIMIT), 12);",
+        "assert_eq!(crate::weight(4).min(100), TWELVE);",
+        "assert_eq!(crate::weight(4).min(100u32), 12);",
+        "assert_eq!(crate::weight(4).min(0x64), 12);",
+        // A leading `_` names a const or binding, not a literal.
+        "assert_eq!(crate::weight(4).min(_100), 12);",
+        "assert_eq!(crate::weight(4).max(3), _12);",
+        // Something else around the call.
+        "assert_eq!(crate::weight(4).min(100).min(50), 12);",
+        "assert_eq!(crate::weight(4) / 2 * 1, 6);",
+        "assert_ne!(crate::weight(4).min(100), 13);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // Floats and other non-integer returns keep only the bare call.
+    let body = "assert_eq!(crate::weight(4).min(100), 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A float or bool owner is a scalar but not an integer.
+    for returned in ["f64", "bool"] {
+        let lib = unit_tests("", body).replace("-> u32", &format!("-> {returned}"));
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    }
+    // #7932 review: `.min`/`.max` are the prelude `Ord`'s only while nothing
+    // rebinds them. A local `trait Ord` shadows the prelude's, and an import
+    // of `Ord`, a foreign glob, or a workspace `fn min` may supply another.
+    let rebinding = [
+        "trait Ord {\n    fn min(self, k: u32) -> u32;\n}\nimpl Ord for u32 {\n    fn min(self, _k: u32) -> u32 {\n        12\n    }\n}\n\n",
+        "use other::Ord;\n\n",
+        "use other::{\n    Ord,\n};\n\n",
+        "pub struct Span;\nimpl Span {\n    pub fn min(&self) -> u32 {\n        0\n    }\n}\n\n",
+    ];
+    for prelude in rebinding {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+        // `* 1` keeps std's operator impl, which coherence fixes.
+        let lib = unit_tests(prelude, "assert_eq!(crate::weight(4) * 1, 12);");
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{lib}");
+    }
+    // A foreign glob may import an `Ord`; it already refuses every pin.
+    let lib = unit_tests("use other::*;\n\n", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    let max = "assert_eq!(crate::weight(4).max(3), 12);";
+    let lib = unit_tests("pub fn max(a: u32) -> u32 {\n    a\n}\n\n", max);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A longer name, or the other method, rebinds nothing.
+    for prelude in [
+        "pub fn minimum(a: u32) -> u32 {\n    a\n}\n\n",
+        "pub fn max(a: u32) -> u32 {\n    a\n}\n\n",
+        "use std::collections::BTreeMap;\n\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{lib}");
+    }
+}
+
+#[test]
+fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
+    // trap-pile-first-element-control: `vec![call][0]` is the call's value.
+    for body in [
+        "assert_eq!(vec![crate::weight(4)][0], 12);",
+        "assert_eq!(12, vec![crate::weight(4)][0]);",
+        "assert_eq!(vec![crate::weight(4),][0], 12);",
+        "assert_eq!(vec![\n            crate::weight(4),\n        ][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
+        // A `;` inside a string argument is not the repeat separator.
+        "assert_eq!(vec![crate::weight(\"a;b\".len() as u32)][0], 9);",
+        // A `vec!` in the expected value or message leaves the bare call.
+        "assert_eq!(crate::weight(4), vec![12][0]);",
+        "assert_eq!(crate::weight(4), 12, \"{:?}\", vec![1]);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Another element, index, repeat form or projection.
+        "assert_eq!(vec![crate::weight(4), 1][0], 12);",
+        "assert_eq!(vec![1, crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4); 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4) ; 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0] + 1, 13);",
+        "assert_eq!(vec![crate::weight(4)].len(), 1);",
+        "assert_eq!(vec![crate::weight(4)], vec![12]);",
+        // A qualified `vec!`, another nested macro, or another assertion.
+        "assert_eq!(std::vec![crate::weight(4)][0], 12);",
+        "assert_eq!(vec![dbg!(crate::weight(4))][0], 12);",
+        "assert_eq!(vec![format!(\"{}\", crate::weight(4))][0], \"12\");",
+        "assert_ne!(vec![crate::weight(4)][0], 13);",
+        "assert!(vec![crate::weight(4)][0] == 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // A non-scalar owner keeps only the bare call.
+    let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn a_direct_call_name_is_one_bare_call_ending_the_subject() {
+    for (subject, name) in [
+        ("weight(4)", Some("weight")),
+        (" weight ( 4 , [1, 2] ) ", Some("weight")),
+        ("_w(f(1))", Some("_w")),
+        ("weight(4).min(5)", None),
+        ("weight(4) + 1", None),
+        ("other::weight(4)", None),
+        ("x.weight(4)", None),
+        ("(weight(4))", None),
+        ("weight(4)(5)", None),
+        ("4weight(1)", None),
+        ("weight", None),
+        ("weight(4", None),
+    ] {
+        assert_eq!(direct_call_name(subject), name, "{subject}");
+    }
 }

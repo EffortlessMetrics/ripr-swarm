@@ -97,7 +97,7 @@
         }
       ],
       "mutant_id": "src/display.rs:20:17: replace + with * in <impl Display for Version>::fmt",
-      "mutation_operator": "*",
+      "mutation_operator": "BinaryOperator",
       "runtime_outcome": "caught",
       "seam_id": null,
       "test_command": null,
@@ -127,7 +127,7 @@
         }
       ],
       "mutant_id": "src/display.rs:20:17: replace + with - in <impl Display for Version>::fmt",
-      "mutation_operator": "-",
+      "mutation_operator": "BinaryOperator",
       "runtime_outcome": "caught",
       "seam_id": null,
       "test_command": null,

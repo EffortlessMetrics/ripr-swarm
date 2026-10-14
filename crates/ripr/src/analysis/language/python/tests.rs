@@ -5838,7 +5838,7 @@ fn diff_mode_emits_no_probe_for_structural_def_header_lines() -> Result<(), Stri
         ..PythonNoBehaviorContext::default()
     };
     let classify = |line: usize, text: &str, old: Option<&str>| {
-        classify_change_with_context(file, line, text, old, &owners, &[], context(line))
+        classify_change_with_context(file, line, text, old, &owners, &[], context(line), None)
     };
     assert!(classify(3, "        self,", None).is_none());
     assert!(classify(6, "    ):", None).is_none());
@@ -5942,7 +5942,7 @@ fn classify_multi_line_header_line(
         multi_line_def_header_line: true,
         ..PythonNoBehaviorContext::default()
     };
-    classify_change_with_context(file, line, text, None, &owners, tests, context)
+    classify_change_with_context(file, line, text, None, &owners, tests, context, None)
         .ok_or_else(|| format!("line {line} should classify"))
 }
 

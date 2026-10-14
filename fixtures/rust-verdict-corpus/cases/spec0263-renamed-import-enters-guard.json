@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0263-renamed-import-enters-guard",
+  "subject_id": "authored-spec0263-renamed-import-enters-guard",
+  "diff": "cases/spec0263-renamed-import-enters-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_renamed_import",
+  "hard_case": "Fail-closed witness: the only direct call by the owner's name passes 4, but the renamed import enters the guard with 11, so naming the guard here would be a false gap.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::records_through_the_alias",
+        "equivalence_review": "not equivalent: push_big(&mut v, 11) records 12"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::records_through_the_alias",
+        "equivalence_review": "not equivalent: push_big(&mut v, 11) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "records_through_the_alias calls add(&mut v, 4), which misses `x > 10`, and then push_big(&mut v, 11) through `use super::add as push_big`, which enters it. v is [11] and both mutants fail the equality. Spec cells: RIPR-SPEC-0263 example 6: a test that calls the owner through a value (a renamed import) names no guard.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#6"
+  ]
+}

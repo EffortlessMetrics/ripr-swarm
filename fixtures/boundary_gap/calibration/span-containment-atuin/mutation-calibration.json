@@ -41,6 +41,52 @@
       ],
       "confidence_label": "ambiguous_runtime_join",
       "runtime": {
+        "column": 30,
+        "duration": null,
+        "end_column": 32,
+        "end_line": 40,
+        "file": "crates/atuin-ai/src/context.rs",
+        "line": 40,
+        "mutant_id": "crates/atuin-ai/src/context.rs:40:30: replace && with || in history_output_capability_available",
+        "mutation_operator": "BinaryOperator",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      }
+    },
+    {
+      "candidates": [
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "000f706384b63df2",
+          "seam_kind": "predicate_boundary"
+        },
+        {
+          "column": 5,
+          "end_column": 47,
+          "end_line": 40,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 40,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "f17a02397c93826a",
+          "seam_kind": "return_value"
+        }
+      ],
+      "confidence_label": "ambiguous_runtime_join",
+      "runtime": {
         "column": 5,
         "duration": null,
         "end_column": 47,
@@ -48,7 +94,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 40,
         "mutant_id": "crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with false",
-        "mutation_operator": "false",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -94,53 +140,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 40,
         "mutant_id": "crates/atuin-ai/src/context.rs:40:5: replace history_output_capability_available -> bool with true",
-        "mutation_operator": "true",
-        "runtime_outcome": "missed",
-        "seam_id": null,
-        "test_command": null
-      }
-    },
-    {
-      "candidates": [
-        {
-          "column": 5,
-          "end_column": 47,
-          "end_line": 40,
-          "file": "crates/atuin-ai/src/context.rs",
-          "line": 40,
-          "missing_discriminators": [],
-          "observed_values": [],
-          "oracle_kind": "unknown",
-          "oracle_strength": "unknown",
-          "seam_grip_class": "strongly_gripped",
-          "seam_id": "000f706384b63df2",
-          "seam_kind": "predicate_boundary"
-        },
-        {
-          "column": 5,
-          "end_column": 47,
-          "end_line": 40,
-          "file": "crates/atuin-ai/src/context.rs",
-          "line": 40,
-          "missing_discriminators": [],
-          "observed_values": [],
-          "oracle_kind": "unknown",
-          "oracle_strength": "unknown",
-          "seam_grip_class": "strongly_gripped",
-          "seam_id": "f17a02397c93826a",
-          "seam_kind": "return_value"
-        }
-      ],
-      "confidence_label": "ambiguous_runtime_join",
-      "runtime": {
-        "column": 30,
-        "duration": null,
-        "end_column": 32,
-        "end_line": 40,
-        "file": "crates/atuin-ai/src/context.rs",
-        "line": 40,
-        "mutant_id": "crates/atuin-ai/src/context.rs:40:30: replace && with || in history_output_capability_available",
-        "mutation_operator": "||",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -186,7 +186,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 85,
         "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![\"xyzzy\".into()]",
-        "mutation_operator": "vec![\"xyzzy\".into()]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -232,7 +232,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 85,
         "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![String::new()]",
-        "mutation_operator": "vec![String::new()]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -278,7 +278,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 85,
         "mutant_id": "crates/atuin-ai/src/context.rs:85:9: replace AppContext::capabilities_as_strings -> Vec<String> with vec![]",
-        "mutation_operator": "vec![]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -297,7 +297,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 73,
         "mutant_id": "crates/atuin-ai/src/context.rs:73:9: replace && with || in capability_strings",
-        "mutation_operator": "||",
+        "mutation_operator": "BinaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -328,7 +328,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 78,
         "mutant_id": "crates/atuin-ai/src/context.rs:78:79: delete ! in capability_strings",
-        "mutation_operator": "unknown",
+        "mutation_operator": "UnaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -359,7 +359,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 101,
         "mutant_id": "crates/atuin-ai/src/context.rs:101:28: replace == with != in ClientContext::detect",
-        "mutation_operator": "!=",
+        "mutation_operator": "BinaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -390,7 +390,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 144,
         "mutant_id": "crates/atuin-ai/src/context.rs:144:5: replace detect_os -> String with \"xyzzy\".into()",
-        "mutation_operator": "\"xyzzy\".into()",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -418,7 +418,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 144,
         "mutant_id": "crates/atuin-ai/src/context.rs:144:5: replace detect_os -> String with String::new()",
-        "mutation_operator": "String::new()",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -446,7 +446,7 @@
         "file": "crates/atuin/src/command/client/store/rebuild.rs",
         "line": 29,
         "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:29:9: replace Rebuild::run -> Result<()> with Ok(())",
-        "mutation_operator": "Ok(())",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -474,7 +474,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 38,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:38:9: replace OtelCtx::try_enable -> Result<Option<Self>, OtelCtxEnableError> with Ok(None)",
-        "mutation_operator": "Ok(None)",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -502,7 +502,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 38,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:38:9: replace OtelCtx::try_enable -> Result<Option<Self>, OtelCtxEnableError> with Ok(Some(Default::default()))",
-        "mutation_operator": "Ok(Some(Default::default()))",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -530,7 +530,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 58,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:32: replace == with != in OtelCtx::try_enable",
-        "mutation_operator": "!=",
+        "mutation_operator": "BinaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -554,37 +554,6 @@
       "confidence_label": "supports_static_gap",
       "join_method": "span_containment",
       "runtime": {
-        "column": 63,
-        "duration": null,
-        "end_column": 65,
-        "end_line": 58,
-        "file": "crates/atuin/src/logs/otel/enabled.rs",
-        "line": 58,
-        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:63: replace == with != in OtelCtx::try_enable",
-        "mutation_operator": "!=",
-        "runtime_outcome": "missed",
-        "seam_id": null,
-        "test_command": null
-      },
-      "static": {
-        "column": 45,
-        "end_column": 73,
-        "end_line": 58,
-        "file": "crates/atuin/src/logs/otel/enabled.rs",
-        "line": 58,
-        "missing_discriminators": [],
-        "observed_values": [],
-        "oracle_kind": "unknown",
-        "oracle_strength": "unknown",
-        "seam_grip_class": "ungripped",
-        "seam_id": "ae7ec0349a0e3e36",
-        "seam_kind": "predicate_boundary"
-      }
-    },
-    {
-      "confidence_label": "supports_static_gap",
-      "join_method": "span_containment",
-      "runtime": {
         "column": 42,
         "duration": null,
         "end_column": 44,
@@ -592,7 +561,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 58,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:42: replace || with && in OtelCtx::try_enable",
-        "mutation_operator": "&&",
+        "mutation_operator": "BinaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -616,6 +585,37 @@
       "confidence_label": "supports_static_gap",
       "join_method": "span_containment",
       "runtime": {
+        "column": 63,
+        "duration": null,
+        "end_column": 65,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:63: replace == with != in OtelCtx::try_enable",
+        "mutation_operator": "BinaryOperator",
+        "runtime_outcome": "missed",
+        "seam_id": null,
+        "test_command": null
+      },
+      "static": {
+        "column": 45,
+        "end_column": 73,
+        "end_line": 58,
+        "file": "crates/atuin/src/logs/otel/enabled.rs",
+        "line": 58,
+        "missing_discriminators": [],
+        "observed_values": [],
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "seam_grip_class": "ungripped",
+        "seam_id": "ae7ec0349a0e3e36",
+        "seam_kind": "predicate_boundary"
+      }
+    },
+    {
+      "confidence_label": "supports_static_gap",
+      "join_method": "span_containment",
+      "runtime": {
         "column": 12,
         "duration": null,
         "end_column": 13,
@@ -623,7 +623,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 58,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:58:12: delete ! in OtelCtx::try_enable",
-        "mutation_operator": "unknown",
+        "mutation_operator": "UnaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -654,7 +654,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 62,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:62:12: delete ! in OtelCtx::try_enable",
-        "mutation_operator": "unknown",
+        "mutation_operator": "UnaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -707,7 +707,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 73,
         "mutant_id": "crates/atuin-ai/src/context.rs:73:9: replace && with || in capability_strings",
-        "mutation_operator": "||",
+        "mutation_operator": "BinaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -738,7 +738,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 78,
         "mutant_id": "crates/atuin-ai/src/context.rs:78:79: delete ! in capability_strings",
-        "mutation_operator": "unknown",
+        "mutation_operator": "UnaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -769,7 +769,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 62,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:62:12: delete ! in OtelCtx::try_enable",
-        "mutation_operator": "unknown",
+        "mutation_operator": "UnaryOperator",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -800,7 +800,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 56,
         "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![\"xyzzy\".into()]",
-        "mutation_operator": "vec![\"xyzzy\".into()]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -818,7 +818,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 56,
         "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![String::new()]",
-        "mutation_operator": "vec![String::new()]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -836,7 +836,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 56,
         "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![]",
-        "mutation_operator": "vec![]",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -854,7 +854,7 @@
         "file": "crates/atuin-ai/src/context.rs",
         "line": 117,
         "mutant_id": "crates/atuin-ai/src/context.rs:117:9: replace ClientContext::to_json -> serde_json::Value with Default::default()",
-        "mutation_operator": "Default::default()",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -872,7 +872,7 @@
         "file": "crates/atuin/src/command/client/store/rebuild.rs",
         "line": 53,
         "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:53:9: replace Rebuild::rebuild_history -> Result<()> with Ok(())",
-        "mutation_operator": "Ok(())",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -890,7 +890,7 @@
         "file": "crates/atuin/src/command/client/store/rebuild.rs",
         "line": 71,
         "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:71:9: replace Rebuild::rebuild_scripts -> Result<()> with Ok(())",
-        "mutation_operator": "Ok(())",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -908,7 +908,7 @@
         "file": "crates/atuin/src/logs/otel/enabled.rs",
         "line": 99,
         "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:99:9: replace <impl Drop for OtelCtx>::drop with ()",
-        "mutation_operator": "()",
+        "mutation_operator": "FnValue",
         "runtime_outcome": "missed",
         "seam_id": null,
         "test_command": null
@@ -1269,7 +1269,7 @@
       "file": "crates/atuin-ai/src/context.rs",
       "line": 56,
       "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![\"xyzzy\".into()]",
-      "mutation_operator": "vec![\"xyzzy\".into()]",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1283,7 +1283,7 @@
       "file": "crates/atuin-ai/src/context.rs",
       "line": 56,
       "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![String::new()]",
-      "mutation_operator": "vec![String::new()]",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1297,7 +1297,7 @@
       "file": "crates/atuin-ai/src/context.rs",
       "line": 56,
       "mutant_id": "crates/atuin-ai/src/context.rs:56:5: replace capability_strings -> Vec<String> with vec![]",
-      "mutation_operator": "vec![]",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1327,7 +1327,7 @@
         }
       ],
       "mutant_id": "crates/atuin-ai/src/context.rs:99:9: replace ClientContext::detect -> Self with Default::default()",
-      "mutation_operator": "Default::default()",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "unviable",
       "seam_id": null,
       "test_command": null,
@@ -1341,7 +1341,7 @@
       "file": "crates/atuin-ai/src/context.rs",
       "line": 117,
       "mutant_id": "crates/atuin-ai/src/context.rs:117:9: replace ClientContext::to_json -> serde_json::Value with Default::default()",
-      "mutation_operator": "Default::default()",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1355,7 +1355,7 @@
       "file": "crates/atuin/src/command/client/store/rebuild.rs",
       "line": 53,
       "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:53:9: replace Rebuild::rebuild_history -> Result<()> with Ok(())",
-      "mutation_operator": "Ok(())",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1385,7 +1385,7 @@
         }
       ],
       "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:71:9: replace Rebuild::rebuild_scripts -> Result<()> with Ok(())",
-      "mutation_operator": "Ok(())",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,
@@ -1429,7 +1429,7 @@
         }
       ],
       "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:99:9: replace <impl Drop for OtelCtx>::drop with ()",
-      "mutation_operator": "()",
+      "mutation_operator": "FnValue",
       "runtime_outcome": "missed",
       "seam_id": null,
       "test_command": null,

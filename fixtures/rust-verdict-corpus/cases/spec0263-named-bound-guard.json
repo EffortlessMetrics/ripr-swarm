@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0263-named-bound-guard",
+  "subject_id": "authored-spec0263-named-bound-guard",
+  "diff": "cases/spec0263-named-bound-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_named_bound_guard",
+  "hard_case": "Known false verdict the spec accepts: example 5 refuses a named bound, so the direct-collection observer keeps exposed although 4 never enters `x > LIMIT`. Narrow fix proposed in #7964.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records 12"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "adds_nothing_for_small_values calls add(&mut v, 4); 4 never enters `x > LIMIT` with LIMIT = 10, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 5: a named bound is unreadable, so no guard is named.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#5"
+  ]
+}

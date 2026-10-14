@@ -299,7 +299,19 @@ pub(in crate::analysis) fn constant_tail_witness(
         return None;
     }
     let identity = normalize_semantic_text(&probe.expression);
-    let tail_line = constant_owner_tail_line(owner, &identity)?;
+    // RIPR-SPEC-0265 rule 3: an admitted iterator-adaptor tail that is the
+    // owner's whole body is, like a constant tail, the value the owner
+    // returns; whether the pinned input runs its closure is the owner pin's
+    // question (rule 2), not this edge's.
+    let (tail_line, limitation) = match constant_owner_tail_line(owner, &identity) {
+        Some(line) => (line, "constant_owner_tail"),
+        None => (
+            super::owner_pin::closure_adaptor::owner_adaptor_tail(owner)
+                .filter(|tail| tail.tail_is(&probe.expression))
+                .map(|tail| owner.start_line + tail.tail_line_offset)?,
+            "iterator_adaptor_owner_tail",
+        ),
+    };
     if tail_line != probe.location.line {
         return None;
     }
@@ -336,10 +348,7 @@ pub(in crate::analysis) fn constant_tail_witness(
             line: sink.line,
         },
         completeness: PathCompleteness::Complete,
-        limitations: vec![
-            "constant_owner_tail".into(),
-            "static_local_flow_only".into(),
-        ],
+        limitations: vec![limitation.into(), "static_local_flow_only".into()],
         semantic_digest: String::new(),
     };
     witness.semantic_digest = witness.compute_semantic_digest();
