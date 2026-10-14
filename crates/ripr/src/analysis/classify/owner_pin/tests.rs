@@ -4439,6 +4439,99 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     }
 }
 
+/// Only a `use` or `extern crate` item, a macro's arguments or an attribute
+/// renames. A cast to the field's type (`letters as u32`) elsewhere in the
+/// workspace binds no name, so it leaves `u32` the standard type, and a
+/// qualified path (`<Window as Clone>`) leaves `Clone` the standard trait.
+/// The same name renamed in a `use` group, a function-local `use`, a macro
+/// body, a macro invocation's arguments or an attribute still refuses
+/// (spot-window-clone-field-whole-equality, #7926 review).
+#[test]
+fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
+    let glob_tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let with = |extra: &str| format!("{WINDOW_LIB}{glob_tests}{extra}");
+    for (lib, credits) in [
+        (with(""), true),
+        (
+            with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Both used to read as renames of `Clone` and `PartialEq`.
+        (
+            with("pub fn dup(w: &Window) -> Window {\n    <Window as Clone>::clone(w)\n}\n"),
+            true,
+        ),
+        (
+            with(
+                "pub fn same(a: &Window, b: &Window) -> bool {\n    <Window as PartialEq>::eq(a, b)\n}\n",
+            ),
+            true,
+        ),
+        // Precise capturing is not an import, so the cast after it stays a cast.
+        (
+            with("pub fn width(letters: usize) -> impl Sized + use<> {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Rooted in `std`, so the use-statement scan admits the path and
+        // only the rename itself refuses.
+        (with("use std::{num::Wrapping as u32};\n"), false),
+        (
+            with("pub fn f() {\n    use std::num::Wrapping as u32;\n}\n"),
+            false,
+        ),
+        (
+            with(
+                "macro_rules! bind {\n    () => {\n        use std::num::Wrapping as u32;\n    };\n}\n",
+            ),
+            false,
+        ),
+        (with("extern crate other as u32;\n"), false),
+        // A macro may expand its arguments into a `use`.
+        (
+            with(
+                "macro_rules! import {\n    ($p:path as $n:ident) => {\n        use $p as $n;\n    };\n}\nimport!(std::num::Wrapping as u32);\n",
+            ),
+            false,
+        ),
+        (with("reexport! { std::num::Wrapping as u32 }\n"), false),
+        (
+            with("#[import(std::num::Wrapping as u32)]\npub fn f() {}\n"),
+            false,
+        ),
+        // A Unicode macro name expands its arguments too.
+        (with("δ!(std::num::Wrapping as u32);\n"), false),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+    // A non-ASCII identifier before a macro `!` must not split a character.
+    let (_, pin) = clone_field_pin(
+        &with(
+            "pub fn größe() -> u32 {\n    let maß = 3;\n    maß as u32\n}\nmacro_rules! größe_m { () => {} }\npub fn g() { größe_m!(); }\n",
+        ),
+        WINDOW_TESTS,
+    );
+    assert!(pin.is_some());
+    // Another workspace file: `use super::*;` reaches the workspace-wide
+    // re-export scan, which reads every file's renames but not its casts.
+    let lib = format!("{WINDOW_LIB}{glob_tests}");
+    for (other, credits) in [
+        (
+            "pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n",
+            true,
+        ),
+        ("extern crate other as u32;\n", false),
+    ] {
+        let index = index(&[
+            (LIB, lib.as_str()),
+            ("src/score.rs", other),
+            (TESTS, WINDOW_TESTS),
+        ]);
+        let pin = field_pin(&index, &lib, "start: self.start,", "start: self.start,");
+        assert_eq!(pin.is_some(), credits, "{other}");
+    }
+}
+
 /// #6692 review: the receiver must not itself come from the clone under
 /// test (an idempotent wrong field, `start: 0` or `start: self.end`, would
 /// then survive) or be changed after it is bound. A literal or the type's
