@@ -393,7 +393,7 @@ fn is_identifier_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_' || c == '$'
 }
 
-fn is_identifier_part(c: char) -> bool {
+pub(super) fn is_identifier_part(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
 
