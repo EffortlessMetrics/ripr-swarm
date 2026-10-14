@@ -1166,25 +1166,17 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
 }
 
 fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+    // Comments and literals are not delimiters. Mask them before counting
+    // brackets so an unmatched `}` inside a nested comment cannot hide a
+    // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
+    // valid on the original because masking preserves byte length.
+    let masked = mask_comments_and_strings(condition);
     let mut paren_depth = 0i32;
     let mut bracket_depth = 0i32;
     let mut brace_depth = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut chars = condition.char_indices().peekable();
+    let mut chars = masked.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
         match ch {
-            '"' => in_string = true,
             '(' => paren_depth += 1,
             ')' => paren_depth = paren_depth.saturating_sub(1),
             '[' => bracket_depth += 1,
@@ -2030,11 +2022,51 @@ mod spec_0106_tests {
             ("(a == b || c) && ready", false),
             ("total(&cart) == 42 // a || b", true),
             ("/* pinned */ (a == b) && ready", true),
+            // #7822: comment brackets are not delimiters of the `==`.
+            ("matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true", true),
+            ("matches!(r, // , ( [ ) ] }\n Ok(3)) == true", true),
+            // An unpinned pattern compared with a bool still pins nothing.
+            (
+                "matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true",
+                false,
+            ),
         ] {
             let actual = has_top_level_exact_equality(condition);
             if actual != expected {
                 return Err(format!(
                     "comparison classification mismatch for {condition}: {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bool_compared_matches_polarity_ignores_comment_brackets() -> Result<(), String> {
+        // #7822: an unmatched `}` in a nested comment must not turn a
+        // positive `== true` comparison into NotPositive.
+        for (line, expected) in [
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == false);",
+                Some(PatternPolarity::NotPositive),
+            ),
+            (
+                "assert!(true == matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)));",
+                Some(PatternPolarity::Positive),
+            ),
+        ] {
+            let actual = pattern_comparison_polarity(line);
+            if actual != expected {
+                return Err(format!(
+                    "polarity mismatch for {line}: {actual:?}, expected {expected:?}"
                 ));
             }
         }
