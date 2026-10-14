@@ -34,6 +34,9 @@ use std::path::Path;
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
+/// Match the producers' Unicode scalar-value columns. SARIF 2.1.0 §3.14.27
+/// requires this declaration for nonempty text results; empty runs may carry it.
+const SARIF_COLUMN_KIND: &str = "unicodeCodePoints";
 /// Per-class rule help anchors (#7371). Finding rules point at the exposure
 /// class table a maintainer landing on a code-scanning rule page needs; seam
 /// rules point at the seam inventory spec's classification contract. The
@@ -117,6 +120,7 @@ fn sarif_document_repo_seam(
         "version": SARIF_VERSION,
         "runs": [
             {
+                "columnKind": SARIF_COLUMN_KIND,
                 "tool": {
                     "driver": {
                         "name": "ripr",
@@ -193,6 +197,7 @@ fn sarif_document(
         "version": SARIF_VERSION,
         "runs": [
             {
+                "columnKind": SARIF_COLUMN_KIND,
                 "tool": {
                     "driver": {
                         "name": "ripr",
@@ -1151,6 +1156,87 @@ mod tests {
     };
     use serde_json::Value;
     use std::path::PathBuf;
+
+    fn assert_sarif_scalar_column_contract(source: &str) -> Result<(), String> {
+        let offset = source.rfind('x').ok_or("fixture x missing")?;
+        let span = crate::analysis::seams::byte_span_to_lines(source, 1, offset, offset + 1)
+            .ok_or("producer did not derive a source span")?;
+        assert_eq!(span.start_column, 14, "literal scalar-column fixture pin");
+        assert_eq!(span.end_column, 15);
+        let mut output = sample_output();
+        output.findings.truncate(1);
+        let finding = output
+            .findings
+            .first_mut()
+            .ok_or("fixture finding missing")?;
+        finding.probe.location = SourceLocation::new("src/日本語.rs", 1, span.start_column);
+        let json = parse_json(&crate::output::json::render(&output))?;
+        assert_eq!(json["findings"][0]["probe"]["file"], "src/日本語.rs");
+        assert_eq!(json["findings"][0]["probe"]["line"], 1);
+        let human = crate::output::human::render(&output);
+        assert!(
+            human.contains("src/日本語.rs:1"),
+            "human filename and line control"
+        );
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let run = &sarif["runs"][0];
+        assert_eq!(run["results"].as_array().map(Vec::len), Some(1));
+        let location = &run["results"][0]["locations"][0]["physicalLocation"];
+        assert_eq!(
+            location["artifactLocation"]["uri"],
+            "src/%E6%97%A5%E6%9C%AC%E8%AA%9E.rs"
+        );
+        assert_eq!(location["region"]["startLine"], 1);
+        assert_eq!(location["region"]["startColumn"], 14);
+        // SARIF 2.1.0 section 3.14.27 requires a unit declaration for
+        // nonempty text results; neither bytes nor UTF-16 units match this producer.
+        assert_eq!(run["columnKind"], "unicodeCodePoints");
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_column_contract_ascii() -> Result<(), String> {
+        assert_sarif_scalar_column_contract("fn f(){ 'a'; x }\n")
+    }
+
+    #[test]
+    fn sarif_column_contract_bmp() -> Result<(), String> {
+        assert_sarif_scalar_column_contract("fn f(){ 'é'; x }\n")
+    }
+
+    #[test]
+    fn sarif_column_contract_non_bmp() -> Result<(), String> {
+        let source = "fn f(){ '🦀'; x }\n";
+        let prefix = source.split('x').next().ok_or("prefix missing")?;
+        assert_eq!(prefix.encode_utf16().count() + 1, 15);
+        assert_eq!(prefix.len() + 1, 17);
+        assert_sarif_scalar_column_contract(source)
+    }
+
+    #[test]
+    fn sarif_column_contract_repo_seam() -> Result<(), String> {
+        let sarif = parse_json(&render_repo_seams_sarif(
+            &[weakly_gripped_classified()],
+            None,
+            &RiprConfig::default(),
+        ))?;
+        let run = &sarif["runs"][0];
+        assert_eq!(run["results"].as_array().map(Vec::len), Some(1));
+        assert_eq!(run["columnKind"], "unicodeCodePoints");
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_column_contract_empty_control() -> Result<(), String> {
+        let mut output = sample_output();
+        output.findings.clear();
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(
+            sarif["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0)
+        );
+        Ok(())
+    }
 
     #[test]
     fn refusal_sarif_is_a_schema_valid_run_with_the_typed_notification() -> Result<(), String> {
