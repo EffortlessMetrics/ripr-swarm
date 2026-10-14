@@ -166,7 +166,10 @@ rule only for an assertion whose context was admitted.
    a module whose `use` binds `case`, is an unknown attribute macro. A computed row value (which could
    call the owner), `#[rstest(..)]` arguments, and parameters carrying any
    other attribute (`#[values]`, `#[from]`, `#[with]`, `#[future]`,
-   `#[by_ref]`, `#[files]`) refuse. Every other attribute (`ignore`,
+   `#[by_ref]`, `#[files]`) refuse, as do a `mut` `#[case]` parameter (the
+   body may reassign it, `expected = want;`, which no binding scan reads)
+   and an `impl Trait` parameter (an anonymous type parameter rstest may
+   infer from a fixture). Every other attribute (`ignore`,
    `timeout`, other async runtime tests, other parameterizing macros such as
    `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's

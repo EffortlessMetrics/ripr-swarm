@@ -1939,11 +1939,31 @@ fn an_rstest_fixture_feeds_the_call_but_never_the_expected_value() {
         ("#[future] x: u32", "assert_eq!(weight(x), 12);"),
         ("#[values(4)] x: u32", "assert_eq!(weight(x), 12);"),
         ("#[by_ref] x: &u32", "assert_eq!(weight(x), 12);"),
+        // An anonymous type parameter rstest may infer from the fixture.
+        ("x: impl Into<u32>", "assert_eq!(weight(x.into()), 12);"),
         // Patterns other than a plain binding.
         ("ref x: u32", "assert_eq!(weight(x), 12);"),
         ("(x, _y): (u32, u32)", "assert_eq!(weight(x), 12);"),
     ] {
         let tests = fixture_test(&format!("{four}\n{want}"), parameters, body);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A `mut` `#[case]` parameter the body reassigns from a fixture or the
+    // owner: an assignment binds nothing (#6578 review).
+    for (fixtures, parameters, body) in [
+        (
+            want,
+            "#[case] mut expected: u32, want: u32",
+            "expected = want;\n    assert_eq!(weight(4), expected);",
+        ),
+        (
+            "",
+            "#[case] mut expected: u32",
+            "expected = weight(4);\n    assert_eq!(weight(4), expected);",
+        ),
+    ] {
+        let tests = fixture_test(fixtures, parameters, body)
+            .replace("#[rstest]\n", "#[rstest]\n#[case(0)]\n");
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
     // A `#[case]` parameter the body rebinds from a fixture.

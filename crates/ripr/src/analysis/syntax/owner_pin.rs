@@ -2055,15 +2055,27 @@ fn case_parameters(function: &ast::Fn) -> Option<usize> {
     }
     let mut count = 0;
     for param in list.params() {
-        match param.pat()? {
-            ast::Pat::IdentPat(pat) if pat.ref_token().is_none() && pat.pat().is_none() => {}
-            _ => return None,
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            return None;
+        };
+        if pat.ref_token().is_some() || pat.pat().is_some() {
+            return None;
+        }
+        // An `impl Trait` parameter is an anonymous type parameter, which
+        // rstest may infer from a fixture as it does a named one.
+        if matches!(param.ty(), Some(ast::Type::ImplTraitType(_))) {
+            return None;
         }
         let attrs: Vec<_> = param.attrs().collect();
         match attrs.as_slice() {
             [] => {}
+            // A `mut` case value may be reassigned in the body
+            // (`expected = want;`), which no binding scan sees, so a case
+            // row's literal reaches the assertion only through an immutable
+            // parameter (#6578 review).
             [case]
                 if case.excl_token().is_none()
+                    && pat.mut_token().is_none()
                     && matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
                     && case.simple_name().as_deref() == Some("case") =>
             {
