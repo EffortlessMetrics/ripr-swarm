@@ -89,7 +89,7 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
 /// `#[values(..)]`, `#[with(..)]`, `#[case(..)]` and `#[future(..)]`,
 /// `#[test_case(..)]`, and test-strategy's `#[strategy(..)]`, which can sit
 /// inside a test's parameter list.
-fn runs_its_arguments(attribute: &str) -> bool {
+pub(crate) fn runs_its_arguments(attribute: &str) -> bool {
     let inner = attribute.trim_start_matches('#').trim_start();
     let inner = inner.strip_prefix('[').unwrap_or(inner).trim_start();
     let path_end = inner

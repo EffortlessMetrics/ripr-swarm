@@ -3053,6 +3053,7 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
   "version": "2.1.0",
   "runs": [
     {
+      "columnKind": "unicodeCodePoints",
       "tool": {
         "driver": {
           "name": "ripr",
@@ -3066,6 +3067,12 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
 ```
 
 Rule IDs are stable public integration strings.
+
+Finding and repo-seam runs declare `columnKind: "unicodeCodePoints"`, matching
+the producers' 1-based Unicode scalar-value columns. A non-BMP character counts
+as one column, even though its UTF-16 encoding uses two code units. Consumers
+using UTF-16 columns must convert the coordinates before highlighting source.
+Empty analysis runs retain the declaration; refusal runs may omit it.
 
 Finding rule IDs:
 

@@ -569,9 +569,11 @@ rule only for an assertion whose context was admitted.
    their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
-   unqualified nested `matches!` expands to one `match` over operands the
-   scan already reads, so it is admitted and its name joins this binding
-   check (see "Literal `matches!` pins"). Any visible
+   unqualified nested `matches!` or `format!` expands to one call over
+   operands the scan already reads, so it is admitted and its name joins
+   this binding check (see "Literal `matches!` pins" and "Rendered scalar
+   pins"). A path before the nested name (`std::format!`) refuses; inside
+   a token tree `::` lexes as two `:` tokens, which count as a path. Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
    trusted macro used by that test refuses the pin. This scan
@@ -666,7 +668,10 @@ rule only for an assertion whose context was admitted.
    bring only a workspace-declared type of that name, and a workspace glob
    counts only while no workspace file re-exports the name or a glob from
    elsewhere, renames to it or aliases it. The scan is file-wide, not
-   per-module. The changed line must be one whole field
+   per-module. A rename is an `as` inside a `use` or `extern crate` item, a
+   macro invocation's arguments (a macro may expand them into a `use`) or an
+   attribute; a cast (`letters as u32`) or a qualified path
+   (`<Window as Clone>`) in plain code renames nothing (#7926). The changed line must be one whole field
    initializer at the literal's own brace depth: a field of a nested literal
    or an argument of a call within a field (`start: f(Raw { start: .. })`)
    is not the outer field's value. No workspace `trait Clone` may exist, the
@@ -1252,6 +1257,40 @@ value when:
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the normalized pattern.
 
+### Rendered scalar pins
+
+`assert_eq!(format!("{:?}", owner(..)), "94")` fails exactly when
+`assert_eq!(owner(..), 94)` does when the owner returns a primitive scalar
+(trap-shine-debug-exact-control): the std `Debug` and `Display` text of a
+`bool`, `char`, float or built-in integer differs for every value but NaN,
+so exact text pins the value. The pin reads the call inside `format!` as
+the actual side and the string literal as the expected value when:
+
+1. The assertion is one plain, unqualified `assert_eq!` whose only nested
+   macros are plain, unqualified `format!` calls; `assert_ne!` and
+   `assert!` stay refused.
+2. One compared operand is exactly `format!("{}", call)` or
+   `format!("{:?}", call)` (a trailing comma is allowed). Flags, width,
+   precision, other text in the format string, a second argument, or
+   anything chained after `format!(..)` refuses. The call is the owner
+   call shape of rule 1, with nothing around it.
+3. The other operand is a plain string literal with no escapes, other
+   than `"NaN"`: every NaN payload of `f32` or `f64` renders as `NaN`, so
+   that text pins no single value (#7905).
+4. The owner's return type is a primitive scalar under the cell-0094 rule
+   (declared `bool`, `char`, `f32`, `f64` or built-in integer, with no
+   same-named item or import in the owner's file), and its return-path
+   gate holds any value. Every other rule above holds unchanged.
+
+Admitting a nested `format!` is an execution fact, shared by every
+`assert_eq!` the syntax gate reads: `format!` evaluates its operands
+eagerly and cannot leave the test once their tokens hold no exit, so
+`assert_eq!(format!("{}", f(4)).len(), 2)` reaches the ordinary token rule
+as `f(4).to_string().len()` does. Only the shape above earns the pin.
+
+The trap twin `trap-glow-debug-nonempty` (`assert!(!format!("{:?}",
+glow(2)).is_empty())`) holds for every value and stays a gap.
+
 ### Inline expect-test pins (#6578)
 
 `expect![["text"]].assert_eq(&owner(..))` from `expect_test` compares the
@@ -1704,7 +1743,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`,
   `an_error_path_probe_is_pinned_like_a_changed_err_return`);
   literal `matches!` pins
-  (`a_literal_matches_pattern_pins_the_owner_value`);
+  (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
+  (`a_scalar_rendering_compared_with_exact_text_pins`,
+  `each_refusal_names_the_gate_that_failed`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
   `T::name(..)` calls (#6617:

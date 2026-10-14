@@ -47,6 +47,7 @@ const PLAIN_KEYS: &[&str] = &[
 pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
+    standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
 
 impl DropInManifests {
@@ -54,6 +55,7 @@ impl DropInManifests {
         Self {
             root: Some(root.to_path_buf()),
             verdicts: Arc::default(),
+            standard_roots: Arc::default(),
         }
     }
 
@@ -83,9 +85,96 @@ impl DropInManifests {
         }
         verdict
     }
+
+    /// Closed declaration proof for an implicit std/core root, not a
+    /// registry-package verdict or general standard-library identity.
+    pub(crate) fn unbound_standard_root(&self, file: &Path, krate: &str) -> bool {
+        if !matches!(krate, "std" | "core") {
+            return false;
+        }
+        let Some(root) = &self.root else { return false };
+        let file = root.join(file);
+        let Some(directory) = file.parent() else {
+            return false;
+        };
+        let key = (directory.to_path_buf(), krate.to_string());
+        if let Some(verdict) = self
+            .standard_roots
+            .lock()
+            .ok()
+            .and_then(|verdicts| verdicts.get(&key).copied())
+        {
+            return verdict;
+        }
+        let verdict = manifests(root, directory, krate).is_some_and(|manifests| {
+            manifests.first().is_some_and(|own| {
+                own.get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(toml::Value::as_str)
+                    .is_some()
+                    && own
+                        .get("package")
+                        .and_then(|p| p.get("workspace"))
+                        .is_none()
+            }) && manifests.iter().all(|manifest| {
+                standard_manifest_shape(manifest)
+                    && !patches(manifest, krate)
+                    && ["package", "lib"].iter().all(|kind| {
+                        manifest
+                            .get(*kind)
+                            .and_then(|table| table.get("name"))
+                            .and_then(toml::Value::as_str)
+                            .is_none_or(|name| normalized(name) != krate)
+                    })
+                    && dependency_tables(manifest)
+                        .iter()
+                        .all(|table| table.keys().all(|name| normalized(name) != krate))
+                    && manifest
+                        .get("workspace")
+                        .and_then(|w| w.get("dependencies"))
+                        .and_then(toml::Value::as_table)
+                        .is_none_or(|table| table.keys().all(|name| normalized(name) != krate))
+            })
+        });
+        if let Ok(mut verdicts) = self.standard_roots.lock() {
+            verdicts.insert(key, verdict);
+        }
+        verdict
+    }
 }
 
-fn verify(root: &Path, directory: &Path, krate: &str) -> bool {
+fn standard_manifest_shape(manifest: &toml::Table) -> bool {
+    let dependency_shape = |table: &toml::Table| {
+        DEPENDENCY_TABLES.iter().all(|key| {
+            table
+                .get(*key)
+                .is_none_or(|value| value.as_table().is_some())
+        })
+    };
+    ["package", "lib"].iter().all(|key| {
+        manifest.get(*key).is_none_or(|value| {
+            value
+                .as_table()
+                .is_some_and(|table| table.get("name").is_none_or(|name| name.as_str().is_some()))
+        })
+    }) && dependency_shape(manifest)
+        && manifest.get("target").is_none_or(|value| {
+            value.as_table().is_some_and(|targets| {
+                targets
+                    .values()
+                    .all(|target| target.as_table().is_some_and(dependency_shape))
+            })
+        })
+        && manifest.get("workspace").is_none_or(|value| {
+            value.as_table().is_some_and(|workspace| {
+                workspace
+                    .get("dependencies")
+                    .is_none_or(|value| value.as_table().is_some())
+            })
+        })
+}
+
+fn manifests(root: &Path, directory: &Path, krate: &str) -> Option<Vec<toml::Table>> {
     // The directories from the file's own up to the root, inclusive. A file
     // outside the root has no readable crate manifest.
     let directories: Vec<&Path> = directory
@@ -93,22 +182,29 @@ fn verify(root: &Path, directory: &Path, krate: &str) -> bool {
         .take_while(|candidate| candidate.starts_with(root))
         .collect();
     if directories.is_empty() {
-        return false;
+        return None;
     }
     let mut manifests = Vec::new();
     for dir in &directories {
         if config_mentions(dir, krate) {
-            return false;
+            return None;
         }
         match std::fs::read_to_string(dir.join("Cargo.toml")) {
             Ok(text) => match text.parse::<toml::Table>() {
                 Ok(manifest) => manifests.push(manifest),
-                Err(_) => return false,
+                Err(_) => return None,
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return false,
+            Err(_) => return None,
         }
     }
+    Some(manifests)
+}
+
+fn verify(root: &Path, directory: &Path, krate: &str) -> bool {
+    let Some(manifests) = manifests(root, directory, krate) else {
+        return false;
+    };
     let Some(own) = manifests.first() else {
         return false;
     };
@@ -452,6 +548,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(!verdict);
         assert!(!unrooted);
+        Ok(())
+    }
+
+    #[test]
+    fn standard_roots_require_closed_manifest_and_fresh_index() -> Result<(), String> {
+        for (extra, admitted) in [
+            ("", true),
+            (
+                "[dependencies]\nstd={package='alternate',path='alias'}",
+                false,
+            ),
+            ("[target.'cfg(unix)'.dependencies]\ncore='1'", false),
+            ("[workspace.dependencies]\nstd='1'", false),
+            ("dependencies='opaque'", false),
+            ("[lib]\nname=17", false),
+            ("target='opaque'", false),
+            ("workspace='opaque'", false),
+        ] {
+            let text = if !extra.is_empty() && !extra.starts_with('[') {
+                format!("{extra}\n{}", manifest(""))
+            } else {
+                manifest(extra)
+            };
+            let root = temp_workspace("standard-root", &[("Cargo.toml", &text)])?;
+            let subject = if extra.contains("core=") {
+                "core"
+            } else {
+                "std"
+            };
+            assert_eq!(
+                DropInManifests::new(&root).unbound_standard_root(Path::new(FILE), subject),
+                admitted,
+                "{extra}"
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        let root = temp_workspace("standard-currentness", &[("Cargo.toml", &manifest(""))])?;
+        let first = DropInManifests::new(&root);
+        assert!(first.unbound_standard_root(Path::new(FILE), "std"));
+        std::fs::write(root.join("Cargo.toml"), manifest("[dependencies]\nstd='1'"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            first.unbound_standard_root(Path::new(FILE), "std"),
+            "same index snapshot cache"
+        );
+        assert!(
+            !DropInManifests::new(&root).unbound_standard_root(Path::new(FILE), "std"),
+            "new index declaration invalidation"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }
 }

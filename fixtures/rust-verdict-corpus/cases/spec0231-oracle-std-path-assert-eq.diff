@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b66a73e..67f6c43 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn score(x: u32) -> u32 {
+-    x * x
++    x * x * 1
+ }
+ 
+ #[cfg(test)]
