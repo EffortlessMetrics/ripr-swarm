@@ -734,22 +734,11 @@ fn find_related_tests_with_candidates<'a>(
     // #6292/#6537: a module-level owner with same-named module-level rivals
     // in its package is told apart by the call's spelled path. A test whose
     // every call of the name settles on a rival relates through no signal.
+    // The identity is shared per analysis run (#7716): its construction and
+    // its per-test memo would otherwise repeat for every probe.
     let call_identity = owner_fn
         .filter(|_| indexed_same_name_ids.len() > 1)
-        .and_then(|owner| match candidates {
-            RelatedTestCandidates::Indexed(candidate_index) => super::OwnerCallIdentity::new(
-                owner,
-                candidate_index
-                    .function_indices(owner_name)
-                    .iter()
-                    .map(|&function_index| index.functions().at(function_index)),
-                index,
-            ),
-            #[cfg(test)]
-            RelatedTestCandidates::FullScan => {
-                super::OwnerCallIdentity::new(owner, index.functions().iter(), index)
-            }
-        });
+        .and_then(|owner| super::call_identity::shared_owner_call_identity(index, owner));
 
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are

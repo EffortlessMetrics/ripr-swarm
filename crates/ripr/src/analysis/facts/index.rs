@@ -142,6 +142,13 @@ pub struct RustIndex {
     pub harness_subjects: Vec<HarnessSubjectFact>,
     pub harness_limitations: Vec<HarnessLimitationFact>,
     pub(crate) workspace_authority: Option<WorkspaceRootAuthority>,
+    /// Per-analysis call-identity memos (#7716 residual): one workspace
+    /// shape pass and one identity per owner definition. The index is
+    /// rebuilt per analysis run and its sources never change after the
+    /// build (the post-build oracle-policy pass edits only test assertion
+    /// facts), so the memos can never answer for sources other than the
+    /// ones they were computed from; a cloned index starts empty.
+    pub(crate) call_identity_memos: crate::analysis::classify::CallIdentityMemos,
 }
 
 #[derive(Clone, Debug, Default)]

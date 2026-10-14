@@ -70,6 +70,175 @@ pub(in crate::analysis) enum CallTarget {
 
 type TestKey = (PathBuf, usize);
 
+/// One identity per owner definition per run, built on first ask.
+type SharedIdentities = BTreeMap<TestKey, Option<std::sync::Arc<OwnerCallIdentity>>>;
+
+/// Per-index memos for the call-identity family (#7716 residual).
+///
+/// Every producer that classifies probes rebuilds its [`RustIndex`] per
+/// analysis run (the CLI diff pass, an MCP refresh, an LSP analysis), so a
+/// memo held here lives exactly one run and can never outlive the sources it
+/// was computed from. A cloned index starts with empty memos and recomputes
+/// them on demand. Without the memo each construction repeated a whole-index
+/// layout scan and each probe re-parsed every candidate test: measured
+/// ~28 ms of related-test work per probe pair on a 20-package corpus where
+/// the work is identical across probes.
+#[derive(Default)]
+pub(crate) struct CallIdentityMemos {
+    /// One workspace shape pass per index, shared by every
+    /// [`OwnerCallIdentity`] construction and the `#[path]` remap check.
+    shapes: std::sync::OnceLock<BTreeMap<Option<String>, std::sync::Arc<PackageCallIdentityShape>>>,
+    /// One identity per owner definition per run. Its per-test memo and
+    /// scope parses then serve every probe and every pin of the run instead
+    /// of dying with each construction.
+    identities: Mutex<SharedIdentities>,
+}
+
+impl Clone for CallIdentityMemos {
+    fn clone(&self) -> Self {
+        // A cloned index recomputes: the memos describe THIS index's sources,
+        // and a clone may be mutated independently of the original.
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for CallIdentityMemos {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CallIdentityMemos")
+            .finish_non_exhaustive()
+    }
+}
+
+/// The whole-index answers one package's call-identity checks need: whether
+/// any of its files carries a `#[path]` attribute (which switches the rule
+/// off) and how the package splits `src/` between its crates.
+struct PackageCallIdentityShape {
+    remaps_module_paths: bool,
+    layout: CrateLayout,
+}
+
+/// One workspace pass over `index.files()`, grouping the `#[path]` remap
+/// flag and the crate-root sources by package key. Mirrors the per-package
+/// scans it replaces exactly: `has_path_attribute` over every file of the
+/// package (`package_remaps_module_paths`), and the `lib.rs`/`main.rs`
+/// root-source collection of [`CrateLayout::new`] with the same
+/// `under_tests_dir` and `src_body` filters.
+fn scan_call_identity_shapes(
+    index: &RustIndex,
+) -> BTreeMap<Option<String>, std::sync::Arc<PackageCallIdentityShape>> {
+    let mut remaps: BTreeMap<Option<String>, bool> = BTreeMap::new();
+    let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
+    let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
+    for (path, facts) in index.files().iter() {
+        let package = package_key(path);
+        let remapped = remaps.entry(package.clone()).or_insert(false);
+        if !*remapped && has_path_attribute(&facts.data().source) {
+            *remapped = true;
+        }
+        if under_tests_dir(path) {
+            continue;
+        }
+        match src_body(&super::related_tests::normalize_path(path)) {
+            Some("lib.rs") => libs
+                .entry(package)
+                .or_default()
+                .push(std::sync::Arc::clone(&facts.data().source)),
+            Some("main.rs") => mains
+                .entry(package)
+                .or_default()
+                .push(std::sync::Arc::clone(&facts.data().source)),
+            _ => {}
+        }
+    }
+    let packages = remaps
+        .keys()
+        .cloned()
+        .chain(libs.keys().cloned())
+        .chain(mains.keys().cloned())
+        .collect::<BTreeSet<_>>();
+    packages
+        .into_iter()
+        .map(|package| {
+            let lib = libs.get(&package).cloned().unwrap_or_default();
+            let main = mains.get(&package).cloned().unwrap_or_default();
+            let declared = |sources: Vec<std::sync::Arc<str>>| match sources.as_slice() {
+                [source] => declared_first_segments(source),
+                _ => None,
+            };
+            let main_only = lib.is_empty() && !main.is_empty();
+            let roots =
+                (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
+            let shape = PackageCallIdentityShape {
+                remaps_module_paths: remaps.get(&package).copied().unwrap_or(false),
+                layout: CrateLayout {
+                    package: package.clone(),
+                    roots,
+                    main_only,
+                },
+            };
+            (package, std::sync::Arc::new(shape))
+        })
+        .collect()
+}
+
+/// The memoized (or freshly scanned) whole-index answers for `package`.
+fn call_identity_shape(
+    index: &RustIndex,
+    package: Option<&str>,
+) -> std::sync::Arc<PackageCallIdentityShape> {
+    let shapes = index
+        .call_identity_memos
+        .shapes
+        .get_or_init(|| scan_call_identity_shapes(index));
+    shapes
+        .get(&package.map(str::to_string))
+        .cloned()
+        .unwrap_or_else(|| {
+            // A package with no indexed file: the per-package scans it
+            // replaces both answered `false`/no-roots for this case.
+            std::sync::Arc::new(PackageCallIdentityShape {
+                remaps_module_paths: false,
+                layout: CrateLayout {
+                    package: package.map(str::to_string),
+                    roots: None,
+                    main_only: false,
+                },
+            })
+        })
+}
+
+/// The owner's call identity for this analysis run, shared by every caller:
+/// the related-test relation, the owner-return pin and the dependent-scope
+/// pin-scope check all ask for the same (owner, index) answer, and the
+/// identity's own per-test memo and scope parses are worth sharing across
+/// probes (#7716). `None` exactly when a fresh [`OwnerCallIdentity::new`]
+/// construction would also answer `None` (no same-package rival, a mixed
+/// index, a `#[path]` remap, an unclassifiable layout).
+pub(in crate::analysis) fn shared_owner_call_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<std::sync::Arc<OwnerCallIdentity>> {
+    let key = (owner.file.clone(), owner.start_line);
+    if let Some(memo) = index
+        .call_identity_memos
+        .identities
+        .lock()
+        .ok()
+        .and_then(|identities| identities.get(&key).cloned())
+    {
+        return memo;
+    }
+    let built =
+        OwnerCallIdentity::new(owner, index.functions().iter(), index).map(std::sync::Arc::new);
+    // A poisoned lock only costs the sharing, never a wrong answer: the
+    // fallback rebuilds fresh, exactly as before the memo existed.
+    if let Ok(mut identities) = index.call_identity_memos.identities.lock() {
+        identities.entry(key).or_insert(built.clone());
+    }
+    built
+}
+
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
@@ -642,9 +811,7 @@ fn join(left: &[String], right: &[String]) -> Vec<String> {
 /// [`file_module_segments`] reads. A raw scan: a match inside a string or
 /// comment only switches the rule off.
 fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool {
-    index.files().iter().any(|(path, facts)| {
-        package_key(path).as_deref() == package && has_path_attribute(&facts.data().source)
-    })
+    call_identity_shape(index, package).remaps_module_paths
 }
 
 pub(super) fn has_path_attribute(source: &str) -> bool {
@@ -811,29 +978,13 @@ struct CrateLayout {
 
 impl CrateLayout {
     fn new(index: &RustIndex, package: Option<&str>) -> Self {
-        let mut lib = Vec::new();
-        let mut main = Vec::new();
-        for (path, facts) in index.files().iter() {
-            if package_key(path).as_deref() != package || under_tests_dir(path) {
-                continue;
-            }
-            let normalized = super::related_tests::normalize_path(path);
-            match src_body(&normalized) {
-                Some("lib.rs") => lib.push(&facts.data().source),
-                Some("main.rs") => main.push(&facts.data().source),
-                _ => {}
-            }
-        }
-        let declared = |sources: Vec<&Arc<str>>| match sources.as_slice() {
-            [source] => declared_first_segments(source),
-            _ => None,
-        };
-        let main_only = lib.is_empty() && !main.is_empty();
-        let roots = (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
-        Self {
+        // The whole-index answers are memoized per index (one scan serves
+        // every construction and every probe of the run; #7716).
+        let shape = call_identity_shape(index, package);
+        CrateLayout {
             package: package.map(str::to_string),
-            roots,
-            main_only,
+            roots: shape.layout.roots.clone(),
+            main_only: shape.layout.main_only,
         }
     }
 
@@ -1394,6 +1545,94 @@ mod blocks {
             settle(&index, "::a::render", "bare_call_bound_by_nothing"),
             Some(CallTarget::Unsettled)
         );
+    }
+
+    /// The shared per-analysis identity is one instance per owner: the
+    /// related-test relation, the owner-return pin and the dependent-scope
+    /// check each ask for the same (owner, index) answer on every probe, so
+    /// a fresh construction per ask re-runs the whole-index layout scan and
+    /// re-parses every candidate test per probe (#7716, measured ~28 ms per
+    /// probe pair on a 20-package corpus). A mutant that rebuilds instead
+    /// of reusing fails the pointer identity below.
+    #[test]
+    fn shared_identity_is_one_instance_per_owner_per_index() -> Result<(), String> {
+        let index = index(&[("src/lib.rs", RENDER_LIB)]);
+        let find_owner = |suffix: &str| {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(suffix))
+                .cloned()
+                .ok_or_else(|| format!("owner `{suffix}` must be indexed"))
+        };
+        let owner = find_owner("::a::render")?;
+        let ok = || "two module-level rivals give an identity".to_string();
+        let first = super::shared_owner_call_identity(&index, &owner).ok_or_else(ok)?;
+        let second = super::shared_owner_call_identity(&index, &owner).ok_or_else(ok)?;
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "the second ask must return the memoized identity; rebuilding it \
+             repeats the whole-index scan and every per-test parse per probe"
+        );
+        // Behavior parity: the shared instance settles a test exactly as a
+        // fresh construction does — sharing never strengthens or weakens
+        // the rule.
+        let fresh = super::OwnerCallIdentity::new(&owner, index.functions().iter(), &index)
+            .ok_or_else(|| "a fresh construction matches the shared one".to_string())?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "doubles_two")
+            .ok_or_else(|| "the fixture test must be indexed".to_string())?;
+        assert_eq!(
+            first.resolve_test(test, &index),
+            fresh.resolve_test(test, &index)
+        );
+        Ok(())
+    }
+
+    /// The whole-index shape answers (per-package `#[path]` remap flag and
+    /// crate layout) are computed in one pass and then shared across
+    /// packages and constructions. A mutant that rescans per construction
+    /// leaves the memo unpopulated and fails the map assertion below.
+    #[test]
+    fn identity_shapes_are_one_scan_per_index_shared_across_packages() -> Result<(), String> {
+        let index = index(&[
+            ("src/lib.rs", RENDER_LIB),
+            (
+                "crates/other/src/lib.rs",
+                "pub mod a {\n    pub fn render(x: i32) -> i32 { x + 1 }\n}\n\npub mod b {\n    pub fn render(x: i32) -> i32 { x * 2 }\n}\n",
+            ),
+        ]);
+        let find_owner = |prefix: &str| {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.starts_with(prefix) && function.name == "render")
+                .cloned()
+                .ok_or_else(|| format!("`{prefix}` render must be indexed"))
+        };
+        let root_owner = find_owner("src/lib.rs")?;
+        let other_owner = find_owner("crates/other")?;
+        let root_identity = super::shared_owner_call_identity(&index, &root_owner);
+        let other_identity = super::shared_owner_call_identity(&index, &other_owner);
+        let shapes = index.call_identity_memos.shapes.get().ok_or_else(|| {
+            "the first identity construction must populate the shape memo".to_string()
+        })?;
+        assert_eq!(shapes.len(), 2, "one pass answers every package at once");
+        let root_shape = shapes
+            .get(&None)
+            .ok_or_else(|| "the root package must be scanned".to_string())?;
+        let other_shape = shapes
+            .get(&Some("crates/other/".to_string()))
+            .ok_or_else(|| "the other package must be scanned".to_string())?;
+        assert!(!root_shape.remaps_module_paths);
+        assert!(!other_shape.remaps_module_paths);
+        // Two owners never share one identity instance.
+        if let (Some(root), Some(other)) = (root_identity, other_identity) {
+            assert!(!std::sync::Arc::ptr_eq(&root, &other));
+        }
+        Ok(())
     }
 
     /// #6544: a `use` that imports one rival settles a bare call on it.

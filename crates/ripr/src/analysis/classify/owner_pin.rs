@@ -110,7 +110,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
     /// Same-named module-level rivals in the owner's package, settled per
     /// test by the call's spelled path (#6544). `None` when there are none.
-    identity: Option<OwnerCallIdentity>,
+    /// Shared per analysis run with the relation stage's identity (#7716).
+    identity: Option<std::sync::Arc<OwnerCallIdentity>>,
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
@@ -1721,10 +1722,10 @@ impl OwnerReturnPin {
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
         let identity = match call.kind() {
-            CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+            CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
             CallKind::Method | CallKind::Associated => None,
         };
-        if other_definition_competes(owner, index, call.kind(), identity.as_ref()) {
+        if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
             return None;
         }
         Some(Self {
@@ -6383,10 +6384,11 @@ pub(in crate::analysis) fn pin_scope_needs(
     // Same rivals `establish` settles per test (#6544): once indexed they no
     // longer refuse, but files that define more of them still widen scope.
     let identity = match kind {
-        CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+        CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
         CallKind::Method | CallKind::Associated => None,
     };
-    needs.competing_definitions = !other_definition_competes(owner, index, kind, identity.as_ref());
+    needs.competing_definitions =
+        !other_definition_competes(owner, index, kind, identity.as_deref());
     needs
 }
 
