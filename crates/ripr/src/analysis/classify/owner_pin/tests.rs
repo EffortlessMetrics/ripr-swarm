@@ -7998,6 +7998,37 @@ fn an_integer_projection_that_keeps_the_value_pins() {
         let lib = unit_tests("", body).replace("-> u32", &format!("-> {returned}"));
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
     }
+    // #7932 review: `.min`/`.max` are the prelude `Ord`'s only while nothing
+    // rebinds them. A local `trait Ord` shadows the prelude's, and an import
+    // of `Ord`, a foreign glob, or a workspace `fn min` may supply another.
+    let rebinding = [
+        "trait Ord {\n    fn min(self, k: u32) -> u32;\n}\nimpl Ord for u32 {\n    fn min(self, _k: u32) -> u32 {\n        12\n    }\n}\n\n",
+        "use other::Ord;\n\n",
+        "use other::{\n    Ord,\n};\n\n",
+        "pub struct Span;\nimpl Span {\n    pub fn min(&self) -> u32 {\n        0\n    }\n}\n\n",
+    ];
+    for prelude in rebinding {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+        // `* 1` keeps std's operator impl, which coherence fixes.
+        let lib = unit_tests(prelude, "assert_eq!(crate::weight(4) * 1, 12);");
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{lib}");
+    }
+    // A foreign glob may import an `Ord`; it already refuses every pin.
+    let lib = unit_tests("use other::*;\n\n", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    let max = "assert_eq!(crate::weight(4).max(3), 12);";
+    let lib = unit_tests("pub fn max(a: u32) -> u32 {\n    a\n}\n\n", max);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A longer name, or the other method, rebinds nothing.
+    for prelude in [
+        "pub fn minimum(a: u32) -> u32 {\n    a\n}\n\n",
+        "pub fn max(a: u32) -> u32 {\n    a\n}\n\n",
+        "use std::collections::BTreeMap;\n\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{lib}");
+    }
 }
 
 #[test]

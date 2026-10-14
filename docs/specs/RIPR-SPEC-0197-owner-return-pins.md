@@ -1344,6 +1344,15 @@ owner call against a plain decimal literal `e` pins the call
 3. `call * 1`, `1 * call`, `call + 0` and `0 + call`, which keep every
    value.
 
+`.min` and `.max` are the prelude `Ord`'s methods only while nothing
+rebinds them (#7932 review). The projection refuses when the workspace
+declares a `fn min` (for `.min`) or `fn max` (for `.max`), declares a
+`trait Ord`, names `Ord` in a `use` item, or carries
+`no_implicit_prelude`, or when the test's file globs a foreign module. A
+local `trait Ord` shadows the prelude's, so `.min(k)` would resolve to it.
+`* 1` and `+ 0` keep std's operator impls, which coherence fixes for a
+primitive, so they do not read that scan.
+
 `k` and `e` are plain decimal literals (`_` separators allowed): a
 constant, a suffix, a hex literal or a negative number refuses. The call
 is the owner call shape of rule 1 with nothing else around it; chained

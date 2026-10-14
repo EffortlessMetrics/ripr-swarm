@@ -2020,6 +2020,7 @@ impl OwnerReturnPin {
                         .then(|| {
                             [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                                 exact_integer_projection(operands[at], operands[other])
+                                    .filter(|_| !ord_method_rebindable(operands[at], test, index))
                                     .and_then(|call| self.awaited_call_shape(call, &self.name))
                                     .map(|call| (call, operands[other]))
                             })
@@ -7116,6 +7117,64 @@ fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a 
         .or_else(|| before(operand, '*', '1'))
         .or_else(|| before(operand, '+', '0'))
         .filter(|call| !call.is_empty())
+}
+
+/// `.min(k)` and `.max(k)` on an integer resolve to the prelude's `Ord`
+/// only while nothing rebinds that name: a local `trait Ord` (or an import
+/// of one, including through a foreign glob) shadows it, and
+/// `no_implicit_prelude` drops it. A workspace that declares its own
+/// `fn min`/`fn max`, names `Ord` in a `use` or a `trait` item, drops the
+/// prelude, or whose test file globs a foreign module refuses the
+/// projection rather than crediting a method it may not bind (#7932
+/// review). `* 1` and `+ 0` keep std's operator impls, which coherence
+/// forbids redefining for a primitive.
+fn ord_method_rebindable(operand: &str, test: &TestSummary, index: &RustIndex) -> bool {
+    let method = match (operand.contains(".min("), operand.contains(".max(")) {
+        (false, false) => return false,
+        (true, false) => "min",
+        (false, true) => "max",
+        (true, true) => return true,
+    };
+    let Some(test_source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.clone())
+    else {
+        return true;
+    };
+    if may_saturate_macro_ambiguity(&test_source) {
+        return true;
+    }
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    // `keyword` as a whole word, followed by whitespace and `then`, which
+    // `then` matches by its whole leading word or (for `use`) its item text.
+    let declares = |masked: &str, keyword: &str, then: &dyn Fn(&str) -> bool| {
+        masked.match_indices(keyword).any(|(offset, _)| {
+            let rest = &masked[offset + keyword.len()..];
+            let item = rest.trim_start();
+            masked[..offset]
+                .bytes()
+                .next_back()
+                .is_none_or(|byte| !ident(byte))
+                && item.len() < rest.len()
+                && then(item)
+        })
+    };
+    let leading = |word: &'static str| {
+        move |item: &str| {
+            item.strip_prefix(word)
+                .is_some_and(|tail| !tail.bytes().next().is_some_and(ident))
+        }
+    };
+    let names_ord =
+        |item: &str| contains_as_whole_word(item.split(';').next().unwrap_or(item), "Ord");
+    index.files().iter().any(|(_, facts)| {
+        let masked = mask_comments_and_strings(&facts.data().source);
+        masked.contains("no_implicit_prelude")
+            || declares(&masked, "fn", &leading(method))
+            || declares(&masked, "trait", &leading("Ord"))
+            || declares(&masked, "use", &names_ord)
+    })
 }
 
 /// trap-pile-first-element-control: the call inside `vec![call][0]`, a
