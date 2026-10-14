@@ -360,7 +360,24 @@ fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
         && word == "("
     {
         start += 1;
+        // `throw (log(e), e)`: a top-level comma inside the parentheses is
+        // the sequence operator, and the thrown value is its last operand.
+        let mut depth = 0usize;
+        for token in &throw[start..] {
+            match token {
+                LineToken::Other(open) if open == "(" || open == "[" || open == "{" => depth += 1,
+                LineToken::Other(close) if close == ")" || close == "]" || close == "}" => {
+                    let Some(next) = depth.checked_sub(1) else {
+                        break;
+                    };
+                    depth = next;
+                }
+                LineToken::Other(comma) if comma == "," && depth == 0 => return None,
+                _ => {}
+            }
+        }
     }
+    let mut called = false;
     let constructed = matches!(throw.get(start), Some(LineToken::Other(word)) if word == "new");
     if constructed {
         start += 1;
@@ -375,10 +392,21 @@ fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
         && !callee.contains('.')
     {
         start += 2;
-    } else if constructed {
-        // `new errors.ParseError(...)` (the tokenizer keeps the dotted path
-        // as one word) or `new X<T>(...)`: the class is not one name, so
-        // the split is refused.
+        called = true;
+    } else if constructed
+        || matches!(
+            (throw.get(start), throw.get(start + 1)),
+            (Some(LineToken::Other(callee)), Some(LineToken::Other(open)))
+                if (open == "(" || open == "<")
+                    && callee
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        )
+    {
+        // `new errors.ParseError(...)` or `errors.make(...)` (the tokenizer
+        // keeps the dotted path as one word), or `new X<T>(...)`: the class
+        // or factory is not one name, so the split is refused.
         return None;
     }
     let mut depth = 0usize;
@@ -392,7 +420,14 @@ fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
                 };
                 depth = next;
             }
-            LineToken::Other(comma) if comma == "," && depth == 0 => break,
+            // Outside a call, a top-level comma is the sequence operator
+            // (`throw (log(e), e)`): the thrown value is its last operand.
+            LineToken::Other(comma) if comma == "," && depth == 0 => {
+                if !called {
+                    return None;
+                }
+                break;
+            }
             _ => {}
         }
         end += 1;
@@ -724,6 +759,44 @@ mod tests {
             r#"throw new errors.B("bad");"#,
         );
         assert!(!member_changed.message_only);
+        // A class change outside the argument, a later argument that also
+        // changes, an empty argument list and an unclosed line are not.
+        for (old, new) in [
+            (r#"throw new Error("a");"#, r#"throw new TypeError("b");"#),
+            (
+                r#"throw new Error("a", { cause: x });"#,
+                r#"throw new Error("b", { cause: y });"#,
+            ),
+            (r#"throw new Error();"#, r#"throw new Error("x");"#),
+            (r#"throw f([a"#, r#"throw f([b"#),
+        ] {
+            assert!(
+                !ErrorChangeFacts::read(Some(old), new).message_only,
+                "{old} -> {new}"
+            );
+        }
+        // A renamed single-name factory, and a sequence operand, are not.
+        for (old, new) in [
+            (r#"throw makeErr("a");"#, r#"throw makeOther("b");"#),
+            (r#"throw (log(a), e);"#, r#"throw (log(b), e);"#),
+            (r#"throw x, e;"#, r#"throw y, e;"#),
+        ] {
+            assert!(
+                !ErrorChangeFacts::read(Some(old), new).message_only,
+                "{old} -> {new}"
+            );
+        }
+        // So is a dotted or generic factory without `new`.
+        let factory = ErrorChangeFacts::read(
+            Some(r#"throw errors.make("bad " + x);"#),
+            r#"throw errors.other("bad ");"#,
+        );
+        assert!(!factory.message_only);
+        let generic = ErrorChangeFacts::read(
+            Some(r#"throw make<A>("bad " + x);"#),
+            r#"throw make<B>("bad ");"#,
+        );
+        assert!(!generic.message_only);
         // A change in another argument, or after the call, is not.
         let cause = ErrorChangeFacts::read(
             Some(r#"throw new Error("bad", { cause: a });"#),

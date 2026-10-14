@@ -300,18 +300,28 @@ because no class check matches a primitive;
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
 differs between its old and new text lies inside the message argument of
-the thrown or rejected error: the first argument of `new X(...)` or
-`X(...)` with `X` one undotted name, or otherwise the whole thrown or
-rejected operand, a literal, a name, a ternary or a call alike (a literal
-in a condition on the same line does not count). A changed string literal, a
-changed `${...}` interpolation and an added or dropped operand
-(`"limit " + max` against `"limit "`) all count. A change to the class,
-to a member-path class (`new errors.ParseError(...)`), to a later
-argument or after the call does not, and neither does a respelling that
-reads the same message on both sides (`"unsupported currency"` against
-`"unsupported " + "currency"`), which keeps the ladder's reading (amended
-2026-10-14; before that, only changed string literals counted). On such a
-change a
+the thrown or rejected error (a literal in a condition on the same line
+does not count). The message argument is the first argument of
+`new X(...)` or `X(...)` with `X` one undotted name, or otherwise the
+whole thrown or rejected operand when it does not open with a call (a
+literal, a name or a ternary). A dotted or generic class or factory
+(`new errors.ParseError(...)`, `errors.make(...)`, `make<T>(...)`)
+refuses the split, and so does a top-level comma outside a call (the
+sequence operator in `throw (log(e), e)`). A changed string literal, a changed `${...}`
+interpolation and an added or dropped operand inside a present argument
+(`"limit " + max` against `"limit "`) all count; adding the argument
+itself (`new Error()` against `new Error("x")`) does not. A factory's
+first argument is read as its message even when it is another value
+(`make(code, "a")`). A change to the class of `new X(...)` or `X(...)`,
+to a later argument or after the call does not count. A class inside an
+operand that does not open with a call (a ternary choosing between two
+`new` expressions) is part of the operand, so such a change counts, which
+only removes credit. A respelling whose literals join to the same
+message on both sides (`"unsupported currency"` against
+`"unsupported " + "currency"`) does not count either; a respelling that
+needs runtime values to compare (two interpolations) is not recognised
+and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
+before that, only changed string literals counted). On such a change a
 payload credits only if it separates the two versions: it matches
 exactly one of the old and new messages. A test that passes on the new
 side and one that pins the old message and fails on the new side both
