@@ -70,8 +70,10 @@ pub(in crate::analysis) enum CallTarget {
 
 type TestKey = (PathBuf, usize);
 
-/// One identity per owner definition per run, built on first ask.
-type SharedIdentities = BTreeMap<TestKey, Option<std::sync::Arc<OwnerCallIdentity>>>;
+/// One identity per owner definition per run, built on first ask. Keyed by
+/// the owner's parser symbol id, which is unique per definition even when
+/// two same-named owners share one source line (inline sibling modules).
+type SharedIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -151,15 +153,11 @@ fn scan_call_identity_shapes(
             _ => {}
         }
     }
-    let packages = remaps
-        .keys()
-        .cloned()
-        .chain(libs.keys().cloned())
-        .chain(mains.keys().cloned())
-        .collect::<BTreeSet<_>>();
-    packages
+    // Every file's package key is inserted into `remaps` above, so it
+    // already holds every package with an indexed file.
+    remaps
         .into_iter()
-        .map(|package| {
+        .map(|(package, remaps_module_paths)| {
             let lib = libs.get(&package).cloned().unwrap_or_default();
             let main = mains.get(&package).cloned().unwrap_or_default();
             let declared = |sources: Vec<std::sync::Arc<str>>| match sources.as_slice() {
@@ -170,7 +168,7 @@ fn scan_call_identity_shapes(
             let roots =
                 (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
             let shape = PackageCallIdentityShape {
-                remaps_module_paths: remaps.get(&package).copied().unwrap_or(false),
+                remaps_module_paths,
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -180,6 +178,17 @@ fn scan_call_identity_shapes(
             (package, std::sync::Arc::new(shape))
         })
         .collect()
+}
+
+impl CallIdentityMemos {
+    /// Forget every memo: an index mutation (a new or replaced file, new
+    /// functions) can change both the workspace shape answers and each
+    /// owner's rival set, so a memo computed earlier must not survive it.
+    /// Build-time inserts pay nothing (the memos are still empty); the
+    /// producers never mutate a live index mid-analysis.
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// The memoized (or freshly scanned) whole-index answers for `package`.
@@ -219,7 +228,7 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     index: &RustIndex,
     owner: &FunctionSummary,
 ) -> Option<std::sync::Arc<OwnerCallIdentity>> {
-    let key = (owner.file.clone(), owner.start_line);
+    let key = owner.id.0.clone();
     if let Some(memo) = index
         .call_identity_memos
         .identities
@@ -1632,6 +1641,61 @@ mod blocks {
         if let (Some(root), Some(other)) = (root_identity, other_identity) {
             assert!(!std::sync::Arc::ptr_eq(&root, &other));
         }
+        Ok(())
+    }
+
+    /// Two same-named owners on one source line (inline sibling modules)
+    /// are distinct identities: the shared memo keys on the owner's parser
+    /// symbol id, never on (file, start_line), which both share (#7716
+    /// review). A (file, line) key made the second owner reuse the first's
+    /// identity, discarding the other owner's tests as rivals.
+    #[test]
+    fn shared_identity_distinguishes_same_line_same_name_owners() -> Result<(), String> {
+        // `a::render` and `b::render` share one source line (and so one
+        // (file, start_line)); `c::render` sits on its own line, which is
+        // what lets `OwnerCallIdentity::new` build an identity for either
+        // same-line owner at all. The shared memo keys on the owner's
+        // symbol id: a (file, line) key handed `b::render` the identity
+        // built for `a::render`, settling `b::render`'s tests as rivals
+        // (#7716 review).
+        let one_line = "mod a { pub fn render(x: i32) -> i32 { x + 1 } } mod b { pub fn render(x: i32) -> i32 { x * 2 } }
+
+mod c { pub fn render(x: i32) -> i32 { x * 3 } }
+
+#[cfg(test)]
+mod tests { use super::b::render; #[test] fn doubles_two() { assert_eq!(render(2), 4); } }
+";
+        let index = index(&[("src/lib.rs", one_line)]);
+        let find = |module: &str| {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(&format!("::{module}::render")))
+                .cloned()
+                .ok_or_else(|| format!("`{module}::render` must be indexed"))
+        };
+        let a = find("a")?;
+        let b = find("b")?;
+        let a_identity =
+            super::shared_owner_call_identity(&index, &a).ok_or("identity for a::render")?;
+        let b_identity =
+            super::shared_owner_call_identity(&index, &b).ok_or("identity for b::render")?;
+        assert!(
+            !std::sync::Arc::ptr_eq(&a_identity, &b_identity),
+            "same-line same-name owners are distinct definitions; sharing one              identity settles the other owner's tests as rivals"
+        );
+        // Behavior parity for the second owner against a fresh construction.
+        let fresh_b = super::OwnerCallIdentity::new(&b, index.functions().iter(), &index)
+            .ok_or("a fresh construction for b::render matches")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "doubles_two")
+            .ok_or("the fixture test must be indexed")?;
+        assert_eq!(
+            b_identity.resolve_test(test, &index),
+            fresh_b.resolve_test(test, &index)
+        );
         Ok(())
     }
 

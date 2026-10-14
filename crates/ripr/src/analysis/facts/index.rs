@@ -488,6 +488,7 @@ impl RustIndex {
     /// Insert each supplied occurrence once. Shared membership is explicit;
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
+        self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
             path: fact_path,
@@ -552,6 +553,7 @@ impl RustIndex {
     }
     #[cfg(test)]
     pub(crate) fn insert_file_only(&mut self, path: PathBuf, facts: FileFacts) {
+        self.call_identity_memos.clear();
         self.insert_file(path, facts, false);
     }
     pub fn push_function(&mut self, fact: FunctionFact) {
@@ -785,12 +787,14 @@ impl RustIndex {
     }
     #[cfg(test)]
     pub fn extend_functions(&mut self, facts: impl IntoIterator<Item = FunctionFact>) {
+        self.call_identity_memos.clear();
         for fact in facts {
             self.push_function(fact);
         }
     }
     #[cfg(test)]
     pub fn extend_tests(&mut self, facts: impl IntoIterator<Item = TestFact>) {
+        self.call_identity_memos.clear();
         for fact in facts {
             self.push_test(fact);
         }
