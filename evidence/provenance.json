@@ -25,9 +25,10 @@
   },
   "test_provenance": {
     "focused_receipt": "tests/focused-receipts.json",
-    "focused_receipt_note": "Receipt file timestamp is after candidate commit; it records seven commands with exit 0. Raw post-commit log files preserved here for reveal and transitive. Other command stdout was not captured as post-commit raw logs.",
-    "sibling_effect_oracle": "Reported exit 0, 13 passed on the final repaired source; raw stdout not captured. The older 13/13 raw log is retained under tests/pre-final and is explicitly not bound as exact-candidate output.",
+    "focused_receipt_note": "The post-commit focused runner recorded four successful commands: reveal, transitive, integration and CLI rerun. Exact-head logs for those four are preserved. It then began goldens; that run was stopped before completion at the user instruction to stop local commands. No exact-head goldens exit is claimed; exact-head honesty and dogfood were not run.",
+    "sibling_effect_oracle": "Reported exit 0, 13 passed on the final repaired source worktree; the source file fingerprint in candidate-file-sha256.json matches commit a4. Raw stdout was not retained. The older 13/13 raw log is retained under tests/pre-final and predates final source edits.",
     "native_fixture_controls": "Rustc fixture-control receipts were recorded before candidate commit a4. They test fixture mutation behavior and are not analyzer executions; source/log receipts are retained without claiming exact-a4 runtime.",
-    "external_corpus": "Full pinned external-corpus qualification remains blocked by inherited setup failure tracked in issue #7880; no full-corpus pass is claimed."
+    "external_corpus": "Full pinned external-corpus qualification remains blocked by inherited setup failure tracked in issue #7880; no full-corpus pass is claimed.",
+    "stopped_local_command": "The focused runner was terminated while goldens was in progress. It was stopped on explicit user instruction; no focused runner or test compiler remains active."
   }
 }
