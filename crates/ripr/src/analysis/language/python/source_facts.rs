@@ -108,12 +108,20 @@ pub(super) struct PythonSourceLimitation {
 /// - pytest: `pytest.ini`, `conftest.py`, or a pytest section in
 ///   `pyproject.toml` / `setup.cfg` / `tox.ini` (a bare pyproject.toml is
 ///   PEP 517 packaging, not pytest evidence — #2183 review);
+///   when those markers are absent, bounded code evidence of
+///   `import pytest` / `from pytest import ...` in a `test_*.py` file at
+///   the root or in `tests/` / `test/` also counts (#7662);
 /// - unittest: no config exists by design, so detection uses bounded code
 ///   evidence (`import unittest` in a `test_*.py` file at the root or in
 ///   `tests/` / `test/`), matching what the adapter detects from source.
 ///
-/// Fail-closed: `None` when no marker matches — callers must report
-/// "not detected", never guess.
+/// Config-file pytest markers stay first so a marker-backed pytest repo
+/// that also contains unittest imports still reports pytest. Pytest import
+/// evidence outranks unittest in the same bounded scan so zero-config
+/// pytest repos agree between `ripr doctor` and `ripr check`. Reporting
+/// both frameworks at once is out of scope (#7664). Fail-closed: `None`
+/// when no marker matches — callers must report "not detected", never
+/// guess.
 pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> {
     if root.join("pytest.ini").exists()
         || root.join("conftest.py").exists()
@@ -125,6 +133,7 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
     {
         return Some("pytest");
     }
+    let mut saw_unittest = false;
     for dir in [root.to_path_buf(), root.join("tests"), root.join("test")] {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -143,15 +152,24 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
                 continue;
             };
             let prefix = &bytes[..bytes.len().min(4096)];
-            if String::from_utf8_lossy(prefix)
-                .lines()
-                .any(is_unittest_import_line)
-            {
-                return Some("unittest");
+            let text = String::from_utf8_lossy(prefix);
+            if text.lines().any(is_pytest_import_line) {
+                return Some("pytest");
+            }
+            if !saw_unittest && text.lines().any(is_unittest_import_line) {
+                saw_unittest = true;
             }
         }
     }
-    None
+    saw_unittest.then_some("unittest")
+}
+
+/// Whether a line is a real pytest import statement — `import pytest`,
+/// `import pytest as ...`, or `from pytest import ...` — at a token
+/// boundary. Comment lines and lookalike identifiers (`import pytesting`)
+/// do not count (#7662).
+fn is_pytest_import_line(line: &str) -> bool {
+    is_top_level_module_import_line(line, "pytest")
 }
 
 /// Whether a line is a real unittest import statement — `import unittest`,
@@ -159,18 +177,26 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
 /// boundary. Comment lines and lookalike identifiers (`import unittesting`)
 /// do not count (#2106 review).
 fn is_unittest_import_line(line: &str) -> bool {
+    is_top_level_module_import_line(line, "unittest")
+}
+
+/// Token-boundary `import <module>` / `from <module> import ...` matcher.
+/// A following space after the module name admits aliases such as
+/// `import pytest as pt`; a glued lookalike (`import pytesting`) does not.
+fn is_top_level_module_import_line(line: &str, module: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with('#') {
         return false;
     }
     if let Some(rest) = trimmed.strip_prefix("from ") {
         return rest
-            .strip_prefix("unittest")
+            .strip_prefix(module)
             .is_some_and(|rest| rest.starts_with(" import"));
     }
-    trimmed
-        .strip_prefix("import ")
-        .is_some_and(|rest| rest == "unittest" || rest.starts_with("unittest "))
+    trimmed.strip_prefix("import ").is_some_and(|rest| {
+        rest.strip_prefix(module)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(' '))
+    })
 }
 
 /// Whether an INI-style file exists and contains the given section header.
