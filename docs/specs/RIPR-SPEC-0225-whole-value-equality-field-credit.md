@@ -219,6 +219,25 @@ rejected alternative. Any can be reversed later without touching the rest.
    unresolved flow remain refused. This is separate from #7105's refusal of
    an actual-side field read inside braces, which remains unchanged.
 
+6. **Unwrapped `Ok`/`Some` tails and their early exits (2026-10-14).**
+   Beside an `Ok(T { .. })` tail, an early `return Err(..)` is admitted, and
+   beside a `Some(T { .. })` tail an early `return None`: each exits with the
+   variant the tail does not build, as `?` already does, so every `Ok`/`Some`
+   the owner returns is the tail literal. Any other `return` (another
+   `Ok(..)`, a call, a method chain on `Err(..)`) still refuses, and so does
+   an early exit when a workspace file may rebind `Err`/`None` (a `fn Err`,
+   a `use .. as Err`), as the tail's `Ok`/`Some` already must not be. The test may
+   then compare `owner(..).unwrap()` or `owner(..).expect("..")` (one plain
+   string-literal message), inline or through rule 1's once-used `let`, with
+   the bare literal `T { .. }`: both panic on `Err`/`None`, so a passing
+   comparison reads the `Ok`/`Some` payload, and the expected literal is
+   checked as `Ok(T { .. })`/`Some(T { .. })` against every other gate.
+   `unwrap_or*`, a computed `expect` message, an unwrapped bare-tail owner and
+   an unwrapped value compared with a wrapped literal give no credit. Rejected:
+   leaving early-`Err` owners refused, which kept the common
+   `let r = ship(..).unwrap(); assert_eq!(r, Receipt { .. })` shape a false
+   gap (ledger-receipt-remaining).
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
@@ -250,7 +269,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 2. Same, with `impl PartialEq for Config { fn eq(&self, o: &Self) -> bool { self.name == o.name } }`:
    not `exposed`.
 3. `assert_eq!(parse("3"), Ok(Config { retries: 4, name: "x".into() }))`,
-   `parse` the owner: `exposed`.
+   `parse` the owner: `exposed`. Under decision 6, `parse` may also
+   `return Err(..)` early, and `assert_eq!(parse("3").unwrap(), Config { retries: 4, name: "x".into() })`
+   reads `exposed` too.
 4. `let c = build(3); assert_eq!(c, Config { retries: 4, name: "x".into() })`: `exposed`.
 5. `let c = build(3); let e = Config { retries: 4, name: "x".into() }; assert_eq!(c, e)`:
    `exposed` under decision 5's adjacent immutable binding gates.
@@ -311,7 +332,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   adjacent expected binding admission before the existing literal gates.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
   execution admission (`establish_whole_value_field`, `whole_value_tail`,
-  `WholeValueField::admits`, `bound_owner_call`).
+  `WholeValueField::admits`, `bound_owner_initializer`); decision 6 adds
+  `returns_other_variant` and `unwrapped_call`, covered by
+  `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`.
 
 ## Metrics
 

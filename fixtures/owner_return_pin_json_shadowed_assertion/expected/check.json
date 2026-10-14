@@ -1,0 +1,232 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/owner_return_pin_json_shadowed_assertion/input",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":3,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:65ccba2dcd461e22aa991bab2e102b5fb7660ea8e7374a97ee2b2a70d66cd198","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:error_path:3c99e167",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:error_variant:error_path:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:error_variant:error_path:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:3c99e167",
+        "family": "error_path",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 checks uses none unknown oracle"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
+      ],
+      "evidence": ["Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks", "assertion not credited: `assert_eq!` in checks at tests/save.rs:5: tests/save.rs:4 defines a macro named `assert_eq`"],
+      "missing": ["No exact error variant discriminator was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 5,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:9659b9fa",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "ok"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:9659b9fa",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Ok(())"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Ok(())"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:5 checks uses none unknown oracle"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Ok(())","line":5}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: Ok(())", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks", "assertion not credited: `assert_eq!` in checks at tests/save.rs:5: tests/save.rs:4 defines a macro named `assert_eq`"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 5,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:94904a64",
+      "canonical_gap_id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:did_save_params:return_value:return_value:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "did_save_params",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:94904a64",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach did_save_params: checks"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 checks uses none unknown oracle"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})","line":5}
+      ],
+      "evidence": ["Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach did_save_params: checks", "assertion not credited: `assert_eq!` in checks at tests/save.rs:5: tests/save.rs:4 defines a macro named `assert_eq`"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "checks",
+          "file": "tests/save.rs",
+          "line": 5,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in checks at tests/save.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}
