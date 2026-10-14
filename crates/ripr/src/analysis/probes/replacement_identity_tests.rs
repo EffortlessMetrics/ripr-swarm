@@ -171,14 +171,14 @@ fn unequal_replacement_and_wrapper_only_return_keep_distinct_obligations() -> Re
         "{unequal:?}"
     );
     let wrapper = git_probes(
-        "pub fn f(a: u8) -> Result<(), u8> {\n    let _ =\n        Err(a);\n    Ok(())\n}\n",
-        "pub fn f(a: u8) -> Result<(), u8> {\n    return\n        Err(a);\n    Ok(())\n}\n",
+        "pub fn f(a: u8) -> Result<(), u8> {\n    let _ =\n        Result::<(), u8>::Err(a);\n    Ok(())\n}\n",
+        "pub fn f(a: u8) -> Result<(), u8> {\n    return\n        Result::<(), u8>::Err(a);\n    Ok(())\n}\n",
     )?;
     for family in [ProbeFamily::ErrorPath, ProbeFamily::ReturnValue] {
         assert!(
             wrapper.iter().any(|seed| seed.probe.family == family
                 && seed.probe.location.line == 2
-                && seed.probe.after.as_deref() == Some("return\n        Err(a)")),
+                && seed.probe.after.as_deref() == Some("return\n        Result::<(), u8>::Err(a)")),
             "{wrapper:?}"
         );
     }

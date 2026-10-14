@@ -15,11 +15,11 @@ fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
         std::fs::write(root.join("src/lib.rs"), "mod a;\nmod b;\n")?;
         std::fs::write(
             root.join("src/a.rs"),
-            "pub fn f(x: i32) -> bool {\n    if x > 0 { true } else { false }\n}\n",
+            "pub fn f(x: i32) -> bool {\n    if x > 0 {\n        true\n    } else {\n        false\n    }\n}\n",
         )?;
         std::fs::write(
             root.join("src/b.rs"),
-            "pub fn g(n: i32) -> bool {\n    if n < 0 { true } else { false }\n}\n",
+            "pub fn g(n: i32) -> bool {\n    if n < 0 {\n        true\n    } else {\n        false\n    }\n}\n",
         )?;
         run_git(&root, &["init", "-q"])?;
         run_git(&root, &["config", "core.autocrlf", "false"])?;
@@ -38,11 +38,11 @@ fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
         )?;
         std::fs::write(
             root.join("src/a.rs"),
-            "// shifted é\npub fn f(x: i32) -> bool {\n    if x >= 0 { true } else { false }\n}\n",
+            "// shifted é\npub fn f(x: i32) -> bool {\n    if x >= 0 {\n        true\n    } else {\n        false\n    }\n}\n",
         )?;
         std::fs::write(
             root.join("src/b.rs"),
-            "pub fn g(n: i32) -> bool {\n    if n <= 0 { true } else { false }\n}\n",
+            "pub fn g(n: i32) -> bool {\n    if n <= 0 {\n        true\n    } else {\n        false\n    }\n}\n",
         )?;
         let patch = run_command("git", Some(&root), &["diff", "--unified=0", "HEAD", "--"])?;
         assert!(patch.status.success());
