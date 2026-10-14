@@ -204,7 +204,10 @@ recomputed one given the same render options. The one exception is
 navigation: the sibling commands `explain` prints and the context packet's
 `witness.explain_command` replay the source that produced the finding,
 `--diff`/`--base` on a fresh run and `--from <artifact>` on a reused one
-(#3952). Render-time knobs
+(#3952). An explicit mode remains in the sibling command even when it is
+`draft`: omitting `--mode draft` over a repository `mode = "ready"` would
+reload Ready and refuse the Draft artifact (#7873). Unoverridden Draft
+retains its existing omission. Render-time knobs
 (`--max-related-tests`, severity display, output format) are not part of
 the identity and are honored fresh at render time — including
 `--max-related-tests` beyond the `check --json` render cap, because the
@@ -368,6 +371,10 @@ even though the `check --json` render caps related tests at 8.
   — an artifact written with `--no-unchanged-tests` is consumable with the
   same flag and fails closed naming
   `analysis_options.include_unchanged_tests` without it.
+- `crates/ripr/tests/cli_smoke/artifact_mode_precedence.rs::context_artifact_navigation_preserves_mode_precedence`
+  — literal mode precedence through artifact-backed navigation and actual
+  nested-cwd replay, with a removed-mode refusal, default-mode omission,
+  unrelated render-cap, unchanged-test and cache-relocation controls.
 - `crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_managed_perl_producer`
   — managed `[perl] producer` packet generation fails closed with the
   named limitation.
