@@ -1052,7 +1052,7 @@ fn short_name_matches_added(
 /// has no long pairing name. Keywords (`if`, `fn`, `as`, `in`) and pure
 /// digits or underscores are not names, so they cannot pair unrelated
 /// lines that merely share punctuation or literals. Comments and the
-/// contents of character, string, or raw-string literals are not pairing
+/// contents of character, string, byte, or raw-string literals are not pairing
 /// names; nested block comments, lifetimes, and code after a comment or
 /// literal still are.
 fn short_pairing_tokens(text: &str) -> Vec<String> {
@@ -1064,7 +1064,12 @@ fn short_pairing_tokens(text: &str) -> Vec<String> {
         let ch = chars[index];
         let next = chars.get(index + 1).copied();
         // Literal and raw-string starts are recognized before comments so a
-        // `//` or `/*` inside quotes does not hide later code names.
+        // `//` or `/*` inside quotes does not hide later code names. `b"..."`
+        // / `c'...'` prefixes are part of the literal, not pairing names.
+        if current.is_empty() && matches!(ch, 'b' | 'c') && matches!(next, Some('\'' | '"')) {
+            index = skip_quoted_literal(&chars, index + 1);
+            continue;
+        }
         if current.is_empty()
             && let Some(end) = skip_raw_string(&chars, index)
         {
@@ -3414,6 +3419,25 @@ mod tests {
         assert_eq!(probes[0].family, ProbeFamily::Predicate);
         assert_eq!(probes[0].before.as_deref(), Some("if x == 'a' {"));
         assert_eq!(probes[0].after.as_deref(), Some("if x == 'b' {"));
+    }
+
+    /// `b"..."` is a byte string, not a binding named `b`. Dropping the
+    /// prefix must pair as the same predicate instead of a deletion.
+    #[test]
+    fn short_name_byte_string_prefix_is_not_a_pairing_name() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(r#"    if x == b"a" {"#, r#"    if x == "a" {"#, 6),
+            &RustIndex::default(),
+        );
+        assert_eq!(
+            probes.len(),
+            1,
+            "byte-string prefix must not create a deleted probe: {probes:?}"
+        );
+        assert_eq!(probes[0].family, ProbeFamily::Predicate);
+        assert_eq!(probes[0].before.as_deref(), Some(r#"if x == b"a" {"#));
+        assert_eq!(probes[0].after.as_deref(), Some(r#"if x == "a" {"#));
     }
 
     /// A block comment must not hide later code names, so `y` vs `z` after
