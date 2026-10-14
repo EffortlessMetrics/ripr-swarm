@@ -57,31 +57,37 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/messages.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/messages.rs",
             "value": "len = 12",
             "context": "function_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/messages.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/messages.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/messages.rs",
             "value": "len = 12",
             "context": "function_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/messages.rs",
             "value": "12",
             "context": "assertion_argument"
           }
@@ -97,31 +103,37 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/messages.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/messages.rs",
           "value": "len = 12",
           "context": "function_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/messages.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/messages.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/messages.rs",
           "value": "len = 12",
           "context": "function_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/messages.rs",
           "value": "12",
           "context": "assertion_argument"
         }
@@ -216,31 +228,37 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/messages.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/messages.rs",
             "value": "len = 12",
             "context": "function_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/messages.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/messages.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/messages.rs",
             "value": "len = 12",
             "context": "function_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/messages.rs",
             "value": "12",
             "context": "assertion_argument"
           }
@@ -256,31 +274,37 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/messages.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/messages.rs",
           "value": "len = 12",
           "context": "function_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/messages.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/messages.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/messages.rs",
           "value": "len = 12",
           "context": "function_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/messages.rs",
           "value": "12",
           "context": "assertion_argument"
         }

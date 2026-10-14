@@ -333,3 +333,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_swallowed_ok (13)
+
+Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
+Command:
+`cargo xtask goldens bless propagate_swallowed_ok --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

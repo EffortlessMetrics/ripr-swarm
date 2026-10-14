@@ -54,16 +54,19 @@
         "observed_values": [
           {
             "line": 8,
+            "source_file": "tests/route.rs",
             "value": "\"proof\"",
             "context": "assertion_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/route.rs",
             "value": "\"sensor\"",
             "context": "assertion_argument"
           },
           {
             "line": 8,
+            "source_file": "tests/route.rs",
             "value": "kind = \"focused-test\"",
             "context": "function_argument"
           }
@@ -79,16 +82,19 @@
       "observed_values": [
         {
           "line": 8,
+          "source_file": "tests/route.rs",
           "value": "\"proof\"",
           "context": "assertion_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/route.rs",
           "value": "\"sensor\"",
           "context": "assertion_argument"
         },
         {
           "line": 8,
+          "source_file": "tests/route.rs",
           "value": "kind = \"focused-test\"",
           "context": "function_argument"
         }

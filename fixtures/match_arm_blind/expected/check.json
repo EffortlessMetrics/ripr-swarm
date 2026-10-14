@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/reason.rs",
             "value": "6",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/reason.rs",
             "value": "x = 5",
             "context": "function_argument"
           }
@@ -74,11 +76,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/reason.rs",
           "value": "6",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/reason.rs",
           "value": "x = 5",
           "context": "function_argument"
         }

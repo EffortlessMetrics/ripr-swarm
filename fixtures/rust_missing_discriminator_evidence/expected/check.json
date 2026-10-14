@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "value = 100",
             "context": "function_argument"
           }
@@ -69,6 +70,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "value = 100",
           "context": "function_argument"
         }
@@ -148,6 +150,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/pricing.rs",
             "value": "value = 100",
             "context": "function_argument"
           }
@@ -163,6 +166,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/pricing.rs",
           "value": "value = 100",
           "context": "function_argument"
         }

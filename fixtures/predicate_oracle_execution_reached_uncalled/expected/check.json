@@ -55,6 +55,7 @@
         "observed_values": [
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument"
           },
@@ -66,16 +67,19 @@
           },
           {
             "line": 14,
+            "source_file": "src/lib.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "90",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "amount = 100",
             "context": "function_argument",
             "provenance": "let _unused = || { assert_eq!(discounted_total(100, 100), 90); };"
@@ -88,6 +92,7 @@
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "discount_threshold = 100",
             "context": "function_argument",
             "provenance": "let _unused = || { assert_eq!(discounted_total(100, 100), 90); };"
@@ -99,6 +104,7 @@
       "observed_values": [
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument"
         },
@@ -110,16 +116,19 @@
         },
         {
           "line": 14,
+          "source_file": "src/lib.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "90",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "amount = 100",
           "context": "function_argument",
           "provenance": "let _unused = || { assert_eq!(discounted_total(100, 100), 90); };"
@@ -132,6 +141,7 @@
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "discount_threshold = 100",
           "context": "function_argument",
           "provenance": "let _unused = || { assert_eq!(discounted_total(100, 100), 90); };"

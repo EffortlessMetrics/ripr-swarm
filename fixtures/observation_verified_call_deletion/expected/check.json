@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/store_tests.rs",
             "value": "result = 42",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/store_tests.rs",
             "value": "\"result_key=42\"",
             "context": "assertion_argument"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/store_tests.rs",
           "value": "result = 42",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/store_tests.rs",
           "value": "\"result_key=42\"",
           "context": "assertion_argument"
         }
@@ -148,11 +152,13 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/store_tests.rs",
             "value": "result = 42",
             "context": "function_argument"
           },
           {
             "line": 7,
+            "source_file": "tests/store_tests.rs",
             "value": "\"result_key=42\"",
             "context": "assertion_argument"
           }
@@ -163,11 +169,13 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/store_tests.rs",
           "value": "result = 42",
           "context": "function_argument"
         },
         {
           "line": 7,
+          "source_file": "tests/store_tests.rs",
           "value": "\"result_key=42\"",
           "context": "assertion_argument"
         }

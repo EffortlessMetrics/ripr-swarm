@@ -55,23 +55,27 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "ParseError::UnexpectedEof",
             "context": "enum_variant"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument",
             "provenance": "match expect_ready(\"busy\", 12) {"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "len = 12",
             "context": "function_argument",
             "provenance": "match expect_ready(\"busy\", 12) {"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "12",
             "context": "assertion_argument"
           }
@@ -87,23 +91,27 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "ParseError::UnexpectedEof",
           "context": "enum_variant"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument",
           "provenance": "match expect_ready(\"busy\", 12) {"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "len = 12",
           "context": "function_argument",
           "provenance": "match expect_ready(\"busy\", 12) {"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "12",
           "context": "assertion_argument"
         }
@@ -184,23 +192,27 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "ParseError::UnexpectedEof",
             "context": "enum_variant"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "kind = \"busy\"",
             "context": "function_argument",
             "provenance": "match expect_ready(\"busy\", 12) {"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "len = 12",
             "context": "function_argument",
             "provenance": "match expect_ready(\"busy\", 12) {"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "12",
             "context": "assertion_argument"
           }
@@ -216,23 +228,27 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "ParseError::UnexpectedEof",
           "context": "enum_variant"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "kind = \"busy\"",
           "context": "function_argument",
           "provenance": "match expect_ready(\"busy\", 12) {"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "len = 12",
           "context": "function_argument",
           "provenance": "match expect_ready(\"busy\", 12) {"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "12",
           "context": "assertion_argument"
         }

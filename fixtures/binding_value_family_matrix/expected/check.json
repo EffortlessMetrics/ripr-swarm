@@ -55,6 +55,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/matrix.rs",
             "value": "\"matched\"",
             "context": "assertion_argument"
           },
@@ -66,16 +67,19 @@
           },
           {
             "line": 5,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"pre-fix\"",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/matrix.rs",
             "value": "\"none\"",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"raw\"",
             "context": "function_argument"
           }
@@ -86,6 +90,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/matrix.rs",
           "value": "\"matched\"",
           "context": "assertion_argument"
         },
@@ -97,16 +102,19 @@
         },
         {
           "line": 5,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"pre-fix\"",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/matrix.rs",
           "value": "\"none\"",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"raw\"",
           "context": "function_argument"
         }
@@ -188,6 +196,7 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"pre-fix\"",
             "context": "function_argument"
           },
@@ -199,6 +208,7 @@
           },
           {
             "line": 15,
+            "source_file": "tests/matrix.rs",
             "value": "want = true",
             "context": "function_argument"
           }
@@ -209,6 +219,7 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"pre-fix\"",
           "context": "function_argument"
         },
@@ -220,6 +231,7 @@
         },
         {
           "line": 15,
+          "source_file": "tests/matrix.rs",
           "value": "want = true",
           "context": "function_argument"
         }
@@ -291,11 +303,13 @@
         "observed_values": [
           {
             "line": 20,
+            "source_file": "tests/matrix.rs",
             "value": "input = \"zz\"",
             "context": "function_argument"
           },
           {
             "line": 20,
+            "source_file": "tests/matrix.rs",
             "value": "other = \"abc\"",
             "context": "function_argument"
           },
@@ -312,11 +326,13 @@
       "observed_values": [
         {
           "line": 20,
+          "source_file": "tests/matrix.rs",
           "value": "input = \"zz\"",
           "context": "function_argument"
         },
         {
           "line": 20,
+          "source_file": "tests/matrix.rs",
           "value": "other = \"abc\"",
           "context": "function_argument"
         },
@@ -394,6 +410,7 @@
         "observed_values": [
           {
             "line": 25,
+            "source_file": "tests/matrix.rs",
             "value": "base = 3",
             "context": "function_argument"
           },
@@ -410,6 +427,7 @@
       "observed_values": [
         {
           "line": 25,
+          "source_file": "tests/matrix.rs",
           "value": "base = 3",
           "context": "function_argument"
         },
@@ -494,12 +512,14 @@
           },
           {
             "line": 30,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"xray\"",
             "context": "function_argument",
             "provenance": "assert!(head(\"xray\"));"
           },
           {
             "line": 35,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"fix\"",
             "context": "function_argument"
           },
@@ -510,6 +530,7 @@
           },
           {
             "line": 40,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"\"",
             "context": "function_argument",
             "provenance": "assert!(head(\"\"));"
@@ -526,12 +547,14 @@
         },
         {
           "line": 30,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"xray\"",
           "context": "function_argument",
           "provenance": "assert!(head(\"xray\"));"
         },
         {
           "line": 35,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"fix\"",
           "context": "function_argument"
         },
@@ -542,6 +565,7 @@
         },
         {
           "line": 40,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"\"",
           "context": "function_argument",
           "provenance": "assert!(head(\"\"));"
@@ -635,6 +659,7 @@
         "observed_values": [
           {
             "line": 45,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"box\"",
             "context": "function_argument"
           },
@@ -646,6 +671,7 @@
           },
           {
             "line": 50,
+            "source_file": "tests/matrix.rs",
             "value": "label = \"\"",
             "context": "function_argument"
           },
@@ -662,6 +688,7 @@
       "observed_values": [
         {
           "line": 45,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"box\"",
           "context": "function_argument"
         },
@@ -673,6 +700,7 @@
         },
         {
           "line": 50,
+          "source_file": "tests/matrix.rs",
           "value": "label = \"\"",
           "context": "function_argument"
         },

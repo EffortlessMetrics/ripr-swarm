@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "tests/validation.rs",
             "value": "\"valid\"",
             "context": "assertion_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/validation.rs",
             "value": "input = \"hello\"",
             "context": "function_argument"
           }
@@ -74,11 +76,13 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "tests/validation.rs",
           "value": "\"valid\"",
           "context": "assertion_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/validation.rs",
           "value": "input = \"hello\"",
           "context": "function_argument"
         }
@@ -158,11 +162,13 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "tests/validation.rs",
             "value": "\"valid\"",
             "context": "assertion_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/validation.rs",
             "value": "input = \"hello\"",
             "context": "function_argument"
           }
@@ -178,11 +184,13 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "tests/validation.rs",
           "value": "\"valid\"",
           "context": "assertion_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/validation.rs",
           "value": "input = \"hello\"",
           "context": "function_argument"
         }

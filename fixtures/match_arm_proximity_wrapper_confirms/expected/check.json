@@ -56,26 +56,31 @@
         "observed_values": [
           {
             "line": 41,
+            "source_file": "src/lib.rs",
             "value": "1_814_400",
             "context": "assertion_argument"
           },
           {
             "line": 46,
+            "source_file": "src/lib.rs",
             "value": "1_209_600",
             "context": "assertion_argument"
           },
           {
             "line": 46,
+            "source_file": "src/lib.rs",
             "value": "Unit::Fortnight",
             "context": "enum_variant"
           },
           {
             "line": 51,
+            "source_file": "src/lib.rs",
             "value": "\"fortnight\"",
             "context": "assertion_argument"
           },
           {
             "line": 51,
+            "source_file": "src/lib.rs",
             "value": "Unit::Fortnight",
             "context": "enum_variant"
           }
@@ -86,26 +91,31 @@
       "observed_values": [
         {
           "line": 41,
+          "source_file": "src/lib.rs",
           "value": "1_814_400",
           "context": "assertion_argument"
         },
         {
           "line": 46,
+          "source_file": "src/lib.rs",
           "value": "1_209_600",
           "context": "assertion_argument"
         },
         {
           "line": 46,
+          "source_file": "src/lib.rs",
           "value": "Unit::Fortnight",
           "context": "enum_variant"
         },
         {
           "line": 51,
+          "source_file": "src/lib.rs",
           "value": "\"fortnight\"",
           "context": "assertion_argument"
         },
         {
           "line": 51,
+          "source_file": "src/lib.rs",
           "value": "Unit::Fortnight",
           "context": "enum_variant"
         }

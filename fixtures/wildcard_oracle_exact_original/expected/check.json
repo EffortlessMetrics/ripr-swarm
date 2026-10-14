@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "src/lib.rs",
             "value": "value = 1",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "src/lib.rs",
             "value": "2",
             "context": "assertion_argument"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "src/lib.rs",
           "value": "value = 1",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "src/lib.rs",
           "value": "2",
           "context": "assertion_argument"
         }

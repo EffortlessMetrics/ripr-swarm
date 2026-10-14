@@ -56,22 +56,26 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "ParseError::InvalidData",
             "context": "enum_variant"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "\"ready\"",
             "context": "function_argument",
             "provenance": "match expect_response(&mut cursor, \"ready\") {"
           },
           {
             "line": 8,
+            "source_file": "tests/protocol.rs",
             "value": "\"ready\"",
             "context": "assertion_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/protocol.rs",
             "value": "\"payload\"",
             "context": "assertion_argument"
           }
@@ -82,22 +86,26 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "ParseError::InvalidData",
           "context": "enum_variant"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "\"ready\"",
           "context": "function_argument",
           "provenance": "match expect_response(&mut cursor, \"ready\") {"
         },
         {
           "line": 8,
+          "source_file": "tests/protocol.rs",
           "value": "\"ready\"",
           "context": "assertion_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/protocol.rs",
           "value": "\"payload\"",
           "context": "assertion_argument"
         }
@@ -172,22 +180,26 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "ParseError::InvalidData",
             "context": "enum_variant"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "\"ready\"",
             "context": "function_argument",
             "provenance": "match expect_response(&mut cursor, \"ready\") {"
           },
           {
             "line": 8,
+            "source_file": "tests/protocol.rs",
             "value": "\"ready\"",
             "context": "assertion_argument"
           },
           {
             "line": 9,
+            "source_file": "tests/protocol.rs",
             "value": "\"payload\"",
             "context": "assertion_argument"
           }
@@ -198,22 +210,26 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "ParseError::InvalidData",
           "context": "enum_variant"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "\"ready\"",
           "context": "function_argument",
           "provenance": "match expect_response(&mut cursor, \"ready\") {"
         },
         {
           "line": 8,
+          "source_file": "tests/protocol.rs",
           "value": "\"ready\"",
           "context": "assertion_argument"
         },
         {
           "line": 9,
+          "source_file": "tests/protocol.rs",
           "value": "\"payload\"",
           "context": "assertion_argument"
         }

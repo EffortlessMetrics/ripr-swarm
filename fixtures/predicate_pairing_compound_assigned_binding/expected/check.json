@@ -55,6 +55,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/compounded.rs",
             "value": "input = 10",
             "context": "function_argument"
           },
@@ -66,6 +67,7 @@
           },
           {
             "line": 7,
+            "source_file": "tests/compounded.rs",
             "value": "2",
             "context": "assertion_argument"
           }
@@ -76,6 +78,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/compounded.rs",
           "value": "input = 10",
           "context": "function_argument"
         },
@@ -87,6 +90,7 @@
         },
         {
           "line": 7,
+          "source_file": "tests/compounded.rs",
           "value": "2",
           "context": "assertion_argument"
         }

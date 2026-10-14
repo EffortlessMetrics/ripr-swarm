@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/rendering.rs",
             "value": "code = 404",
             "context": "function_argument"
           }
@@ -69,6 +70,7 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/rendering.rs",
           "value": "code = 404",
           "context": "function_argument"
         }

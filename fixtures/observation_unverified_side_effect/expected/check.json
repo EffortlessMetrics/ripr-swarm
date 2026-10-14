@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/process_tests.rs",
             "value": "order_id = \"order-1\"",
             "context": "function_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/process_tests.rs",
           "value": "order_id = \"order-1\"",
           "context": "function_argument"
         }
@@ -138,6 +140,7 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/process_tests.rs",
             "value": "order_id = \"order-1\"",
             "context": "function_argument"
           }
@@ -148,6 +151,7 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/process_tests.rs",
           "value": "order_id = \"order-1\"",
           "context": "function_argument"
         }

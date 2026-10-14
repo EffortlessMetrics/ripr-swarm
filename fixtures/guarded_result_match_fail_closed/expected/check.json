@@ -63,71 +63,85 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 28,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 36,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 37,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 44,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 44,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 45,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 56,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 56,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 57,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           }
@@ -138,71 +152,85 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 28,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 36,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 37,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 44,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 44,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 45,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 56,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 56,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 57,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         }
@@ -334,71 +362,85 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 26,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 28,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 36,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 37,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 44,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 44,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 45,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           },
           {
             "line": 56,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "function_argument"
           },
           {
             "line": 56,
+            "source_file": "tests/protocol.rs",
             "value": "\"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
             "line": 57,
+            "source_file": "tests/protocol.rs",
             "value": "\"42\"",
             "context": "assertion_argument"
           }
@@ -409,71 +451,85 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 26,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 28,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 36,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 37,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 44,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 44,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 45,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         },
         {
           "line": 56,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "function_argument"
         },
         {
           "line": 56,
+          "source_file": "tests/protocol.rs",
           "value": "\"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
           "line": 57,
+          "source_file": "tests/protocol.rs",
           "value": "\"42\"",
           "context": "assertion_argument"
         }

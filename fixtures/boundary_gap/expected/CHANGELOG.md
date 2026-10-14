@@ -864,3 +864,16 @@ Apply the existing portable root/head/worktree normalization from
 `normalize_unchanged_repo_exposure_producer_fixture`, and recompute the existing
 raw-JSON placeholder commitment. The receipt retains its established portable
 projection; only dependent artifact hashes are refreshed.
+
+## Pending — boundary_gap (21)
+
+Reason:
+RIPR-SPEC-0158 and #7805: independently audited additive source_file metadata only; all classification, oracle, evidence and human output preserved
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

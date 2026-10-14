@@ -56,16 +56,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           },
           {
             "line": 15,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -76,16 +79,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         },
         {
           "line": 15,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
@@ -162,16 +168,19 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           },
           {
             "line": 15,
+            "source_file": "tests/errors.rs",
             "value": "raw = \"@bad;\"",
             "context": "function_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/errors.rs",
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
           }
@@ -182,16 +191,19 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         },
         {
           "line": 15,
+          "source_file": "tests/errors.rs",
           "value": "raw = \"@bad;\"",
           "context": "function_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/errors.rs",
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
         }
