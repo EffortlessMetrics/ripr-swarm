@@ -35,7 +35,9 @@ from that workflow rather than copied into a second command portfolio. The
 current-main reconciliation brings #7918's landed `cargo xtask ci-policy`
 composition into this source; the previous `d51471b24...` checkpoint remains in
 the merge ancestry. The recorded integration basis is
-`0598981b9ef1ae9b5eb79a25b58e732126a6cadf`, not the earlier `92e7ea803...` basis.
+`7c24ed92e24fd5cdcd3399012d5c4f03f7404bf9`. The earlier `0598981b9...` basis
+and `eb754b9f...` proof remain historical epochs; the current main merge was
+clean and preserved its `ci-policy` composition.
 
 For rehearsal, PR evidence evaluates the detached subject against its reviewed
 actual ancestor base, with no fabricated PR payload or constituent identities.
@@ -86,10 +88,50 @@ establish inspectable Rust-test or RIPR evidence custody. This consumer needs:
 | `target/nextest/ci/junit.xml`, `run-context.txt` | Fresh nonempty CI nextest execution, actual checkout/run/attempt, exit and tool/config identities; Rust Gates' Required Rust tests block |
 | `target/ripr/pr/check.json` | Native diff analysis; not a repository-wide debt census |
 | `target/ripr/pr/repo-exposure.json`, `.md`, `canonical-delta.json`, `pr.diff` | Exact base/head diff packet and available causal-comparison observations; PR evidence owner |
-| `target/ripr/review/comments.json`, `.md`, `run-receipt.json`, `annotations.txt` | Guidance/annotations and their actual subject; review-comments owner |
+| `target/ripr/review/comments.json`, `.md`, `run-receipt.json`, `annotations.txt` | Guidance/annotations and their actual subject; annotations belong under `review/`, and may truthfully be empty |
 | `target/xtask/impacted-evidence/latest.json`, `.md` | Selected changed surfaces and disclosed routing evidence; impacted-evidence owner |
 | `target/ripr/reports/policy-preflight.json`, `ci-policy.json`, `.md` and applicable policy/fixture reports | Actual source/toolchain-bound policy and selected fixture outcomes; existing report owners |
 | Native adapter logs plus central job/result context | Command-owner blob, exact subject/tree/base, original step exits/timing, setup refusal and actual workflow/run/attempt |
+
+The machine-readable proposed contract is
+[`.ci/contabo-product-contract.json`](../../.ci/contabo-product-contract.json),
+schema `ripr-swarm-product-members/v1`. It declares **19 exact native core
+members plus the adapter's terminal `target/ripr/contabo/commands.json`** on
+complete product success. It also names retain-if-produced policy/golden/fixture
+reports, source-derived verdict-corpus membership, and the two existing
+producer-owned test/calibration retention sets. Central must resolve their
+bounded path selections from the exact owner blob, not collect an entire target
+or cache tree. The contract proposes fourteen-day retention and limits of 512
+regular members / 8 GiB expanded including context, with 128 MiB per member.
+These transport bounds are not measured product/storage fit or a reservation.
+
+The adapter's fresh exclusive terminal receipt records actual entered commands,
+SHA256 of their Bash source, original exits/durations, all unentered steps as
+`not_executed`, source/base/tree/owner/contract blobs and native run/attempt.
+It performs no upload/import. Receipt publication failure after a product failure
+preserves the original product exit; after product success it refuses completion.
+It never overwrites a previous attempt. Setup refusal, cancellation or timeout
+may leave no terminal receipt; central pre-proof/failure diagnostics and native
+job status must retain that absence, never invent a completed command portfolio.
+
+Empty `annotations.txt` and `pr.diff` can be legitimate. The nextest producer
+still enforces fresh JUnit with at least one executed test. `canonical-delta.json`
+may disclose unavailable comparison snapshots. The three PR summary files include
+`target/ripr/reports/pr-evidence-summary.{json,md}`; that v1 pair reads optional
+report inputs distinct from `pr/repo-exposure.json` and may honestly report
+unavailable analysis. File presence is not an established causal comparison,
+repository census or analysis completeness. Do not fabricate the optional inputs.
+
+On partial product failure retain only fresh declared files actually produced;
+later members are expected to be absent and cannot turn the native failure green.
+Central packaging must reject links/escapes/stale files and bind member digests,
+command receipt, current run/attempt, actual native producer and defining pin.
+Before a consumer result importer treats this as complete, it must authenticate
+the native successful producer, all 17 rows and mandatory membership without
+rebuilding the portfolio or converting transport success into domain evidence.
+This RIPR-specific contract is distinct from both Perl's ten-file canonical packet
+and `em-ci#229`'s unsafe-review nonfatal diagnostic packet. Central implementation,
+generated publication, admission and native upload/import remain its owner's work.
 
 These current outputs must be retained together under the existing central
 upload/import authority, with exact source/run/attempt/command/result binding,
@@ -116,7 +158,8 @@ workflow allowance and native upload/import result be considered for controlled
 admission. `upload_artifacts=true`, `artifact_lane=ripr` and `result_script` on
 `15f2c4d...` alone do not repair that incompatibility. The active caller remains
 on `a3125de...`, its read permissions unchanged. No duplicate uploader, artifact
-package, image activation or new-pin allowance is implemented in this source.
+package, image activation or new-pin allowance is implemented in this source;
+the new member declaration and terminal command receipt do not activate transport.
 
 The legacy `routed-rust.yml` / `rust-gates.yml` required producer remains available
 as bounded compatibility pending coherent activation. Its Ready/main routing and
@@ -124,6 +167,48 @@ old inventory/fallback are historical live behavior, not the desired route.
 This rehearsal does not claim to complete their retirement, admission, exact-G
 aggregation, cache-writer continuity or required-context migration. #4986 / #4836 /
 #7827 / #4838 must bind those changes before cutover. No protection changes occur.
+
+## Coordinated routing and cleanup retirement
+
+The source path below prepares retirement; it does not perform live activation,
+cancel queued Scratch GC run `38606711391`, delete old-host state, relabel jobs or
+withdraw runner registrations. Preserve current required producers until their
+replacement coverage and rollback generation are accepted together.
+
+| Current source owner | Replacement / release condition |
+| --- | --- |
+| `routed-rust.yml` hosted inventory, cx43/cpx42/cx53 selection and hosted scratch-tempfail recovery | #4986 supplies explicit reviewed H admission; #4836 binds actual G/native result. The reviewed central standard caller queues on qualified capability with no ordinary hosted chooser/fallback. No Ready/push/synchronize qualification. Remove inventory/token references only after rederiving genuine consumers; do not remove a credential live. |
+| `rust-gates.yml` shared command and native artifact owners | Preserve these 17 commands, policy-preflight/ci-policy composition, separate strict Clippy, fresh nonempty JUnit, doctests and real corpus/PR outcomes. Transfer actual retention through the distinct product contract above. Keep the command owner; provider migration does not fork or copy the product portfolio. |
+| `Ripr Rust Small Result`, docs/no-heavy result and `pr-staleness-watchdog.yml` | #4836 binds selected required children/attempt/source and truthful no-heavy finalization; #4986 supplies review/request revocation. Update actual workflow/event/head lookups and policy fixtures together. Missing/cancelled/stale evidence cannot become pass. Independent control capacity remains a #7164 proof obligation. |
+| `.github/actions/ci-scratch-lease`, inline legacy scratch and `scratch-gc.yml` | Remain exclusively legacy `/mnt/ci-scratch` lease owners and `/mnt/ci-cache/sccache` users. GC retains `em-ci-small` and its old label matrix; **never relabel it onto Contabo**. After no new legacy allocations, inventory exact in-flight jobs/leases and let the existing owner settle them. Only after verified ownership/coverage transfer may a reviewed source change remove the obsolete schedule/action/policy entries. No age-based or foreign-tree deletion. |
+| `ci-lane-whitelist`, repo-policy routing/Ready/fallback checks, scratch behavior tests, command-count and watchdog fixtures, `docs/CI.md` | Reconcile with the same admitted generation and tested rollback. A literal label replacement cannot transfer admission, result, artifacts, cache-writer continuity or cleanup coverage. #7827 owns main-cache writer/reader continuity; #4838 owns controlled activation/readback. |
+
+Source inspection of `em-ci@ab217deb99fb673103975a4fbea6b66f62d56a38`
+`host/em-ci-slot` assigns container/cycle-directory/registration cleanup to the
+central slot supervisor, outside candidate code. Their failures latch cleanup
+state; recovery is checked before fresh admission/JIT registration. Shared Cargo
+and sccache mounts are outside consumer cleanup. Qualify bound started/completed
+hook receipts, post-cleanup container/cycle/registration absence, failure ->
+offline -> no registration -> verified recovery, and sibling/shared-state safety.
+
+The central cycle receipt is written **before cleanup** and cannot attest teardown.
+Receipt write failure only warns, and some disk-size/pruning errors are not uniformly
+latched. `worker_seen`/runner exit alone are telemetry. These are source observations,
+not actual fleet proof or a claim that every filesystem failure forces offline state;
+central owns any repair and the actual lifecycle receipts under #7164.
+
+## Provider-neutral NixOS preparation
+
+The caller selects the immutable central Rust workflow and `standard` contract;
+it has no Contabo machine label, NixOS label, provider selector or host filesystem
+cleanup. Keep this one consumer when future NixOS capacity is enrolled. Central
+owns runtime, image/toolchain, trust, resource isolation and group/workflow admission;
+new capacity must meet the same product/custody/lifecycle contract before eligibility.
+`em-ci#152` describes a CI-disabled appliance foundation, not admitted Rust capacity.
+No host setup, new credentials, runner registration or separate consumer workflow
+is introduced. A new host/provider alone neither proves 75-minute fit nor supplies
+independent control availability. Unsupported or unenrolled capacity stays unavailable,
+without automatic hosted fallback or consumer-specific placement logic.
 
 ## Parent-owned execution admission
 

@@ -1,13 +1,18 @@
 //! #4988/#7164: execute the existing Rust Gates command owner on a reviewed
 //! detached rehearsal subject. This is never admission or native queue proof.
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     env, fs,
+    io::Write,
+    path::Path,
     process::{Command, ExitCode},
     time::Instant,
 };
 
 const OWNER: &str = ".github/workflows/rust-gates.yml";
+const PRODUCT_CONTRACT: &str = ".ci/contabo-product-contract.json";
+const COMMAND_RECEIPT: &str = "target/ripr/contabo/commands.json";
 const PORTFOLIO: &[&str] = &[
     "Formatting preflight",
     "Agent skill contracts",
@@ -246,6 +251,69 @@ fn prepare_matching_llvm(
     Ok(observed)
 }
 
+fn command_row(step: &Step, code: i32, duration_ms: u128) -> Value {
+    json!({"step":step.name, "command":step.script,
+        "command_sha256":format!("{:x}", Sha256::digest(step.script.as_bytes())),
+        "outcome":if code == 0 { "pass" } else { "failure" },
+        "exit":code, "duration_ms":duration_ms})
+}
+
+fn retain_terminal_commands(
+    context: &Value,
+    rows: &[Value],
+    code: i32,
+    path: &Path,
+) -> Result<(), String> {
+    let ordered = rows.len() <= PORTFOLIO.len()
+        && rows
+            .iter()
+            .enumerate()
+            .all(|(index, row)| row["step"] == PORTFOLIO[index] && row["exit"].as_i64().is_some());
+    let terminal = if code == 0 {
+        rows.len() == PORTFOLIO.len() && rows.iter().all(|row| row["exit"] == 0)
+    } else {
+        rows.last().is_some_and(|row| row["exit"] == code)
+            && rows
+                .iter()
+                .take(rows.len().saturating_sub(1))
+                .all(|row| row["exit"] == 0)
+    };
+    if !ordered || !terminal {
+        return Err(
+            "terminal command receipt cannot promote incomplete or discordant execution".into(),
+        );
+    }
+    let mut receipt = context.clone();
+    receipt["schema"] = json!("ripr-swarm-product-commands/v1");
+    receipt["disposition"] = json!(if code == 0 {
+        "product_pass"
+    } else {
+        "product_failure"
+    });
+    receipt["exit"] = json!(code);
+    receipt["steps"] = json!(
+        PORTFOLIO
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                rows.get(index)
+                    .cloned()
+                    .unwrap_or_else(|| json!({"step":name,"outcome":"not_executed"}))
+            })
+            .collect::<Vec<_>>()
+    );
+    fs::create_dir_all(path.parent().ok_or("command receipt has no parent")?)
+        .map_err(|error| error.to_string())?;
+    // Never overwrite an earlier attempt or follow a pre-existing receipt link.
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("fresh terminal command receipt unavailable: {error}"))?;
+    file.write_all(&serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
+}
+
 fn run() -> Result<i32, String> {
     let event: Value = serde_json::from_slice(
         &fs::read(env::var("GITHUB_EVENT_PATH").map_err(|e| e.to_string())?)
@@ -294,24 +362,31 @@ fn run() -> Result<i32, String> {
         json!({"phase":"llvm_prerequisite", "toolchain":selected, "version":llvm_version})
     );
     let steps = portfolio(&fs::read_to_string(OWNER).map_err(|e| e.to_string())?)?;
-    println!(
-        "{}",
-        json!({"profile":"consumer_qualification", "subject":head, "base":base,
+    let context = json!({"profile":"consumer_qualification", "repository":"EffortlessMetrics/ripr-swarm",
+        "subject":head, "base":base,
         "owner_blob":capture("git", &["hash-object", OWNER])?, "tree":capture("git", &["rev-parse", "HEAD^{tree}"])?,
+        "artifact_contract_blob":capture("git", &["hash-object", PRODUCT_CONTRACT])?,
         "run":env::var("GITHUB_RUN_ID").unwrap_or_default(), "attempt":env::var("GITHUB_RUN_ATTEMPT").unwrap_or_default(),
-        "cargo_target":target, "steps":steps.len()})
-    );
+        "cargo_target":target, "selected_steps":steps.len()});
+    println!("{context}");
+    let mut rows = Vec::new();
     for step in steps {
         let started = Instant::now();
         let code = execute(&step, &base, &head)?;
-        println!(
-            "{}",
-            json!({"step":step.name, "command":step.script, "exit":code, "duration_ms":started.elapsed().as_millis()})
-        );
+        let row = command_row(&step, code, started.elapsed().as_millis());
+        println!("{row}");
+        rows.push(row);
         if code != 0 {
+            // Receipt failure cannot replace the original product failure.
+            if let Err(error) =
+                retain_terminal_commands(&context, &rows, code, Path::new(COMMAND_RECEIPT))
+            {
+                eprintln!("terminal receipt incomplete: {error}");
+            }
             return Ok(code);
         }
     }
+    retain_terminal_commands(&context, &rows, 0, Path::new(COMMAND_RECEIPT))?;
     Ok(0)
 }
 
@@ -328,6 +403,75 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn terminal_receipt_retains_native_failure_and_refuses_prior_attempt() -> Result<(), String> {
+        let step = Step {
+            name: PORTFOLIO[0].into(),
+            script: "exit 37".into(),
+            environment: vec![],
+        };
+        let code = execute(&step, "base", "head")?;
+        let row = command_row(&step, code, 1);
+        let root = env::temp_dir().join(format!("contabo-terminal-{}", std::process::id()));
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let path = root.join("commands.json");
+        let result = (|| {
+            retain_terminal_commands(&json!({"subject":"fixture"}), &[row], code, &path)?;
+            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let receipt: Value =
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            assert_eq!(receipt["disposition"], "product_failure");
+            assert_eq!(receipt["exit"], 37);
+            assert_eq!(receipt["steps"][0]["exit"], 37);
+            assert_eq!(receipt["steps"][1]["outcome"], "not_executed");
+            assert_eq!(
+                receipt["steps"].as_array().map(Vec::len),
+                Some(PORTFOLIO.len())
+            );
+            assert!(
+                retain_terminal_commands(&json!({}), &[], 0, &root.join("missing.json")).is_err()
+            );
+            assert!(!root.join("missing.json").exists());
+            assert!(retain_terminal_commands(&json!({}), &[], 0, &path).is_err());
+            assert_eq!(fs::read(&path).map_err(|error| error.to_string())?, bytes);
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
+    }
+    #[test]
+    fn product_members_are_bound_to_actual_producer_paths() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let contract: Value = serde_json::from_slice(
+            &fs::read(root.join(PRODUCT_CONTRACT)).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        assert_eq!(contract["schema"], "ripr-swarm-product-members/v1");
+        assert_eq!(contract["command_receipt"], COMMAND_RECEIPT);
+        let mut paths = std::collections::BTreeSet::new();
+        for group in contract["required_on_complete_success"]
+            .as_array()
+            .ok_or("missing groups")?
+        {
+            let source = fs::read_to_string(
+                root.join(group["producer_source"].as_str().ok_or("missing owner")?),
+            )
+            .map_err(|e| e.to_string())?;
+            for member in group["members"].as_array().ok_or("missing members")? {
+                let path = member["path"].as_str().ok_or("missing member path")?;
+                assert!(paths.insert(path.to_owned()), "duplicate member {path}");
+                assert!(
+                    source.contains(path),
+                    "declared output is absent from its real producer: {path}"
+                );
+            }
+        }
+        assert_eq!(paths.len(), 19);
+        assert!(paths.contains("target/nextest/ci/junit.xml"));
+        assert!(paths.contains("target/ripr/review/annotations.txt"));
+        assert!(!paths.contains("target/receipts/quality/ripr-plus.json"));
+        Ok(())
+    }
     #[test]
     fn exact_dispatch_subject_refuses_metadata_and_stale_inputs() {
         let h = "a".repeat(40);

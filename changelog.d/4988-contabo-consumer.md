@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Add a reviewed dispatch-only Contabo standard consumer rehearsal using the existing Rust product commands, pre-allocation SHA validation and matching LLVM setup; document the incompatible central artifact contract and keep the legacy required producer until qualified activation (#4988).
+- Add a reviewed dispatch-only governed standard consumer using the existing Rust product commands, pre-allocation SHA validation and matching LLVM setup; retain exact terminal command receipts, specify genuine product artifact custody and coordinated legacy routing/cleanup retirement, and keep one provider-neutral consumer for future NixOS capacity until qualified activation (#4988).
