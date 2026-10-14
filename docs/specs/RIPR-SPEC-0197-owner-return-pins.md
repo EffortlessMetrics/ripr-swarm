@@ -1433,8 +1433,9 @@ reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
   `grid-bool-helper` move the same way. No case gains a false `exposed`
   verdict and no other row changes. The other helper cells stay below
   `exposed` for the causes their inline `-exact` twins share: an `&&` tail
-  owner pin (`grid-equality-helper`, credited since #7969), a changed arm pattern that selection
-  never credits (`grid-match-helper`), and the iterator-closure and `?`
+  owner pin (`grid-equality-helper`, credited since #7969), a changed arm
+  pattern that selection never credited (`grid-match-helper`, credited since
+  RIPR-SPEC-0229 decision 5, #7981), and the iterator-closure and `?`
   operand shapes (`grid-iter-helper`, `grid-try-helper`).
 - The bytes 7930d93 replay moves both `return_value` findings
   (`try_get_int`, `try_get_int_le`) from `weakly_exposed` to `exposed`, and

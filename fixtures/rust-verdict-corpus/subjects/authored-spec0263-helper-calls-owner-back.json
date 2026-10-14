@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0263-helper-calls-owner-back",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for RIPR-SPEC-0263 acceptance example 6 (a guarded push a helper's call back into the owner enters)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6b5fb92c85332f31d56a1aa37e1b4e429e24df40e629c4f097abac8f4aac1066"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "06db207ffc1ca5700be2b553f39aae8c0a6667abe95870894b74d4c969bc1ddd"
+    }
+  ]
+}
