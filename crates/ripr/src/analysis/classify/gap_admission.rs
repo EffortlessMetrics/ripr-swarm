@@ -461,13 +461,22 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
     let mut fragments = Vec::new();
     let mut current = String::new();
     let mut chars = template.chars().peekable();
+    // An escape at either edge (`"\"audited {}\""`) would leave that edge
+    // unanchored, so the record could bind another record's literal; such a
+    // template is not bound at all.
+    let leading_escape = template.starts_with('\\');
+    let mut trailing_escape = false;
     while let Some(ch) = chars.next() {
+        trailing_escape = false;
         match ch {
             '\\' => {
                 // An escape ends the fragment: its decoded text is not
-                // spelled the same way in the test's literal.
+                // spelled the same way in the test's literal. (A `\u{..}`
+                // escape's braces then read as a placeholder, which also
+                // ends the fragment.)
                 chars.next();
                 fragments.push(std::mem::take(&mut current));
+                trailing_escape = true;
             }
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
@@ -487,6 +496,9 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
             }
             _ => current.push(ch),
         }
+    }
+    if leading_escape || trailing_escape {
+        return None;
     }
     fragments.push(current);
     let anchored_start = fragments
@@ -1237,6 +1249,10 @@ mod tests {
             log_template("log::info! { \"finished {}\", format!(\"audited {}\", n) }"),
             None
         );
+        // An escape at an edge leaves the template unbound.
+        assert_eq!(log_template("log::info!(\"\\\"audited {}\\\"\", n);"), None);
+        assert_eq!(log_template("log::info!(\"\\u{61}udited {}\", n);"), None);
+        assert_eq!(log_template("log::info!(\"audited {}\\n\", n);"), None);
         // A raw template is not read; the gap stays.
         assert_eq!(log_template("log::info!(r\"audited {}\", n);"), None);
         assert!(matches(
@@ -1265,6 +1281,7 @@ mod tests {
             "log::info!(user = \"bob\"; \"audited {}\", amount * 7);",
             "log::info!(target: \"audit\", \"audited {}\", /* ; */ amount * 7);",
             "log::info!(ch = ';'; \"audited {}\", amount * 7);",
+            "log::info!(ch = ','; \"audited {}\", amount * 7);",
             "log::info!(/* lead, ; */ \"audited {}\", amount * 7);",
             "log::info!(target: \"a;b\", user = \"bob\"; \"audited {}\", amount * 7);",
         ] {
