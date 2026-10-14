@@ -299,6 +299,7 @@ fn a_rebound_parameter_is_not_the_scrutinee() -> Result<(), String> {
         BOUNDARY_TESTS,
     )?;
     assert!(!findings.is_empty());
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
     assert!(
         findings
             .iter()
@@ -325,5 +326,32 @@ fn the_unrebound_parameter_control_reads_exposed() -> Result<(), String> {
             .any(|finding| finding.class == ExposureClass::Exposed),
         "{findings:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_rebinding_line_that_mentions_fn_is_not_the_signature() -> Result<(), String> {
+    // Control (review on #7811): only the owner's signature binds the
+    // parameter; `fn ` elsewhere on a rebinding line (a nested fn, a string)
+    // never exempts it.
+    for prelude in [
+        "    let points = { fn h(x: i64) -> i64 { x - 50 } h(points) };\n",
+        "    let points = points - 50; let _s = \"fn \";\n",
+    ] {
+        let lib = tier(prelude).replace("p if 100 <= p", "p if 100 < p");
+        let findings = findings_on_changed_line(
+            &lib,
+            "        p if 100 < p => Tier::Gold,",
+            "        p if 100 <= p => Tier::Gold,",
+            BOUNDARY_TESTS,
+        )?;
+        assert!(!findings.is_empty(), "{prelude}");
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{prelude}: {findings:?}"
+        );
+    }
     Ok(())
 }

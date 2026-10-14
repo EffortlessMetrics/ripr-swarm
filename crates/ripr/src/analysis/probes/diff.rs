@@ -60,8 +60,9 @@ pub(crate) fn probes_for_file_with_relations(
         changed_nodes: &changed_nodes,
     };
     let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
-    // Old lines whose replacement is a guard-only arm edit: that edit's
-    // predicate already carries the old guard as `before`.
+    // Old-side line numbers of this file's removed lines whose positional
+    // replacement is a guard-only arm edit, one entry per such edit: that
+    // edit's predicate already carries the old guard as `before`.
     let mut guard_edit_counterparts = Vec::<usize>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);

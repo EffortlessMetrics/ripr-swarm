@@ -2819,12 +2819,13 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         // The parameter itself must reach the `match` unchanged: any other
         // mention (`let points = points - 50;`, a closure `|points|`) may
         // rebind or shadow it, so the test argument is not the scrutinee.
+        // The body opens with the signature, the parameter's one binding.
         && code
             .iter()
+            .skip(1)
             .filter(|line| mentions_identifier(line, parameter))
             .all(|line| {
-                line.contains("fn ")
-                    || line.strip_prefix("match ").is_some_and(|rest| {
+                line.strip_prefix("match ").is_some_and(|rest| {
                         rest.strip_prefix(parameter)
                             .is_some_and(|tail| tail.trim() == "{")
                     })
