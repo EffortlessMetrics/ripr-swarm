@@ -10,8 +10,11 @@ export const HOST_DIAGNOSTICS_IDENTITY_FILE = 'retention.json';
 export const MAX_HOST_DIAGNOSTICS_BYTES = 5 * 1024 * 1024;
 /** Per-file tail retained from the VS Code host log directory. */
 export const MAX_HOST_DIAGNOSTICS_FILE_BYTES = 256 * 1024;
+/** Reserved identity-file budget inside the total cap. */
+export const MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES = 16 * 1024;
 /** GitHub Actions retention for the failure-only upload in `.github/workflows/ci.yml`. */
 export const HOST_DIAGNOSTICS_RETENTION_DAYS = 5;
+const MAX_ERROR_FIELD_CHARS = 2048;
 
 const COMPLETE_PEM =
   /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g;
@@ -72,6 +75,7 @@ export function retainHostDiagnostics(
 ): RetainHostDiagnosticsResult {
   const diagnosticsDir = resolveHostDiagnosticsDir(input.artifactRoot);
   if (!input.failed) {
+    fs.rmSync(diagnosticsDir, { force: true, recursive: true });
     return {
       retained: false,
       diagnosticsDir,
@@ -87,11 +91,12 @@ export function retainHostDiagnostics(
   const logDir = resolveLogDir(input.userDataDir);
   const copiedFiles: string[] = [];
   let bytesWritten = 0;
+  const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
 
   if (fs.existsSync(logDir) && fs.statSync(logDir).isDirectory()) {
     for (const relative of listRelativeFiles(logDir)) {
-      const remaining = MAX_HOST_DIAGNOSTICS_BYTES - bytesWritten;
+      const remaining = logBudget - bytesWritten;
       if (remaining <= 0) {
         break;
       }
@@ -109,7 +114,7 @@ export function retainHostDiagnostics(
   }
 
   const env = input.env ?? process.env;
-  const identity = redactHostDiagnosticsText(
+  let identity = redactHostDiagnosticsText(
     `${JSON.stringify(
       {
         schema_version: '0.1',
@@ -133,6 +138,11 @@ export function retainHostDiagnostics(
       2
     )}\n`
   );
+  if (Buffer.byteLength(identity, 'utf8') > MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
+    identity = Buffer.from(identity, 'utf8')
+      .subarray(0, MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES)
+      .toString('utf8');
+  }
   const identityPath = path.join(diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE);
   fs.writeFileSync(identityPath, identity, 'utf8');
   bytesWritten += Buffer.byteLength(identity, 'utf8');
@@ -181,9 +191,19 @@ function serializeError(error: unknown): { message: string; stack?: string } | n
     return null;
   }
   if (error instanceof Error) {
-    return { message: error.message, stack: error.stack };
+    return {
+      message: clipErrorField(error.message),
+      stack: error.stack === undefined ? undefined : clipErrorField(error.stack)
+    };
   }
-  return { message: String(error) };
+  return { message: clipErrorField(String(error)) };
+}
+
+function clipErrorField(text: string): string {
+  if (text.length <= MAX_ERROR_FIELD_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_ERROR_FIELD_CHARS)}...[truncated]`;
 }
 
 function listRelativeFiles(root: string, relative = ''): string[] {

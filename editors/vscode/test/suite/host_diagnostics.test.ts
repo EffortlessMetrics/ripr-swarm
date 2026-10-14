@@ -6,7 +6,9 @@ import {
   HOST_DIAGNOSTICS_DIR_NAME,
   HOST_DIAGNOSTICS_IDENTITY_FILE,
   HOST_LOG_DIR_NAME,
+  MAX_HOST_DIAGNOSTICS_BYTES,
   MAX_HOST_DIAGNOSTICS_FILE_BYTES,
+  MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES,
   USER_DATA_DIR_NAME,
   finalizeHostRun,
   redactHostDiagnosticsText,
@@ -48,6 +50,24 @@ suite('VS Code test host diagnostics', () => {
     });
     assert.strictEqual(result.retained, false);
     assert.strictEqual(result.reason, 'success_no_retention');
+    assert.ok(!fs.existsSync(resolveHostDiagnosticsDir(root)));
+  });
+
+  test('a later successful run removes an earlier failure snapshot', () => {
+    writeLog(root, 'window.log', 'CodeWindow: detected unresponsive\n');
+    retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error: new Error('host hung')
+    });
+    assert.ok(fs.existsSync(resolveHostDiagnosticsDir(root)));
+    const result = retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: false
+    });
+    assert.strictEqual(result.retained, false);
     assert.ok(!fs.existsSync(resolveHostDiagnosticsDir(root)));
   });
 
@@ -143,6 +163,26 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(!redacted.includes('ghp_abcdefghijklmnopqrstuvwxyz0123'), redacted);
     assert.ok(redacted.includes('[redacted-token]'), redacted);
     assert.ok(redacted.includes('x-access-token:[redacted]'), redacted);
+  });
+
+  test('keeps identity plus logs inside the total byte cap', () => {
+    const chunk = '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES);
+    for (let index = 0; index < 24; index += 1) {
+      writeLog(root, `chunk-${index}.log`, chunk);
+    }
+    const error = new Error('host hung');
+    error.stack = 's'.repeat(200_000);
+    const result = retainHostDiagnostics({
+      artifactRoot: root,
+      userDataDir: resolveUserDataDir(root),
+      failed: true,
+      error
+    });
+    assert.ok(result.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES, String(result.bytesWritten));
+    const identitySize = fs.statSync(
+      path.join(result.diagnosticsDir, HOST_DIAGNOSTICS_IDENTITY_FILE)
+    ).size;
+    assert.ok(identitySize <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES, String(identitySize));
   });
 
   test('caps an oversized host log to the per-file tail bound', () => {

@@ -49009,6 +49009,14 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     Ok(&workflow[start..])
 }
 
+fn vscode_diagnostics_upload_step(job: &str) -> Option<&str> {
+    const MARKER: &str = "- name: Upload VS Code test host diagnostics";
+    let start = job.find(MARKER)?;
+    let rest = &job[start..];
+    let end = rest.find("\n      - ").unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
 fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     let mut violations = Vec::new();
     if !job.contains("xvfb-run -a npm run test:e2e") {
@@ -49019,15 +49027,21 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
             "continue-on-error would launder the original VS Code test exit status".to_string(),
         );
     }
-    let Some(upload_at) = job.find("Upload VS Code test host diagnostics") else {
+    let Some(upload) = vscode_diagnostics_upload_step(job) else {
         violations.push("vscode job is missing the failure-only diagnostics upload".to_string());
         return violations;
     };
-    let upload = &job[upload_at..];
-    if !upload.contains("if: failure()") {
-        violations.push("diagnostics upload must be if: failure() only".to_string());
+    let conditions: Vec<&str> = upload
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("if:"))
+        .collect();
+    if conditions.as_slice() != ["if: failure()"] {
+        violations.push(format!(
+            "diagnostics upload if must be exactly failure(), got {conditions:?}"
+        ));
     }
-    if upload.contains("if: always()") {
+    if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
     if !upload.contains("actions/upload-artifact@v7") {
@@ -49086,6 +49100,30 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
             .iter()
             .any(|violation| violation.contains("launder")),
         "continue-on-error must fail the contract"
+    );
+
+    let success_upload_before_later_failure = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+      - name: later summary
+        if: failure()
+        run: echo later
+"#;
+    let success_before_later =
+        vscode_host_diagnostics_contract_violations(success_upload_before_later_failure);
+    assert!(
+        success_before_later
+            .iter()
+            .any(|violation| violation.contains("exactly failure()")),
+        "a later failure() step must not credit a success() upload: {success_before_later:?}"
     );
 }
 
