@@ -301,14 +301,49 @@ fn captured_and_asserted_around(
     })
 }
 
-/// The raw contents of the string literals in `code`, read by the shared
-/// lexical scan so a literal inside a comment (nested block comments
-/// included) or a quote in a character literal is never live.
-fn string_literal_contents(code: &str) -> Vec<&str> {
+/// The values of the string literals in `code`, read by the shared lexical
+/// scan so a literal inside a comment (nested block comments included) or a
+/// quote in a character literal is never live. A raw literal's value is its
+/// contents; a cooked literal is unescaped, and one with an escape
+/// [`unescape`] does not decode is left out.
+fn string_literal_contents(code: &str) -> Vec<String> {
     crate::analysis::extract::string_literal_spans(code)
         .into_iter()
-        .map(|(open, close)| &code[open + 1..close])
+        .filter_map(|(open, close, raw)| {
+            let contents = &code[open + 1..close];
+            if raw {
+                Some(contents.to_string())
+            } else {
+                unescape(contents)
+            }
+        })
         .collect()
+}
+
+/// The value of cooked string contents with the simple escapes (`\n`,
+/// `\t`, `\r`, `\0`, `\\`, `\"`, `\'`) decoded. `None` for any other
+/// escape (`\u{..}`, `\x..`, a line continuation), so text that is not
+/// decoded is never compared.
+fn unescape(contents: &str) -> Option<String> {
+    let mut value = String::with_capacity(contents.len());
+    let mut chars = contents.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            value.push(ch);
+            continue;
+        }
+        value.push(match chars.next()? {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '0' => '\0',
+            '\\' => '\\',
+            '"' => '"',
+            '\'' => '\'',
+            _ => return None,
+        });
+    }
+    Some(value)
 }
 
 /// Whether every fragment occurs in `literal`, each after the previous one.
@@ -381,13 +416,13 @@ fn log_template_literal(expression: &str) -> Option<&str> {
     // rules out a raw (`r"`) or byte (`b"`) prefix.
     crate::analysis::extract::string_literal_spans(arguments)
         .into_iter()
-        .find(|(quote, _)| *quote >= start)
-        .filter(|(quote, _)| {
+        .find(|(quote, _, _)| *quote >= start)
+        .filter(|(quote, _, _)| {
             masked
                 .get(start..*quote)
                 .is_some_and(|gap| gap.trim().is_empty())
         })
-        .map(|(quote, close)| &arguments[quote + 1..close])
+        .map(|(quote, close, _)| &arguments[quote + 1..close])
 }
 
 /// Byte offsets of the depth-zero `,` and `;` in `masked` macro arguments
@@ -457,27 +492,14 @@ impl LogTemplate {
 /// The [`LogTemplate`] of a `log::` record. `None` when the template cannot
 /// be read or has no alphanumeric static text.
 fn log_template(expression: &str) -> Option<LogTemplate> {
-    let template = log_template_literal(expression)?;
+    // Compared as decoded text, so an escape is ordinary text rather than
+    // a gap that could absorb another record's words.
+    let template = unescape(log_template_literal(expression)?)?;
     let mut fragments = Vec::new();
     let mut current = String::new();
     let mut chars = template.chars().peekable();
-    // An escape at either edge (`"\"audited {}\""`) would leave that edge
-    // unanchored, so the record could bind another record's literal; such a
-    // template is not bound at all.
-    let leading_escape = template.starts_with('\\');
-    let mut trailing_escape = false;
     while let Some(ch) = chars.next() {
-        trailing_escape = false;
         match ch {
-            '\\' => {
-                // An escape ends the fragment: its decoded text is not
-                // spelled the same way in the test's literal. (A `\u{..}`
-                // escape's braces then read as a placeholder, which also
-                // ends the fragment.)
-                chars.next();
-                fragments.push(std::mem::take(&mut current));
-                trailing_escape = true;
-            }
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
                 current.push('{');
@@ -497,19 +519,17 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
             _ => current.push(ch),
         }
     }
-    if leading_escape || trailing_escape {
-        return None;
-    }
     fragments.push(current);
+    // Any static text at an edge, whitespace included, anchors that edge.
     let anchored_start = fragments
         .first()
-        .is_some_and(|fragment| !fragment.trim().is_empty());
+        .is_some_and(|fragment| !fragment.is_empty());
     let anchored_end = fragments
         .last()
-        .is_some_and(|fragment| !fragment.trim().is_empty());
+        .is_some_and(|fragment| !fragment.is_empty());
     let fragments: Vec<String> = fragments
         .into_iter()
-        .filter(|fragment| !fragment.trim().is_empty())
+        .filter(|fragment| !fragment.is_empty())
         .collect();
     // Static text of only spaces and punctuation (`"{}: {}"`) shows up in
     // unrelated records, so it cannot bind the assertion to this record.
@@ -1249,10 +1269,46 @@ mod tests {
             log_template("log::info! { \"finished {}\", format!(\"audited {}\", n) }"),
             None
         );
-        // An escape at an edge leaves the template unbound.
-        assert_eq!(log_template("log::info!(\"\\\"audited {}\\\"\", n);"), None);
+        // Escapes compare as decoded text, so an edge escape still anchors
+        // that edge and a mid-template escape is not a wildcard.
+        let quoted_edges = "log::info!(\"\\\"audited {}\\\"\", n);";
+        assert!(matches(quoted_edges, "\"audited 42\""));
+        assert!(!matches(quoted_edges, "unaudited 42"));
+        let newline_end = "log::info!(\"audited {}\\n\", n);";
+        assert!(matches(newline_end, "audited 42\n"));
+        assert!(!matches(newline_end, "audited 42"));
+        assert!(!matches("log::info!(\"audited\\n \");", "audited by bob"));
+        assert!(!matches(
+            "log::info!(\" \\taudited {}\", n);",
+            "unaudited 42"
+        ));
+        assert!(!matches(
+            "log::info!(\"audited\\n{}\", n);",
+            "audited by bob"
+        ));
+        assert!(!matches(
+            "log::info!(\"audited\\tuser {}\", n);",
+            "audited by user 1"
+        ));
+        // Whitespace at an edge anchors that edge too.
+        assert!(matches(
+            "log::info!(\" {} audited {}\", a, b);",
+            "  audited 42"
+        ));
+        assert!(!matches(
+            "log::info!(\" {} audited {}\", a, b);",
+            "x  audited 42"
+        ));
+        assert!(matches(
+            "log::info!(\"{} audited {} \", a, b);",
+            "x audited 42 "
+        ));
+        assert!(!matches(
+            "log::info!(\"{} audited {} \", a, b);",
+            "x audited 42 y"
+        ));
+        // An escape that is not decoded leaves the template unbound.
         assert_eq!(log_template("log::info!(\"\\u{61}udited {}\", n);"), None);
-        assert_eq!(log_template("log::info!(\"audited {}\\n\", n);"), None);
         // A raw template is not read; the gap stays.
         assert_eq!(log_template("log::info!(r\"audited {}\", n);"), None);
         assert!(matches(
@@ -1264,7 +1320,12 @@ mod tests {
         // A cooked template binds the same text in a raw or cooked literal.
         let quoted = "log::info!(\"before \\\"audited {}\\\" after\", amount * 7);";
         assert!(matches(quoted, "before \"audited 42\" after"));
-        assert!(matches(quoted, "before \\\"audited 42\\\" after"));
+        assert_eq!(
+            string_literal_contents(
+                "x(r#\"before \"audited 42\" after\"#, \"before \\\"audited 42\\\" after\")"
+            ),
+            vec!["before \"audited 42\" after".to_string(); 2]
+        );
         let ordered = ["audited".to_string(), "42".to_string()];
         assert!(contains_in_order("audited 42", &ordered));
         let reversed = ["42".to_string(), "audited".to_string()];

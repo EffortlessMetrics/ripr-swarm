@@ -142,12 +142,12 @@ pub(crate) fn mask_with_string_delimiter_quotes(text: &str) -> (String, usize) {
 }
 
 /// Every terminated plain or raw string literal in `text`, as the byte
-/// offsets of its opening and closing delimiter quotes, read by the same
-/// scan: a quote inside a comment (nested block comments included), a
-/// character literal or an escape never opens or closes one. The contents
-/// are `text[open + 1..close]`, escapes left unprocessed. An unterminated
-/// string is left out.
-pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize)> {
+/// offsets of its opening and closing delimiter quotes and whether it is a
+/// raw string, read by the same scan: a quote inside a comment (nested
+/// block comments included), a character literal or an escape never opens
+/// or closes one. The contents are `text[open + 1..close]`, escapes left
+/// unprocessed. An unterminated string is left out.
+pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
@@ -159,8 +159,9 @@ struct Scanned {
     char_literals: Vec<(usize, usize)>,
     /// How many `"` were string delimiters.
     string_quotes: usize,
-    /// Delimiter offsets of every terminated string literal.
-    string_spans: Vec<(usize, usize)>,
+    /// Delimiter offsets of every terminated string literal, and whether
+    /// it is raw.
+    string_spans: Vec<(usize, usize, bool)>,
 }
 
 /// One pass over `text` producing the masked output, the byte ranges of
@@ -271,7 +272,7 @@ fn scan(text: &str) -> Scanned {
                 }
                 if byte == b'"' {
                     state = MaskState::Code;
-                    string_spans.push((string_open, index));
+                    string_spans.push((string_open, index, false));
                     string_quotes += 1;
                     out.push(b' ');
                     index += 1;
@@ -299,7 +300,7 @@ fn scan(text: &str) -> Scanned {
                     if closing == raw_hashes {
                         // Consume the closing quote and its hashes
                         // (closing + 1 bytes).
-                        string_spans.push((string_open, index));
+                        string_spans.push((string_open, index, true));
                         string_quotes += 1;
                         out.extend(std::iter::repeat_n(b' ', closing + 1));
                         index += closing + 1;
@@ -418,7 +419,7 @@ mod tests {
         let contents = |text: &str| -> Vec<String> {
             string_literal_spans(text)
                 .into_iter()
-                .map(|(open, close)| text[open + 1..close].to_string())
+                .map(|(open, close, _)| text[open + 1..close].to_string())
                 .collect()
         };
         // A nested block comment hides the literal inside it; only the
@@ -432,6 +433,11 @@ mod tests {
             vec!["a\\\"b".to_string(), "c\"d".to_string()]
         );
         assert!(contents("open(\"never closed").is_empty());
+        let raw: Vec<bool> = string_literal_spans("f(\"a\", r#\"b\"#)")
+            .into_iter()
+            .map(|(_, _, raw)| raw)
+            .collect();
+        assert_eq!(raw, vec![false, true]);
     }
 
     #[test]
