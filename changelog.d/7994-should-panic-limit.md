@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed panic guard (`if index >= 100 { panic!(..) }`) reached by a `#[should_panic]` test with no assertion no longer reads as a missing-assertion gap. When the test calls the owner directly, its `expected` message (if any) appears in the owner's string literals, and the owner can panic on or after the changed line, the finding is `static_unknown` with the new `rust_panic_outcome_unresolved` limit. ripr does not credit the panic, since a bare `#[should_panic]` also passes on another callee's panic (#7994).
