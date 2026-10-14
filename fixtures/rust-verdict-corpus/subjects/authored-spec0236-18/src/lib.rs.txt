@@ -1,0 +1,17 @@
+fn suffix(v: u64) -> &'static str {
+    if v > 1 { "items" } else { "item" }
+}
+
+pub fn label(v: u64) -> String {
+    format!("{v} {}", suffix(v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn label_three_runs() {
+        let _ = label(3);
+    }
+}
