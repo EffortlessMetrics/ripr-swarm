@@ -520,6 +520,7 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
     let mut arguments: Vec<String> = Vec::new();
     // `{}` takes the next positional argument, so it is named by its index.
     let mut next_positional = 0usize;
+    let (mut positional, mut named) = (false, false);
     while let Some(ch) = chars.next() {
         match ch {
             '{' if chars.peek() == Some(&'{') => {
@@ -542,17 +543,25 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
                 // A named or positional argument used twice (`"{0} by {0}"`)
                 // ties two placeholders together, which independent gaps
                 // cannot express; such a template is not bound.
-                let mut name = argument
-                    .split(':')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
+                let (name, spec) = argument.split_once(':').unwrap_or((&argument, ""));
+                // A width or precision taken from an argument (`{:1$}`,
+                // `{:w$}`, `{:.*}`) ties placeholders the same way.
+                if spec.contains(['$', '*']) {
+                    return None;
+                }
+                let mut name = name.trim().to_string();
                 if name.is_empty() {
                     name = next_positional.to_string();
                     next_positional += 1;
                 }
-                if arguments.contains(&name) {
+                // A named argument also has a position (`"{} id {x}", x = v`),
+                // so mixing named and positional placeholders may tie them.
+                if name.parse::<usize>().is_ok() {
+                    positional = true;
+                } else {
+                    named = true;
+                }
+                if (positional && named) || arguments.contains(&name) {
                     return None;
                 }
                 arguments.push(name);
@@ -1353,8 +1362,25 @@ mod tests {
         assert_eq!(log_template("log::info!(\"{0} audited {0}\", u);"), None);
         assert_eq!(log_template("log::info!(\"{who} audited {who:?}\");"), None);
         assert!(matches(
-            "log::info!(\"{who} audited {0}\", n);",
+            "log::info!(\"{who} audited {what}\");",
             "alice audited 4"
+        ));
+        // Named and positional placeholders together, or a width or precision
+        // taken from an argument, may tie two placeholders as well.
+        assert_eq!(log_template("log::info!(\"{who} audited {0}\", n);"), None);
+        assert_eq!(log_template("log::info!(\"{} audited {x}\", x = v);"), None);
+        for template in [
+            "{:.*} rows {1}",
+            "{:1$} id {}",
+            "{:w$} by {w}",
+            "{0:>width$} {width}",
+        ] {
+            let expression = format!("log::info!(\"audit {template}\", a, b);");
+            assert_eq!(log_template(&expression), None, "{template}");
+        }
+        assert!(matches(
+            "log::info!(\"{:>8} audited {:.2}\", a, b);",
+            "alice audited 4.00"
         ));
         assert_eq!(log_template("log::info!(\"{} audited {0}\", u);"), None);
         assert_eq!(log_template("log::info!(\"{0} audited {:?}\", u);"), None);
@@ -1374,6 +1400,9 @@ mod tests {
             "format!(r#\"a {}\"#, b)",
             "std::format! (\"a {}\", b)",
             "format![\"a {}\", b]",
+            "format!{\"a {}\", b}",
+            "format !(\"a {}\", b)",
+            "format!(r##\"a {}\"##, b)",
         ] {
             assert!(string_literal_contents(code).is_empty(), "{code}");
         }
