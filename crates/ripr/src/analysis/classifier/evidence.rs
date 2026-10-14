@@ -518,12 +518,28 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
-                test_has_known_implicit_dispatch: &|test| {
-                    context.owner_fn.is_some_and(|owner| {
-                        owner_reach
-                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .test_has_known_implicit_dispatch(owner, test)
-                    })
+                assertion_has_known_implicit_observer: &|test, assertion| {
+                    if !matches!(
+                        context.probe.family,
+                        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                    ) {
+                        return None;
+                    }
+                    let owner = context.owner_fn?;
+                    let reach =
+                        owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
+                    reach.test_has_known_implicit_dispatch(owner, test)
+                        .then(|| {
+                            context.index.files().get(&test.file).is_some_and(|facts| {
+                                reach.assertion_has_known_implicit_observer(
+                                    owner,
+                                    test,
+                                    assertion,
+                                    &context.probe.expression,
+                                    &facts.source,
+                                )
+                            })
+                        })
                 },
                 proximity_may_reach_owner: &|test| {
                     context.owner_fn.is_none_or(|owner| {

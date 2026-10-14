@@ -9,6 +9,7 @@ mod effect_carrier;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
+mod implicit_effect;
 mod infection;
 mod match_transfer;
 mod operand_pin;

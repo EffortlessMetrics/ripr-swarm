@@ -596,3 +596,21 @@ verdict-corpus rows.
   discriminate summary.
 
 No tier change required. Honesty narrowing within the existing `usable alpha` Rust exposure loop.
+
+### Assertion-local implicit effect authority (#7794)
+
+A known typed trait dispatch is not a test-wide observation receipt. Kind-only
+credit requires the particular assertion to observe the dispatched literal
+receiver's shared sink after dispatch. The bounded form supports one uniquely named same-file receiver type, one local
+standard Rc/Cell or Rc/RefCell/Vec handle, a record literal sharing its clone,
+an ordered empty loop/for_each/explicit-next loop or Add operation, and a
+one-field derived PartialEq wrapper compared against a fresh literal expected
+handle. Direct changed-field writes and one-argument direct reverse transfers
+are supported only with a single written-field use in dispatch and a single
+owner-parameter use, excluding shadowing and whole-self transfers. Competing
+production writes cannot stand in for the changed effect. Unknown aliases, intervening handle uses, shadowing, custom
+equality, inequality, deferred code, production macro calls/definitions, any
+same-file Drop implementation, receiver-type attributes and longer reverse transfers refuse this
+exception. Reach, token/collection identity, opaque-macro authority and
+direct/helper recorder admission remain separate. A refused assertion keeps
+its own visible miss; an admitted assertion cannot lend it confirmation.

@@ -811,6 +811,37 @@ impl OwnerReach<'_, '_> {
                 })
     }
 
+    /// Assertion-local shared-sink authority; declaration/reach alone is
+    /// insufficient. The separate reach predicate keeps its uncertainty.
+    pub(in crate::analysis) fn assertion_has_known_implicit_observer(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &crate::analysis::facts::OracleFact,
+        expression: &str,
+        source: &str,
+    ) -> bool {
+        let observes = |function: &FunctionSummary| {
+            IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
+                && super::related_tests::test_dispatches_trait_impl(test, function)
+                && super::implicit_effect::assertion_observes_dispatch(
+                    function, owner, expression, test, assertion, source,
+                )
+        };
+        observes(owner)
+            || self
+                .reaching
+                .iter()
+                .copied()
+                .filter(|name| *name != self.owner_name && IMPLICIT_DISPATCH_METHODS.contains(name))
+                .any(|name| {
+                    self.graph
+                        .by_name
+                        .get(name)
+                        .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
+                })
+    }
+
     /// Whether `test` may run the owner, by name only (#6297). It may when
     /// it calls the owner, calls a production function that reaches the
     /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name

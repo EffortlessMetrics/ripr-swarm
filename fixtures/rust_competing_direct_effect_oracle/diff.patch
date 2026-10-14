@@ -1,0 +1,5 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,1 +8,1 @@
+-        self.sink.set(0);
++        self.sink.set(1);

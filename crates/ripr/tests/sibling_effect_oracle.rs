@@ -418,3 +418,261 @@ fn free_inherent_and_wrong_receiver_push_matrix_stays_weak() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn same_test_dispatch_cannot_credit_disconnected_assertions() -> Result<(), String> {
+    let dispatch = "let sink=Rc::new(RefCell::new(Vec::new())); let counter=Counter { sink:sink.clone(), finished:false }; for _ in counter {}";
+    let parser = "assert_eq!(parse_note(&format!(\"{input}\")), expected);";
+    let cases = [
+        UNUSED_TRAIT.replace("    let input=", &format!("    {dispatch}\n    let input=")),
+        UNUSED_TRAIT.replace(parser, &format!("{parser}\n    {dispatch}")),
+        format!(
+            "{UNUSED_TRAIT}\n#[test]\nfn disconnected() {{\n {dispatch}\n let fresh=Rc::new(RefCell::new(vec![7]));\n assert_eq!(Observation {{ sink:fresh }}, Observation {{ sink:Rc::new(RefCell::new(vec![7])) }});\n}}\n"
+        ),
+        format!(
+            "{UNUSED_TRAIT}{}",
+            REVERSE_OBSERVER
+                .replace(
+                    "Observation { sink },",
+                    "Observation { sink:Rc::new(RefCell::new(Vec::new())) },"
+                )
+                .replace("vec![1]", "vec![]")
+        ),
+        format!(
+            "{UNUSED_TRAIT}{}",
+            REVERSE_OBSERVER
+                .replace("    for _ in counter {}\n", "")
+                .replace("    assert_eq!", "    for _ in [()] {}\n    assert_eq!")
+        ),
+    ];
+    for source in cases {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(
+                &source,
+                &changed_effect(&source, expression),
+                expression,
+                family,
+            )?;
+            assert_eq!(row["classification"], "weakly_exposed", "{row}");
+            assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+            let rows = row["related_tests"].as_array().ok_or("missing rows")?;
+            assert!(
+                rows.iter()
+                    .any(|r| r["oracle"].is_string() && r["miss"] == "observation_unconfirmed"),
+                "{row}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn implicit_credit_belongs_to_the_ordered_shared_sink_assertion() -> Result<(), String> {
+    let assertion =
+        "assert_eq!(Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) });";
+    let decoy = "let expected=Some(vec![7]); assert_eq!(parse_note(\"x\"), expected);";
+    for observer in [
+        REVERSE_OBSERVER.to_string(),
+        REVERSE_OBSERVER.replace("for _ in counter {}", "counter.for_each(|_| {});"),
+        REVERSE_OBSERVER
+            .replace("let counter=", "let mut counter=")
+            .replace("for _ in counter {}", "while counter.next().is_some() {}"),
+    ] {
+        for source in [
+            format!(
+                "{UNUSED_TRAIT}{}",
+                observer.replace(assertion, &format!("{decoy}\n    {assertion}"))
+            ),
+            format!(
+                "{UNUSED_TRAIT}{}",
+                observer.replace(assertion, &format!("{assertion}\n    {decoy}"))
+            ),
+        ] {
+            for family in ["side_effect", "call_deletion"] {
+                let expression = "output.borrow_mut().push(1)";
+                let row = finding(
+                    &source,
+                    &changed_effect(&source, expression),
+                    expression,
+                    family,
+                )?;
+                assert_eq!(row["classification"], "exposed", "{row}");
+                assert_eq!(row["ripr"]["discriminate"]["state"], "yes", "{row}");
+                let rows = row["related_tests"].as_array().ok_or("missing rows")?;
+                let own: Vec<_> = rows
+                    .iter()
+                    .filter(|r| r["name"] == "implicit_observer")
+                    .collect();
+                assert_eq!(own.len(), 2, "{row}");
+                assert!(
+                    own.iter().any(|r| r["oracle"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("parse_note"))
+                        && r["miss"] == "observation_unconfirmed"),
+                    "{row}"
+                );
+                assert!(
+                    own.iter().any(|r| r["oracle"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("Observation"))
+                        && r["miss"].is_null()),
+                    "{row}"
+                );
+            }
+        }
+    }
+    for source in [
+        format!(
+            "{UNUSED_TRAIT}{}",
+            REVERSE_OBSERVER
+                .replace("    for _ in counter {}\n", "")
+                .replace(
+                    assertion,
+                    &format!("{assertion}\n    for _ in counter {{}}")
+                )
+        ),
+        format!(
+            "{UNUSED_TRAIT}{}",
+            REVERSE_OBSERVER.replace(
+                assertion,
+                &format!("let sink=Rc::new(RefCell::new(vec![1]));\n    {assertion}")
+            )
+        ),
+        format!(
+            "{UNUSED_TRAIT}{}",
+            REVERSE_OBSERVER.replace(
+                assertion,
+                &format!("sink.borrow_mut().clear();\n    {assertion}")
+            )
+        ),
+    ] {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(
+                &source,
+                &changed_effect(&source, expression),
+                expression,
+                family,
+            )?;
+            assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn implicit_binding_refuses_self_comparison_and_opaque_observers() -> Result<(), String> {
+    let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
+    let actual = "Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) }";
+    for source in [
+        iterator.replace(
+            actual,
+            "Observation { sink:sink.clone() }, Observation { sink:sink.clone() }",
+        ),
+        iterator
+            .replace("assert_eq!", "assert_ne!")
+            .replace("vec![1]", "vec![42]"),
+        iterator.replace("#[derive(Debug,PartialEq)]", "#[derive(Debug)]")
+            + "\nimpl PartialEq for Observation { fn eq(&self, _: &Self) -> bool { true } }\n",
+        iterator.replace(
+            "let sink=Rc::new(RefCell::new(Vec::new()));\n    let counter=",
+            "let sink=Rc::new(RefCell::new(Vec::new())).clone();\n    let counter=",
+        ),
+        iterator.replace(
+            "    assert_eq!(Observation",
+            "    let never = || assert_eq!(Observation",
+        ),
+        iterator.replace("record(&self.sink);", "let never = || record(&self.sink);"),
+    ] {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(
+                &source,
+                &changed_effect(&source, expression),
+                expression,
+                family,
+            )?;
+            assert_ne!(row["classification"], "exposed", "{row}");
+            assert_ne!(row["ripr"]["discriminate"]["state"], "yes", "{row}");
+            assert!(
+                !row["related_tests"]
+                    .as_array()
+                    .ok_or("missing rows")?
+                    .is_empty(),
+                "{row}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn receiver_construction_cannot_seed_the_observed_effect() -> Result<(), String> {
+    let source = ITERATOR_OBSERVER.replace(
+        "Counter { sink: state.clone(), finished: false };",
+        "Counter { sink: state.clone(), finished: { state.set(1); false } };",
+    );
+    assert_ne!(source, ITERATOR_OBSERVER);
+    let expression = "self.sink.set(1)";
+    let row = finding(
+        &source,
+        &changed_effect(&source, expression),
+        expression,
+        "call_deletion",
+    )?;
+    assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+    Ok(())
+}
+
+#[test]
+fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result<(), String> {
+    let reverse = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+        "record(&self.sink);",
+        "record(&self.sink);\n        self.sink.borrow_mut().clear();\n        self.sink.borrow_mut().push(1);",
+    );
+    let macro_definition = "macro_rules! reset_sink { ($sink:expr) => {{ $sink.borrow_mut().clear(); $sink.borrow_mut().push(1); }}; }\n";
+    let mut hidden_dispatch_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+        "record(&self.sink);",
+        "record(&self.sink);\n        reset_sink!(&self.sink);",
+    );
+    hidden_dispatch_write.insert_str(0, macro_definition);
+    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace("output.borrow_mut().push(1);", "output.borrow_mut().push(1);\n    reset_sink!(output);");
+    hidden_owner_write.insert_str(0, macro_definition);
+    let destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nimpl Drop for crate::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let macro_destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nmacro_rules! install_drop { () => { impl Drop for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } } }; }\ninstall_drop!();\n";
+    for source in [
+        reverse,
+        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+            "output.borrow_mut().push(1);",
+            "output.borrow_mut().push(1);\n    output.borrow_mut().clear();\n    output.borrow_mut().push(1);",
+        ),
+        hidden_dispatch_write,
+        hidden_owner_write,
+        destructor_write,
+        macro_destructor_write,
+    ] {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
+            assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "source={source}\n{row}");
+            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == "observation_unconfirmed"), "{row}");
+        }
+    }
+    let source = ITERATOR_OBSERVER.replace(
+        "self.sink.set(1);",
+        "self.sink.set(1);\n        self.sink.set(1);",
+    );
+    let expression = "self.sink.set(1)";
+    let row = finding(
+        &source,
+        &changed_effect(&source, expression),
+        expression,
+        "call_deletion",
+    )?;
+    assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+    Ok(())
+}

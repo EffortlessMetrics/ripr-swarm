@@ -24,9 +24,11 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
-    /// Indexed trait dispatch witnessed by the current observer test, excluding
-    /// unknown calls, lexical containers and unused trait declarations.
-    pub(in crate::analysis) test_has_known_implicit_dispatch: &'a dyn Fn(&TestSummary) -> bool,
+    /// Assertion-local binding for a known typed trait dispatch. `None` means
+    /// no such dispatch; `Some(false)` withholds kind-only credit even on a
+    /// direct explicit-next call. Unknown calls cannot supply this authority.
+    pub(in crate::analysis) assertion_has_known_implicit_observer:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> Option<bool>,
     /// Whether a test related only by file or module may run the owner
     /// (#6297). One that cannot, by any name path, does not confirm a match
     /// arm while another related test reaches the owner.
@@ -76,7 +78,7 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
-            test_has_known_implicit_dispatch: &|_| false,
+            assertion_has_known_implicit_observer: &|_, _| None,
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
@@ -997,11 +999,6 @@ fn analyze_related_assertions(
         // standard-method dispatch is not an observation witness. Indexed
         // implicit trait dispatch in this test retains its authority (#7820). Keep
         // token/collection confirmation and opaque macro allowances.
-        let effect_kind_confirms = !(is_effect_family(&probe.family)
-            && owner_reaching_related
-            && is_proximity_only(*reason)
-            && !invokes_opaque_macro(&test.body)
-            && !(return_admission.test_has_known_implicit_dispatch)(test));
         let assertions: Vec<_> = test
             .assertions
             .iter()
@@ -1064,6 +1061,14 @@ fn analyze_related_assertions(
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            let implicit_observer =
+                (return_admission.assertion_has_known_implicit_observer)(test, assertion);
+            let effect_kind_confirms = !(is_effect_family(&probe.family)
+                && owner_reaching_related
+                && (is_proximity_only(*reason) || implicit_observer.is_some())
+                && !invokes_opaque_macro(&test.body)
+                && implicit_observer != Some(true));
+
             // #4478: whether this `assert_eq!` pins the owner's whole return
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
@@ -1135,7 +1140,14 @@ fn analyze_related_assertions(
                     return_admission.getter_reads_field,
                 )
             });
-            let matched = matched || field_collection_read;
+            // A bounded assertion-local implicit witness is a matching
+            // observer even beside another assertion. Keep refused kind rows
+            // visible without borrowing the admitted assertion's confirmation.
+            let matched = matched
+                || field_collection_read
+                || (is_effect_family(&probe.family)
+                    && implicit_observer.is_some()
+                    && effect_observer_confirms(assertion));
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -1209,6 +1221,9 @@ fn analyze_related_assertions(
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
+                    && (implicit_observer != Some(false)
+                        || field_collection_read
+                        || collection_observer_confirms(&probe.expression, assertion))
                     && (!confirm_required
                         || (confirms_observation
                             && (collection_observer_confirms(&probe.expression, assertion)
@@ -1274,7 +1289,8 @@ fn analyze_related_assertions(
                     relation_confidence,
                     miss: (!effect_kind_confirms
                         && !observation_confirmed
-                        && effect_observer_confirms(assertion))
+                        && (effect_observer_confirms(assertion)
+                            || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                 });
             }
@@ -4074,7 +4090,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
-                    test_has_known_implicit_dispatch: &|_| false,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -4170,7 +4186,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
-                    test_has_known_implicit_dispatch: &|_| false,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -4523,7 +4539,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -4595,7 +4611,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6220,7 +6236,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6277,7 +6293,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6305,7 +6321,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6352,7 +6368,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6401,7 +6417,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6575,7 +6591,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6606,7 +6622,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7022,7 +7038,9 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
-                    test_has_known_implicit_dispatch: &|test| test.name == "implicit_observer",
+                    assertion_has_known_implicit_observer: &|test, _| {
+                        (test.name == "implicit_observer").then_some(true)
+                    },
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -7104,7 +7122,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
-                    test_has_known_implicit_dispatch: &|_| false,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -7381,7 +7399,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7473,7 +7491,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
-                    test_has_known_implicit_dispatch: &|_| false,
+                    assertion_has_known_implicit_observer: &|_, _| None,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -7508,7 +7526,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7861,7 +7879,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -8161,7 +8179,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
-                test_has_known_implicit_dispatch: &|_| false,
+                assertion_has_known_implicit_observer: &|_, _| None,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
