@@ -1115,10 +1115,21 @@ pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
         let text = crate::analysis::extract::mask_comments_and_strings(text);
         let opens_closure = |at: usize| {
             let before = text[..at].trim_end();
+            // `move` and `return` count only as whole words: `should_remove
+            // || x` is an operator (#7943 review).
+            let ends_with_word = |word: &str| {
+                before.strip_suffix(word).is_some_and(|head| {
+                    !head
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                })
+            };
             before.is_empty()
-                || before.ends_with(['(', ',', '=', '{', ';', '['])
-                || before.ends_with("move")
-                || before.ends_with("return")
+                || before.ends_with(['(', ',', '=', '{', ';', '[', ':'])
+                || before.ends_with("=>")
+                || ends_with_word("move")
+                || ends_with_word("return")
         };
         text.match_indices("&&")
             .chain(
@@ -2066,6 +2077,13 @@ mod tests {
             "n.map_or_else(|| 0, f) >= 1 && ok"
         ));
         assert!(same_connectives("f(|| 1) && g", "f(|| 2) && g"));
+        assert!(same_connectives("move || 1", "return || 2"));
+        assert!(same_connectives("x => || 1", "x => || 2"));
+        assert!(same_connectives("Foo { f: || 1 }", "Foo { f: || 2 }"));
+        assert!(same_connectives("remove || a", "remove || b"));
+        // A name that merely ends in `move` or `return` is an operand.
+        assert!(!same_connectives("100 < p", "should_remove || 100 <= p"));
+        assert!(!same_connectives("100 < p", "early_return || 100 <= p"));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }

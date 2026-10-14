@@ -601,6 +601,18 @@ fn predicates(findings: &[Finding]) -> Vec<&Finding> {
         .collect()
 }
 
+/// The predicate reads `infection_unknown`, not some other non-exposed class.
+fn assert_predicates_infection_unknown(findings: &[Finding]) {
+    let predicates = predicates(findings);
+    assert!(!predicates.is_empty(), "{findings:?}");
+    assert!(
+        predicates
+            .iter()
+            .all(|finding| finding.class == ExposureClass::InfectionUnknown),
+        "{findings:?}"
+    );
+}
+
 #[test]
 fn a_deleted_guard_conjunct_is_not_credited() -> Result<(), String> {
     // Control (#7898): the predicate `100 < p` was `other > 0 && 100 <= p`.
@@ -614,6 +626,7 @@ fn a_deleted_guard_conjunct_is_not_credited() -> Result<(), String> {
     )?;
     assert!(!predicates(&findings).is_empty(), "{findings:?}");
     assert_not_exposed(&findings, "deleted guard conjunct");
+    assert_predicates_infection_unknown(&findings);
     Ok(())
 }
 
@@ -629,6 +642,16 @@ fn a_deleted_if_conjunct_is_not_credited() -> Result<(), String> {
     )?;
     assert!(!predicates(&findings).is_empty(), "{findings:?}");
     assert_not_exposed(&findings, "deleted if conjunct");
+    assert_predicates_infection_unknown(&findings);
+    // The reason is the changed operands, not some other unknown.
+    assert!(
+        predicates(&findings).iter().all(|finding| finding
+            .ripr
+            .infect
+            .summary
+            .contains("changes the predicate's `&&`/`||` operands")),
+        "{findings:?}"
+    );
     Ok(())
 }
 
@@ -645,6 +668,7 @@ fn an_added_if_disjunct_is_not_credited() -> Result<(), String> {
     )?;
     assert!(!predicates(&findings).is_empty(), "{findings:?}");
     assert_not_exposed(&findings, "added if disjunct");
+    assert_predicates_infection_unknown(&findings);
     Ok(())
 }
 

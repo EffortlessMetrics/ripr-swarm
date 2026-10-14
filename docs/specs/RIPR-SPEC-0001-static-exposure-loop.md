@@ -268,7 +268,10 @@ that opens an empty closure, as in `unwrap_or_else(|| 0)`, is not one), the
 same reading the guard-only arm filter uses. It replaces only boundary
 credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
-an unchanged chain keeps its boundary credit.
+an unchanged chain keeps its boundary credit. The rule reads one changed
+line: a chain that rustfmt splits across lines (`if other > 0` over `&&
+100 <= points`) pairs only its first old line as `before`, so it is not yet
+covered (#7945).
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
