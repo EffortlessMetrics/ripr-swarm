@@ -9574,11 +9574,16 @@ tests = [
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::gap_code_fails_closed_for_unknown_kind",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::unknown_code_does_not_resolve",
   "crates/ripr/src/lsp/diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::quarantined_pull_and_push_serve_one_information_marker",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::saving_matching_buffer_retracts_the_marker",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/quarantine_marker_tests.rs::quarantine_marker_has_no_finding_context_action",
+  "crates/ripr/src/lsp/backend.rs::quarantine_message_tests::quarantined_document_result_id_stays_distinct",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/lsp/diagnostic_catalog.rs",
   "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/lsp.rs",
 ]
 outputs = [
