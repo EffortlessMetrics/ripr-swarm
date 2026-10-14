@@ -6,8 +6,9 @@
 //! and reads bytes as given: callers mask strings and comments first when
 //! a delimiter inside a literal must not count.
 
-/// The byte index of the delimiter closing the group opened at `open`, or
-/// `None` when it never closes or a closer appears before any opener.
+/// The byte index of the delimiter closing the first group opened at or
+/// after `open` (callers pass the opener's own index), or `None` when it
+/// never closes or a closer appears before any opener.
 pub(crate) fn group_end(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0_usize;
     for (at, byte) in text.bytes().enumerate().skip(open) {
@@ -53,6 +54,10 @@ mod tests {
         assert_eq!(group_end("x.call(a).next(b)", 6), Some(8));
         assert_eq!(group_end("[(a)]", 0), Some(4));
         assert_eq!(group_end("{ (a) }", 0), Some(6));
+        // Starts at `open`, not at the first group in the text.
+        assert_eq!(group_end("(a)(b)", 3), Some(5));
+        // Kinds count toward one depth without matching each other.
+        assert_eq!(group_end("(a]", 0), Some(2));
     }
 
     #[test]
@@ -71,5 +76,7 @@ mod tests {
         assert!(!delimiters_balance("f(a"));
         assert!(!delimiters_balance("a) (b"));
         assert!(!delimiters_balance("x }"));
+        assert!(!delimiters_balance("a["));
+        assert!(!delimiters_balance("(a]]"));
     }
 }

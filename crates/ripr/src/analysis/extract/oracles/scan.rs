@@ -4980,4 +4980,19 @@ mod call_path_tests {
         assert!(super::receiver_keeps_call_error(&grouped(8)));
         assert!(!super::receiver_keeps_call_error(&grouped(9)));
     }
+
+    #[test]
+    fn a_stray_brace_in_the_receiver_refuses_the_uncompared_unwrap_err() {
+        // The shared walker counts braces (#7860), so a `}` the line cannot
+        // pair, as on a line inside a multi-line string, refuses the read
+        // instead of crediting a weak oracle.
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a }).unwrap_err();", ""),
+            None
+        );
+        assert_eq!(
+            super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
+            Some("f(a).unwrap_err()".to_string())
+        );
+    }
 }
