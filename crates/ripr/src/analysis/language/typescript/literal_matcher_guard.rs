@@ -129,3 +129,111 @@ pub(crate) fn inline_snapshot_is_literal(
         _ => false,
     }
 }
+
+/// A test-local `const` whose literal initializer a loose equality may read
+/// in place of the name (RIPR-SPEC-0247 rule 2, amended for #6654): declared
+/// once at the top level of the test body, before the assertion.
+#[derive(Clone, Debug)]
+pub(crate) struct LooseLiteralConst {
+    name: String,
+    text: String,
+    declared_end: u32,
+    pins: bool,
+    pins_deep: bool,
+}
+
+/// The test body's top-level `const <name> = <literal>;` bindings whose name
+/// no other top-level declaration reuses. Only plain identifiers bound to a
+/// literal are kept; the literal's own coercion reach is decided per
+/// assertion by [`resolve_loose_literal_const`].
+pub(crate) fn loose_literal_consts(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
+) -> Vec<LooseLiteralConst> {
+    let mut declared: Vec<String> = Vec::new();
+    let mut candidates = Vec::new();
+    for stmt in statements {
+        match stmt {
+            Statement::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    declared.extend(
+                        declarator
+                            .id
+                            .get_binding_identifiers()
+                            .iter()
+                            .map(|ident| ident.name.to_string()),
+                    );
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                        continue;
+                    }
+                    let oxc_ast::ast::BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    let Some(init) = &declarator.init else {
+                        continue;
+                    };
+                    let span = init.span();
+                    let Some(text) = source.get(span.start as usize..span.end as usize) else {
+                        continue;
+                    };
+                    let pins = expression_pins_loosely(init, false);
+                    let pins_deep = expression_pins_loosely(init, true);
+                    if !pins_deep {
+                        continue;
+                    }
+                    candidates.push(LooseLiteralConst {
+                        name: id.name.to_string(),
+                        text: text.to_string(),
+                        declared_end: declaration.span.end,
+                        pins,
+                        pins_deep,
+                    });
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                declared.extend(function.id.as_ref().map(|id| id.name.to_string()));
+            }
+            Statement::ClassDeclaration(class) => {
+                declared.extend(class.id.as_ref().map(|id| id.name.to_string()));
+            }
+            _ => {}
+        }
+    }
+    candidates.retain(|candidate| {
+        declared
+            .iter()
+            .filter(|name| **name == candidate.name)
+            .count()
+            == 1
+    });
+    candidates
+}
+
+/// The literal a loose equality's `expected` identifier stands for, when it
+/// names one of `consts` declared before the assertion at `call_start` and
+/// that literal pins the value under `==` (`deep` for `deepEqual`).
+pub(crate) fn resolve_loose_literal_const<'c>(
+    consts: &'c [LooseLiteralConst],
+    expected: &Argument<'_>,
+    call_start: u32,
+    deep: bool,
+) -> Option<&'c str> {
+    let Some(Expression::Identifier(ident)) = expected
+        .as_expression()
+        .map(|expression| expression.get_inner_expression())
+    else {
+        return None;
+    };
+    consts
+        .iter()
+        .find(|candidate| candidate.name == ident.name.as_str())
+        .filter(|candidate| candidate.declared_end <= call_start)
+        .filter(|candidate| {
+            if deep {
+                candidate.pins_deep
+            } else {
+                candidate.pins
+            }
+        })
+        .map(|candidate| candidate.text.as_str())
+}

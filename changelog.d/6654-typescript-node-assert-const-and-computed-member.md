@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: a loose `assert.equal` / `t.assert.equal` (or `deepEqual`) whose expected value is a test-local `const` bound to a literal, such as `const want = 30`, now reads as an exact assertion, as the inline literal already did. `t["assert"].equal(...)` in a `node:test` test now reads as `t.assert.equal(...)` instead of no assertion. Both shapes were reported as missing tests the user had already written (#6654).

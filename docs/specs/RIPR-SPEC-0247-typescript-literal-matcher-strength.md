@@ -127,6 +127,18 @@ another spelling can equal, the assertion reads `exact_value` / strong:
 computed key, a spread, and an object literal under `equal` (a reference
 comparison) keep `relational_check` / weak.
 
+Amended 2026-10-14 (#6654): an expected identifier reads as the literal
+it is bound to when it names a `const` declared with a plain identifier
+at the top level of the test body (or of an awaited `t.test` subtest
+body), before the assertion, by the only top-level declaration of that
+name, and the assertion itself is a top-level statement of that body.
+The literal must meet the rule above (for `equal`, not an object or
+array). Any other variable keeps the weak reading: a `let` or `var`, a
+destructured or call-bound `const`, a `const` declared after the
+assertion or in an enclosing scope, and an assertion nested in a block,
+branch, loop, `try` or callback, where a nested declaration could
+shadow the name.
+
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
 (`20n == 20`), a one-element array (`["bronze"] == "bronze"`) or a
@@ -196,6 +208,14 @@ and the rejected alternative. Recorded on #6654.
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
    `jest-spec0234-ex03`.
+6. **Test-local literal `const` (rule 2, amended 2026-10-14).** Adopted:
+   a `const` bound once to a literal at the top level of the test body
+   reads as that literal, because the runtime comparison is the same and
+   `const` cannot be reassigned. Rejected: keep every variable weak,
+   which leaves `nodetest-t-assert-equal-variable` (a discriminated test)
+   a false gap. Rejected: resolve any reachable binding (enclosing
+   `describe`, module scope, nested blocks), which needs scope analysis
+   ripr does not do and could read a shadowing declaration's value.
 
 ## Required Evidence
 
@@ -252,8 +272,8 @@ and the rejected alternative. Recorded on #6654.
    `"1e3"`, `"\uFEFF20"`, `"Infinity"`, `1.0`, `-0`, `true`, `null`,
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
-   computed key, with a `__proto__` key, or against a variable:
-   `relational_check` / weak. chai `assert.equal(x, "silver")` reads
+   computed key, with a `__proto__` key, or against a variable other than
+   the test-local `const` of example 10: `relational_check` / weak. chai `assert.equal(x, "silver")` reads
    strong and `assert.equal(x, 1)` weak, as legacy `node:assert` does.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
    multi-line template holding an object's text: `snapshot` / strong,
@@ -262,13 +282,24 @@ and the rejected alternative. Recorded on #6654.
    snapshot with a property-matcher object, or `toMatchSnapshot()`:
    `snapshot` / medium. Amended by RIPR-SPEC-0258: `toMatchSnapshot()`
    whose committed entry the test file names reads `snapshot` / strong.
+10. `const want = 30;` at the top level of the test body, then
+    `assert.equal(graceFee(10), want)` or `t.assert.equal(graceFee(10),
+    want)`, and `const want = { total: 30 };` with
+    `assert.deepEqual(line(3), want)`: `exact_value` / strong, expected
+    value `30` or `{ total: 30 }`. The same with `const want = 1`, `let
+    want = 30`, `const want = price(30)`, `const want` declared after the
+    assertion or inside a block, the assertion inside an `if` block, or
+    an object `const` under `equal`: `relational_check` / weak.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
   pins examples 1 to 9 at the rule level.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
-  keeps the loose-equality grading with coercion-reachable literals.
+  keeps the loose-equality grading with coercion-reachable literals, and
+  `loose_equality_reads_a_test_local_literal_const` pins example 10.
+- `fixtures/typescript-verdict-corpus` pins example 10:
+  `nodetest-t-assert-equal-variable` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
 
@@ -281,8 +312,9 @@ and the rejected alternative. Recorded on #6654.
   read the credited payload as strong, and `project_credited_mock_rows`
   shows it as strong on the related-test row (rule 1).
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
-  `loose_equality_pins_literal` (rule 2), `inline_snapshot_is_literal`
-  (rule 3).
+  `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
+  `resolve_loose_literal_const` (rule 2's test-local `const`),
+  `inline_snapshot_is_literal` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.
