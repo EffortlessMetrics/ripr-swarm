@@ -5,7 +5,6 @@ use crate::lsp::client_features::{ClientFeatureProfile, RiprEditorClientCapabili
 use crate::lsp::diagnostic_budget::{DiagnosticBudget, DiagnosticDeliverySelection};
 use crate::lsp::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE;
 use crate::lsp::state::DocumentStalenessReason;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tower_lsp_server::ls_types::{
     CodeActionContext, CodeActionOrCommand, CodeActionParams, DidChangeTextDocumentParams,
@@ -77,15 +76,14 @@ fn assert_quarantine_marker(
     Ok(())
 }
 
-fn disk_backed_uri(name: &str) -> Result<(PathBuf, Uri), String> {
+fn disk_backed_uri(name: &str) -> Result<(crate::lsp::tests::TempLspRoot, Uri), String> {
     // Non-Rust extensions use the persisted saved digest, so a matching
     // on-disk file can leave quarantine after the injected snapshot commits.
-    let dir = std::env::temp_dir().join("ripr-7771-quarantine-marker");
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(name);
+    let root = crate::lsp::tests::unique_lsp_test_root("quarantine-marker")?;
+    let path = root.path().join(name);
     std::fs::write(&path, CLEAN_TEXT).map_err(|error| error.to_string())?;
     let uri = crate::lsp::uri::file_uri_for_path(&path)?;
-    Ok((path, uri))
+    Ok((root, uri))
 }
 
 fn open_clean(harness: &ParityHarness, uri: &Uri) {
@@ -137,7 +135,7 @@ fn served_workspace(uri: &Uri) -> WorkspaceDiagnostics {
 #[test]
 fn quarantined_pull_and_push_serve_one_information_marker() -> Result<(), String> {
     let harness = drained_parity_backend()?;
-    let (_path, uri) = disk_backed_uri("paused.py")?;
+    let (_root, uri) = disk_backed_uri("paused.py")?;
     open_clean(&harness, &uri);
     commit(harness.service.inner(), served_workspace(&uri))?;
     let served = document_report(&harness, &uri, None)?;
@@ -217,7 +215,7 @@ fn quarantined_pull_and_push_serve_one_information_marker() -> Result<(), String
 #[test]
 fn saving_matching_buffer_retracts_the_marker() -> Result<(), String> {
     let harness = drained_parity_backend()?;
-    let (_path, uri) = disk_backed_uri("restore.py")?;
+    let (_root, uri) = disk_backed_uri("restore.py")?;
     open_clean(&harness, &uri);
     commit(harness.service.inner(), served_workspace(&uri))?;
     change_text(&harness, &uri, 2, DIRTY_TEXT);

@@ -1185,11 +1185,11 @@ impl Backend {
         // so the new episode does not disclose a second time.
         let transitions =
             documents.note_refresh_analyzed(input_identity, pending_analyzed, pending_entered);
-        // `last_diagnostics` mirrors the client-visible state: quarantined
-        // documents were withdrawn (published empty), so the committed
-        // baseline carries an empty set for them (#1970). The next plan then
-        // re-publishes the full set when the quarantine lifts instead of
-        // diffing against diagnostics the client never saw.
+        // Quarantined documents keep an empty committed baseline even though
+        // the client receives a quarantine marker. When quarantine lifts, the
+        // next plan re-publishes the full saved-state set instead of diffing
+        // against findings the client was not shown as line-local diagnostics
+        // (#1970/#7771).
         let mut committed_diagnostics = snapshot.diagnostics_by_uri.clone();
         for (uri, diagnostics) in committed_diagnostics.iter_mut() {
             if documents
