@@ -15,6 +15,182 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn real_terminal_replaced_formatter_remains_unverified() -> Result<(), String> {
+    // This formatter ignores the relation. The complete native request-only
+    // oracle still passes, so body spelling alone cannot certify its arm.
+    let source = format!(
+        r#"macro_rules! format {{
+            ($($tokens:tt)*) => {{ "receipt-1=head_passed join=request_identity_v2".to_string() }};
+        }}
+        {TERMINAL_SOURCE}"#
+    );
+    let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+    let output = repo.check()?;
+    assert_unverified(changed_request_only_arm(&output)?, "replaced formatter");
+    Ok(())
+}
+
+#[test]
+fn real_terminal_projection_is_current_and_deterministic_in_ready_and_deep() -> Result<(), String> {
+    let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+    let ready = repo.check()?;
+    let repeated = repo.check()?;
+    let deep = check_workspace(CheckInput {
+        root: repo.workspace.clone(),
+        base: None,
+        diff_file: Some(repo.workspace.join("diff.patch")),
+        mode: Mode::Deep,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let ready = changed_request_only_arm(&ready)?;
+    for (label, output) in [("repeated ready", repeated), ("deep", deep)] {
+        let current = changed_request_only_arm(&output)?;
+        assert_eq!(
+            current.class,
+            ExposureClass::Exposed,
+            "{label}: {current:#?}"
+        );
+        assert_eq!(
+            current.probe.id, ready.probe.id,
+            "{label}: stable finding identity"
+        );
+        assert_eq!(
+            serde_json::to_value(current).map_err(|error| error.to_string())?,
+            serde_json::to_value(ready).map_err(|error| error.to_string())?,
+            "{label}: complete finding stays deterministic"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn real_terminal_owner_flow_controls_remain_unverified() -> Result<(), String> {
+    for (label, from, to) in [
+        (
+            "swapped owner parameters",
+            "task_id: &str,\n    plan_status: &str",
+            "plan_status: &str,\n    task_id: &str",
+        ),
+        (
+            "wrong proof key",
+            "proof_request_ids.get(task_id)",
+            "proof_request_ids.get(plan_status)",
+        ),
+        (
+            "shadowed request set",
+            "let mut matching = receipts",
+            "let request_set = BTreeSet::<&str>::new();\n    let mut matching = receipts",
+        ),
+        (
+            "swapped tuple",
+            "match (request_identity_matches, task_identity_matches)",
+            "match (task_identity_matches, request_identity_matches)",
+        ),
+        (
+            "mutated matching",
+            "matching.sort_by",
+            "matching.clear();\n    matching.sort_by",
+        ),
+        (
+            "wrong receipt identity in reason",
+            "receipt.id, receipt.result",
+            "task_id, receipt.result",
+        ),
+        (
+            "diagnostic literal",
+            "join={relation}",
+            "diagnostic={relation}",
+        ),
+        ("string whitespace", " join={relation}", "join={relation}"),
+        (
+            "swapped return fields",
+            "Ok((status, reason, request_ids, receipt_ids))",
+            "Ok((status, reason, receipt_ids, request_ids))",
+        ),
+        (
+            "wrong task binding",
+            "receipt.id == task_id",
+            "receipt.id == plan_status",
+        ),
+    ] {
+        assert!(
+            TERMINAL_SOURCE.contains(from),
+            "{label}: setup must change the specimen"
+        );
+        let source = TERMINAL_SOURCE.replace(from, to);
+        let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn real_terminal_oracle_controls_remain_unverified() -> Result<(), String> {
+    let honest = terminal_test(true, false);
+    for (label, from, to) in [
+        (
+            "conditional observation",
+            "    assert_eq!(terminal.0",
+            "    #[cfg(any())]\n    assert_eq!(terminal.0",
+        ),
+        (
+            "uninvoked oracle",
+            "    assert_eq!(terminal.0",
+            "    let _never_called = || {\n    assert_eq!(terminal.0",
+        ),
+        (
+            "direct return",
+            "    assert_eq!(terminal.0",
+            "    return;\n    assert_eq!(terminal.0",
+        ),
+        (
+            "no-op reason",
+            "assert_eq!(terminal.1, \"receipt-1=head_passed join=request_identity_v2\", \"request_identity_v2\")",
+            "assert_eq!(terminal.1, terminal.1, \"request_identity_v2\")",
+        ),
+        ("mutable input", "let receipts =", "let mut receipts ="),
+        ("mutated result", "let terminal =", "let mut terminal ="),
+        (
+            "wrong fed binding",
+            "&proof_request_ids, &receipt_request_ids",
+            "&receipt_request_ids, &proof_request_ids",
+        ),
+        (
+            "diagnostic only",
+            "terminal.1, \"receipt-1=head_passed join=request_identity_v2\"",
+            "terminal.1, \"request_identity_v2\"",
+        ),
+        (
+            "duplicate proof key",
+            "vec![\"request-1\".to_string(), \"request-1\".to_string()])]",
+            "vec![\"request-1\".to_string(), \"request-1\".to_string()]), (\"different-task\".to_string(), vec![\"unrelated-request\".to_string()])]",
+        ),
+        (
+            "shadowed result",
+            "    assert_eq!(terminal.0",
+            "    let terminal = (String::new(), String::new(), Vec::<String>::new(), Vec::<String>::new());\n    assert_eq!(terminal.0",
+        ),
+    ] {
+        assert!(
+            honest.contains(from),
+            "{label}: setup must change the oracle"
+        );
+        let mut test = honest.replace(from, to);
+        if label == "uninvoked oracle" {
+            let close = test.rfind('}').ok_or("test has closing brace")?;
+            test.insert_str(close, "};\n");
+        }
+        let repo = TempRepo::create(TERMINAL_SOURCE, &test)?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, label);
+    }
+    Ok(())
+}
+
 const TERMINAL_SOURCE: &str = r#"use std::collections::{BTreeMap, BTreeSet};
 type Result<T> = std::result::Result<T, String>;
 #[derive(Debug, PartialEq, Eq)]

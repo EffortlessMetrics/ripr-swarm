@@ -157,6 +157,42 @@ After fix:     exposed / confidence 1.0   (unchanged — Idle token_match fires)
 
 ## Test Mapping
 
+### Real terminal tuple projection (#1728)
+
+The bounded derived-local witness also admits the retained
+[`terminalize_proof` consumer correction](https://github.com/EffortlessMetrics/ripr/issues/1728#issuecomment-5747473563).
+Its five ordered parameters, outer proof-request lookup, request sort/dedup,
+borrowed request set, receipt iteration, matching sort, status validation,
+`join={relation}` formatter and returned `Ok((status, reason, request_ids,
+receipt_ids))` must match the frozen parsed grammar. Only the exact parser-owned
+tuple-match node is a hole; the existing derived witness independently binds
+its ordered immutable locals, exhaustive Boolean arms and candidate-current
+changed literal. Lexer trivia is ignored; literal whitespace is preserved.
+
+The supported oracle is one direct five-argument owner call followed by
+`.unwrap()`, with a single immutable receipt literal and immutable
+`BTreeMap::from` request maps. Duplicate keys, aliases, mutation and unknown
+inputs refuse. The actual input maps determine request intersection and task
+identity. Four executed top-level `assert_eq!` observations must pin the
+returned status, exact reason containing the current relation, sorted/deduped
+request IDs and receipt IDs. Sibling-only, diagnostic-only, no-op, uninvoked,
+shadowed and post-return observations cannot refine the changed arm.
+
+This extends static discrimination only for that grammar. Indirect serialized
+caller projections, multiple-receipt oracle evaluation and arbitrary result
+flow remain unsupported. The stage combiner retains ownership of the final
+classification. No consumer rewrite, pin, suppression, threshold, release or
+adoption follows. Roll back the terminal grammar while retaining its public
+positive/negative regressions; the previously admitted precursor stays intact.
+
+Test mapping:
+`match_arm_tuple_derived_local::{real_terminal_request_derivation_and_reason_projection,
+real_terminal_sibling_projections_remain_unverified,
+real_terminal_owner_flow_controls_remain_unverified,
+real_terminal_oracle_controls_remain_unverified}`, plus literal-token and
+map-input controls in `tuple_match/derived_admission/terminal_flow.rs`.
+
+
 - `crates/ripr/src/analysis/classify/reveal.rs` — unit tests for
   `assertion_matches_probe_detail` and `analyze_related_assertions`.
 - `fixtures/match_arm_blind/` — golden fixture for the arm-blind case.

@@ -4,7 +4,7 @@
 //! text-shaped initializer and descendant-oracle helpers are intentionally not
 //! authority on their own. This layer binds the admitted owner roles and one
 //! executed top-level projection oracle before that discriminator may refine
-//! evidence. Broader outer-local derivation remains unsupported.
+//! evidence. The real terminal projection has a separate exact parsed grammar.
 
 use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
@@ -12,6 +12,21 @@ use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
+
+mod terminal_flow;
+
+pub(super) fn terminal_owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
+    terminal_flow::owner_match(function)
+}
+
+pub(super) fn terminal_projection_observes(
+    function: &ast::Fn,
+    owner: &str,
+    expected_result: &str,
+    selected: Option<[bool; 2]>,
+) -> Option<bool> {
+    terminal_flow::projection_observes(function, owner, expected_result, selected)
+}
 
 pub(super) fn admits(context: &ProbeContext<'_>) -> bool {
     admits_inner(context).unwrap_or(false)
@@ -32,7 +47,8 @@ fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     }
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
-    if !canonical_owner_roles(&function)? {
+    let terminal = terminal_owner_match(&function).is_some();
+    if !terminal && !canonical_owner_roles(&function)? {
         return Some(false);
     }
     let result = current_result(&facts.source, &function, context.probe)?;
@@ -48,7 +64,11 @@ fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     let test_facts = find_file_facts(context.index, &test.file)?;
     let test_root = parsed(&test_facts.source)?;
     let test_function = named_function(&test_root, &test.name)?;
-    top_level_projection_observes(&test_function, &owner.name, &result)
+    if terminal {
+        terminal_projection_observes(&test_function, &owner.name, &result, None)
+    } else {
+        top_level_projection_observes(&test_function, &owner.name, &result)
+    }
 }
 
 /// The parameter names `canonical_owner_roles` pins with `has_exact_parameter`.
