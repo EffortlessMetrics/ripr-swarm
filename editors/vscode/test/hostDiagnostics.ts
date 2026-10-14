@@ -15,8 +15,10 @@ export const HOST_DIAGNOSTICS_RETENTION_DAYS = 5;
 
 const COMPLETE_PEM =
   /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g;
+// Bounded repeats: an unbounded `{32,}+` over a long base64-looking log
+// backtracks without bound when no PEM follows (see host hang diagnosis).
 const PEM_TAIL =
-  /(?:[A-Za-z0-9+/]{32,}={0,2}(?:\r?\n|$))+-----END [A-Z0-9 ]+-----/g;
+  /(?:[A-Za-z0-9+/]{32,512}={0,2}(?:\r?\n)){0,64}[A-Za-z0-9+/]{32,512}={0,2}\r?\n?-----END [A-Z0-9 ]+-----/g;
 const PEM_END_ONLY = /-----END [A-Z0-9 ]+-----/g;
 const GITHUB_TOKEN = /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g;
 const GITHUB_PAT = /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g;

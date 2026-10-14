@@ -127,6 +127,14 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(redacted.includes('[redacted-pem-tail]'), redacted);
   });
 
+  test('redacts a one-line PEM tail without unbounded matching', () => {
+    const redacted = redactHostDiagnosticsText(
+      `${'A'.repeat(400)}==-----END PRIVATE KEY-----`
+    );
+    assert.ok(!redacted.includes('A'.repeat(64)), redacted);
+    assert.ok(redacted.includes('[redacted-pem-tail]'), redacted);
+  });
+
   test('redacts GitHub tokens that may appear in host logs', () => {
     const redacted = redactHostDiagnosticsText(
       'url=https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz012345@github.com/org/repo.git ghp_abcdefghijklmnopqrstuvwxyz0123 leftover'
