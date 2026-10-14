@@ -640,9 +640,10 @@ pub enum AnalysisMode {
 /// on a loaded host the probe worker loses the #7292 overlap race against
 /// the analysis thread pool and the join extends every refresh by the full
 /// probe wall time. The CLI and MCP check output keep [`DisclosureProbes::Run`],
-/// so no rendered surface loses a disclosure.
+/// so no rendered surface loses a disclosure. Crate-internal: no library
+/// consumer selects a disclosure policy, so this is not a public contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DisclosureProbes {
+pub(crate) enum DisclosureProbes {
     /// Run the probes and populate the disclosure fields (CLI, MCP, tests).
     Run,
     /// Skip the probes; the disclosure fields stay empty. Only honest for
