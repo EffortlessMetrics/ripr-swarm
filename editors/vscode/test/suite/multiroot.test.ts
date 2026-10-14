@@ -254,15 +254,34 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       // failing on the startup churn.
       const attemptBeforeRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
-      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
-        .analysis_status?.attempt_id;
+      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string } })
+        .analysis_status;
       const uri = vscode.Uri.file(path.join(expected.root, expected.source));
       const seamPresent = () => vscode.languages.getDiagnostics(uri).some(d => d.source === 'ripr'
         && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped');
+      // The copy requires the CURRENT snapshot to retain the seam inventory:
+      // seam diagnostics alone can race a deferred did_save refresh that
+      // supersedes the full snapshot (run_status flips back to
+      // seams_deferred and the cited evidence goes stale). Evidence is ready
+      // only while the seam diagnostics are published AND the projected
+      // run status is a seam-retaining full-family state.
+      const seamRetainingRunStatus = (runStatus: string | undefined) =>
+        runStatus !== 'stale' && runStatus !== 'seams_deferred';
+      const sampleStatus = async () => (await bounded(client.sendRequest('workspace/executeCommand', {
+        command: 'ripr.collectWorkspaceStatus', arguments: [],
+      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string } })
+        .analysis_status;
+      const evidenceReady = async () => {
+        if (!seamPresent()) {
+          return false;
+        }
+        const status = await sampleStatus();
+        return seamRetainingRunStatus(status?.run_status);
+      };
       const seamDeadline = Date.now() + 90_000;
-      let attemptAfterRefresh = attemptBeforeRefresh;
+      let attemptAfterRefresh = attemptBeforeRefresh?.attempt_id;
       let lastError: unknown;
-      while (Date.now() < seamDeadline && !seamPresent()) {
+      while (Date.now() < seamDeadline && !(await evidenceReady())) {
         try {
           await bounded(client.sendRequest('workspace/executeCommand', {
             command: 'ripr.refresh', arguments: [],
@@ -271,21 +290,18 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           lastError = error;
         }
         // The framed refresh resolves when its analysis settles; give the
-        // publication a moment, then re-issue if the seams are still absent.
+        // publication a moment, then re-issue if the evidence is not current.
         try {
-          await waitFor(seamPresent, 'seam publication', 10_000);
+          await waitFor(evidenceReady, 'seam publication', 10_000);
         } catch (error) {
           lastError = error;
         }
-        attemptAfterRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
-          command: 'ripr.collectWorkspaceStatus', arguments: [],
-        }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
-          .analysis_status?.attempt_id;
+        attemptAfterRefresh = (await sampleStatus())?.attempt_id;
       }
-      assert.notStrictEqual(attemptAfterRefresh, attemptBeforeRefresh,
+      assert.notStrictEqual(attemptAfterRefresh, attemptBeforeRefresh?.attempt_id,
         `the explicit full refresh must commit a new analysis attempt`
         + ` (last error: ${String(lastError)})`);
-      await waitFor(seamPresent, `nonempty real seam diagnostics at ${uri}`, 10_000, async () => {
+      await waitFor(evidenceReady, `nonempty real seam diagnostics at ${uri}`, 10_000, async () => {
         const status = await client.sendRequest('workspace/executeCommand', {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }) as { analysis_status?: Record<string, unknown> };
@@ -298,9 +314,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
             ?.components?.map(c => `${c.component}:${c.state}${c.kind ? `(${c.kind})` : ''}`),
         });
       });
-      const status = await bounded(client.sendRequest('workspace/executeCommand', {
-        command: 'ripr.collectWorkspaceStatus', arguments: [],
-      }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
+      const status = await sampleStatus() as { analysis_status?: { effective_root?: string; root_state?: string } };
       // The server's status projects its canonical root spelling (forward
       // slashes on every host); identity compares separators-insensitively.
       assert.strictEqual(status.analysis_status?.effective_root?.replace(/\\/g, '/'),

@@ -111,13 +111,32 @@ pub(super) struct RefreshTelemetrySnapshot {
     pub(super) git_input_resolutions: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 struct RefreshInputIdentity {
     root: PathBuf,
     config: LspAnalysisConfig,
     workspace_revision: u64,
     input_identity: LspAnalysisInputIdentity,
 }
+
+impl PartialEq for RefreshInputIdentity {
+    /// Semantic equality: the same root at the same saved-workspace revision
+    /// with the same EFFECTIVE analysis settings. The retained-layer
+    /// bookkeeping (which layer supplied a setting — the initialization
+    /// options or the workspace/configuration pull) is deliberately not
+    /// compared: the pull rewrites that bookkeeping when it applies, and
+    /// treating the rewritten bookkeeping as a new input made every request
+    /// after the pull supersede the just-committed snapshot, withdrawing
+    /// full-seam evidence the explicit refresh had published (#7408 matrix).
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.workspace_revision == other.workspace_revision
+            && self.config.effective_settings_eq(&other.config)
+            && self.input_identity == other.input_identity
+    }
+}
+
+impl Eq for RefreshInputIdentity {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RefreshRequest {
@@ -295,6 +314,28 @@ impl RefreshScheduler {
                     .as_ref()
                     .is_some_and(|(completed, completed_scope)| {
                         *completed == identity && completed_scope.covers(scope)
+                    })
+            {
+                return RefreshDecision::Deduplicated;
+            }
+            // A same-revision Interactive refresh after a published Full is
+            // covered even when the identities disagree on pull-layer
+            // session cosmetics (base_ref spelling moves between the init
+            // and pulled layers without changing the resolved base): the
+            // full already analyzed this saved-workspace state, and running
+            // the deferred re-run would only supersede the full-seam
+            // snapshot with deferred evidence (#7408 matrix — the save's
+            // debounced refresh withdrawing the explicit refresh's seam
+            // diagnostics). A NEWER revision is a real input change and
+            // still schedules.
+            if state.active.is_none()
+                && scope == RefreshScope::Interactive
+                && state
+                    .last_completed
+                    .as_ref()
+                    .is_some_and(|(completed, completed_scope)| {
+                        *completed_scope == RefreshScope::Full
+                            && completed.workspace_revision == workspace_revision
                     })
             {
                 return RefreshDecision::Deduplicated;
@@ -624,6 +665,71 @@ mod tests {
         // scheduler is idle with the full recorded as completed.
         if scheduler.finish(&full, true).is_some() {
             return Err("no request should remain after the absorbed request".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_revision_interactive_after_published_full_is_absorbed() -> Result<(), String> {
+        // The reachable supersession case: the save's debounced interactive
+        // request arrives after the explicit full published, and its identity
+        // differs from the full's only in retained-layer bookkeeping (the
+        // workspace/configuration pull moves the session settings from the
+        // initialization layer into the pulled layer without changing the
+        // effective values). Running it would supersede the fresh full-seam
+        // snapshot with deferred evidence for the SAME saved-workspace input.
+        let scheduler = RefreshScheduler::default();
+        // Pre-pull configuration: the initialization layer retains the
+        // session overrides.
+        let mut pre_pull = config();
+        pre_pull.session_options = Some(serde_json::json!({
+            "baseRef": "",
+            "checkMode": "draft",
+            "includeUnchangedTests": true
+        }));
+        // Post-pull configuration: the pull absorbed every initialization
+        // key, so the initialization layer empties and the pulled layer
+        // retains the same effective values.
+        let mut post_pull = config();
+        post_pull.session_options = None;
+        post_pull.pulled_options = Some(serde_json::json!({
+            "baseRef": "",
+            "checkMode": "draft",
+            "includeUnchangedTests": true,
+            "diagnosticProfile": "full"
+        }));
+
+        let root = PathBuf::from("/workspace");
+        let RefreshDecision::Start(full) = scheduler.request(
+            root.clone(),
+            pre_pull.clone(),
+            2,
+            0,
+            RefreshScope::Full,
+            RefreshReason::ExplicitRefresh,
+        ) else {
+            return Err("full request should start".to_string());
+        };
+        let full = *full;
+        if scheduler.finish(&full, true).is_some() {
+            return Err("no request should remain after the full".to_string());
+        }
+
+        // The post-pull interactive request for the same revision is
+        // absorbed: its effective analysis settings and resolved base match
+        // the published full, so the full-seam evidence stays current.
+        if scheduler.request(
+            root,
+            post_pull,
+            2,
+            0,
+            RefreshScope::Interactive,
+            RefreshReason::DidSave,
+        ) != RefreshDecision::Deduplicated
+        {
+            return Err(
+                "same-revision interactive after a published full should be absorbed".to_string(),
+            );
         }
         Ok(())
     }
