@@ -177,7 +177,7 @@ Updated:
 ## Pending — error_path_diagnostic_escaped (14)
 
 Reason:
-RIPR-SPEC-0259: Next step for error_path/return_value weakly_exposed findings names the missing input when the strongest related oracle is already exact (#7393); guidance text only, no class or evidence change
+RIPR-SPEC-0264: Next step for error_path/return_value weakly_exposed findings names the missing input when the strongest related oracle is already exact (#7393); guidance text only, no class or evidence change
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`

@@ -1325,9 +1325,9 @@ owner = "product-analysis"
 standalone_reason = "Reads a committed Jest or Vitest snapshot entry the assertion compares with as strong, amending RIPR-SPEC-0247 rule 3 from corpus mutation evidence."
 
 [[artifact]]
-id = "RIPR-SPEC-0259"
+id = "RIPR-SPEC-0264"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md"
+path = "docs/specs/RIPR-SPEC-0264-next-step-oracle-shape.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Weakly_exposed error_path/return_value findings name the missing input when the strongest related oracle is already exact, instead of presuming an assertion shape the suite does not have; guidance text only, no class, stage, or evidence change (#7393)."

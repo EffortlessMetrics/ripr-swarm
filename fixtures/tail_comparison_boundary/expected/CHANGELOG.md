@@ -242,7 +242,7 @@ Updated:
 ## Pending — tail_comparison_boundary (21)
 
 Reason:
-RIPR-SPEC-0259: Next step for error_path/return_value weakly_exposed findings names the missing input when the strongest related oracle is already exact (#7393); guidance text only, no class or evidence change
+RIPR-SPEC-0264: Next step for error_path/return_value weakly_exposed findings names the missing input when the strongest related oracle is already exact (#7393); guidance text only, no class or evidence change
 
 Command:
 `cargo xtask goldens bless tail_comparison_boundary --reason "..."`
@@ -254,7 +254,7 @@ Updated:
 ## Pending — tail_comparison_boundary (22)
 
 Reason:
-RIPR-SPEC-0259: the exact-oracle Next step now requires an admitted strong oracle on a credited row; self-computed expectations and uncredited rows keep the family template (#7393); guidance text only, no class or evidence change
+RIPR-SPEC-0264: the exact-oracle Next step now requires an admitted strong oracle on a credited row; self-computed expectations and uncredited rows keep the family template (#7393); guidance text only, no class or evidence change
 
 Command:
 `cargo xtask goldens bless tail_comparison_boundary --reason "..."`

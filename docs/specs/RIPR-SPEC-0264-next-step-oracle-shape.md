@@ -1,4 +1,4 @@
-# RIPR-SPEC-0259: Next step follows the related oracle shape
+# RIPR-SPEC-0264: Next step follows the related oracle shape
 
 Status: proposed
 
