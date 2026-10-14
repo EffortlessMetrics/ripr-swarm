@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-e2449dc2f938fb1f)
+
+running 1 test
+test check_badge_command_exits_zero_even_with_nonzero_count ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 514 filtered out; finished in 0.09s
+

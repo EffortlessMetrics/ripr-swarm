@@ -1,0 +1,1 @@
+Error: "Rust read outside selected fixture /workspace/ripr-sample-output-1791958278511589714-5007-0/owned/: /workspace/ripr-sample-output-unrelated-sibling/owned/crates/ripr/examples/sample/src/lib.rs"

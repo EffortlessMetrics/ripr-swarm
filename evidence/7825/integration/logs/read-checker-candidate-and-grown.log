@@ -1,0 +1,12 @@
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-0/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-1/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-2/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-3/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-4/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-2-5/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-0/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-1/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-2/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-3/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-4/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1
+/tmp/7825-archive-verify/7825-raw-witnesses/witnesses/candidate-grown-2-5/trace.txt: PASS; Rust inputs=2; successful execs=8; CLI=1

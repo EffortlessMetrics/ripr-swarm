@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-fixture-contracts`
+check-fixture-contracts: pass (target/ripr/reports/fixture-contracts.md)

@@ -1,0 +1,2 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-traceability`

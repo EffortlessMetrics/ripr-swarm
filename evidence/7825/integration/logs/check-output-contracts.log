@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `/workspace/ripr-swarm/target/debug/xtask check-output-contracts`
+check-output-contracts: pass (target/ripr/reports/output-contracts.md)

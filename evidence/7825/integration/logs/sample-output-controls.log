@@ -1,0 +1,131 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/cli_smoke.rs (/workspace/ripr-swarm/target/debug/deps/cli_smoke-e2449dc2f938fb1f)
+
+running 2 tests
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:150:5:
+assertion failed: stdout.contains(r#""evidence_path""#)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:151:5:
+assertion failed: stdout.contains(r#""flow_sinks""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:152:5:
+assertion failed: stdout.contains(r#""assertion_texts""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:153:5:
+assertion failed: stdout.contains(r#""activation""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:154:5:
+assertion failed: stdout.contains(r#""missing_discriminators""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:155:5:
+assertion failed: stdout.contains(r#""oracle_kind""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:156:5:
+assertion failed: stdout.contains(r#""recommended_next_step""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:157:5:
+assertion failed: stdout.contains(r#""suggested_next_action""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:148:5:
+assertion failed: stdout.contains(r#""schema_version": "0.2""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:149:5:
+assertion failed: stdout.contains(r#""classification": "weakly_exposed""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:274:5:
+assertion `left == right` failed: sample must retain four actual findings
+  left: 0
+ right: 4
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:198:5:
+assertion failed: stdout.contains(r#""counts""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:191:5:
+assertion failed: stdout.contains(r#""schema_version": "0.8""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:206:5:
+assertion failed: stdout.contains(r#""message": "4""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:261:5:
+assertion `left == right` failed
+  left: String("0")
+ right: "4"
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke.rs:642:5:
+expected command to succeed
+stdout:
+{
+  "schema_version": "0.8",
+  "kind": "ripr",
+  "scope": "diff",
+  "basis": "finding_exposure",
+  "label": "ripr",
+  "message": "4",
+  "status": "warn",
+  "color": "orange",
+  "analysis_complete": true,
+  "analysis_outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:8a01a6f6aff0e3d9091b315ab0907d4ae30487f4197f56dabc5bef8c4c262c77","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":2,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."},
+  "counts": {
+    "unsuppressed_exposure_gaps": 4,
+    "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 4,
+    "analyzed_seams": 0,
+    "analyzed_gap_records": 0,
+    "analyzed_tests": 2
+  },
+  "reason_counts": {
+    "no_assertion_detected": 0,
+    "smoke_oracle_only": 0,
+    "relational_oracle": 0,
+    "broad_oracle": 0,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 0,
+    "no_activation_literal_detected": 0,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 0
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": [],
+  "preview_skipped": []
+}
+
+stderr:
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr progress: building_output [diff]
+ripr progress: completed [diff]
+
+test sample_output::parallel_fixture_state_and_cleanup_are_independent ... ok
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:221:5:
+assertion failed: stdout.contains(r#""schemaVersion": 1"#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:223:5:
+assertion failed: stdout.contains(r#""message": "4""#)
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:248:5:
+assertion `left == right` failed
+  left: ["color", "label", "message", "schemaVersion", "unexpected"]
+ right: ["color", "label", "message", "schemaVersion"]
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:131:5:
+assertion failed: stdout.contains("Summary: 4 probe(s)")
+
+thread 'sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal' (19092) panicked at crates/ripr/tests/cli_smoke/sample_output.rs:137:5:
+assertion failed: stdout.contains("Missing discriminator (")
+test sample_output::retained_oracles_reject_wrong_contract_shape_count_and_refusal ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 513 filtered out; finished in 0.21s
+
