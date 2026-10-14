@@ -254,7 +254,8 @@ Two pattern terms are used below.
    whose whole condition is such a comparison (`ensure!((a == b) ==
    false)`), when `X` has a top-level `==`, `!=`, `<`, `>`, `<=` or `>=` (a
    turbofish, `->`, `=>` and a shift are not comparisons), `||` or `&&`
-   (through any `!` or `.not()`), an `X` asserted false,
+   (through any `!`, `.not()` or comparison with a boolean literal, read
+   first: `x != true` is `!x` and pins a bool value), an `X` asserted false,
    an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
    relational all cap the reading at `relational_check` / weak (a `<`
    that opens the operand or follows `::` opens a path, not a comparison:
@@ -297,8 +298,10 @@ Two pattern terms are used below.
    (`foo(matches!(..)).is_ok()`, `Some(true) == Some(matches!(..))`), a
    `matches!` scrutinee (`matches!(build(matches!(..)), Ok(_))`) and a
    closure body (`xs.iter().any(|x| f(matches!(x, Some(3))))`) keep their
-   readings. A whole condition compared with a literal whose operand is an
-   `&&` chain keeps the compared-pattern cap above. At
+   readings. A whole condition or equality-macro operand compared with a
+   literal whose operand is an `&&` chain with a `matches!` conjunct keeps
+   the compared-pattern cap above
+   (`assert_eq!((flag && matches!(r, Ok(3))) == true, true)`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns

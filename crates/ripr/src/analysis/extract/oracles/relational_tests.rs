@@ -742,6 +742,34 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // A compared chain in a whole condition keeps the compared-pattern
         // cap; the chain reading never raises it.
         ("assert!((ready && matches!(r, Ok(3))) == true);", &weak),
+        (
+            "assert_eq!((flag && matches!(r, Ok(3))) == true, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!((flag && matches!(r, Ok(3))) != false, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(!((flag && matches!(r, Ok(3))) == false), true);",
+            &weak,
+        ),
+        (
+            "assert_eq!(true == (flag && matches!(r, Ok(3))), true);",
+            &weak,
+        ),
+        (
+            "assert_eq!((matches!(r, Ok(3)) && flag).not() == false, true);",
+            &weak,
+        ),
+        (
+            "assert_eq!((flag && matches!(r, Err(E::Bad))) == true, true);",
+            &weak,
+        ),
+        // A bool value compared with a literal reads as that value or its
+        // negation, which pins it.
+        ("assert_eq!(x != true, true);", &exact),
+        ("assert_eq!(is_valid(v) == true, false);", &exact),
         // The conjunct with the unread pattern drops out and the other
         // required conjuncts decide.
         ("ensure!(check(matches!(r, Ok(3))) && score == 4);", &exact),

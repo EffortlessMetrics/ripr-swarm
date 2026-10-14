@@ -50,7 +50,7 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     {
         return Some(BoolOperandReading::Capped);
     }
-    let (core, negated) = strip_negations(operand.trim());
+    let (core, negated, literal_compared) = strip_negations(operand.trim());
     if negated {
         positive = !positive;
     }
@@ -103,9 +103,15 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
             return Some(BoolOperandReading::Capped);
         }
         let chain = format!("assert!({core}\n);");
-        return pattern_conjunct_assertions(&chain)
-            .is_some()
-            .then_some(BoolOperandReading::Chain(chain));
+        pattern_conjunct_assertions(&chain)?;
+        // A chain compared with a literal inside the operand
+        // (`(ready && matches!(r, Ok(3))) == true`) keeps the
+        // compared-pattern cap, as in a whole condition.
+        return Some(if literal_compared {
+            BoolOperandReading::Capped
+        } else {
+            BoolOperandReading::Chain(chain)
+        });
     }
     (comparison == Some("!=") || relational).then_some(BoolOperandReading::Capped)
 }
@@ -114,10 +120,12 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
 /// boolean literal (`X == false`, `X != true`, `X == true`), and whether
 /// an odd number of negations applied. `!` binds tighter than a binary
 /// operator, so it negates the whole only when the rest is one operand
-/// (`!(a && b)`, not `!flag && b`).
-fn strip_negations(text: &str) -> (&str, bool) {
+/// (`!(a && b)`, not `!flag && b`). The third value says whether a literal
+/// comparison was peeled.
+fn strip_negations(text: &str) -> (&str, bool, bool) {
     let mut core = unwrap_parentheses(text);
     let mut negated = false;
+    let mut literal_compared = false;
     loop {
         if let Some(rest) = core.strip_prefix('!') {
             let rest = rest.trim();
@@ -130,6 +138,7 @@ fn strip_negations(text: &str) -> (&str, bool) {
             core = unwrap_parentheses(receiver.trim());
         } else if let Some((operand, flips)) = literal_compared_operand(core) {
             core = operand;
+            literal_compared = true;
             if !flips {
                 continue;
             }
@@ -138,7 +147,7 @@ fn strip_negations(text: &str) -> (&str, bool) {
         }
         negated = !negated;
     }
-    (core, negated)
+    (core, negated, literal_compared)
 }
 
 /// The operand of a top-level `==` or `!=` whose other side is a boolean
@@ -177,7 +186,7 @@ fn is_single_operand(text: &str) -> bool {
 /// (`(r != Err(E::Bad)) == true`). A negated bool value (`x == false`,
 /// `!x`) pins it, like `!is_valid(x)`.
 fn conjunct_states_relation(conjunct: &str) -> bool {
-    let (core, negated) = strip_negations(conjunct.trim());
+    let (core, negated, _) = strip_negations(conjunct.trim());
     let relational = has_top_level_relational_operator(core);
     let masked = mask_comments_and_strings(core);
     let holds_test =
