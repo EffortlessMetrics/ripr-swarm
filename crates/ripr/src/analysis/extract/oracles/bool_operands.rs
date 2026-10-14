@@ -624,10 +624,15 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     })
 }
 
-/// Whether `text` is one `matches!` invocation and nothing else.
+/// Whether `text` is one `matches!` invocation and nothing else but
+/// comments and whitespace (`/* c */ matches!(..)`). A nested `matches!`
+/// inside its arguments still leaves it whole.
 fn is_whole_pattern(text: &str) -> bool {
-    let text = text.trim();
-    matches!(pattern_invocation_spans(text).as_slice(), [(0, end)] if *end == text.len())
+    let masked = mask_comments_and_strings(text);
+    pattern_invocation_spans(text).iter().any(|&(start, end)| {
+        masked.get(..start).is_some_and(|head| head.trim().is_empty())
+            && masked.get(end..).is_some_and(|tail| tail.trim().is_empty())
+    })
 }
 
 /// Whether masked `text` spells a comparison as a call anywhere
