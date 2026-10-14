@@ -9,6 +9,8 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/replacement_identity_tests.rs",
+  "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",
   "crates/ripr/tests/cli_smoke.rs::check_human_output_reports_sample_findings",
@@ -14451,6 +14453,17 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::a_guard_pattern_naming_a_constant_is_not_the_parameter",
   "crates/ripr/tests/match_guard_edit.rs::an_arm_body_binding_on_the_guard_line_is_not_the_guard_binding",
   "crates/ripr/tests/match_guard_edit.rs::a_closure_in_the_guard_is_not_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_nested_match_spelled_without_a_space_is_a_second_match",
+  "crates/ripr/tests/match_guard_edit.rs::a_block_guard_may_rebind_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_deleted_guard_conjunct_keeps_the_arm_head",
+  "crates/ripr/tests/match_guard_edit.rs::an_edit_inside_one_operand_of_a_compound_guard_drops_the_arm_head",
+  "crates/ripr/tests/match_guard_edit.rs::a_raw_identifier_named_match_is_not_a_second_match",
+  "crates/ripr/tests/match_guard_edit.rs::a_macro_may_declare_the_guard_binding_as_a_constant",
+  "crates/ripr/tests/match_guard_edit.rs::a_statement_macro_in_the_owner_may_declare_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::an_item_macro_in_a_nested_module_may_declare_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_statement_macro_in_another_function_keeps_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_let_in_the_guard_may_rebind_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::an_added_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
   "fixtures/match_arm_blind",
