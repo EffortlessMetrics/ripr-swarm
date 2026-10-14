@@ -13,7 +13,7 @@ use super::classify::{
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
-use super::family::delta_for_family;
+use super::family::{delta_for_family, family_for_probe_shape};
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::classify_changed_line;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
@@ -350,14 +350,28 @@ pub(crate) fn probes_for_file_with_relations(
         for family in families {
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
-            // remained in the replacement's evidence.
-            if has_matching_added_line(removed, &family, changed, &added_bounds)
-                && (!removed_bounds.lines[removed_index]
+            // remained in the replacement's evidence. Short-name pairing must
+            // not consume a removed family when the matching added line has
+            // more than one same-family parser shape: the producer emits only
+            // one of them, so the other subject would disappear (#7807).
+            if has_matching_added_line(removed, &family, changed, &added_bounds) {
+                if extract_identifier_tokens(&removed.text).is_empty() {
+                    if !short_name_match_leaves_unemitted_shape(
+                        removed,
+                        &family,
+                        changed,
+                        &added_bounds,
+                        index,
+                    ) {
+                        continue;
+                    }
+                } else if !removed_bounds.lines[removed_index]
                     || probes
                         .iter()
-                        .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
-            {
-                continue;
+                        .any(|seeded| seeded.probe.before.as_deref() == Some(text))
+                {
+                    continue;
+                }
             }
             if family == ProbeFamily::StaticUnknown
                 && has_adjacent_reordered_added_line(removed, changed)
@@ -943,6 +957,48 @@ fn lines_are_adjacent(removed_new_side_line: usize, added_new_side_line: usize) 
 
 fn added_run_start(added_new_side_line: usize, changed: &ChangedFile) -> usize {
     changed.added_run_start(added_new_side_line)
+}
+
+fn short_name_match_leaves_unemitted_shape(
+    removed_line: &ChangedLine,
+    removed_family: &ProbeFamily,
+    changed: &ChangedFile,
+    added_bounds: &[bool],
+    index: &RustIndex,
+) -> bool {
+    changed
+        .added_lines
+        .iter()
+        .enumerate()
+        .any(|(added_index, added)| {
+            short_name_matches_added(
+                removed_line,
+                removed_family,
+                added_index,
+                changed,
+                added_bounds,
+            ) && same_family_parser_shapes_on_line(index, &changed.path, added, removed_family) > 1
+        })
+}
+
+fn same_family_parser_shapes_on_line(
+    index: &RustIndex,
+    path: &Path,
+    added: &ChangedLine,
+    family: &ProbeFamily,
+) -> usize {
+    let Some(facts) = find_file_facts(index, path) else {
+        return 0;
+    };
+    facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| {
+            shape.start_line <= added.new_side_line
+                && added.new_side_line <= shape.end_line
+                && family_for_probe_shape(shape.kind) == *family
+        })
+        .count()
 }
 
 fn has_matching_added_line(
@@ -3265,6 +3321,78 @@ mod tests {
             probes.iter().any(|probe| probe.expression == "B { n: 1 }"
                 && probe.family == ProbeFamily::FieldConstruction),
             "the added constructor must still be probed: {probes:?}"
+        );
+    }
+
+    /// Two same-family constructors on one line: the parser emits only
+    /// `Some(3)`. Short-name set equality on `t` must not drop the old
+    /// line, which still represents the unemitted `Some(4)` subject.
+    #[test]
+    fn short_name_pairing_keeps_unrepresented_second_constructor() {
+        let added = "    let t = (Some(3), Some(4));";
+        let removed = "    let t = (Some(1), Some(2));";
+        assert!(
+            extract_identifier_tokens(removed).is_empty()
+                && extract_identifier_tokens(added).is_empty(),
+            "fixture: both lines must have no long identifier"
+        );
+        let probes = shapes_probes(
+            added,
+            removed,
+            &[
+                (ProbeShapeKind::ReturnValue, "Some(3)"),
+                (ProbeShapeKind::ReturnValue, "Some(4)"),
+            ],
+            added,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("Some(3)") && probe.after.is_some() }),
+            "the emitted constructor must still be probed: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| {
+                probe.expression.contains("Some(1)") && probe.after.is_none()
+                    || probe.expression.contains("(Some(1), Some(2))") && probe.after.is_none()
+            }),
+            "unrepresented constructor history must stay: {probes:?}"
+        );
+    }
+
+    /// Two predicates on one line: the parser emits only the last `if`.
+    /// Short-name set equality on `{a, b}` must not drop the old line.
+    #[test]
+    fn short_name_pairing_keeps_unrepresented_second_predicate() {
+        let added = "    if a >= b {} if a <= b {}";
+        let removed = "    if a > b {} if a < b {}";
+        assert!(
+            extract_identifier_tokens(removed).is_empty()
+                && extract_identifier_tokens(added).is_empty(),
+            "fixture: both lines must have no long identifier"
+        );
+        let probes = shapes_probes(
+            added,
+            removed,
+            &[
+                (ProbeShapeKind::Predicate, "if a >= b {}"),
+                (ProbeShapeKind::Predicate, "if a <= b {}"),
+            ],
+            added,
+        );
+        assert!(
+            probes.iter().any(
+                |probe| probe.expression.contains("a <=") && probe.after.is_some()
+                    || probe.expression.contains("a >=") && probe.after.is_some()
+            ),
+            "the emitted predicate must still be probed: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| {
+                probe.after.is_none()
+                    && (probe.expression.contains("a > b") || probe.expression.contains("a < b"))
+            }),
+            "unrepresented predicate history must stay: {probes:?}"
         );
     }
 
