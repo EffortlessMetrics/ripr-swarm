@@ -98,6 +98,16 @@ fn a_change_the_closure_decides_or_carries_stays_unrevealed() -> Result<(), Stri
             "{ let k = 50; lines.iter().map(|l| l.cents + k).sum::<u64>() }",
             "{ let k = 51; lines.iter().map(|l| l.cents + k).sum::<u64>() }",
         ),
+        // The changed receiver flows through the unchanged closure.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines[..1].iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        // The changed initial value passes through the folding closure.
+        (
+            "lines.iter().fold(50, |acc, l| acc + l.cents)",
+            "lines.iter().fold(51, |acc, l| acc + l.cents)",
+        ),
         // The changed default runs only when `extra` is `None`, and the
         // combinator decides that.
         (

@@ -3876,60 +3876,92 @@ const NEGATING_KEYWORDS: &[&str] = &[
 ];
 
 /// #6578: whether the part of the changed tail that differs from its old
-/// text (`before`) is evaluated only on some inputs. In
-/// `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` the
-/// closure is unchanged and the changed operand of the outer `+` runs on
-/// every input, so the closure does not make the change conditional. The
-/// changed span is the text between the longest common prefix and suffix;
-/// it is conditional when its own text is, or when any enclosing
-/// expression up to the tail is a closure, branch, loop, `&&`/`||`, or the
-/// argument of a combinator that may skip it (`map_or(0, ..)`).
-/// Without a paired old text, or when the tail does not parse as one
-/// expression, the whole tail is read as before.
+/// text (`before`) is evaluated only on some inputs, or passes through code
+/// that may not use it. In `lines.iter().map(|l| l.cents).sum::<u64>() + 50`
+/// → `.. + 25 * 2` the closure is unchanged and the changed operand of the
+/// outer `+` runs on every input and reaches the sum directly, so the
+/// closure does not make the change conditional.
+///
+/// Only a tail the whole-text check refuses is read more closely, and it is
+/// admitted only in one narrow shape: the changed span (the text between
+/// the longest common prefix and suffix) holds no closure, block,
+/// assignment or conditional text, and every node from it up to and
+/// including the tail is an operator that evaluates all its operands
+/// (arithmetic, comparison or bitwise; not `&&`, `||` or an assignment), a
+/// parenthesis, prefix operator or cast, or a call to a named function or
+/// method that is no skipping combinator and holds no closure anywhere. A
+/// closure beside the change in a call (`items.iter().map(|l| ..)` with
+/// `items` changed, `fold(51, |a, l| ..)`) may discard or transform it, and
+/// a block, labeled `break`, `const` or `async` around it may skip or
+/// rebind it, so each refuses. Without a paired old text, or when the tail
+/// does not parse as one expression, the whole tail is read as before.
 pub(super) fn changed_part_evaluates_conditionally(changed: &str, before: Option<&str>) -> bool {
+    if !evaluates_conditionally(&mask_comments_and_strings(changed)) {
+        return false;
+    }
     let Some(span) = super::changed_span::ChangedSpan::of(changed, before) else {
-        return evaluates_conditionally(&mask_comments_and_strings(changed));
+        return true;
     };
     if evaluates_conditionally(&mask_comments_and_strings(
         &span.covering.text().to_string(),
-    )) {
+    )) || span.covering.descendants().any(|node| {
+        ast::ClosureExpr::can_cast(node.kind())
+            || ast::BlockExpr::can_cast(node.kind())
+            || ast::Item::can_cast(node.kind())
+            || is_short_circuit_or_assignment(&node)
+    }) {
         return true;
     }
-    span.enclosing().iter().any(|(ancestor, child)| {
-        ast::ClosureExpr::can_cast(ancestor.kind())
-            || ast::IfExpr::can_cast(ancestor.kind())
-            || ast::MatchExpr::can_cast(ancestor.kind())
-            || ast::LoopExpr::can_cast(ancestor.kind())
-            || ast::WhileExpr::can_cast(ancestor.kind())
-            || ast::ForExpr::can_cast(ancestor.kind())
-            || ast::BinExpr::cast(ancestor.clone()).is_some_and(|binary| {
-                binary
-                    .op_token()
-                    .is_some_and(|op| matches!(op.text(), "&&" | "||"))
-            })
-            || skipping_combinator_argument(ancestor, child)
+    !span
+        .enclosing()
+        .iter()
+        .all(|(ancestor, _)| evaluates_every_operand(ancestor))
+}
+
+/// A `&&`/`||` or an assignment (`=`, `+=`, ..) operator.
+fn is_short_circuit_or_assignment(node: &SyntaxNode) -> bool {
+    ast::BinExpr::cast(node.clone()).is_some_and(|binary| {
+        binary.op_token().is_some_and(|op| {
+            let op = op.text();
+            op == "&&"
+                || op == "||"
+                || (op.ends_with('=') && !matches!(op, "==" | "!=" | "<=" | ">="))
+        })
     })
 }
 
-/// Whether `child` is the argument list of a call to one of
-/// [`CONDITIONAL_COMBINATORS`] (`x.map_or(0, ..)`, `Option::map(x, ..)`).
-fn skipping_combinator_argument(call: &SyntaxNode, child: &SyntaxNode) -> bool {
-    if !ast::ArgList::can_cast(child.kind()) {
-        return false;
-    }
-    let name = if let Some(method) = ast::MethodCallExpr::cast(call.clone()) {
-        method.name_ref().map(|name| name.text().to_string())
-    } else if let Some(ast::Expr::PathExpr(path)) =
-        ast::CallExpr::cast(call.clone()).and_then(|call| call.expr())
+/// Whether `node`, enclosing the changed span, evaluates every operand and
+/// passes the changed one on without a closure or skipping combinator.
+fn evaluates_every_operand(node: &SyntaxNode) -> bool {
+    // An argument list is judged by the call that holds it.
+    if ast::ArgList::can_cast(node.kind())
+        || ast::ParenExpr::can_cast(node.kind())
+        || ast::PrefixExpr::can_cast(node.kind())
+        || ast::CastExpr::can_cast(node.kind())
     {
-        path.path()
-            .and_then(|path| path.segment())
-            .and_then(|segment| segment.name_ref())
-            .map(|name| name.text().to_string())
+        return true;
+    }
+    if ast::BinExpr::can_cast(node.kind()) {
+        return !is_short_circuit_or_assignment(node);
+    }
+    let name = if let Some(method) = ast::MethodCallExpr::cast(node.clone()) {
+        method.name_ref().map(|name| name.text().to_string())
+    } else if let Some(call) = ast::CallExpr::cast(node.clone()) {
+        match call.expr() {
+            Some(ast::Expr::PathExpr(path)) => path
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|name| name.text().to_string()),
+            _ => None,
+        }
     } else {
         return false;
     };
-    name.is_none_or(|name| CONDITIONAL_COMBINATORS.contains(&name.as_str()))
+    name.is_some_and(|name| !CONDITIONAL_COMBINATORS.contains(&name.as_str()))
+        && !node
+            .descendants()
+            .any(|inner| ast::ClosureExpr::can_cast(inner.kind()))
 }
 
 /// Whether the changed tail evaluates some of its parts only on some

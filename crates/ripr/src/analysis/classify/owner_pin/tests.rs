@@ -1012,6 +1012,22 @@ fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
         gate_from(&tail("25 * 2"), Some(&tail("50"))),
         Some(ReturnPathGate::Any)
     ));
+    // Every enclosing operator, parenthesis and cast evaluates the change.
+    for (after, before) in [
+        (
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 51) as u64",
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 50) as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(51))",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(50))",
+        ),
+    ] {
+        assert!(
+            matches!(gate_from(after, Some(before)), Some(ReturnPathGate::Any)),
+            "{after}"
+        );
+    }
     // Without the old text the whole tail is read, closure included.
     assert!(gate_from(&tail("25 * 2"), None).is_none());
     for (after, before) in [
@@ -1035,10 +1051,44 @@ fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
             "Option::map(x, |v| v).unwrap_or(51)",
             "Option::map(x, |v| v).unwrap_or(50)",
         ),
+        (
+            "Option::map_or(x, 51, |v| v) + 1",
+            "Option::map_or(x, 50, |v| v) + 1",
+        ),
+        (
+            "(Option::map_or)(x, 51, |v| v)",
+            "(Option::map_or)(x, 50, |v| v)",
+        ),
+        (
+            "x.unwrap_or(51) + lines.iter().map(|l| l.cents).sum::<u64>()",
+            "x.unwrap_or(50) + lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
         // A name bound outside the closure carries the change into it.
         (
             "{ let k = 3; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
             "{ let k = 2; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+        ),
+        (
+            "{ const K: u64 = 3; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+            "{ const K: u64 = 2; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+        ),
+        // The changed value flows through a closure beside it in a call.
+        (
+            "items.iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines[..1].iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines.iter().fold(51, |acc, l| acc + l.cents)",
+            "lines.iter().fold(50, |acc, l| acc + l.cents)",
+        ),
+        // A block around the change may skip it.
+        (
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 51 }",
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 50 }",
         ),
     ] {
         assert!(gate_from(after, Some(before)).is_none(), "{after}");

@@ -2168,6 +2168,15 @@ mod tests {
             ("f(&|l: &dyn Fn()| l) + 51", "f(&|l: &dyn Fn()| l) + 50"),
             // A combinator decides whether the changed default runs.
             ("x.map_or(51, |v| v) + 3", "x.map_or(50, |v| v) + 3"),
+            // The changed receiver or argument flows through a closure.
+            (
+                "items.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+            ),
+            (
+                "lines.iter().fold(51, |acc, l| acc + l.cents)",
+                "lines.iter().fold(50, |acc, l| acc + l.cents)",
+            ),
         ] {
             let probe = changed(after, Some(before), ProbeFamily::ReturnValue);
             assert!(!witness(&probe, after, 10), "{after}");
