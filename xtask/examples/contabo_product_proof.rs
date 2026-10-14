@@ -416,7 +416,12 @@ mod tests {
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let path = root.join("commands.json");
         let result = (|| {
-            retain_terminal_commands(&json!({"subject":"fixture"}), &[row], code, &path)?;
+            retain_terminal_commands(
+                &json!({"subject":"fixture"}),
+                std::slice::from_ref(&row),
+                code,
+                &path,
+            )?;
             let bytes = fs::read(&path).map_err(|error| error.to_string())?;
             let receipt: Value =
                 serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
@@ -432,8 +437,54 @@ mod tests {
                 retain_terminal_commands(&json!({}), &[], 0, &root.join("missing.json")).is_err()
             );
             assert!(!root.join("missing.json").exists());
-            assert!(retain_terminal_commands(&json!({}), &[], 0, &path).is_err());
+            assert!(
+                retain_terminal_commands(
+                    &json!({"subject":"different-attempt"}),
+                    &[row],
+                    code,
+                    &path
+                )
+                .is_err()
+            );
             assert_eq!(fs::read(&path).map_err(|error| error.to_string())?, bytes);
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
+    }
+    #[test]
+    fn terminal_success_requires_all_seventeen_native_command_rows() -> Result<(), String> {
+        let root = env::temp_dir().join(format!("contabo-complete-{}", std::process::id()));
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let mut rows = Vec::new();
+            for name in PORTFOLIO {
+                let step = Step {
+                    name: (*name).into(),
+                    script: "test \"$BASE_SHA\" = base && test \"$HEAD_SHA\" = head".into(),
+                    environment: vec![],
+                };
+                let code = execute(&step, "base", "head")?;
+                assert_eq!(code, 0);
+                rows.push(command_row(&step, code, 1));
+            }
+            let incomplete = root.join("incomplete.json");
+            assert!(retain_terminal_commands(&json!({}), &rows[..16], 0, &incomplete).is_err());
+            assert!(!incomplete.exists());
+            let complete = root.join("complete.json");
+            retain_terminal_commands(&json!({"subject":"fixture"}), &rows, 0, &complete)?;
+            let receipt: Value =
+                serde_json::from_slice(&fs::read(&complete).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            assert_eq!(receipt["disposition"], "product_pass");
+            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(17));
+            assert!(
+                receipt["steps"]
+                    .as_array()
+                    .ok_or("missing rows")?
+                    .iter()
+                    .all(|row| row["outcome"] == "pass" && row["exit"] == 0)
+            );
             Ok(())
         })();
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
