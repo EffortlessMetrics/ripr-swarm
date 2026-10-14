@@ -121,7 +121,9 @@ pub(in crate::analysis) fn build_finding(
     // `reveal` names these downgrades in the stage summary; the same tokens
     // are how `ClassifiedProbeEvidence` recognizes them.
     let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
-    let unconfirmed = if discriminate_summary.contains("(observation_unverified)") {
+    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
         Unconfirmed::AllRows
     } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
         && evidence.related_tests.len() >= evidence.related_tests_matched_total
