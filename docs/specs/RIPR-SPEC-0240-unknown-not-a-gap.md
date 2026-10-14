@@ -175,12 +175,15 @@ that gap under `rust_panic_outcome_unresolved` when all of these hold:
 
 - the finding is `reachable_unrevealed` with no `static_limit_kind`;
 - the changed line is inside the owner function, and the owner's body
-  (comments and strings masked) invokes a panicking macro (`panic!`,
+  (comments and strings masked) invokes a panicking macro (`name!(`,
+  `name![` or `name!{`) (`panic!`,
   `unreachable!`, `todo!`, `unimplemented!`, `assert!`, `assert_eq!`,
   `assert_ne!` or a `debug_assert` form) on the changed line or after it;
 - a related test with a `direct_owner_call` relation has no assertion and
   carries `#[should_panic]`, either bare or with `expected = ".."` whose
-  text is in one of the owner's string literals.
+  text is in one of the owner's string literals on or after the changed
+  line. Other attribute forms (`#[should_panic = ".."]`, a raw string,
+  `cfg_attr`) keep the gap.
 
 It runs in `apply_probe_and_oracle_limits` after the log-capture limit and
 before `withhold_unsupported_gap`, and writes the finding the same way, with
@@ -188,9 +191,15 @@ before `withhold_unsupported_gap`, and writes the finding the same way, with
 `#[should_panic]` also passes on a panic from another callee, so its twin
 `trap-row-of-unrelated-panic` (`Grid::new(0)` panics first) moves from gap
 to limited, which its case accepts. An `expected` message the owner never
-raises, a change after the owner's last panic, an owner with no panicking
-macro (`spec0227-check-variant-should-panic`, where the test's `unwrap`
-panics), and a test without `#[should_panic]` keep the gap.
+raises on or after the changed line, a change after the owner's last panic,
+an owner with no panicking macro, a test without `#[should_panic]`, and a
+`#[should_panic]` test with an assertion keep the gap; only the matching
+test's start line binds it to its related row.
+`spec0227-check-variant-should-panic` is untouched: it reads as
+`weakly_exposed` (the test's `unwrap`), and its owner has no panicking macro.
+A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
+owner still counts; that over-reads toward `static_unknown`, never toward a
+gap or credit.
 
 ## Scope boundary
 

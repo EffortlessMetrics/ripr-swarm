@@ -3,8 +3,9 @@
 //! A `#[should_panic]` test with no assertion that calls the owner reads as
 //! `static_unknown` when the owner can panic at or after the changed line:
 //! the panic outcome is an oracle ripr does not resolve. A change after the
-//! owner's last panic, an `expected` message the owner never raises, a test
-//! without `#[should_panic]`, and an owner that cannot panic keep the gap.
+//! owner's last panic, an `expected` message the owner raises only before
+//! the change or never, a test without `#[should_panic]`, and a
+//! `#[should_panic]` test that carries an assertion keep the gap.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -12,9 +13,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// `src/lib.rs` with `row` on lines 1-6 and the test's attributes and body.
 fn source(attrs: &str, body: &str) -> String {
+    with_owner(
+        "pub fn row(index: usize) -> usize {
+    if index >= 100 {",
+        attrs,
+        body,
+    )
+}
+
+/// `head` (lines 1-2 of the owner) before lines 3-6 of `row`.
+fn with_owner(head: &str, attrs: &str, body: &str) -> String {
     format!(
-        "pub fn row(index: usize) -> usize {{
-    if index >= 100 {{
+        "{head}
         panic!(\"index past the end\");
     }}
     index / 4
@@ -158,13 +168,42 @@ fn a_panic_outcome_the_rule_does_not_cover_keeps_the_gap() -> Result<(), String>
         // Not a `#[should_panic]` test.
         ("", GUARD_DIFF, 2),
     ] {
-        let finding = finding_on(&source(attrs, "row(100);"), diff, line)?;
-        assert_eq!(
-            finding.class,
-            ExposureClass::ReachableUnrevealed,
-            "{attrs} line {line}: {finding:?}"
-        );
-        assert_eq!(finding.static_limit_kind, None, "{attrs} line {line}");
+        keeps_gap(&source(attrs, "row(100);"), diff, line, attrs)?;
     }
+    // The test carries an assertion, which other rules judge.
+    keeps_gap(
+        &source(
+            "#[should_panic]",
+            "assert_eq!(1 + 1, 2);\n        row(100);",
+        ),
+        GUARD_DIFF,
+        2,
+        "should_panic with an assertion",
+    )?;
+    // The expected message is raised before the changed line, and the
+    // panicking macro after it raises another.
+    keeps_gap(
+        &with_owner(
+            "pub fn row(index: usize) -> usize { if index == 7 { panic!(\"seven\"); }
+    if index >= 100 {",
+            "#[should_panic(expected = \"seven\")]",
+            "row(100);",
+        ),
+        GUARD_DIFF,
+        2,
+        "expected before the change",
+    )?;
+    Ok(())
+}
+
+/// The finding on `line` stays a `reachable_unrevealed` gap with no limit.
+fn keeps_gap(lib: &str, diff: &str, line: usize, label: &str) -> Result<(), String> {
+    let finding = finding_on(lib, diff, line)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{label} line {line}: {finding:?}"
+    );
+    assert_eq!(finding.static_limit_kind, None, "{label} line {line}");
     Ok(())
 }

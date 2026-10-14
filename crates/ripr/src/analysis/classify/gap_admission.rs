@@ -750,7 +750,15 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     if !panics_at_or_after_change {
         return false;
     }
-    let owner_literals = string_literal_contents(body);
+    // An `expected` message counts only when the owner can raise it on or
+    // after the changed line: a message raised before the change does not
+    // depend on it.
+    let tail_start: usize = body
+        .split_inclusive('\n')
+        .take(changed_line - owner.start_line)
+        .map(str::len)
+        .sum();
+    let owner_literals = string_literal_contents(body.get(tail_start..).unwrap_or_default());
     let panicking: Vec<String> = finding
         .related_tests
         .iter()
@@ -759,6 +767,7 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
                 && index.tests().iter().any(|test| {
                     test.name == related.name
                         && test.file == related.file
+                        && test.start_line == related.line
                         && test.assertions.is_empty()
                         && expects_owner_panic(test, &owner_literals)
                 })
@@ -776,7 +785,7 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
         return false;
     }
     let next_step = format!(
-        "{} passes only if this code panics, and ripr does not resolve whether the changed code decides that panic, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call panics first; add a test only if it does not.",
+        "{} passes only if this code panics, and ripr does not resolve whether the changed code decides that panic, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call can panic first; add a test only if either fails.",
         panicking.join(", ")
     );
     withhold_gap(
@@ -789,13 +798,17 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     true
 }
 
-/// Whether the masked `line` invokes the macro `name!` (`std::panic!` and
-/// `core::panic!` included; `debug_assert!` is not `assert!`).
+/// Whether the masked `line` invokes the macro `name!(..)` (`std::panic!`
+/// and `core::panic!` included; `debug_assert!` is not `assert!`, and
+/// `todo != 0` is a comparison).
 fn invokes_macro(line: &str, name: &str) -> bool {
     line.match_indices(name).any(|(at, _)| {
         let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
         line[..at].chars().next_back().is_none_or(boundary)
-            && line[at + name.len()..].trim_start().starts_with('!')
+            && line[at + name.len()..]
+                .trim_start()
+                .strip_prefix('!')
+                .is_some_and(|args| args.trim_start().starts_with(['(', '[', '{']))
     })
 }
 
@@ -1749,6 +1762,8 @@ mod tests {
         assert!(!invokes_macro("debug_assert!(cols > 0);", "assert"));
         assert!(!invokes_macro("let panic = 1;", "panic"));
         assert!(!invokes_macro("my_panic!(x);", "panic"));
+        assert!(!invokes_macro("if todo != 0 {", "todo"));
+        assert!(!invokes_macro("let ok = !panic;", "panic"));
     }
 
     const PANIC_SOURCE: &str = r#"pub fn row(index: usize) -> usize {
