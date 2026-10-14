@@ -726,6 +726,7 @@ pub(crate) fn expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call,
+        loose_number_expected: false,
     })
 }
 
@@ -793,6 +794,7 @@ pub(crate) fn ava_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: None,
+        loose_number_expected: false,
     })
 }
 
@@ -1383,6 +1385,11 @@ fn assert_call_assertion(
         oracle_kind = OracleKind::ExactValue;
         oracle_strength = OracleStrength::Strong;
     }
+    // Rule 2's typed amendment: `0` and `1` stay weak here, and the
+    // classifier credits them against an owner declared to return `number`.
+    let loose_number_expected = loose_equality
+        && matches!(oracle_kind, OracleKind::RelationalCheck)
+        && call.arguments.get(1).is_some_and(is_finite_number_literal);
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -1418,6 +1425,7 @@ fn assert_call_assertion(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered_call),
+        loose_number_expected,
     })
 }
 
@@ -1712,6 +1720,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered),
+        loose_number_expected: false,
     })
 }
 

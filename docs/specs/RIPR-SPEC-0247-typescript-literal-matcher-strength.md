@@ -140,7 +140,26 @@ changes what the assertion compares. Any other variable keeps the weak
 reading: a `let` or `var`, a destructured, call-bound, object or array
 `const`, a `const` declared after the assertion or in an enclosing
 scope, and an assertion nested in a block, branch, loop, `try` or
-callback, where a nested declaration could shadow the name.
+callback, where a nested declaration could shadow the name. A
+`.then((value) => ...)` callback, which the reader takes as its own
+body, reads its own top-level `const`s the same way, and never its
+parent's.
+
+Amended 2026-10-14 (#6654, typed owner): `==` between two numbers is
+`===`, so a finite number literal the list above refuses (`0`, `1`,
+`-0`, `1.0`), optionally negated, parenthesized or under `as`, also
+reads `exact_value` / strong when the owner's own source declares its
+return type as exactly `number` (`function f(...): number`, an arrow
+`(...): number =>`, or a method `m(): number`) and the assertion
+observes the whole result of one owner call (`f(...)`, `ns.f(...)`, or
+a local bound once to that call). A generic, `async` or generator
+owner, any other annotation (`number | boolean`, `Promise<number>`,
+`number[]`) or none, a wrapped or compared result
+(`Math.min(f(x), 5)`, `f(x) > 0`), a test that declares its own `f`,
+a variable expected value, and chai's negated `.not.to.equal(1)` keep
+`relational_check` / weak. The declared type is trusted: an owner that
+returns `true` through an `any` cast is out of scope, as it is for every
+other TypeScript type ripr reads.
 
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
@@ -223,6 +242,19 @@ and the rejected alternative. Recorded on #6654.
    Rejected: resolve any reachable binding (enclosing `describe`, module
    scope, nested blocks), which needs scope analysis ripr does not do and
    could read a shadowing declaration's value.
+7. **Typed number owner (rule 2, amended 2026-10-14).** Adopted: credit
+   `0` and `1` (and any other finite number literal) when the owner
+   declares `number` as its return type and the assertion observes the
+   whole owner result. The reading lives in the classifier
+   (`ts_typed_loose_number_facts`), which has the owner; extraction only
+   marks the candidate assertion (`loose_number_expected`), so chai's
+   negated `equal`, which shares the matcher name, is never a candidate.
+   Rejected: read every legacy `equal(x, 1)` strong, which credits
+   `assert.equal(isEmpty(x), 1)` against a boolean. Rejected: infer the
+   result type from the returned expression, which needs type inference
+   ripr does not do. Rejected: keep `0` and `1` weak, which leaves
+   `nodetest-legacy-equal-literal-one` (a discriminated test) a false
+   gap.
 
 ## Required Evidence
 
@@ -234,6 +266,8 @@ and the rejected alternative. Recorded on #6654.
 - Amended 2026-10-14: `nodetest-t-assert-equal-variable` moves from `gap`
   to `credited` (false verdicts 7/127 to 5/127 together with the
   RIPR-SPEC-0252 amendment), and no other row moves.
+- Amended 2026-10-14 (typed owner): `nodetest-legacy-equal-literal-one`
+  moves from `gap` to `credited`, and no other row moves.
 
 ## Non-Goals
 
@@ -284,7 +318,8 @@ and the rejected alternative. Recorded on #6654.
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
    computed key, with a `__proto__` key, or against a variable other than
-   the test-local `const` of example 10: `relational_check` / weak.
+   the test-local `const` of example 10: `relational_check` / weak
+   (but see example 11 for `0` and `1` on a `number` owner).
    chai `assert.equal(x, "silver")` reads strong and
    `assert.equal(x, 1)` weak, as legacy `node:assert` does.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
@@ -303,6 +338,16 @@ and the rejected alternative. Recorded on #6654.
     under `deepEqual`), `const want` declared after the assertion or
     inside a block, or the assertion inside an `if`, a `try`, a returned
     `.then` callback or a subtest that does not declare `want` itself:
+    `relational_check` / weak. A `.then((result) => { const want = 30;
+    assert.equal(result, want); })` callback declares `want` itself:
+    `exact_value` / strong.
+11. `export function lineCount(items: string[]): number` and
+    `assert.equal(lineCount(["a"]), 1)`, `assert.equal(lineCount([]), 0)`,
+    `assert.deepEqual(lineCount(["a"]), 1)` or
+    `const n = lineCount(["a"]); assert.equal(n, 1)`: `exact_value` /
+    strong, `exposed`. The same with no return annotation,
+    `: number | boolean`, `Math.min(lineCount(["a"]), 5)`,
+    `lineCount(["a"]) > 0` against `true`, or a test-local `lineCount`:
     `relational_check` / weak.
 
 ## Test Mapping
@@ -312,6 +357,10 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   keeps the loose-equality grading with coercion-reachable literals, and
   `loose_equality_reads_a_test_local_literal_const` pins example 10.
+- `crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs`
+  pins example 11.
+- `fixtures/typescript-verdict-corpus` pins example 11:
+  `nodetest-legacy-equal-literal-one` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins example 10:
   `nodetest-t-assert-equal-variable` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
@@ -328,7 +377,11 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
   `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
   `resolve_loose_literal_const` (rule 2's test-local `const`),
-  `inline_snapshot_is_literal` (rule 3).
+  `inline_snapshot_is_literal` (rule 3), `is_finite_number_literal`
+  (rule 2's typed owner).
+- `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
+  `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
+  (rule 2's typed owner), read by the classifier's pin facts.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

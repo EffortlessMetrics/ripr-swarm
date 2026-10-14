@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "return_value",
   "test_shape": "nodetest_legacy_assert_equal_coercible_literal",
-  "hard_case": "legacy `assert.equal` compares with `==`, so the spec grades a coercible expected `1` relational_check / weak, while this edit's value 2 still fails it",
+  "hard_case": "legacy `assert.equal` compares with `==`, so a bare expected `1` is reachable by `true` or `\"1\"`; the owner declares `: number`, so `==` here compares two numbers and pins the value",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test uses legacy `import assert from \"node:assert\"` and asserts `assert.equal(lineCount([\"a\"]), 1)`; the edit doubles the count, and `2 == 1` is false, so the test fails. RIPR-SPEC-0247 example 7 grades a legacy `equal` against `1` relational_check / weak, because loose equality also accepts `true` or `\"1\"`. ripr reports `weakly_exposed` with relational_check / weak, as the spec states; this edit's value is not coercible to 1, so against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "The test uses legacy `import assert from \"node:assert\"` and asserts `assert.equal(lineCount([\"a\"]), 1)`; the edit doubles the count, and `2 == 1` is false, so the test fails. `lineCount` declares its return type as `number`, and the assertion observes the whole result of the owner call, so loose `==` compares two numbers and reads as `===`. RIPR-SPEC-0247 example 11 grades it exact_value / strong, and ripr reports `exposed`, matching the discriminated truth.",
   "labeling_observation": {
     "ripr_commit": "9073928",
     "full_checkout_verdict": "gap",
@@ -43,6 +43,7 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0247#7"
+    "RIPR-SPEC-0247#7",
+    "RIPR-SPEC-0247#11"
   ]
 }
