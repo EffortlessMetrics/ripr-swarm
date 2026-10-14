@@ -338,6 +338,12 @@ pub enum StaticLimitKind {
     /// `reachable_unrevealed` gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0240.
     RustAssertionContextUnresolved,
+    /// A changed `log::` record is checked by a related test that installs a
+    /// capturing logger before calling the owner and asserts on the captured
+    /// store, but ripr does not resolve the logger or the format template
+    /// against the asserted value. The gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0231 / #7133.
+    RustLogCaptureUnresolved,
 }
 
 impl StaticLimitKind {
@@ -377,6 +383,7 @@ impl StaticLimitKind {
                 "python_transitive_reach_unresolved"
             }
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
+            StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
         }
     }
 
@@ -479,6 +486,12 @@ impl StaticLimitKind {
                  file did not parse, the test carries a feature `cfg`, or a glob import may \
                  rebind the macro). ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustLogCaptureUnresolved => {
+                "A related Rust test installs a capturing logger, runs this code and asserts on \
+                 the captured records, but ripr does not resolve the logger or match the log \
+                 format against the asserted text. ripr does not claim a gap; this is a named \
+                 limitation, not a coverage claim."
             }
         }
     }
@@ -698,6 +711,10 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved.as_str(),
             "rust_assertion_context_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustLogCaptureUnresolved.as_str(),
+            "rust_log_capture_unresolved"
+        );
     }
 
     #[test]
@@ -723,6 +740,7 @@ mod tests {
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
             StaticLimitKind::RustAssertionContextUnresolved,
+            StaticLimitKind::RustLogCaptureUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
