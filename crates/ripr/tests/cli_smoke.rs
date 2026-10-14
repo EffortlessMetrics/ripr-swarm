@@ -8700,6 +8700,22 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         ),
         "the refusal must point at the repair scope boundary:\n{stderr}"
     );
+    // #7735: the pick-another-seam advice is a dead end when no seam can
+    // start a repair (e.g. inline-only crates), so the refusal must name
+    // the stub forward route `check --diff` already advertises and state
+    // the inline-test boundary with its remedy.
+    assert!(
+        stderr.contains("ripr agent stub --at FILE:LINE"),
+        "the refusal must name the stub forward route:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("inline `#[cfg(test)]` modules, which never qualify as a repair target"),
+        "the refusal must state the inline-test boundary:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("add a `tests/`-surface test file"),
+        "the refusal must name the add-a-tests-file remedy:\n{stderr}"
+    );
     // The packet-field claim covers both states: not_applicable when no
     // target was proposed, the production file with an empty surface for
     // an inline-module proposal.

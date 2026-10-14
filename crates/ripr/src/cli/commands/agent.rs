@@ -2344,11 +2344,13 @@ fn before_phase_dirty_premise_refusal(
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
 /// points at the surfaces that only offer a repair start for seams that
-/// pass this check, and points at the repair help carrying the scope
-/// boundary (#5210).
+/// pass this check, names the `agent stub` forward route for the same state
+/// (#7735 — the pick-another-seam advice is a dead end when no seam can
+/// start a repair), states the inline-test boundary with its remedy, and
+/// points at the repair help carrying the scope boundary (#5210).
 fn before_phase_refusal(seam_id: &str, error: &str) -> String {
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose only tests are inline `#[cfg(test)]` modules, which never qualify as a repair target — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --at FILE:LINE` (the finding location `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
