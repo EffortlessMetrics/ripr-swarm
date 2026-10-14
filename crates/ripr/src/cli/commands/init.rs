@@ -364,14 +364,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
     if wrote_any {
         // #7830: a UTF-8 argument can select a non-UTF-8 cwd. Never render
         // a lossy root as an executable command for a different repository.
-        let root_display = match output::path::absolute_command_root_display(root) {
-            Ok(root) => root,
-            Err(error) => {
-                println!();
-                println!("Init completed; follow-up commands omitted: {error}.");
-                return Ok(());
-            }
-        };
+        let root_display =
+            match output::path::absolute_command_root_display(root).or_else(|error| {
+                // A byte-invalid cwd can still select a UTF-8 parent. Resolve
+                // real filesystem traversal, without lexically collapsing `..`
+                // across symlinks or replacing an already-lossless alias.
+                let resolved = root.canonicalize().map_err(|_| error)?;
+                output::path::command_root_display(root, &resolved)
+            }) {
+                Ok(root) => root,
+                Err(error) => {
+                    println!();
+                    println!("Init completed; follow-up commands omitted: {error}.");
+                    return Ok(());
+                }
+            };
         let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
         let doctor = format!("ripr doctor --root {root_arg}");
         let check = format!("ripr check --root {root_arg}");

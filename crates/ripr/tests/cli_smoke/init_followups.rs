@@ -281,3 +281,97 @@ fn init_followups_replay_a_utf8_alias_to_a_non_utf8_root() -> TestResult {
     std::fs::remove_dir_all(&scratch)?;
     result
 }
+
+/// A byte-invalid producer cwd need not make the selected target invalid.
+/// Resolve actual traversal rather than dropping `..` across a symlink.
+#[cfg(unix)]
+#[test]
+fn init_followups_replay_utf8_targets_from_a_non_utf8_cwd() -> TestResult {
+    use std::os::unix::ffi::OsStringExt;
+    let scratch = unique_temp_workspace("init-lossless-parent");
+    let result: TestResult = (|| {
+        let parent = scratch.join("selected parent répo");
+        let child = parent.join(std::ffi::OsString::from_vec(b"child-\xff".to_vec()));
+        let physical = scratch.join("physical");
+        let traversed = physical.join("repo");
+        let lexical = child.join("repo");
+        let decoy = scratch.join("decoy");
+        for (root, answer, mode) in [
+            (&parent, 311, "draft"),
+            (&traversed, 412, "draft"),
+            (&lexical, 789, "instant"),
+            (&decoy, 999, "instant"),
+        ] {
+            rust_repo(root)?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                format!("pub fn answer() -> u16 {{ {answer} }}\n"),
+            )?;
+            if mode == "instant" {
+                std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"instant\"\n")?;
+            }
+            // Healthy subjects use independent literal policy/value pins.
+            let check = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(root),
+                &["check", "--root", "."],
+            )?;
+            assert!(check.status.success(), "{check:?}");
+            let text = String::from_utf8(check.stdout)?;
+            assert!(text.contains(&format!("\nmode: {mode}\n")), "{text}");
+            assert!(
+                text.contains(&format!("Changed behavior: {answer}")),
+                "{text}"
+            );
+        }
+        std::fs::create_dir_all(physical.join("anchor"))?;
+        std::os::unix::fs::symlink(physical.join("anchor"), child.join("link"))?;
+        for (root_arg, selected, answer) in
+            [("..", &parent, 311), ("link/../repo", &traversed, 412)]
+        {
+            let init = run_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&child),
+                &["init", "--root", root_arg],
+            )?;
+            assert!(init.status.success(), "{init:?}");
+            assert!(selected.join("ripr.toml").is_file());
+            let stdout = String::from_utf8(init.stdout)?;
+            let commands: Vec<_> = stdout
+                .split('`')
+                .filter(|text| text.starts_with("ripr doctor") || text.starts_with("ripr check"))
+                .collect();
+            assert_eq!(
+                commands.len(),
+                2,
+                "a lossless selected target exists: {stdout}"
+            );
+            for command in commands {
+                let replay = replay_printed_ripr(command, &decoy)?;
+                assert!(replay.status.success(), "{command}: {replay:?}");
+                let text = String::from_utf8(replay.stdout)?;
+                if command.starts_with("ripr doctor") {
+                    assert!(text.contains("Analysis mode default: draft"), "{text}");
+                    assert!(
+                        text.contains(&format!(
+                            "Config path: {}",
+                            selected.join("ripr.toml").display()
+                        )),
+                        "{text}"
+                    );
+                } else {
+                    assert!(text.contains("\nmode: draft\n"), "{text}");
+                    assert!(
+                        text.contains(&format!("Changed behavior: {answer}")),
+                        "{text}"
+                    );
+                    assert!(!text.contains("Changed behavior: 789"), "{text}");
+                    assert!(!text.contains("Changed behavior: 999"), "{text}");
+                }
+            }
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&scratch)?;
+    result
+}

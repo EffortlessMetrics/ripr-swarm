@@ -1,4 +1,5 @@
 <!-- section: Fixed -->
-- Successful `ripr init` omits executable follow-ups when the selected root cannot
-  be represented losslessly, while preserving completed writes and naming the
-  UTF-8-parent/alias remedy (#7830).
+- Successful `ripr init` uses a lossless supplied or resolved filesystem root
+  for executable follow-ups, including UTF-8 parents reached from byte-invalid
+  directories. If neither spelling is lossless, it preserves completed writes,
+  omits the commands, and names the UTF-8-parent/alias remedy (#7830).
