@@ -1,0 +1,171 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "ripr-mcp-gap-list-v1"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "requested_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshot_profile_budget_identity": {
+      "type": "string"
+    },
+    "selection_basis_version": {
+      "type": "string"
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_items_per_workspace_response": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_items_per_document": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_serialized_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_inline_detail_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "max_items_per_workspace_response",
+        "max_items_per_document",
+        "max_serialized_bytes",
+        "max_inline_detail_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "eligible": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "selected": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "omitted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "selected_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "complete_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "overflowed": {
+      "type": "boolean"
+    },
+    "overflow_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "document_item_limit",
+          "workspace_item_limit",
+          "serialized_byte_limit",
+          "inline_detail_limit"
+        ]
+      }
+    },
+    "items": {
+      "type": "array"
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "The caller-set page cap; null when the page byte-filled."
+        },
+        "returned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "offset",
+        "limit",
+        "returned",
+        "has_more",
+        "next_offset"
+      ],
+      "additionalProperties": false
+    },
+    "omitted_items": {
+      "type": "array"
+    },
+    "continuation": {
+      "type": "object"
+    },
+    "claim_boundary": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "requested_snapshot_id",
+    "snapshot_profile_budget_identity",
+    "selection_basis_version",
+    "budget",
+    "total",
+    "eligible",
+    "selected",
+    "omitted",
+    "selected_bytes",
+    "complete_bytes",
+    "overflowed",
+    "overflow_reasons",
+    "items",
+    "page",
+    "omitted_items",
+    "continuation",
+    "claim_boundary",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

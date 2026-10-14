@@ -11,6 +11,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "common/advisory_write_safety.rs"]
 mod advisory_write_safety;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/agent_policy_guidance.rs"]
+mod agent_policy_guidance;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/artifact_mode_precedence.rs"]
+mod artifact_mode_precedence;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
@@ -32,6 +38,9 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/init_followups.rs"]
+mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -61,12 +70,18 @@ mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_effect_aliases.rs"]
+mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_diff_exit.rs"]
+mod unsupported_diff_exit;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -9055,11 +9070,10 @@ fn agent_packet_rejects_configured_off_seam() -> Result<(), Box<dyn std::error::
             .join("fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt"),
     )?;
     assert!(stderr.contains(expected.trim()));
-    // #4332: the policy-omitted refusal names the listing route instead of
-    // dead-ending.
+    // #7736: policy omission names policy inspection rather than re-listing.
     assert!(
-        stderr.contains("Run `ripr pilot"),
-        "the policy-omitted refusal must name the listing command:\n{stderr}"
+        stderr.contains("Inspect the agent policy with `ripr agent brief"),
+        "the policy-omitted refusal must name policy inspection:\n{stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -18397,6 +18411,10 @@ fn calibrate_cargo_mutants_prints_markdown_by_default() {
     assert!(stdout.contains("Status: advisory"));
     assert!(stdout.contains("Static/runtime agreement"));
     assert!(stdout.contains("Runtime Outcome Counts"));
+    assert!(
+        !stdout.contains("this import has no observed runtime outcomes"),
+        "the fixture sample carries an observed outcome and must not use the mutants.json-only note:\n{stdout}"
+    );
 }
 
 #[test]
@@ -18482,6 +18500,60 @@ fn calibrate_foreign_same_line_join_discloses_missing_head() -> Result<(), Strin
     assert!(
         !stdout.contains("does not carry a head SHA"),
         "the caveat is stderr-only so JSON/markdown stdout stays the report:\n{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #7451: pointing --mutants-json at a directory that holds only
+/// mutants.json still joins the candidate and still counts it in
+/// matched_total. The default Markdown Summary must say those rows carry
+/// no runtime observation.
+#[test]
+fn calibrate_mutants_json_only_directory_discloses_unexecuted_denominator() -> Result<(), String> {
+    let workspace = unique_temp_workspace("calibrate-mutants-json-only");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let mutants_dir = workspace.join("cm-dir");
+    std::fs::create_dir_all(&mutants_dir).map_err(|e| format!("create cm-dir: {e}"))?;
+    std::fs::write(
+        mutants_dir.join("mutants.json"),
+        r#"{"mutants":[{"id":"candidate-only","file":"src/lib.rs","line":2,"operator":"replace >= with >"}]}"#,
+    )
+    .map_err(|e| format!("write mutants.json: {e}"))?;
+    let root = workspace_root();
+    let repo =
+        root.join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json");
+
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &mutants_dir.display().to_string(),
+        "--repo-exposure-json",
+        &repo.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let after_summary = stdout
+        .split("## Summary")
+        .nth(1)
+        .and_then(|rest| rest.split("## Static/runtime agreement").next())
+        .ok_or("default markdown must keep Summary before agreement")?;
+    assert!(
+        after_summary.contains("| matched_total | 1 |"),
+        "matched_total still counts the joined candidate:\n{after_summary}"
+    );
+    assert!(
+        after_summary.contains("this import has no observed runtime outcomes")
+            && after_summary.contains("`matched_total` counts joined candidate mutants")
+            && after_summary.contains("`unknown` / `no_runtime_data`"),
+        "the default Markdown Summary must disclose the unexecuted denominator:\n{after_summary}"
+    );
+    assert!(
+        stdout.contains("| unknown | 1 |") && stdout.contains("`no_runtime_data`"),
+        "row-level unknown / no_runtime_data must still render:\n{stdout}"
     );
 
     ignore_remove_dir_all(&workspace);

@@ -283,7 +283,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | An attempt cannot continue. | Run `ripr status --root .` and follow [repair recovery](REPAIR_ATTEMPT.md). |
 | Analysis is partial or limited. | Read the limitation and suggested retry. Missing evidence is not a successful empty result. |
 
-Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml) with your `ripr --version`.
+Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml) with your `ripr --version`.
 
 ## Known Limits
 

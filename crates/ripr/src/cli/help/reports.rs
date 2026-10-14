@@ -195,7 +195,7 @@ pub(super) const CALIBRATE_HELP: &str = r#"Import cargo-mutants outcomes as advi
 Usage: ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
 
 Options:
-  --mutants-json PATH          cargo-mutants JSON file, or mutants.out directory containing outcomes.json and/or mutants.json.
+  --mutants-json PATH          cargo-mutants JSON file, or mutants.out directory containing outcomes.json and/or mutants.json. A mutants.json-only import counts unexecuted candidates in matched_total.
   --repo-exposure-json PATH    RIPR repo-exposure-json snapshot to join against.
   --format FORMAT             md, markdown, text, or json. Defaults to md.
   --out PATH                  Write the rendered calibration report to a file instead of stdout.
@@ -210,10 +210,14 @@ configure CI policy.
 Producing the input:
   Install cargo-mutants (`cargo install cargo-mutants --locked`) and run
   `cargo mutants` so it writes `mutants.out/`. Pass that directory,
-  `mutants.out/outcomes.json`, or `mutants.out/mutants.json`. cargo-mutants
-  selection flags only narrow its own run; ripr does not invoke it. The
-  importer was validated against cargo-mutants 27.1.0 `outcomes.json` and
-  `mutants.json` shapes; see RIPR-SPEC-0006 and
+  `mutants.out/outcomes.json`, or `mutants.out/mutants.json`. A
+  mutants.json-only path counts unexecuted candidates in matched_total;
+  those rows have no runtime observation and render as unknown /
+  no_runtime_data. Pass outcomes.json, or a mutants.out directory that
+  includes it, when the Summary counts should reflect observed runtime
+  evidence. cargo-mutants selection flags only narrow its own run; ripr
+  does not invoke it. The importer was validated against cargo-mutants
+  27.1.0 `outcomes.json` and `mutants.json` shapes; see RIPR-SPEC-0006 and
   fixtures/boundary_gap/calibration/. A checked-in sample is
   fixtures/boundary_gap/calibration/runtime-mutants.json.
 
@@ -271,6 +275,35 @@ mod tests {
                 "producer block must name the install command, not only the output directory"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// #7451: naming mutants.json as a valid path is not enough if the
+    /// reader still thinks matched_total means observed runtime evidence.
+    #[test]
+    fn calibrate_help_discloses_mutants_json_only_denominator() -> Result<(), String> {
+        for needle in [
+            "mutants.json-only import counts unexecuted candidates in matched_total",
+            "no runtime observation",
+            "unknown",
+            "no_runtime_data",
+            "Pass outcomes.json",
+        ] {
+            if !CALIBRATE_HELP.contains(needle) {
+                return Err(format!(
+                    "calibrate help omitted mutants.json-only denominator contract {needle:?}"
+                ));
+            }
+        }
+        let after_options = CALIBRATE_HELP
+            .split("The calibration report is advisory.")
+            .nth(1)
+            .ok_or("advisory paragraph is the producer-block anchor")?;
+        if !after_options.contains("mutants.json-only path counts unexecuted candidates") {
+            return Err(format!(
+                "the option one-liner is not the full denominator caveat:\n{after_options}"
+            ));
         }
         Ok(())
     }

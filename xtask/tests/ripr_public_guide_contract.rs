@@ -12,6 +12,20 @@ const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.m
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
+const FIRST_RUN_REPORT_TEMPLATE: &str =
+    include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
+const WRONG_VERDICT_TEMPLATE: &str = include_str!("../../.github/ISSUE_TEMPLATE/wrong_verdict.yml");
+
+/// The templates live in this repo. GitHub ignores an unknown `template=`
+/// query, so sending readers to EffortlessMetrics/ripr opens a blank form.
+const SWARM_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=first_run_report.yml";
+const SWARM_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/new?template=wrong_verdict.yml";
+const RIPR_FIRST_RUN_REPORT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml";
+const RIPR_WRONG_VERDICT: &str =
+    "https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml";
 
 /// User-facing guides whose `ripr ...` commands a reader or agent copies.
 /// Internal specs, plans, and handoffs are historical records and stay out.
@@ -66,6 +80,11 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
     ),
 ];
 
+/// The C2 `cmd:feedback.record` example in
+/// `crates/ripr/src/cli/command_metadata.rs`. Bare `ripr feedback record`
+/// always refuses without `--snapshot` and `--reason`.
+const FEEDBACK_RECORD_EXAMPLE: &str = "ripr feedback record --snapshot ID --reason CODE";
+
 /// Validate the command cell of each task row, not mentions elsewhere in the
 /// document. The result prose can change without changing the command's job.
 fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
@@ -77,7 +96,7 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
         ("Compose PR evidence", "ripr first-pr"),
         ("Add advisory CI", "ripr init --ci github"),
         ("Diagnose setup", "ripr doctor"),
-        ("Record result usefulness", "ripr feedback record"),
+        ("Record result usefulness", FEEDBACK_RECORD_EXAMPLE),
     ] {
         let mut matches = doc.lines().filter_map(|line| {
             let mut cells = line.trim().strip_prefix('|')?.split('|');
@@ -229,15 +248,35 @@ fn doc_routes_reject_missing_wrong_and_duplicate_tasks() -> Result<(), String> {
     );
     let duplicate =
         format!("{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n");
+    let bare_feedback = COMMAND_HIERARCHY_DOC.replace(
+        &format!("`{FEEDBACK_RECORD_EXAMPLE}`"),
+        "`ripr feedback record`",
+    );
     for (case, changed) in [
         ("missing", missing),
         ("wrong", wrong),
         ("duplicate", duplicate),
+        ("bare-feedback", bare_feedback),
     ] {
         if assert_doc_command_routes(&changed).is_ok() {
             return Err(format!("doc route guard accepted the {case} task mutation"));
         }
     }
+    Ok(())
+}
+
+/// Keep the hierarchy task row on the same spelling the typed catalog example
+/// already ships. A docs-only re-pin of the refusing bare command must fail.
+#[test]
+fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String> {
+    const COMMAND_METADATA: &str = include_str!("../../crates/ripr/src/cli/command_metadata.rs");
+    let example_field = format!("example: \"{FEEDBACK_RECORD_EXAMPLE}\"");
+    if !COMMAND_METADATA.contains(&example_field) {
+        return Err(format!(
+            "command_metadata.rs lost the C2 example `{FEEDBACK_RECORD_EXAMPLE}`"
+        ));
+    }
+    assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
     Ok(())
 }
 
@@ -252,6 +291,101 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(&wrong)? == "ripr check" {
         return Err(
             "the CLI section credited a later check instead of its first command".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #7661: troubleshooting report links must open the swarm templates that
+/// exist in this repo. The README already routes problem reports to
+/// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
+/// reader to EffortlessMetrics/ripr, which has neither template.
+fn markdown_link(label: &str, url: &str) -> String {
+    format!("[{label}]({url})")
+}
+
+fn assert_quickstart_report_links(doc: &str) -> Result<(), String> {
+    let troubleshooting = doc_section(doc, "## Troubleshooting")?;
+    for (label, url) in [
+        ("first run report", SWARM_FIRST_RUN_REPORT),
+        ("wrong finding report", SWARM_WRONG_VERDICT),
+    ] {
+        assert_contains(
+            "docs/QUICKSTART.md troubleshooting",
+            &troubleshooting,
+            &markdown_link(label, url),
+        )?;
+    }
+    for forbidden in [RIPR_FIRST_RUN_REPORT, RIPR_WRONG_VERDICT] {
+        if troubleshooting.contains(forbidden) {
+            return Err(format!(
+                "docs/QUICKSTART.md troubleshooting still opens `{forbidden}`; those templates exist only on EffortlessMetrics/ripr-swarm"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_open_the_swarm_templates() -> Result<(), String> {
+    assert_quickstart_report_links(QUICKSTART_DOC)?;
+    assert_contains(
+        "README.md problem reports",
+        ROOT_README,
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/first_run_report.yml",
+        FIRST_RUN_REPORT_TEMPLATE,
+        "name: First run report",
+    )?;
+    assert_contains(
+        ".github/ISSUE_TEMPLATE/wrong_verdict.yml",
+        WRONG_VERDICT_TEMPLATE,
+        "name: Wrong or misleading finding",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn quickstart_report_links_reject_the_release_repo_and_a_dropped_close() -> Result<(), String> {
+    let release_repo = QUICKSTART_DOC
+        .replace(SWARM_FIRST_RUN_REPORT, RIPR_FIRST_RUN_REPORT)
+        .replace(SWARM_WRONG_VERDICT, RIPR_WRONG_VERDICT);
+    if assert_quickstart_report_links(&release_repo).is_ok() {
+        return Err("report-link guard accepted EffortlessMetrics/ripr template URLs".to_string());
+    }
+    let dropped = QUICKSTART_DOC.replace(
+        "Still stuck, or ripr gave a wrong or confusing answer?",
+        "Still stuck?",
+    );
+    let without_close = dropped
+        .lines()
+        .filter(|line| !line.contains("issues/new?template="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if assert_quickstart_report_links(&without_close).is_ok() {
+        return Err(
+            "report-link guard accepted a troubleshooting section with no report URLs".to_string(),
+        );
+    }
+    let unclickable = QUICKSTART_DOC
+        .replace(
+            &markdown_link("first run report", SWARM_FIRST_RUN_REPORT),
+            &format!(
+                "[first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_FIRST_RUN_REPORT}"
+            ),
+        )
+        .replace(
+            &markdown_link("wrong finding report", SWARM_WRONG_VERDICT),
+            &format!(
+                "[wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_WRONG_VERDICT}"
+            ),
+        );
+    if assert_quickstart_report_links(&unclickable).is_ok() {
+        return Err(
+            "report-link guard credited a plain-text swarm URL whose markdown link pointed elsewhere"
+                .to_string(),
         );
     }
     Ok(())
@@ -309,6 +443,25 @@ fn targeted_test_workflow_names_the_cargo_mutants_producer() -> Result<(), Strin
     Ok(())
 }
 
+/// #7451: naming mutants.json as a valid path is not the denominator
+/// caveat. Help and the targeted-test workflow must say a mutants.json-only
+/// import counts unexecuted candidates in matched_total.
+#[test]
+fn targeted_test_workflow_discloses_mutants_json_only_denominator() -> Result<(), String> {
+    let doc = include_str!("../../docs/TARGETED_TEST_WORKFLOW.md");
+    let help = rendered_help(&["calibrate", "cargo-mutants", "--help"])?;
+    for needle in [
+        "mutants.json-only",
+        "unexecuted candidates",
+        "matched_total",
+        "no runtime observation",
+    ] {
+        assert_contains("docs/TARGETED_TEST_WORKFLOW.md", doc, needle)?;
+        assert_contains("ripr calibrate cargo-mutants --help", &help, needle)?;
+    }
+    Ok(())
+}
+
 /// Every flag a public guide passes to a `ripr` command must be an option that
 /// command's rendered help lists. The parser/help direction is already pinned
 /// (#2342); this pins the guide/help direction so a renamed or removed flag
@@ -341,6 +494,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "exhaustive_help_marks_non_public_rows_visibly",
     "help_screens_state_the_surfaces_the_parsers_accept",
     "calibrate_help_names_how_to_produce_the_imported_artifacts",
+    "calibrate_help_discloses_mutants_json_only_denominator",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
@@ -376,7 +530,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 17 {
+    if actual != expected || actual.len() != 18 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -385,10 +539,10 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 16 portable cases:\n{text}"
+            "extracted target did not run all 18 portable cases:\n{text}"
         ));
     }
     Ok(())

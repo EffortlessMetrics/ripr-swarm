@@ -1002,22 +1002,38 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     let mut child = match OwnedProcess::spawn(command) {
         Ok(child) => child,
         Err(err) => {
-            remove_stdout_capture_temp(&stdout_tmp_path);
-            return Err(format!("failed to run {error_context}: {err}"));
+            drop(stdout_file);
+            let mut error = format!("failed to run {error_context}: {err}");
+            if let Err(cleanup) = remove_stdout_capture_temp(&stdout_tmp_path) {
+                error.push_str(&format!("; {cleanup}"));
+            }
+            return Err(error);
         }
     };
     let stdout = match child.stdout_pipe().take() {
         Some(stdout) => stdout,
         None => {
-            remove_stdout_capture_temp(&stdout_tmp_path);
-            return Err(format!("failed to capture stdout for {error_context}"));
+            drop(stdout_file);
+            return Err(discard_failed_stdout_capture(
+                &mut child,
+                &stdout_tmp_path,
+                [None, None],
+                error_context,
+                format!("failed to capture stdout for {error_context}"),
+            ));
         }
     };
     let stderr = match child.stderr_pipe().take() {
         Some(stderr) => stderr,
         None => {
-            remove_stdout_capture_temp(&stdout_tmp_path);
-            return Err(format!("failed to capture stderr for {error_context}"));
+            drop(stdout_file);
+            return Err(discard_failed_stdout_capture(
+                &mut child,
+                &stdout_tmp_path,
+                [None, None],
+                error_context,
+                format!("failed to capture stderr for {error_context}"),
+            ));
         }
     };
     let echo_latency_trace = envs
@@ -1035,40 +1051,46 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         match wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context) {
             Ok(wait_outcome) => wait_outcome,
             Err(err) => {
-                remove_stdout_capture_temp(&stdout_tmp_path);
-                return Err(err);
+                return Err(discard_failed_stdout_capture(
+                    &mut child,
+                    &stdout_tmp_path,
+                    [Some(stdout_writer_handle), Some(stderr_handle)],
+                    error_context,
+                    err,
+                ));
             }
         };
 
-    // Use bounded drains for the same reason as in `capture_output_with_timeout`:
-    // after a group-kill an escaped descendant may keep the pipe open.
-    let stdout_bytes = match drain_file_writer_bounded(
-        stdout_writer_rx,
-        stdout_writer_handle,
-        POST_KILL_DRAIN_GRACE,
-        "stdout",
-        error_context,
-    ) {
-        Ok(stdout_bytes) => stdout_bytes,
-        Err(err) => {
-            remove_stdout_capture_temp(&stdout_tmp_path);
-            return Err(err);
-        }
-    };
-    publish_stdout_capture(&stdout_tmp_path, stdout_path, error_context)?;
-    let stderr = drain_stream_reader_bounded(
-        stderr_rx,
-        stderr_handle,
-        POST_KILL_DRAIN_GRACE,
-        "stderr",
-        error_context,
-    )?;
-    Ok(TimedFileOutput {
-        status: Some(wait_outcome.status),
-        stderr,
-        duration: wait_outcome.duration,
-        timed_out: wait_outcome.timed_out,
-        stdout_bytes,
+    // A zero primary exit is not a complete capture: a descendant can retain
+    // either pipe. Both workers must finish before the staging file is published.
+    // Unlike diagnostic string capture, file capture cannot replace missing
+    // completion evidence with an empty byte count or a truncation note.
+    let captured = (|| {
+        let stdout_bytes = drain_file_capture_bounded(
+            &stdout_writer_rx,
+            POST_KILL_DRAIN_GRACE,
+            "stdout",
+            error_context,
+        )?;
+        let stderr =
+            drain_file_capture_bounded(&stderr_rx, POST_KILL_DRAIN_GRACE, "stderr", error_context)?;
+        publish_stdout_capture(&stdout_tmp_path, stdout_path, error_context)?;
+        Ok(TimedFileOutput {
+            status: Some(wait_outcome.status),
+            stderr,
+            duration: wait_outcome.duration,
+            timed_out: wait_outcome.timed_out,
+            stdout_bytes,
+        })
+    })();
+    captured.map_err(|error| {
+        discard_failed_stdout_capture(
+            &mut child,
+            &stdout_tmp_path,
+            [Some(stdout_writer_handle), Some(stderr_handle)],
+            error_context,
+            error,
+        )
     })
 }
 
@@ -1088,8 +1110,75 @@ fn stdout_capture_temp_path(stdout_path: &Path) -> std::path::PathBuf {
     ))
 }
 
-fn remove_stdout_capture_temp(path: &Path) {
-    let _ = fs::remove_file(path);
+fn remove_stdout_capture_temp(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove stdout staging file {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn discard_failed_stdout_capture(
+    child: &mut OwnedProcess,
+    path: &Path,
+    workers: [Option<thread::JoinHandle<()>>; 2],
+    error_context: &str,
+    mut error: String,
+) -> String {
+    // Primary cleanup alone cannot stop a Unix descendant after its parent has
+    // exited. This command already owns a fresh process group; use its existing
+    // confirmation/termination authority even when no timeout was recorded.
+    if let Err(cleanup) = child.terminate_tree() {
+        error.push_str(&format!("; primary/tree cleanup failed: {cleanup}"));
+    }
+    #[cfg(unix)]
+    if let Err(cleanup) = confirm_timed_process_group_gone(child.id(), error_context) {
+        error.push_str(&format!("; process-group cleanup failed: {cleanup}"));
+    }
+    let [stdout_worker, stderr_worker] = workers;
+    let stdout_closed = settle_file_capture_worker(stdout_worker, "stdout", error_context);
+    if let Err(cleanup) = &stdout_closed {
+        error.push_str(&format!(
+            "; {cleanup}; stdout staging retained at {}",
+            path.display()
+        ));
+    }
+    if let Err(cleanup) = settle_file_capture_worker(stderr_worker, "stderr", error_context) {
+        error.push_str(&format!("; {cleanup}"));
+    }
+    // An unsettled writer still owns the file. Retain and name it instead of
+    // pretending removal succeeded or deleting through a live handle.
+    if stdout_closed.is_ok()
+        && let Err(cleanup) = remove_stdout_capture_temp(path)
+    {
+        error.push_str(&format!("; {cleanup}"));
+    }
+    error
+}
+
+fn settle_file_capture_worker(
+    worker: Option<thread::JoinHandle<()>>,
+    stream: &str,
+    error_context: &str,
+) -> Result<(), String> {
+    let Some(worker) = worker else {
+        return Ok(());
+    };
+    let deadline = Instant::now() + POST_KILL_DRAIN_GRACE;
+    while !worker.is_finished() {
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{stream} capture worker did not settle after cleanup for {error_context}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    worker
+        .join()
+        .map_err(|_panic| format!("{stream} capture worker panicked for {error_context}"))
 }
 
 fn publish_stdout_capture(
@@ -1327,7 +1416,7 @@ fn confirm_process_group_gone(
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "{error_context} timed out but could not confirm process group {pgid} is gone; still running: {members:?}"
+                "{error_context}: could not confirm process group {pgid} is gone during cleanup; still running: {members:?}"
             ));
         }
         let _ = signal_process_group(pgid, "-KILL");
@@ -1745,20 +1834,23 @@ fn drain_byte_reader_bounded(
     }
 }
 
-/// Drain a file-writer thread within a bounded grace period.  Returns 0 bytes
-/// on grace expiry (the partial file content written before the kill remains).
-fn drain_file_writer_bounded(
-    rx: mpsc::Receiver<Result<usize, String>>,
-    _handle: thread::JoinHandle<()>,
+/// A file capture may publish only after each worker reports completion.
+/// Keep its receiver and handle owned by the caller so failure cleanup can
+/// terminate the process group/job and observe worker closure before unlinking.
+fn drain_file_capture_bounded<T>(
+    rx: &mpsc::Receiver<Result<T, String>>,
     grace: Duration,
     stream_name: &str,
     error_context: &str,
-) -> Result<usize, String> {
+) -> Result<T, String> {
     match rx.recv_timeout(grace) {
         Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Ok(0),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "{stream_name} file capture incomplete: drain exceeded post-exit grace ({}s) for {error_context}; artifact not published",
+            grace.as_secs()
+        )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
-            "{stream_name} writer thread disconnected while running {error_context}"
+            "{stream_name} file capture worker disconnected while running {error_context}"
         )),
     }
 }
@@ -2419,6 +2511,287 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdout_file_capture_incomplete_stdout_cleans_owned_descendant() -> Result<(), String> {
+        owned_stdout_file_capture_fixture("stdout", false)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdout_file_capture_incomplete_stderr_cleans_owned_descendant() -> Result<(), String> {
+        owned_stdout_file_capture_fixture("stderr", false)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdout_file_capture_timeout_retains_actual_observation() -> Result<(), String> {
+        owned_stdout_file_capture_fixture("stdout", true)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn owned_stdout_file_capture_fixture(stream: &str, wait_primary: bool) -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let root = unique_pgid_marker("stdout-file").with_extension("dir");
+        fs::create_dir(&root).map_err(|error| format!("create owned fixture {root:?}: {error}"))?;
+        let destination = root.join("stdout.json");
+        let sibling = root.join(".stdout.json.other-owner.tmp");
+        fs::write(&destination, b"prior-good-artifact").map_err(|error| error.to_string())?;
+        fs::write(&sibling, b"other-owner").map_err(|error| error.to_string())?;
+        let script = r#"
+printf '%s' "$$" > "$RIPR_CAPTURE_FIXTURE/primary"
+if [ "$RIPR_CAPTURE_STREAM" = stdout ]; then
+    sh -c 'trap "" TERM; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' 2>/dev/null &
+else
+    sh -c 'trap "" TERM; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' >/dev/null &
+fi
+attempt=0
+while [ ! -s "$RIPR_CAPTURE_FIXTURE/ready" ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 300 ]; then exit 99; fi
+    sleep 0.01
+done
+printf '{"complete":true}\n'
+if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
+"#;
+        let root_text = root.to_string_lossy().into_owned();
+        let envs = [
+            ("RIPR_CAPTURE_FIXTURE", root_text.as_str()),
+            ("RIPR_CAPTURE_STREAM", stream),
+            ("RIPR_CAPTURE_WAIT", if wait_primary { "yes" } else { "no" }),
+        ];
+        let started = Instant::now();
+        let capture = capture_stdout_to_file_with_timeout(
+            "sh",
+            &["-c".to_string(), script.to_string()],
+            &envs,
+            &destination,
+            Duration::from_secs(if wait_primary { 5 } else { 10 }),
+            "owned stdout-file fixture",
+        );
+        let wall = started.elapsed();
+        let primary = fs::read_to_string(root.join("primary"))
+            .map_err(|error| format!("fixture did not start in {root:?}: {error}"))?
+            .parse::<u32>()
+            .map_err(|error| format!("invalid primary marker: {error}"))?;
+        let descendant = fs::read_to_string(root.join("ready"))
+            .map_err(|error| format!("resistant descendant was not ready in {root:?}: {error}"))?
+            .parse::<u32>()
+            .map_err(|error| format!("invalid readiness marker: {error}"))?;
+        // Snapshot cleanup evidence BEFORE the test's fallback termination.
+        // Only the runner's own cleanup can satisfy these expectations.
+        let primary_absent = !Path::new(&format!("/proc/{primary}")).exists();
+        let members_at_return = super::process_group_live_members(primary);
+        let descendant_at_return = fs::read_to_string(format!("/proc/{descendant}/stat"));
+        let artifact = fs::read(&destination);
+        let sibling_bytes = fs::read(&sibling);
+        let staging = fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with(".stdout.json.")
+                    && name.ends_with(".tmp")
+                    && entry.path() != sibling
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        // The test owns this exact group and scratch root. On a red witness,
+        // terminate it before reporting the failure; never use a name filter.
+        let fallback_cleanup = super::confirm_process_group_gone(
+            primary,
+            Duration::from_secs(2),
+            "owned fixture fallback cleanup",
+        );
+        let result = (|| {
+            fallback_cleanup?;
+            let members = members_at_return?;
+            if !primary_absent || !members.is_empty() {
+                return Err(format!(
+                    "capture returned before owned cleanup: primary_absent={primary_absent}, live_group={members:?}, descendant={descendant_at_return:?}"
+                ));
+            }
+            if let Ok(stat) = descendant_at_return
+                && !matches!(
+                    super::parse_stat_pgrp(&stat),
+                    Some(super::ProcStatPgrp::NotLive)
+                )
+            {
+                return Err(format!("descendant was still executing at return: {stat}"));
+            }
+            if wall >= Duration::from_secs(20) {
+                return Err(format!(
+                    "capture waited for the 30-second descendant: {wall:?}"
+                ));
+            }
+            if sibling_bytes.map_err(|error| error.to_string())? != b"other-owner"
+                || !staging.is_empty()
+            {
+                return Err(format!(
+                    "attempt cleanup damaged sibling or left staging: {staging:?}"
+                ));
+            }
+            if wait_primary {
+                let output = capture?;
+                if !output.timed_out || output.status.is_none_or(|status| status.success()) {
+                    return Err(
+                        "physical timeout must retain its actual flag and terminated status".into(),
+                    );
+                }
+                if output.stdout_bytes != 18
+                    || artifact.map_err(|error| error.to_string())? != b"{\"complete\":true}\n"
+                {
+                    return Err(
+                        "settled timeout capture must retain the 18 literal fixture bytes".into(),
+                    );
+                }
+            } else {
+                let error = match capture {
+                    Ok(output) => {
+                        return Err(format!(
+                            "unfinished {stream} must refuse, got success={} timed_out={} bytes={}",
+                            output.status.is_some_and(|status| status.success()),
+                            output.timed_out,
+                            output.stdout_bytes
+                        ));
+                    }
+                    Err(error) => error,
+                };
+                if !error.contains(stream) || !error.contains("capture incomplete") {
+                    return Err(format!("incomplete capture must name its stream: {error}"));
+                }
+                if artifact.map_err(|error| error.to_string())? != b"prior-good-artifact" {
+                    return Err("incomplete capture overwrote the prior artifact".into());
+                }
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove owned fixture {root:?}: {error}"))?;
+        result
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_file_capture_stderr_error_preserves_prior_artifact() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let root = unique_pgid_marker("stderr-error").with_extension("dir");
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let destination = root.join("stdout.json");
+        fs::write(&destination, b"prior-good-artifact").map_err(|error| error.to_string())?;
+        let capture = capture_stdout_to_file_with_timeout(
+            "sh",
+            &[
+                "-c".to_string(),
+                "printf complete; printf '\\377' >&2".to_string(),
+            ],
+            &[("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1")],
+            &destination,
+            Duration::from_secs(10),
+            "stderr read-error fixture",
+        );
+        let bytes = fs::read(&destination).map_err(|error| error.to_string())?;
+        let entries = fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .count();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = match capture {
+            Ok(_) => return Err("invalid UTF-8 in the real latency reader must refuse".into()),
+            Err(error) => error,
+        };
+        assert!(error.contains("failed to read process output"), "{error}");
+        assert_eq!(bytes, b"prior-good-artifact");
+        assert_eq!(entries, 1, "failed capture left attempt staging");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_file_capture_complete_empty_and_nonzero_are_distinct() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        for (code, expected) in [(0, ""), (7, "nonzero-output")] {
+            let destination = unique_pgid_marker("complete-file");
+            let script = format!("printf '{expected}'; exit {code}");
+            let output = capture_stdout_to_file_with_timeout(
+                "sh",
+                &["-c".to_string(), script],
+                &[],
+                &destination,
+                Duration::from_secs(10),
+                "complete stdout-file fixture",
+            )?;
+            let bytes = fs::read(&destination).map_err(|error| error.to_string())?;
+            fs::remove_file(&destination).map_err(|error| error.to_string())?;
+            assert_eq!(output.status.and_then(|status| status.code()), Some(code));
+            assert!(!output.timed_out);
+            assert_eq!(output.stdout_bytes, expected.len());
+            assert_eq!(bytes, expected.as_bytes());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stdout_file_capture_empty_completion_is_not_a_drain_deadline() -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel::<Result<usize, String>>();
+        sender.send(Ok(0)).map_err(|error| error.to_string())?;
+        assert_eq!(
+            super::drain_file_capture_bounded(&receiver, Duration::ZERO, "stdout", "empty file")?,
+            0,
+        );
+        // Keep the sender alive: lack of completion must hit the deadline,
+        // rather than testing the disconnected-worker branch.
+        let error = match super::drain_file_capture_bounded(
+            &receiver,
+            Duration::from_millis(20),
+            "stdout",
+            "unfinished file",
+        ) {
+            Ok(_) => return Err("missing completion must not become zero-byte success".into()),
+            Err(error) => error,
+        };
+        assert!(error.contains("stdout file capture incomplete"), "{error}");
+        assert!(error.contains("artifact not published"), "{error}");
+        drop(sender);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_file_capture_publication_failure_cleans_staging() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let root = unique_pgid_marker("publication-error").with_extension("dir");
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let destination = root.join("stdout.json");
+        fs::create_dir(&destination).map_err(|error| error.to_string())?;
+        fs::write(destination.join("blocker"), b"preserve").map_err(|error| error.to_string())?;
+        let capture = capture_stdout_to_file_with_timeout(
+            "sh",
+            &["-c".to_string(), "printf complete".to_string()],
+            &[],
+            &destination,
+            Duration::from_secs(10),
+            "publication-error fixture",
+        );
+        let blocker = fs::read(destination.join("blocker")).map_err(|error| error.to_string())?;
+        let entries = fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .count();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = match capture {
+            Ok(_) => return Err("directory publication blocker must refuse".into()),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("failed to remove stale stdout file"),
+            "{error}"
+        );
+        assert_eq!(blocker, b"preserve");
+        assert_eq!(entries, 1, "failed publication left attempt staging");
+        Ok(())
+    }
+
     #[test]
     fn latency_progress_reader_preserves_captured_stderr() -> Result<(), String> {
         let stderr = "first\nripr_repo_exposure_latency phase=evidence_for_seams status=start duration_ms=0\nlast\n";
@@ -2791,7 +3164,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         fs::write(&path, "capture").map_err(|err| format!("write temp capture: {err}"))?;
-        remove_stdout_capture_temp(&path);
+        remove_stdout_capture_temp(&path)?;
         if path.exists() {
             let _ = fs::remove_file(&path);
             return Err("wait-error cleanup must remove the stdout temp file".to_string());

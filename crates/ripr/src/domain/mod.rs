@@ -82,10 +82,12 @@ pub(crate) use intervention_study::{
     InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
     codes as intervention_study_codes,
 };
-pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
+pub(crate) use language::{
+    PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
+};
 pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use next_action::{
     CanonicalNextActionV1, NextActionAlternative, NextActionCheckCase, NextActionClass,

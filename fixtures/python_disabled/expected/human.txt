@@ -16,4 +16,4 @@ Note: this diff contains 1 Python file. The Python adapter is preview and not en
 To enable, add to ripr.toml:
 
 [languages]
-enabled = ["rust", "python"]
+enabled = ["python"]

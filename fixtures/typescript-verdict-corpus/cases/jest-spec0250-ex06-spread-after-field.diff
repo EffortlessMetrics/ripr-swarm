@@ -1,0 +1,13 @@
+diff --git a/src/profileSpread.ts b/src/profileSpread.ts
+index 0000000..1111111 100644
+--- a/src/profileSpread.ts
++++ b/src/profileSpread.ts
+@@ -1,7 +1,7 @@
+ export function buildProfileSpread(name: string, age: number, overrides: { adult?: boolean }) {
+   return {
+     name,
+-    adult: age >= 18,
++    adult: age > 18,
+     ...overrides,
+   };
+ }

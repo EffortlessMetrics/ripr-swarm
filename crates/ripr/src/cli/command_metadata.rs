@@ -146,7 +146,8 @@ pub(crate) struct CommandOutputs {
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.
     CompletedOrFailed,
-    /// `ripr check`: findings, including `exposed`, still complete with `0`.
+    /// `ripr check` / `ripr diff`: findings still complete with `0`;
+    /// unsupported input keeps its report and exits `2`.
     AdvisoryFindings,
     /// `ripr gate evaluate`: `config_error` is `2`, `blocked` is `3`.
     GateEvaluate,
@@ -200,7 +201,7 @@ const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptChec
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
 fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
-        "cmd:check" => Some(EXIT_ADVISORY_FINDINGS),
+        "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
             Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
@@ -2047,8 +2048,8 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr diff --root . --base REV --head HEAD --json",
         next_routes: &["check", "explain"],
         stop_states: &["explicit refusal on unresolvable revisions"],
-        exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed.",
+        exit: EXIT_ADVISORY_FINDINGS,
+        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed. Findings and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
         not_applicable_reason: None,
     },
     CommandMetadata {

@@ -142,6 +142,24 @@ official SDK transport:
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.
+- Optional `file`, `class`, `language`, and `repair_ready` filters narrow
+  the stored selection by conjunction before paging; they never re-run
+  analysis or widen the shared budget. File matching removes a leading `./`
+  and accepts exact paths, segment-bounded prefixes, and trailing segments.
+  Class/language are exact wire tokens; unknown values produce an empty page.
+  `selected` remains the stored-selection count; `filtered` is the narrowed
+  count. `filters` echoes all four dimensions, with null for omitted values.
+  Summaries carry `repair_packet_ready` and `repair_ineligibility` (null when
+  ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
+  `continuation.next_page.arguments` pins the snapshot, filters, and explicit
+  limit; replay cannot cross a completed refresh that replaced the snapshot.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v2`.
+  The former v1 success schema closed its top level with
+  `additionalProperties: false`, so adding `filtered` and `filters` cannot
+  retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
+  v2 explicitly and use the advertised output schema. The input arguments
+  remain compatible for callers omitting filters; strict v1 output readers
+  require migration. Other MCP document versions are unchanged.
 - The tool envelope carries the document once at full fidelity (#6021):
   `content[0].text` is the compact JSON serialization of the structured
   document (no pretty-print inflation), and `structuredContent` repeats
@@ -152,16 +170,17 @@ official SDK transport:
   sent over the cap: when even the compact-text envelope cannot fit, the
   call fails closed with `result_too_large` naming both sizes.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
-  over the selected items in snapshot order. When the whole selection
+  over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
   response bound, the worst-case escaping budget), the default call
   returns the first wire-fitting page and discloses the window through
   `page` (`offset` echoing the request, `limit` when the caller set it,
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
-  selection exactly once. Pages are sized so the complete double-carry
+  narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
   carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. The generated `next_page` route pins the snapshot identity, so
+  requires. The generated `next_page` route pins the snapshot identity,
+  filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
   mixing snapshots. Only a listing that cannot fit even one page — for
   example an omission disclosure alone over the ceiling — fails closed
@@ -318,6 +337,19 @@ official SDK transport:
 
 ## Test Mapping
 
+- `crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation`
+  — actual committed multi-item analysis over raw stdio: literal IDs, counts,
+  class/language/readiness exclusion, conjunction, unknown-value empty sets,
+  filtered one-item continuation replay, unchanged snapshot after reads, and
+  stale replay after replacement. The frozen pre-feature closed v1 success
+  schema rejects the extended envelope, which carries v2. A dropped-forwarding
+  experiment must fail this oracle after argument validation.
+- `crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap`
+  + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
+  — direct stored-fact narrowing/readiness and continuation controls.
+- `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
+  — argument admission before refresh; this is not successful narrowing proof.
+
 - `crates/ripr/src/mcp/workspace.rs::tests` — session lifecycle, typed
   failures, identity portability, boundedness, last-known-good retention;
   `session_profile_resolves_the_workspace_configuration` pins the #6825
@@ -364,6 +396,8 @@ official SDK transport:
 ## Metrics
 
 - `mcp_tools` (4) and `mcp_resource_templates` (2) on the slice surface
+- refreshed filter control subjects: five with Python, four in Rust-only builds;
+  every positive narrowing asserts a nonempty fixture and literal IDs
 - typed pre-refresh failure controls on the wire (target: 3 — list, get,
   snapshot resource)
 - zero committed snapshots for `unsupported_input` / `analysis_failed`

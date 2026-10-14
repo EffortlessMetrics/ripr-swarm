@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0246-ex03-spread-drops-field",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0246-ex03-spread-drops-field.diff",
+  "anchor": {
+    "file": "src/settingsOk.ts",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_toequal_input_after_spread_field_dropped",
+  "hard_case": "the edit drops a field, not only the identity, so the copy rule must not apply; the tested input already carries `ok: true`, so the structural pin cannot see the dropped field",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return { ...cfg };",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an input with `ok: false` now comes back with `ok: false` instead of `true`; the only tested input already has `ok: true`, so both versions equal it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`return { ...cfg, ok: true }` becomes `return { ...cfg }`. The test passes `cfg = { name: \"bo\", ok: true }` and asserts `expect(markOk(cfg)).toEqual(cfg)`, which passes on both versions; the test must hold on the stored package, so its input already carries `ok: true` and the dropped field cannot move the compared value. RIPR-SPEC-0246 example 3: the change is not copy-only, so rule 1 does not apply and the ladder's `exposed` stands. ripr reports `exposed`, as the spec states; against the not-discriminated truth that is a false exposed verdict the spec accepts.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0246#3"
+  ]
+}
