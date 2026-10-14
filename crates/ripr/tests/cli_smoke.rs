@@ -26,6 +26,9 @@ mod check_artifact_stdin;
 mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_pairing.rs"]
+mod diff_pairing;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/diff_selection.rs"]
 mod diff_selection;
