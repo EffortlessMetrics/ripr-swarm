@@ -5,6 +5,8 @@
 //! the arm head is not probed, and the old line is not probed again as
 //! deleted behavior. A bare binding in
 //! the body's only `match` on a parameter reads that parameter's inputs.
+//! An edit that adds or removes a `&&`/`||` operand, in a guard or a plain
+//! `if`, is not credited by the surviving comparison's boundary (#7898).
 
 use ripr::{CheckInput, CheckOutput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -554,8 +556,7 @@ fn a_block_guard_may_rebind_the_guard_binding() -> Result<(), String> {
 fn a_deleted_guard_conjunct_keeps_the_arm_head() -> Result<(), String> {
     // Control (review on #7811): deleting `other > 0 &&` is more than the
     // comparison's edit, so the arm head stays, unexposed. The predicate's
-    // own reading of a dropped conjunct is the general predicate rule
-    // (#7898), the same as for a plain `if`.
+    // own reading is pinned by `a_deleted_guard_conjunct_is_not_credited`.
     let lib = two_input_owner("        p if 100 < p => 1,\n");
     let findings = findings_on_changed_line(
         &lib,
@@ -572,6 +573,115 @@ fn a_deleted_guard_conjunct_keeps_the_arm_head() -> Result<(), String> {
         arm_heads
             .iter()
             .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// #7898's witness: `tier(100, 0)` is false under both the old guard
+/// (`other > 0` fails) and the new one (`100 < 100` fails), so it
+/// discriminates neither the dropped conjunct nor the boundary.
+const CONJUNCT_WITNESS: &str =
+    "use guard_edit::tier;\n\n#[test]\nfn witness() {\n    assert_eq!(tier(100, 0), 0);\n}\n";
+
+/// Both sides of the `other == 0 && 100 <= points` boundary with the
+/// unchanged operand true.
+const CHAIN_BOUNDARY_TESTS: &str = "use guard_edit::tier;\n\n#[test]\nfn around_one_hundred() {\n    assert_eq!(tier(100, 0), 0);\n    assert_eq!(tier(101, 0), 1);\n}\n";
+
+fn two_input_if(condition: &str) -> String {
+    format!(
+        "/// The tier of `points`.\npub fn tier(points: i64, other: i64) -> u8 {{\n    let _ = other;\n    if {condition} {{ 1 }} else {{ 0 }}\n}}\n\npub fn unused() {{}}\n"
+    )
+}
+
+fn predicates(findings: &[Finding]) -> Vec<&Finding> {
+    findings
+        .iter()
+        .filter(|finding| finding.probe.family.as_str() == "predicate")
+        .collect()
+}
+
+#[test]
+fn a_deleted_guard_conjunct_is_not_credited() -> Result<(), String> {
+    // Control (#7898): the predicate `100 < p` was `other > 0 && 100 <= p`.
+    // An input at `p == 100` says nothing about the dropped `other > 0`.
+    let lib = two_input_owner("        p if 100 < p => 1,\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => 1,",
+        "        p if other > 0 && 100 <= p => 1,",
+        CONJUNCT_WITNESS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "deleted guard conjunct");
+    Ok(())
+}
+
+#[test]
+fn a_deleted_if_conjunct_is_not_credited() -> Result<(), String> {
+    // Control (#7898): the same deletion in a plain `if`.
+    let lib = two_input_if("100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if 100 < points { 1 } else { 0 }",
+        "    if other > 0 && 100 <= points { 1 } else { 0 }",
+        CONJUNCT_WITNESS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "deleted if conjunct");
+    Ok(())
+}
+
+#[test]
+fn an_added_if_disjunct_is_not_credited() -> Result<(), String> {
+    // Control (#7898): adding `other > 0 ||` widens the predicate where no
+    // test passes a positive `other`.
+    let lib = two_input_if("other > 0 || 100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if other > 0 || 100 < points { 1 } else { 0 }",
+        "    if 100 <= points { 1 } else { 0 }",
+        CONJUNCT_WITNESS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "added if disjunct");
+    Ok(())
+}
+
+#[test]
+fn an_edit_inside_one_operand_of_an_unchanged_if_chain_reads_exposed() -> Result<(), String> {
+    // Positive twin (#7898): the `&&` chain is unchanged, so the inputs on
+    // both sides of `100` with `other == 0` true discriminate the edit.
+    let lib = two_input_if("other == 0 && 100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if other == 0 && 100 < points { 1 } else { 0 }",
+        "    if other == 0 && 100 <= points { 1 } else { 0 }",
+        CHAIN_BOUNDARY_TESTS,
+    )?;
+    assert!(
+        predicates(&findings)
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_edit_inside_one_operand_of_an_unchanged_guard_chain_reads_exposed() -> Result<(), String> {
+    // Positive twin (#7898) in a guard.
+    let lib = two_input_owner("        p if other == 0 && 100 < p => 1,\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if other == 0 && 100 < p => 1,",
+        "        p if other == 0 && 100 <= p => 1,",
+        CHAIN_BOUNDARY_TESTS,
+    )?;
+    assert!(
+        predicates(&findings)
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
         "{findings:?}"
     );
     Ok(())

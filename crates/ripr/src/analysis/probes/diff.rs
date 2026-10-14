@@ -1107,12 +1107,24 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
 
 /// The two predicate texts join their operands with the same sequence of
 /// `&&` and `||`, so an edit between them stays inside one operand.
-fn same_connectives(after: &str, before: &str) -> bool {
+pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
     // Masked, so `&&` or `||` inside a string or comment is not a connective.
+    // A `||` that opens an argument or a value (`unwrap_or_else(|| x)`,
+    // `= || x`) is an empty closure, not an operator.
     let connectives = |text: &str| {
         let text = crate::analysis::extract::mask_comments_and_strings(text);
+        let opens_closure = |at: usize| {
+            let before = text[..at].trim_end();
+            before.is_empty()
+                || before.ends_with(['(', ',', '=', '{', ';', '['])
+                || before.ends_with("move")
+                || before.ends_with("return")
+        };
         text.match_indices("&&")
-            .chain(text.match_indices("||"))
+            .chain(
+                text.match_indices("||")
+                    .filter(|&(at, _)| !opens_closure(at)),
+            )
             .map(|(at, connective)| (at, connective.to_string()))
             .collect::<std::collections::BTreeMap<_, _>>()
             .into_values()
@@ -2034,6 +2046,28 @@ mod tests {
                 "{probes:?}"
             );
         }
+    }
+
+    #[test]
+    fn same_connectives_reads_operators_not_empty_closures() {
+        // An edit inside one operand keeps the chain.
+        assert!(same_connectives("a > 0 && b < 1", "a > 0 && b <= 1"));
+        // A dropped or added operand changes it (#7898).
+        assert!(!same_connectives("b < 1", "a > 0 && b <= 1"));
+        assert!(!same_connectives("a > 0 || b < 1", "b <= 1"));
+        assert!(!same_connectives("a || b && c", "a && b || c"));
+        // `||` that opens an empty closure is not an operator.
+        assert!(same_connectives(
+            "x.unwrap_or_else(|| 0) > 1",
+            "x.unwrap_or_else(|| 0) >= 1"
+        ));
+        assert!(!same_connectives(
+            "n > 1",
+            "n.map_or_else(|| 0, f) >= 1 && ok"
+        ));
+        assert!(same_connectives("f(|| 1) && g", "f(|| 2) && g"));
+        // Operators in strings or comments are masked.
+        assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
 
     #[test]
