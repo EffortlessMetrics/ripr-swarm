@@ -667,6 +667,24 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert!(f(1, matches!(r, Err(E::Bad))));", &weak),
         ("assert!(f(g(matches!(r, Err(E::Bad)))));", &weak),
         ("assert!(matches!(r, Err(E::Bad)) | true);", &weak),
+        // A string or char literal before `<` is an operand, not a path.
+        ("assert_eq!(\"x+\" < s, true);", &weak),
+        ("assert_eq!('+' < c, true);", &weak),
+        ("assert_eq!(s + \"x\" < t, true);", &weak),
+        // A name that starts with `move` is not a closure.
+        (
+            "assert_eq!(moved_ok(matches!(r, Ok(3))) ^ true, true);",
+            &weak,
+        ),
+        ("assert_eq!(moves(r == Err(E::Bad)) ^ flag, true);", &weak),
+        // With no pinning `==` conjunct, a `!=` conjunct states a relation,
+        // whether joined by `&&` or a single `&`.
+        ("assert_eq!(score(2) != 0 && flag, true);", &weak),
+        ("assert_eq!((r != Err(E::Bad)) && flag, true);", &weak),
+        ("assert_eq!((r != Err(E::Bad)) & flag, true);", &weak),
+        ("assert_eq!((score(2) != 0) & flag, true);", &weak),
+        ("assert_eq!(ready & matches!(r, Ok(_)), true);", &weak),
+        ("assert_eq!(a == b && c != d, true);", &exact),
         // A single `&` over booleans is a conjunction: both must hold.
         ("assert!(matches!(r, Err(E::Bad)) & ready);", &err),
         (
@@ -674,6 +692,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &exact,
         ),
         // An `if` anywhere in the condition may invert the pattern it tests.
+        (
+            "assert!(flag == if ready && matches!(r, Ok(3)) { false } else { true });",
+            &weak,
+        ),
         (
             "assert!(flag == if matches!(r, Ok(3)) { false } else { true });",
             &weak,
@@ -723,6 +745,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // A leading or qualified `<` opens a path, not a comparison.
         ("assert_eq!(<Vec<u8>>::new() == v, true);", &exact),
         ("assert_eq!(<T as Tr>::f(x) == y, true);", &exact),
+        ("assert_eq!(foo::<fn() -> u8>(x) == y, true);", &exact),
         ("assert_eq!(a << 2 == b, true);", &exact),
         ("assert_eq!(a & mask == b, true);", &exact),
         ("assert_eq!(is_a(x) ^ true, true);", &exact),
@@ -756,6 +779,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(r == Err(E::Bad), false);",
         "assert!(std::ops::Not::not(matches!(r, Err(E::Bad))));",
         "assert!(f(matches!(r, Ok(3))) && g(matches!(s, Ok(4))));",
+        "assert_eq!(\"x+\" < s, true);",
+        "assert_eq!((r != Err(E::Bad)) & flag, true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));

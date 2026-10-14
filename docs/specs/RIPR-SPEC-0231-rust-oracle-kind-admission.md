@@ -260,21 +260,26 @@ Two pattern terms are used below.
    that opens the operand or follows `::` opens a path, not a comparison:
    `<T as Tr>::f(x) == y`). An `&&`
    chain asserted true with a `matches!` conjunct and no pinning `==`
-   conjunct reads like the same chain in `assert!` (rule 3). A comparison
+   conjunct reads like the same chain in `assert!` (rule 3); with no
+   pinning `==` conjunct, a `!=` or relational conjunct caps
+   (`assert_eq!(score(2) != 0 && flag, true)`). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
    `matches!` (the polarity rule above) keep their readings. `^` and a
    single `|` over an operand holding a `matches!` or a comparison, with no
    top-level comparison of their own, also cap (`assert_eq!((r ==
    Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
-   they still pin a bool result; a single `&` over booleans is a
-   conjunction and reads like `&&`. In a boolean assertion condition, or an
+   they still pin a bool result. A top-level single `&` over booleans is a
+   conjunction and reads like `&&`; beside a top-level comparison it is a
+   bitwise operand (`a & mask == b`). A string or char literal before `<`
+   is an operand (`"x+" < s` compares). In a boolean assertion condition, or an
    equality-macro operand compared with a boolean literal, a `matches!`
    that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=`, an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
-   directly or through nested calls), or after an `if`, `while` or
-   `match` keyword anywhere in the condition may be inverted or
+   directly or through nested calls), or inside the condition or
+   scrutinee of an `if`, `while` or `match` anywhere in the condition
+   (`flag == if ready && matches!(..) { false } else { true }`) may be inverted or
    discarded, so it caps the reading like a negated pattern. In a boolean
    assertion's top-level `&&` chain with no top-level `||` its conjunct
    drops out and the other conjuncts decide

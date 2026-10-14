@@ -61,6 +61,10 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         }
         positive = !positive;
     }
+    // A single `&` requires both sides like `&&`, so the operand reads as
+    // the same `&&` chain.
+    let conjoined = conjoin_single_ampersands(core);
+    let core = conjoined.as_str();
     let disjunction = has_top_level_disjunction(core);
     let conjunction = split_top_level_conjuncts(core).len() > 1;
     let comparison =
@@ -90,10 +94,25 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         if in_condition {
             return None;
         }
+        if has_top_level_exact_equality(core) {
+            return None;
+        }
         let chain = format!("assert!({core}\n);");
-        return (pattern_conjunct_assertions(&chain).is_some()
-            && !has_top_level_exact_equality(core))
-        .then_some(BoolOperandReading::Chain(chain));
+        if pattern_conjunct_assertions(&chain).is_some() {
+            return Some(BoolOperandReading::Chain(chain));
+        }
+        // With no pinning `==` conjunct, a `!=` or relational conjunct
+        // states only a relation (`score(2) != 0 && flag`).
+        return split_top_level_conjuncts(core)
+            .into_iter()
+            .any(|conjunct| {
+                let conjunct = unwrap_parentheses(conjunct.trim());
+                has_top_level_relational_operator(conjunct)
+                    || top_level_comparison_operator(conjunct)
+                        .and_then(|(at, width)| conjunct.get(at..at + width))
+                        == Some("!=")
+            })
+            .then_some(BoolOperandReading::Capped);
     }
     (comparison == Some("!=") || relational).then_some(BoolOperandReading::Capped)
 }
@@ -159,11 +178,12 @@ fn has_top_level_relational_operator(text: &str) -> bool {
             // generic, so `Vec::<Vec<u8>>` closes both levels.
             // A `<` after `::`, at the start, or after an operator or `(`
             // opens a turbofish or qualified path (`<T as Tr>::f`).
-            b'<' if depth == 0 && (generics > 0 || opens_generics(&masked, index)) => {
+            b'<' if depth == 0 && (generics > 0 || opens_generics(text, &masked, index)) => {
                 generics += 1;
             }
             b'<' if depth == 0 && generics == 0 && next != Some(b'-') => return true,
-            b'>' if depth == 0 && generics > 0 => generics -= 1,
+            // The `>` of a `->` inside generics (`fn() -> u8`) closes nothing.
+            b'>' if depth == 0 && generics > 0 && previous != Some(b'-') => generics -= 1,
             b'>' if depth == 0 && !matches!(previous, Some(b'-' | b'=')) => return true,
             _ => {}
         }
@@ -173,9 +193,19 @@ fn has_top_level_relational_operator(text: &str) -> bool {
 }
 
 /// Whether the `<` at `index` opens generics: it follows `::`, starts the
-/// text, or follows an operator, `(` or `,` rather than an operand.
-fn opens_generics(masked: &str, index: usize) -> bool {
+/// text, or follows an operator, `(` or `,` rather than an operand. A string
+/// or char literal masks to spaces, so `text` decides whether one ends the
+/// head (`"x+" < s` compares).
+fn opens_generics(text: &str, masked: &str, index: usize) -> bool {
+    let literal_operand = text
+        .get(..index)
+        .unwrap_or_default()
+        .trim_end()
+        .ends_with(['"', '\'', '#']);
     let head = masked.get(..index).unwrap_or_default().trim_end();
+    if literal_operand {
+        return false;
+    }
     head.is_empty()
         || head.ends_with("::")
         || head.ends_with(['=', '!', '&', '|', '(', ',', '^', '+', '-', '*', '/', '%'])
@@ -187,7 +217,10 @@ fn has_top_level_bitwise_operator(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let trimmed = masked.trim_start();
     // A closure parameter list is not an operator.
-    if trimmed.starts_with('|') || trimmed.starts_with("move") {
+    let is_move_closure = trimmed
+        .strip_prefix("move")
+        .is_some_and(|rest| rest.trim_start().starts_with('|'));
+    if trimmed.starts_with('|') || is_move_closure {
         return false;
     }
     let bytes = masked.as_bytes();
@@ -205,7 +238,8 @@ fn has_top_level_bitwise_operator(text: &str) -> bool {
             }
             b'^' if depth == 0 => return true,
             // A single `&` is a non-short-circuit conjunction: like `&&` it
-            // requires both sides, so it neither inverts nor discards one.
+            // requires both sides, so it neither inverts nor discards one;
+            // `conjoin_single_ampersands` reads it as one.
             b'|' if depth == 0
                 && previous.is_some_and(|byte| {
                     byte.is_ascii_alphanumeric() || matches!(byte, b')' | b']' | b' ' | b'_')
@@ -259,21 +293,72 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
             .unwrap_or_default()
             .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
         unread_operator_before(before)
-            || ends_with_keyword(before)
+            || in_keyword_condition(before)
             || after.starts_with(['^', '<', '>'])
             || (after.starts_with('|') && !after.starts_with("||"))
     })
 }
 
-/// Whether `before`, through any `(`, ends with the keyword `if`, `while`
-/// or `match` (`flag == if matches!(..) { false } else { true }`).
-fn ends_with_keyword(before: &str) -> bool {
-    let unopened = before.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '(');
-    let word_start = unopened
-        .char_indices()
-        .rfind(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
-        .map_or(0, |(at, ch)| at + ch.len_utf8());
-    matches!(unopened.get(word_start..), Some("if" | "while" | "match"))
+/// Whether `before` (masked) ends inside the condition or scrutinee of an
+/// `if`, `while` or `match`: its last such keyword has no `{` after it
+/// (`flag == if ready && matches!(..) { false } else { true }`).
+fn in_keyword_condition(before: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut found = None;
+    for keyword in ["if", "while", "match"] {
+        for (at, _) in before.match_indices(keyword) {
+            let starts_word = before.get(..at).is_none_or(|head| !head.ends_with(is_word));
+            let ends_word = before
+                .get(at + keyword.len()..)
+                .is_some_and(|rest| !rest.starts_with(is_word));
+            if starts_word && ends_word && found.is_none_or(|last| at > last) {
+                found = Some(at);
+            }
+        }
+    }
+    found.is_some_and(|at| !before.get(at..).unwrap_or_default().contains('{'))
+}
+
+/// `text` with each top-level binary `&` (not `&&`, not a borrow) spelled
+/// `&&`, so the conjunct rules read it. `&` binds tighter than a comparison,
+/// so beside a top-level comparison it is a bitwise operand (`a & mask ==
+/// b`) and stays.
+fn conjoin_single_ampersands(text: &str) -> String {
+    if top_level_comparison_operator(text).is_some() || has_top_level_relational_operator(text) {
+        return text.to_string();
+    }
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut out = String::with_capacity(text.len() + 4);
+    let mut depth = 0usize;
+    let mut copied = 0;
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let next = bytes.get(index + 1).copied();
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'&' if next == Some(b'&') => {
+                index += 2;
+                continue;
+            }
+            b'&' if depth == 0 => {
+                let head = text.get(..index).unwrap_or_default();
+                let binary = head.trim_end().ends_with(|ch: char| {
+                    ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}' | '?' | '"' | '\'')
+                });
+                if binary {
+                    out.push_str(text.get(copied..index).unwrap_or_default());
+                    out.push_str("&&");
+                    copied = index + 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    out.push_str(text.get(copied..).unwrap_or_default());
+    out
 }
 
 fn unread_operator_before(before: &str) -> bool {
