@@ -1065,11 +1065,11 @@ fn short_pairing_tokens(text: &str) -> Vec<String> {
         let next = chars.get(index + 1).copied();
         // Literal and raw-string starts are recognized before comments so a
         // `//` or `/*` inside quotes does not hide later code names.
-        if current.is_empty() {
-            if let Some(end) = skip_raw_string(&chars, index) {
-                index = end;
-                continue;
-            }
+        if current.is_empty()
+            && let Some(end) = skip_raw_string(&chars, index)
+        {
+            index = end;
+            continue;
         }
         if ch == '\'' && is_lifetime_quote(&chars, index) {
             take_short_pairing_token(&mut current, &mut tokens);
@@ -1144,9 +1144,7 @@ fn skip_quoted_literal(chars: &[char], start: usize) -> usize {
 /// hashes as the opener.
 fn skip_raw_string(chars: &[char], start: usize) -> Option<usize> {
     let mut index = start;
-    let Some(&first) = chars.get(index) else {
-        return None;
-    };
+    let &first = chars.get(index)?;
     if first == 'b' || first == 'c' {
         index += 1;
         if chars.get(index).copied() != Some('r') {
