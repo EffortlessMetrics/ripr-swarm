@@ -596,8 +596,8 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
 
 /// Build the stable identity for one document's current diagnostic report.
 ///
-/// The identity is deliberately scoped to the document. A change in another
-/// document therefore does not invalidate an unchanged document report. The
+/// The identity is scoped to the document's delivered payload and the stored
+/// selection identity. Equivalent values retain an unchanged report. The
 /// digest covers exactly the diagnostics the document serves under the stored
 /// delivery selection (#1973), and the selection identity is part of the
 /// derivation, so a budget/profile/input change produces a new result
@@ -606,8 +606,16 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
 /// removes checkout-root-specific paths before hashing, while the snapshot
 /// inputs capture changes that affect the whole projection.
 pub(super) fn document_diagnostic_result_id(snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
+    document_diagnostic_result_id_with_omissions(snapshot, uri, &delivery_omissions(snapshot))
+}
+
+fn document_diagnostic_result_id_with_omissions(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    omissions: &BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
+) -> String {
     let relative_uri = normalized_document_uri(&snapshot.root, uri);
-    let served = snapshot.served_diagnostics_for_uri(uri);
+    let served = delivered_diagnostics_for_uri(snapshot, uri, omissions);
     let payload_digest = normalized_diagnostic_payload_digest(&snapshot.root, &served);
     stable_diagnostic_id(
         "ripr-document-diagnostics-v2",
@@ -629,6 +637,64 @@ pub(super) fn document_diagnostic_result_id(snapshot: &AnalysisSnapshot, uri: &U
             payload_digest.as_str(),
         ],
     )
+}
+
+fn delivery_omissions(
+    snapshot: &AnalysisSnapshot,
+) -> BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission> {
+    snapshot
+        .delivery_selection
+        .as_ref()
+        .map(|selection| selection.document_omissions())
+        .unwrap_or_default()
+}
+
+/// Transport payload over the stored selection, including its shared typed
+/// limitation. Lookup uses the admitted stored URI, just like membership;
+/// request aliases and previous-only URIs cannot invent or lose a marker.
+pub(super) fn delivered_diagnostics_for_uri(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    omissions: &BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
+    if let Some((stored_uri, _)) = snapshot.diagnostics_entry_for_uri(uri)
+        && let Some(omission) = omissions.get(stored_uri.as_str())
+    {
+        diagnostics.push(delivery_omission_diagnostic(omission));
+    }
+    diagnostics
+}
+
+/// One visible summary of the same budget omission the selection and log
+/// retain. This is a delivery limitation, never a source finding or action.
+pub(super) fn delivery_omission_diagnostic(
+    omission: &super::diagnostic_budget::DocumentDeliveryOmission,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
+            omission.omitted_count, omission.total_count, omission.retrieval_route
+        ),
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "scope": omission.scope,
+            "selected_count": omission.selected_count,
+            "omitted_count": omission.omitted_count,
+            "total_count": omission.total_count,
+            "count_budget": omission.count_budget,
+            "byte_budget": omission.byte_budget,
+            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
+            "complete_evidence_identity": omission.complete_evidence_identity,
+            "retrieval_route": omission.retrieval_route,
+        })),
+        ..Default::default()
+    }
 }
 
 /// The identity fragment the document result IDs bind to. For a committed
@@ -690,6 +756,7 @@ pub(super) fn complete_diagnostic_evidence_identity(snapshot: &AnalysisSnapshot)
 /// This is an observability/test identity; the LSP workspace report carries
 /// the per-document IDs because that is what clients use for unchanged data.
 pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> String {
+    let omissions = delivery_omissions(snapshot);
     let mut parts = vec![
         snapshot.mode.as_str().to_string(),
         snapshot.diagnostic_profile.as_str().to_string(),
@@ -710,7 +777,9 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
     ];
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
-        parts.push(document_diagnostic_result_id(snapshot, uri));
+        parts.push(document_diagnostic_result_id_with_omissions(
+            snapshot, uri, &omissions,
+        ));
     }
     stable_diagnostic_id(
         "ripr-workspace-diagnostics-v2",
@@ -727,20 +796,34 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
 pub(super) struct DiagnosticResultIdCache {
     snapshot: Arc<AnalysisSnapshot>,
     document_ids: BTreeMap<Uri, String>,
+    delivery_omissions: BTreeMap<String, super::diagnostic_budget::DocumentDeliveryOmission>,
     workspace_id: String,
 }
 
 impl DiagnosticResultIdCache {
     pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
+        // Derived once from the committed selection, never a second budget
+        // evaluation. Reuse it across document IDs and workspace pull items.
+        let delivery_omissions = delivery_omissions(&snapshot);
         let document_ids = snapshot
             .diagnostics_by_uri
             .keys()
-            .map(|uri| (uri.clone(), document_diagnostic_result_id(&snapshot, uri)))
+            .map(|uri| {
+                (
+                    uri.clone(),
+                    document_diagnostic_result_id_with_omissions(
+                        &snapshot,
+                        uri,
+                        &delivery_omissions,
+                    ),
+                )
+            })
             .collect();
         let workspace_id = workspace_diagnostic_result_id(&snapshot);
         Self {
             snapshot,
             document_ids,
+            delivery_omissions,
             workspace_id,
         }
     }
@@ -750,12 +833,20 @@ impl DiagnosticResultIdCache {
     }
 
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
-        // Exact-key lookup only: the stored selection keys on the stored URI
-        // string; fuzzy URI matching is not part of the authority contract.
+        // Exact-key cache lookup; admitted aliases fall back to the same
+        // stored-document projection used for payload membership.
         self.document_ids
             .get(uri)
             .cloned()
             .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+    }
+
+    pub(super) fn delivered_diagnostics_for_uri(
+        &self,
+        snapshot: &AnalysisSnapshot,
+        uri: &Uri,
+    ) -> Vec<Diagnostic> {
+        delivered_diagnostics_for_uri(snapshot, uri, &self.delivery_omissions)
     }
 }
 
@@ -3031,7 +3122,8 @@ fn lsp_message(finding: &Finding) -> String {
         .then(|| DiagnosticWitness::from_finding(finding))
         .flatten()
         .and_then(|witness| {
-            let missing = witness.missing_discriminators.first()?.value.as_str();
+            let first = witness.missing_discriminators.first()?;
+            let missing = first.value.as_str();
             let subject = match witness.expected_sink.as_deref() {
                 Some("error_variant") => "Exact error variant",
                 Some("return_value") => "Exact return value",
@@ -3048,6 +3140,16 @@ fn lsp_message(finding: &Finding) -> String {
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
             };
+            // A guard no test enters is a missing input, not a missing
+            // assertion (RIPR-SPEC-0263): the fix is an input that enters it.
+            if first
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+            {
+                return Some(format!(
+                    "No related test input enters `{missing}`; {detail}."
+                ));
+            }
             Some(format!("{subject} `{missing}` is not observed; {detail}."))
         });
     if finding.recommended_next_step.is_none()
@@ -4681,6 +4783,28 @@ mod diagnostic_policy_tests {
             return Err("actionable profile published a static unknown".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn an_unentered_guard_reads_as_a_missing_input_not_an_assertion() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "if x > 10".to_string(),
+            reason: format!(
+                "{} `if x > 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        let message = lsp_message(&finding);
+        assert!(
+            message.starts_with("No related test input enters `if x > 10`;"),
+            "{message}"
+        );
+        assert!(!message.contains("is not observed"), "{message}");
     }
 
     #[test]

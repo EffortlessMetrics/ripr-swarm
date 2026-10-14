@@ -57,6 +57,27 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             };
             guard_condition_tail = Some((condition_end_line, tail));
         }
+        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` whose value is never
+        // compared panics only when `r` is `Ok`, so it observes the `Err`
+        // side. `expect_err` lines keep their `expect_` admission below
+        // (#7604 tracks that reading).
+        if trimmed.ends_with("unwrap_err();")
+            && !is_assertion_line(&trimmed)
+            && starts_statement(body, offset)
+        {
+            let rest = body.lines().skip(offset + 1).collect::<Vec<_>>().join("\n");
+            if let Some(text) = uncompared_unwrap_err(&trimmed, &rest) {
+                out.push(OracleFact {
+                    line: start_line + offset,
+                    observed_tokens: extract_identifier_tokens(&text),
+                    text,
+                    kind: OracleKind::BroadError,
+                    strength: OracleStrength::Weak,
+                    ok_value_observed: None,
+                });
+                continue;
+            }
+        }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
             let admitted = is_assertion_line(&trimmed);
             if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
@@ -2371,6 +2392,164 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// RIPR-SPEC-0227 decision 2: a one-line statement whose value is
+/// `<call>.unwrap_err()` and is never compared,
+/// returned as the oracle text (the extraction without `let` or `;`). The
+/// value is uncompared when the statement discards it (`f().unwrap_err();`,
+/// `let _ = ..`, `let _e = ..`) or binds a name that `rest` (the body after
+/// the statement) never mentions. A binding that a later assertion reads is
+/// that assertion's oracle (RIPR-SPEC-0106), not a side check, and an
+/// assignment or any other statement shape is not admitted.
+/// Whether body line `offset` starts a statement: the previous non-empty
+/// line ends one. After `let e =` the next line is the value, not a
+/// discarded expression.
+fn starts_statement(body: &str, offset: usize) -> bool {
+    body.lines()
+        .take(offset)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .is_none_or(|previous| previous.ends_with([';', '{', '}']))
+}
+
+pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<String> {
+    let statement = statement.trim();
+    let expression = statement.strip_suffix(';')?.trim_end();
+    let (binding, value) = match expression.strip_prefix("let ") {
+        Some(binding) => {
+            let (pattern, value) = binding.split_once('=')?;
+            let pattern = pattern.split(':').next()?.trim();
+            let name = pattern.strip_prefix("mut ").unwrap_or(pattern).trim();
+            if name.is_empty() || !name.bytes().all(is_ident_byte) {
+                return None;
+            }
+            (Some(name), value.trim())
+        }
+        None => (None, expression),
+    };
+    let masked = mask_comments_and_strings(value);
+    if masked.contains('=') || masked.contains(';') || masked.contains('{') {
+        return None;
+    }
+    // The tail line of a multi-line statement (`    .unwrap_err();`,
+    // `y).unwrap_err();`) is not the statement: its binding sits on an
+    // earlier line the line scanner cannot see.
+    if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
+        return None;
+    }
+    if !ends_with_unwrap_err(value) || !receiver_keeps_call_error(&masked) {
+        return None;
+    }
+    let discarded =
+        binding.is_none_or(|name| name.starts_with('_') || !references_whole_word(rest, name));
+    discarded.then(|| value.to_string())
+}
+
+/// Whether `callee` names a called path such as `check`, `svc.check`,
+/// `api::check` or `check::<u8>`, not an operator, reference or grouping.
+fn is_call_path(callee: &str) -> bool {
+    let callee = callee.trim();
+    callee.bytes().next().is_some_and(is_ident_byte)
+        && callee
+            .bytes()
+            .last()
+            .is_some_and(|b| is_ident_byte(b) || b == b'>')
+        && callee
+            .bytes()
+            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'<' | b'>' | b',' | b' '))
+}
+
+/// Whether `.unwrap_err()` reads the error side of the statement's first
+/// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
+/// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
+/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+fn receiver_keeps_call_error(masked: &str) -> bool {
+    const KEEPS_OK: &[&str] = &[
+        "as_deref",
+        "as_mut",
+        "as_ref",
+        "cloned",
+        "copied",
+        "inspect",
+        "inspect_err",
+        "map",
+        "map_err",
+    ];
+    let Some(receiver) = masked.trim_end().strip_suffix(".unwrap_err()") else {
+        return false;
+    };
+    let Some(open) = receiver.find('(') else {
+        return false;
+    };
+    // The first group must be a call: a leading `(..)` is a grouping
+    // expression that would hide `(check(x).and(Err(..))).unwrap_err()`'s
+    // adapter from the whitelist below.
+    if !is_call_path(&receiver[..open]) {
+        return false;
+    }
+    let Some(mut rest) = balanced_group_end(receiver, open).map(|close| &receiver[close + 1..])
+    else {
+        return false;
+    };
+    loop {
+        let rest_trimmed = rest.trim_start();
+        if rest_trimmed.is_empty() {
+            return true;
+        }
+        let Some(segment) = rest_trimmed.strip_prefix('.') else {
+            return false;
+        };
+        let segment = segment.trim_start();
+        let name_len = segment.bytes().take_while(|b| is_ident_byte(*b)).count();
+        let (name, after) = segment.split_at(name_len);
+        if name == "await" {
+            rest = after;
+            continue;
+        }
+        let after = after.trim_start();
+        if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
+            return false;
+        }
+        let Some(close) = balanced_group_end(after, 0) else {
+            return false;
+        };
+        rest = &after[close + 1..];
+    }
+}
+
+/// The byte index of the `)` closing the `(` at `open`.
+fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0_i64;
+    for (index, byte) in text.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn delimiters_balance(masked: &str) -> bool {
+    let mut depth = 0_i64;
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {

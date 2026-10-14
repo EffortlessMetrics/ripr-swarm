@@ -569,9 +569,11 @@ rule only for an assertion whose context was admitted.
    their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
-   unqualified nested `matches!` expands to one `match` over operands the
-   scan already reads, so it is admitted and its name joins this binding
-   check (see "Literal `matches!` pins"). Any visible
+   unqualified nested `matches!` or `format!` expands to one call over
+   operands the scan already reads, so it is admitted and its name joins
+   this binding check (see "Literal `matches!` pins" and "Rendered scalar
+   pins"). A path before the nested name (`std::format!`) refuses; inside
+   a token tree `::` lexes as two `:` tokens, which count as a path. Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
    trusted macro used by that test refuses the pin. This scan
@@ -1091,6 +1093,30 @@ grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
 
+### Format owner tails (#6578)
+
+`format_tail_witness` in `classify/propagation_witness.rs` completes a
+DirectReturn witness for a `return_value` probe whose changed expression is
+the owner's whole body, one `format!("literal", args..)` tail (or a lone
+`format!("literal")`, whose format may capture identifiers, `"{name}"`), on the
+probe's line, matching the owner's local return-value sink. `format!`
+evaluates each argument once and writes it into the `String` it returns (an
+unused argument does not compile), so the changed argument reaches the
+return with nothing in between, as a constant tail does. Only the bare
+`format!` with parentheses, a string-literal format and arguments free of
+macros, closures, blocks, branches, loops, `?`, `return`, `break`,
+`continue`, `.await` and `yield`; the owner's file must hold no binding site
+that may rebind `format` (a `macro_rules!`, an import, `#[macro_use]`,
+`#![no_implicit_prelude]` or a foreign glob). Limit: only the owner's own
+file is read, as for the standard-macro trust of owner bodies, so a
+`macro_rules! format` reached from another module through `#[macro_use]`
+is not seen. Whether the formatting keeps
+two values apart (`{:.0}`, a lossy `Display`) is not settled here, as
+integer division is not for an arithmetic tail. Without this witness
+`assert_eq!(label(4), "w12")` on `fn label(x: u32) -> String { format!("w{}", x * 3) }`
+read as a false `weakly_exposed` gap, because the current-path witness
+refuses any macro in the path.
+
 ### Same-named module-level functions (#6544)
 
 A bare call used to refuse the pin whenever any other module-level `fn` of
@@ -1227,6 +1253,80 @@ value when:
 4. Every other rule above holds unchanged: the scrutinee is the owner call
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the normalized pattern.
+
+### Rendered scalar pins
+
+`assert_eq!(format!("{:?}", owner(..)), "94")` fails exactly when
+`assert_eq!(owner(..), 94)` does when the owner returns a primitive scalar
+(trap-shine-debug-exact-control): the std `Debug` and `Display` text of a
+`bool`, `char`, float or built-in integer differs for every value but NaN,
+so exact text pins the value. The pin reads the call inside `format!` as
+the actual side and the string literal as the expected value when:
+
+1. The assertion is one plain, unqualified `assert_eq!` whose only nested
+   macros are plain, unqualified `format!` calls; `assert_ne!` and
+   `assert!` stay refused.
+2. One compared operand is exactly `format!("{}", call)` or
+   `format!("{:?}", call)` (a trailing comma is allowed). Flags, width,
+   precision, other text in the format string, a second argument, or
+   anything chained after `format!(..)` refuses. The call is the owner
+   call shape of rule 1, with nothing around it.
+3. The other operand is a plain string literal with no escapes, other
+   than `"NaN"`: every NaN payload of `f32` or `f64` renders as `NaN`, so
+   that text pins no single value (#7905).
+4. The owner's return type is a primitive scalar under the cell-0094 rule
+   (declared `bool`, `char`, `f32`, `f64` or built-in integer, with no
+   same-named item or import in the owner's file), and its return-path
+   gate holds any value. Every other rule above holds unchanged.
+
+Admitting a nested `format!` is an execution fact, shared by every
+`assert_eq!` the syntax gate reads: `format!` evaluates its operands
+eagerly and cannot leave the test once their tokens hold no exit, so
+`assert_eq!(format!("{}", f(4)).len(), 2)` reaches the ordinary token rule
+as `f(4).to_string().len()` does. Only the shape above earns the pin.
+
+The trap twin `trap-glow-debug-nonempty` (`assert!(!format!("{:?}",
+glow(2)).is_empty())`) holds for every value and stays a gap.
+
+### Inline expect-test pins (#6578)
+
+`expect![["text"]].assert_eq(&owner(..))` from `expect_test` compares the
+actual text with the inline literal and panics on a mismatch (unless
+`UPDATE_EXPECT` is set, which rewrites the expectation instead), as
+`assert_eq!(owner(..), "text")` does. The pin reads the argument as the
+actual side and the literal as the expected value when:
+
+1. The assertion is one method call `assert_eq` (no turbofish) on a bare
+   `expect!` invocation whose brackets hold one single-line string literal
+   (`[[..]]` or `[..]`) or nothing (the empty expectation, `""`), with one
+   argument. expect-test trims a multi-line literal's indentation before
+   comparing, so its raw text is not the compared value and refuses. A
+   single leading `&` borrows the actual value and is dropped; `&mut` or
+   `&raw` refuses. The comparison is a statement or the tail of the test's
+   own body; one nested in a block, branch, closure or `||` may never run
+   and is not extracted as its own oracle.
+2. The bare `expect!` must be expect-test's: its file imports
+   `use expect_test::expect;` under its own name, verified against the
+   manifest as `pretty_assertions` is (Required Evidence below), and no
+   `macro_rules!`, other import or glob may bind `expect`. That trust is
+   the test side's alone: `expect!` is no `std` macro, so in an owner body
+   (or any binding read) it stays an unknown macro that may hide a
+   `return` (a try-style `expect!(x)`), and the return paths stay open.
+3. Every other rule above holds unchanged: the actual side is the owner call
+   shape, execution and macro admission, `#[should_panic]`, and the
+   return-path gate on the literal.
+
+The parser grades a comparison it reads as an expect-test comparison
+(`assert_eq` or `assert_debug_eq` on an `expect!`/`expect_file!` receiver)
+never above `snapshot` / medium, read from its parsed shape, so a
+single-bracket, spaced (`expect! [[..]]`, `.assert_eq (..)`) or line-split
+call grades as the canonical spelling does. A weaker reading of the compared
+value (a tautology, a broad `is_err()`) is kept.
+The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
+bool-owner pin, only its probe-relative strength rises once the pin admits
+it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
+qualified `expect_test::expect!`, and every `insta` macro stay
+`snapshot` / medium.
 
 ## Required Evidence
 
@@ -1373,6 +1473,9 @@ value when:
   (or found from another working directory) is not read, and a file
   compiled by a package other than its nearest manifest (a target `path`
   or `#[path]` from a sibling) is judged by the nearest manifest.
+- `use expect_test::expect;` under its own name makes a bare `expect!`
+  expect-test's on the same manifest terms as `pretty_assertions`
+  (inline expect-test pins, #6578).
 
 ### Matched before/after observations
 
@@ -1637,7 +1740,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`,
   `an_error_path_probe_is_pinned_like_a_changed_err_return`);
   literal `matches!` pins
-  (`a_literal_matches_pattern_pins_the_owner_value`);
+  (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
+  (`a_scalar_rendering_compared_with_exact_text_pins`,
+  `each_refusal_names_the_gate_that_failed`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
   `T::name(..)` calls (#6617:

@@ -105,6 +105,20 @@ actionable  = the full repair-packet contract is satisfied
 everything else = a named limitation, never a partial/implied packet
 ```
 
+### Capped workspace read disclosure
+
+Every source refused by the per-file or aggregate byte cap contributes to
+read-limit disclosure, including refusals after the first aggregate-budget
+failure. Files that still fit the remaining budget remain eligible. Ordinary
+IO failures retain their separate channel.
+
+The existing shared disclosure samples the first eight refused paths in sorted
+order. More than eight refusals add one summary with the true total in
+`affected_items`; twelve refusals therefore produce eight paths and one
+summary with `affected_items: 12`. The limited outcome remains explicit and
+recovery names the configured read caps. This bounds emitted entries without
+changing read admission, cap defaults, or TypeScript's support tier (#7868).
+
 ### Reality baseline (what already exists)
 
 ```text

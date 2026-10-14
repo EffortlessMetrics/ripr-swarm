@@ -1,0 +1,22 @@
+{
+  "case_id": "rust-guarded-push-unentered-branch",
+  "subject_id": "authored-guarded-push-unentered",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_branch_not_entered",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

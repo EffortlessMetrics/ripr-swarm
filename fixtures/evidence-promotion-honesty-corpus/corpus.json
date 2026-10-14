@@ -5865,6 +5865,46 @@
           "type": "must_not_emit_repair_packet"
         }
       ]
+    },
+    {
+      "id": "rust_formatted_parser_reason_keeps_activation_unknown",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/parser_formatted_input_provenance",
+      "vector": "unrelated_same_file_reason_assertion_cannot_resolve_formatted_parser_input",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "typescript_owner_alias_return_cannot_observe_effect",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_effect_owner_alias",
+      "vector": "renamed_owner_return_is_not_a_side_channel",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
+      ]
     }
   ]
 }
