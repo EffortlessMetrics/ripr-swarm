@@ -733,6 +733,17 @@ pub(in crate::analysis::classify) fn literal_sequence(argument: &str) -> Option<
         .collect()
 }
 
+/// A comparison boundary ripr reads as a literal: its trimmed text is one
+/// whole plain literal of the kind [`literal_sequence`] reads as an element
+/// (an unsuffixed decimal integer or float, possibly negated, `true`,
+/// `false`, or a char). Anything else (`0x7f`, `1e3`, `10u8`, `2 + 2`) is
+/// not read from its leading digits; the boundary stays unresolved unless
+/// it is a same-file constant.
+pub(in crate::analysis::classify) fn literal_boundary(text: &str) -> Option<String> {
+    let text = text.trim();
+    literal_element(text).then(|| text.to_string())
+}
+
 fn literal_element(element: &str) -> bool {
     if matches!(element, "true" | "false") {
         return true;
@@ -1073,6 +1084,10 @@ mod tests {
             "&[1, 2][..]",
             "&[.5]",
             "&[_1]",
+            "&[0x10, 20]",
+            "&[1e3]",
+            "&[0b1]",
+            "&[1_]",
         ] {
             assert_eq!(literal_sequence(unreadable), None, "{unreadable}");
         }

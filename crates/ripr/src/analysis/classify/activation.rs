@@ -1380,9 +1380,14 @@ fn element_boundary_value(
     view: &ElementView,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
+    if let Some(value) = super::owner_pin::closure_adaptor::literal_boundary(&view.boundary) {
+        return Some(value);
+    }
+    // Otherwise only a same-file constant: a literal that is not one whole
+    // plain decimal (`0x7f`, `1e3`) is never read from its leading digits.
     let constant = boundary_constant(owner, &view.boundary, index)
-        .filter(|constant| constant.lookup.is_declared_once());
-    visible_operand(&view.boundary, constant.as_ref()).map(|operand| operand.value)
+        .filter(|constant| constant.lookup.is_declared_once())?;
+    visible_operand(&view.boundary, Some(&constant)).map(|operand| operand.value)
 }
 
 /// One fact per run that reaches the boundary (see
@@ -7210,6 +7215,49 @@ assert_eq!(input.amount, 100);"#
             .iter()
             .map(|fact| (fact.value.clone(), fact.reason.clone()))
             .collect()
+    }
+
+    /// A boundary that is not one whole plain decimal literal (`0x10`,
+    /// `1e3`, `10u8`) and not a same-file constant stays unresolved: its
+    /// leading digits (`0`, `1`, `10`) are not its value.
+    #[test]
+    fn adaptor_non_decimal_boundary_stays_unresolved() {
+        for (owner, expression, call) in [
+            (
+                "xs.iter().filter(|&&x| x > 0x10).count()",
+                "x > 0x10",
+                "assert_eq!(score(&[0, 20]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 0x7f).count()",
+                "x > 0x7f",
+                "assert_eq!(score(&[0, 200]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 1e3).count()",
+                "x > 1e3",
+                "assert_eq!(score(&[1, 2000]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 10u8).count()",
+                "x > 10u8",
+                "assert_eq!(score(&[10, 20]), 1);",
+            ),
+        ] {
+            let gathered = adaptor_boundary(owner, expression, &[call]);
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{expression}"
+            );
+            assert!(missing_values(&gathered).is_empty(), "{expression}");
+        }
+        // The decimal control on the same shape is observed.
+        let decimal = adaptor_boundary(
+            "xs.iter().filter(|&&x| x > 16).count()",
+            "x > 16",
+            &["assert_eq!(score(&[16, 20]), 1);"],
+        );
+        assert!(has_observed_boundary_equality(&decimal.activation));
     }
 
     #[test]

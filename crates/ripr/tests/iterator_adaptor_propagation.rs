@@ -221,3 +221,15 @@ fn self_comparing_boundary_assertion_pairs_nothing() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn hex_boundary_is_not_read_from_its_leading_digit() -> Result<(), String> {
+    // `0x7f` is 127, not 0: the element 0 never sits on the boundary.
+    let (_, predicate) = findings(
+        "xs.iter().filter(|&&x| x > 0x7f).count()",
+        "xs.iter().filter(|&&x| x >= 0x7f).count()",
+        "assert_eq!(count_positive(&[0, 200]), 1);",
+    )?;
+    assert_ne!(predicate["classification"], "exposed", "{predicate}");
+    Ok(())
+}

@@ -10,8 +10,7 @@ use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
 use super::activation::{
-    call_arguments, comparison_operands, function_parameters, literal_operand_value,
-    owner_argument_values,
+    call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
@@ -365,7 +364,7 @@ fn adaptor_element_boundary(probe: &Probe, tail: AdaptorTail) -> Option<(Adaptor
         (false, true) => left,
         _ => return None,
     };
-    literal_operand_value(&boundary).map(|value| (tail, value))
+    super::owner_pin::closure_adaptor::literal_boundary(&boundary).map(|value| (tail, value))
 }
 
 /// RIPR-SPEC-0260 rule 1 same-test pairing: an admitted discriminating or
@@ -3466,6 +3465,29 @@ mod tests {
         ));
         // A bound expected side is read through the test's parsed `let`s,
         // pinned end to end in `tests/iterator_adaptor_propagation.rs`.
+        // A boundary that is not one whole decimal literal is never read
+        // from its leading digits (`0x10` is not 0, `1e3` is not 1).
+        for (owner, expression, assertion) in [
+            (
+                "xs.iter().filter(|&&x| x > 0x10).count()",
+                "x > 0x10",
+                "assert_eq!(gate(&[0, 20]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 0x7f).count()",
+                "x > 0x7f",
+                "assert_eq!(gate(&[0, 200]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 1e3).count()",
+                "x > 1e3",
+                "assert_eq!(gate(&[1, 2000]), 1);",
+            ),
+        ] {
+            assert!(!pairs(owner, expression, assertion), "{expression}");
+        }
+        // A hex element never reads as a decimal one.
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[0x0, 3]), 1);"));
         // A same-file constant boundary is not read here (fail closed).
         assert!(!pairs(
             "xs.iter().filter(|&&x| x > LIMIT).count()",
