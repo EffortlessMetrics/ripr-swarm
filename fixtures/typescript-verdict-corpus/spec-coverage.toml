@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 110
+floor = 111
 
 # LSP Repair Packet Command
 [[spec]]
