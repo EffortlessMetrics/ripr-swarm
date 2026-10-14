@@ -252,11 +252,8 @@ impl ErrorChangeFacts {
                 );
                 old_prefix == new_prefix
                     && (literals_alone_differ(old_throw, new_throw)
-                        || (message_argument_alone_differs(old_throw, new_throw)
-                            && !same_readable_message(
-                                old_message.as_deref(),
-                                new_message.as_deref(),
-                            )))
+                        || message_argument_alone_differs(old_throw, new_throw))
+                    && !same_readable_message(old_message.as_deref(), new_message.as_deref())
             }
             _ => false,
         };
@@ -353,63 +350,32 @@ fn literals_alone_differ(old: &[LineToken], new: &[LineToken]) -> bool {
 /// The tokens before the message argument of a `throw ...` /
 /// `Promise.reject(...)` run, the argument itself, and the tokens after it,
 /// split where [`thrown_message`] reads the message.
+///
+/// The argument is the first argument of a call or construction whose
+/// callee is a name or a dotted path, optionally with type arguments
+/// (`new RangeError(...)`, `errors.make(...)`, `make<T>(...)`); the callee
+/// stays in the head, so a changed class or factory is not message-only.
+/// Any other operand (a ternary, a sequence, an unclosed line) is read
+/// whole. The split falls back rather than refusing, because a refusal
+/// leaves `message_only` false and the ladder's credit in place: a shape it
+/// cannot read may only remove credit (RIPR-SPEC-0243 rule 4).
 fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
     let mut start = 1;
     if let Some(LineToken::Other(word)) = throw.get(start)
         && word == "("
     {
         start += 1;
-        // `throw (log(e), e)`: a top-level comma inside the parentheses is
-        // the sequence operator, and the thrown value is its last operand.
-        let mut depth = 0usize;
-        for token in &throw[start..] {
-            match token {
-                LineToken::Other(open) if open == "(" || open == "[" || open == "{" => depth += 1,
-                LineToken::Other(close) if close == ")" || close == "]" || close == "}" => {
-                    let Some(next) = depth.checked_sub(1) else {
-                        break;
-                    };
-                    depth = next;
-                }
-                LineToken::Other(comma) if comma == "," && depth == 0 => return None,
-                _ => {}
-            }
-        }
     }
-    let mut called = false;
-    let constructed = matches!(throw.get(start), Some(LineToken::Other(word)) if word == "new");
-    if constructed {
+    if matches!(throw.get(start), Some(LineToken::Other(word)) if word == "new") {
         start += 1;
     }
-    if let (Some(LineToken::Other(callee)), Some(LineToken::Other(open))) =
-        (throw.get(start), throw.get(start + 1))
-        && open == "("
-        && callee
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-    {
-        if callee.contains('.') {
-            return None;
+    let called = match call_argument_start(throw, start) {
+        Some(argument) => {
+            start = argument;
+            true
         }
-        start += 2;
-        called = true;
-    } else if constructed
-        || matches!(
-            (throw.get(start), throw.get(start + 1)),
-            (Some(LineToken::Other(callee)), Some(LineToken::Other(open)))
-                if (open == "(" || open == "<")
-                    && callee
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        )
-    {
-        // `new errors.ParseError(...)` or `errors.make(...)` (the tokenizer
-        // keeps the dotted path as one word), or `new X<T>(...)`: the class
-        // or factory is not one name, so the split is refused.
-        return None;
-    }
+        None => false,
+    };
     let mut depth = 0usize;
     let mut end = start;
     while let Some(token) = throw.get(end) {
@@ -421,19 +387,49 @@ fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
                 };
                 depth = next;
             }
-            // Outside a call, a top-level comma is the sequence operator
-            // (`throw (log(e), e)`): the thrown value is its last operand.
-            LineToken::Other(comma) if comma == "," && depth == 0 => {
-                if !called {
-                    return None;
-                }
-                break;
-            }
+            // In a call, a top-level comma ends the first argument; in a
+            // whole operand it is the sequence operator and stays inside.
+            LineToken::Other(comma) if comma == "," && depth == 0 && called => break,
             _ => {}
         }
         end += 1;
     }
-    (depth == 0 && end > start).then_some((start, end))
+    (end > start).then_some((start, end))
+}
+
+/// The index just past the `(` of a call at `at` whose callee is one name
+/// or dotted path (the tokenizer keeps `errors.make` as one word), with an
+/// optional balanced `<...>` type-argument list.
+fn call_argument_start(throw: &[LineToken], at: usize) -> Option<usize> {
+    let Some(LineToken::Other(callee)) = throw.get(at) else {
+        return None;
+    };
+    if !callee
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+    {
+        return None;
+    }
+    let mut next = at + 1;
+    if matches!(throw.get(next), Some(LineToken::Other(open)) if open == "<") {
+        let mut depth = 0usize;
+        loop {
+            match throw.get(next)? {
+                LineToken::Other(open) if open == "<" => depth += 1,
+                LineToken::Other(close) if close == ">" => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        next += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            next += 1;
+        }
+    }
+    matches!(throw.get(next), Some(LineToken::Other(open)) if open == "(").then_some(next + 1)
 }
 
 /// Whether the two thrown expressions differ only inside their message
@@ -748,66 +744,67 @@ mod tests {
         let primitive =
             ErrorChangeFacts::read(Some(r#"throw "limit " + max;"#), r#"throw "limit ";"#);
         assert!(primitive.message_only);
-        // A member-path class is not one name: the split is refused even
-        // when the class is unchanged.
-        let member_class = ErrorChangeFacts::read(
-            Some(r#"throw new errors.ParseError("bad " + x);"#),
-            r#"throw new errors.ParseError("bad ");"#,
+        // A literal respelling that reads the same message on both sides
+        // is a rewrite on the literal path too.
+        let regrouped = ErrorChangeFacts::read(
+            Some(r#"throw new Error("ab" + "c");"#),
+            r#"throw new Error("a" + "bc");"#,
         );
-        assert!(!member_class.message_only);
-        let member_changed = ErrorChangeFacts::read(
-            Some(r#"throw new errors.A("bad");"#),
-            r#"throw new errors.B("bad");"#,
-        );
-        assert!(!member_changed.message_only);
-        // A class change outside the argument, a later argument that also
-        // changes, an empty argument list and an unclosed line are not.
+        assert!(!regrouped.message_only);
+        // A dotted or generic callee that stays the same keeps the change
+        // inside its first argument; a shape the split cannot name a call
+        // in (a sequence, an unclosed line) is read whole. Either way the
+        // change is message-only, which can only remove credit: refusing
+        // the split would leave the ladder's credit in place.
+        for (old, new) in [
+            (
+                r#"throw new errors.ParseError("bad " + x);"#,
+                r#"throw new errors.ParseError("bad ");"#,
+            ),
+            (
+                r#"throw errors.ParseError("bad " + x);"#,
+                r#"throw errors.ParseError("bad ");"#,
+            ),
+            (r#"throw make<A>("bad " + x);"#, r#"throw make<A>("bad ");"#),
+            (
+                "throw errors.make(`bad ${a}`);",
+                "throw errors.make(`bad ${b}`);",
+            ),
+            (r#"throw (log(a), e);"#, r#"throw (log(b), e);"#),
+            (r#"throw x, e;"#, r#"throw y, e;"#),
+            (r#"throw f([a"#, r#"throw f([b"#),
+        ] {
+            assert!(
+                ErrorChangeFacts::read(Some(old), new).message_only,
+                "{old} -> {new}"
+            );
+        }
+        // A changed class or factory (single-name, dotted or generic), a
+        // later argument that also changes, and an added argument are not.
         for (old, new) in [
             (r#"throw new Error("a");"#, r#"throw new TypeError("b");"#),
+            (
+                r#"throw new errors.A("bad");"#,
+                r#"throw new errors.B("bad");"#,
+            ),
+            (r#"throw errors.A("bad");"#, r#"throw errors.B("bad");"#),
+            (r#"throw makeErr("a");"#, r#"throw makeOther("b");"#),
+            (
+                r#"throw errors.make("bad " + x);"#,
+                r#"throw errors.other("bad ");"#,
+            ),
+            (r#"throw make<A>("bad " + x);"#, r#"throw make<B>("bad ");"#),
             (
                 r#"throw new Error("a", { cause: x });"#,
                 r#"throw new Error("b", { cause: y });"#,
             ),
             (r#"throw new Error();"#, r#"throw new Error("x");"#),
-            (r#"throw f([a"#, r#"throw f([b"#),
         ] {
             assert!(
                 !ErrorChangeFacts::read(Some(old), new).message_only,
                 "{old} -> {new}"
             );
         }
-        // A renamed single-name factory, and a sequence operand, are not.
-        for (old, new) in [
-            (r#"throw makeErr("a");"#, r#"throw makeOther("b");"#),
-            (r#"throw (log(a), e);"#, r#"throw (log(b), e);"#),
-            (r#"throw x, e;"#, r#"throw y, e;"#),
-        ] {
-            assert!(
-                !ErrorChangeFacts::read(Some(old), new).message_only,
-                "{old} -> {new}"
-            );
-        }
-        // So is a dotted or generic factory without `new`.
-        let factory = ErrorChangeFacts::read(
-            Some(r#"throw errors.make("bad " + x);"#),
-            r#"throw errors.other("bad ");"#,
-        );
-        assert!(!factory.message_only);
-        let generic = ErrorChangeFacts::read(
-            Some(r#"throw make<A>("bad " + x);"#),
-            r#"throw make<B>("bad ");"#,
-        );
-        assert!(!generic.message_only);
-        let member_fn_changed = ErrorChangeFacts::read(
-            Some(r#"throw errors.A("bad");"#),
-            r#"throw errors.B("bad");"#,
-        );
-        assert!(!member_fn_changed.message_only);
-        let member_fn = ErrorChangeFacts::read(
-            Some(r#"throw errors.ParseError("bad " + x);"#),
-            r#"throw errors.ParseError("bad ");"#,
-        );
-        assert!(!member_fn.message_only);
         // A change in another argument, or after the call, is not.
         let cause = ErrorChangeFacts::read(
             Some(r#"throw new Error("bad", { cause: a });"#),
@@ -839,6 +836,17 @@ mod tests {
                 "{expected}"
             );
         }
+        // The same holds behind a dotted factory: the split falls back to
+        // its first argument rather than refusing, so `toThrow("bad")`,
+        // which passes on both versions, is not credited.
+        let factory = ErrorChangeFacts::read(
+            Some(r#"throw errors.make("bad " + x);"#),
+            r#"throw errors.make("bad ");"#,
+        );
+        assert!(!error_payload_credits(
+            &payload(TypeScriptErrorPayloadKind::ThrowsLiteral, r#""bad""#),
+            &factory
+        ));
         // A pinned rejection reason that only the old, readable message
         // holds separates the versions and keeps its credit.
         // The reason must equal a message: a substring of the old one

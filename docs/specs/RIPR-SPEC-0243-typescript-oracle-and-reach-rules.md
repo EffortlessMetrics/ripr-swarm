@@ -306,23 +306,25 @@ is a `throw` line or a `Promise.reject(...)` line, and every token that
 differs between its old and new text lies inside the message argument of
 the thrown or rejected error (a literal in a condition on the same line
 does not count). The message argument is the first argument of
-`new X(...)` or `X(...)` with `X` one undotted name, or otherwise the
-whole thrown or rejected operand when it does not open with a call (a
-literal, a name or a ternary). A dotted or generic class or factory
-(`new errors.ParseError(...)`, `errors.make(...)`, `make<T>(...)`)
-refuses the split, and so does a top-level comma outside a call (the
-sequence operator in `throw (log(e), e)`). A changed string literal, a changed `${...}`
+`new X(...)` or `X(...)`, where `X` is a name or a dotted path with
+optional type arguments (`new errors.ParseError(...)`, `errors.make(...)`,
+`make<T>(...)`). Otherwise it is the whole thrown or rejected operand: a
+literal, a name, a ternary, a sequence (`throw (log(e), e)`) or an
+unclosed line. A shape the reader cannot split falls back to the whole
+operand rather than refusing, because a refused split leaves the
+ladder's credit in place, and a shape it cannot read may only remove
+credit. A changed string literal, a changed `${...}`
 interpolation and an added or dropped operand inside a present argument
 (`"limit " + max` against `"limit "`) all count; adding the argument
 itself (`new Error()` against `new Error("x")`) does not. A factory's
 first argument is read as its message even when it is another value
-(`make(code, "a")`). A change to the class of `new X(...)` or `X(...)`,
-to a later argument or after the call does not count. A class inside an
+(`make(code, "a")`). A change to the class, factory or type arguments of `new X(...)` or
+`X(...)`, to a later argument, or after the call does not count. A class inside an
 operand that does not open with a call (a ternary choosing between two
 `new` expressions) is part of the operand, so such a change counts, which
 only removes credit. A respelling whose literals join to the same
 message on both sides (`"unsupported currency"` against
-`"unsupported " + "currency"`) does not count either; a respelling that
+`"unsupported " + "currency"`, or `"ab" + "c"` against `"a" + "bc"`) does not count either; a respelling that
 needs runtime values to compare (two interpolations) is not recognised
 and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
 before that, only changed string literals counted). On such a change a
