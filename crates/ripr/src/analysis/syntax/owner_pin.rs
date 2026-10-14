@@ -511,11 +511,11 @@ fn macro_binding_ambiguities(
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
-    if !(trusted.contains(&"json") && source.contains("serde_json"))
-        && !source.contains("macro")
-        && !source.contains("use")
-        && !source.contains("no_implicit_prelude")
-        && !source.contains('!')
+    if !(trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!'))
     {
         return ambiguous;
     }

@@ -41,19 +41,17 @@ const PLAIN_KEYS: &[&str] = &[
     "public",
 ];
 
+type LiteralJsonMemo = Option<(
+    String,
+    Option<crate::analysis::workspace::LiteralJsonIdentity>,
+)>;
+
 /// Per-analysis cache of drop-in crate verdicts, keyed by the importing
 /// file's directory. Clones share the cache.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
-    json: Arc<
-        Mutex<
-            Option<(
-                String,
-                Option<crate::analysis::workspace::LiteralJsonIdentity>,
-            )>,
-        >,
-    >,
+    json: Arc<Mutex<LiteralJsonMemo>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
 
