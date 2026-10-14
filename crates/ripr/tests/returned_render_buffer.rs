@@ -56,6 +56,10 @@ fn analyze(case: &str, source: &str) -> Result<Value, String> {
     assert!(!report.findings.is_empty(), "{case}: empty analysis");
     let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
         .map_err(|e| e.to_string())?;
+    assert_eq!(
+        json["analysis_outcome"]["analysis_complete"], true,
+        "{case}: incomplete analysis: {json}"
+    );
     let selected = json["findings"]
         .as_array()
         .ok_or("missing findings")?
