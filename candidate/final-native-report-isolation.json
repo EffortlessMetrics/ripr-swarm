@@ -1,0 +1,19 @@
+{
+  "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+  "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+  "native_ci_policy_pass": true,
+  "preserved": {
+    "precommit.md": {
+      "before_sha256": "2f2fc891c631a7f8aa4aea53bfb34388e90c19e027108fe9290fa7a35c8b5643",
+      "after_sha256": "2f2fc891c631a7f8aa4aea53bfb34388e90c19e027108fe9290fa7a35c8b5643"
+    },
+    "precommit-v2.json": {
+      "before_sha256": "c06706c069c228a257bb2de02a60a57ae893091deac19cfafc1da08b5287b6ea",
+      "after_sha256": "c06706c069c228a257bb2de02a60a57ae893091deac19cfafc1da08b5287b6ea"
+    },
+    "precommit-v2.md": {
+      "before_sha256": "7a35f3fa1d415f07f2e1c96750abb6c88ca867f52a728479fac6c028b2856e3f",
+      "after_sha256": "7a35f3fa1d415f07f2e1c96750abb6c88ca867f52a728479fac6c028b2856e3f"
+    }
+  }
+}

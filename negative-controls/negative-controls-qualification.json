@@ -1,0 +1,6 @@
+{
+  "head": "9cdec14e182aa3c726274b737fa7b41a3f2386ef",
+  "restored_clean": true,
+  "real_policy_failure": "check-executable-files; receipt source_or_policy_failure, no test or Clippy child",
+  "harness_assertion_failure": "Expected two faults but existing real-repository static-language allowlist permits README wording. Two independent faults proved by final fixture test instead. Native single-policy failure is valid; no production change."
+}

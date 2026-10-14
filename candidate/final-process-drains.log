@@ -1,0 +1,11 @@
+
+running 6 tests
+test run::tests::capture_output_with_timeout_confirms_gnu_time_descendant_group_gone ... ok
+test run::tests::capture_output_returns_status_stdout_and_stderr ... ok
+test run::tests::capture_output_with_timeout_reports_completed_process ... ok
+test run::tests::capture_output_with_timeout_reports_timed_out_process ... ok
+test run::tests::capture_output_with_timeout_terminates_pipe_inheriting_descendants ... ok
+test run::tests::capture_output_without_timeout_returns_after_direct_child_exit_with_lingering_pipe_descendant ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 3623 filtered out; finished in 10.13s
+

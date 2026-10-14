@@ -1,0 +1,165 @@
+{
+  "commit": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+  "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+  "parents": [
+    "bbdbae9332828ceb2729f6238fa5465164b6c267",
+    "3abb3b69f88e9865ce97c41c3e1db2e24010737f"
+  ],
+  "origin_main": "bbdbae9332828ceb2729f6238fa5465164b6c267",
+  "candidate": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+  "stages": [
+    {
+      "name": "policy-table-source-parity",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "xtask",
+        "--bin",
+        "xtask",
+        "precommit_gate_commands_match_executed_precommit_source"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 232.18615062400022,
+      "log": "integration/logs/policy-table-source-parity.log"
+    },
+    {
+      "name": "rust-gates-contract",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "xtask",
+        "--test",
+        "rust_gate_workflow_contract"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 54.00421533900044,
+      "log": "integration/logs/rust-gates-contract.log"
+    },
+    {
+      "name": "collect-all-integration",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "xtask",
+        "--test",
+        "policy_all"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 0.6734621410005275,
+      "log": "integration/logs/collect-all-integration.log"
+    },
+    {
+      "name": "ci-lane-ledger",
+      "argv": [
+        "cargo",
+        "xtask",
+        "check-ci-lane-whitelist"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 0.1603429100005087,
+      "log": "integration/logs/ci-lane-ledger.log"
+    },
+    {
+      "name": "changelog-fragments",
+      "argv": [
+        "cargo",
+        "xtask",
+        "check-changelog-fragments"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 0.1617544619994078,
+      "log": "integration/logs/changelog-fragments.log"
+    },
+    {
+      "name": "traceability",
+      "argv": [
+        "cargo",
+        "xtask",
+        "check-traceability"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 0.19161305600027845,
+      "log": "integration/logs/traceability.log"
+    },
+    {
+      "name": "policy-preflight",
+      "argv": [
+        "cargo",
+        "policy",
+        "preflight"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "exit": 0,
+      "elapsed_seconds": 4.551123236999956,
+      "log": "integration/logs/policy-preflight.log"
+    },
+    {
+      "name": "ci-policy",
+      "argv": [
+        "cargo",
+        "xtask",
+        "ci-policy"
+      ],
+      "composition": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+      "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+      "receipt": "/tmp/7826-integration/target/ripr/reports/policy-preflight.json",
+      "exit": 0,
+      "elapsed_seconds": 198.72386428200025,
+      "log": "integration/logs/ci-policy.log"
+    }
+  ],
+  "remote_pull_request_merge_ref": {
+    "sha": "bb669ee5f20b60a015fbd9d34d36c7629b3277cb",
+    "tree": "b24cb9f174f74f7f795d0d12204039db539c43fd",
+    "parents": [
+      "9dfd3c189bbb20c2e333ee42e8bbe7b6a7ad5fb3",
+      "3abb3b69f88e9865ce97c41c3e1db2e24010737f"
+    ],
+    "candidate_parent_matches": true,
+    "base_parent_is_current_main": false
+  },
+  "latest_main": {
+    "sha": "bbdbae9332828ceb2729f6238fa5465164b6c267",
+    "tree": "b1d1c3af2fdb76ed880ec83669a74fa2e9133674",
+    "parent": "9dfd3c189bbb20c2e333ee42e8bbe7b6a7ad5fb3"
+  },
+  "composition": {
+    "conflict_free": true,
+    "commit": "3258859aa26b5dc4fc261de2ae5a9e02cdeb55e2",
+    "tree": "4b2c2611ddb411af5efd4348d281c7f11f00fee5",
+    "parents": [
+      "bbdbae9332828ceb2729f6238fa5465164b6c267",
+      "3abb3b69f88e9865ce97c41c3e1db2e24010737f"
+    ],
+    "shared_changed_path": [
+      ".ripr/traceability.toml"
+    ],
+    "disposition": "Latest-main composition tested in disposable checkout; no source edits or branch restack."
+  },
+  "ready_handoff": {
+    "current_source_review": "complete with no outstanding actionable source findings; independent prepublication disposition REVIEW_INCOMPLETE",
+    "pr_merge_ref_read": "exact PR merge SHA/tree/parents recorded; it uses prior main parent",
+    "latest_main_integration": "all 8 listed stages passed on conflict-free exact synthetic composition",
+    "hosted_rust_lane": "after-Ready qualification; not required to complete this pre-Ready integration check",
+    "no_transition": "PR left Draft per user direction"
+  }
+}

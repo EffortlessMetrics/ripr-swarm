@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.2",
+  "composition": "ci_policy",
+  "status": "source_or_policy_failure",
+  "failure_kind": "source_or_policy",
+  "repository_root": "$REPO",
+  "head_sha": "9cdec14e182aa3c726274b737fa7b41a3f2386ef",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "9cdec14e182aa3c726274b737fa7b41a3f2386ef",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "staged",
+          "unstaged"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "README.md",
+        "old_path": null,
+        "origins": [
+          "unstaged"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": "Clippy skipped: no Rust package or workspace-wide Rust surface changed."
+  },
+  "commands": [
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "failed",
+      "detail": "check-policy-all: 1 gate(s) failed: check-executable-files\ncheck-executable-files failed; see target/ripr/reports/executable-files.md\nchecked-in executable file is not allowlisted: .ripr/traceability.toml\n  preferred: use cargo xtask instead of executable scripts",
+      "diagnostic": null
+    }
+  ],
+  "skipped": [],
+  "limitations": [
+    "check-policy-all: 1 gate(s) failed: check-executable-files\ncheck-executable-files failed; see target/ripr/reports/executable-files.md\nchecked-in executable file is not allowlisted: .ripr/traceability.toml\n  preferred: use cargo xtask instead of executable scripts"
+  ],
+  "report_digest": "sha256:3c2ee50b3cd5e22883536312b5aae06b534440c5d6030c764d8284bc7bf49cfa"
+}

@@ -1,0 +1,53 @@
+{
+  "native-candidate-prefix": {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "workflow_sha256": "56e32fd825fe61a9641068ab87555b0d46b7c567fedbc50fdba4199fb0b8bf13",
+    "binary_sha256": "267244f1c9711c8864f0b95df4a614b247077b521ea58405aad43f81ca0ec082",
+    "elapsed_seconds": 115.87268761600035,
+    "cargo_invocations": 31,
+    "clippy": [
+      [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    ],
+    "scope": "complete bounded workflow prefix Formatting preflight through Strict workspace Clippy, excluding action-only setup; actual policies/checks; frozen dispatcher bootstrap excluded; not full Rust Gates timing",
+    "lint_mode": "native"
+  },
+  "native-baseline-prefix": {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "workflow_sha256": "56e32fd825fe61a9641068ab87555b0d46b7c567fedbc50fdba4199fb0b8bf13",
+    "binary_sha256": "267244f1c9711c8864f0b95df4a614b247077b521ea58405aad43f81ca0ec082",
+    "elapsed_seconds": 111.5032398909998,
+    "cargo_invocations": 32,
+    "clippy": [
+      [
+        "clippy",
+        "--manifest-path",
+        "/workspace/ripr-swarm/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    ],
+    "scope": "complete bounded workflow prefix Formatting preflight through Strict workspace Clippy, excluding action-only setup; actual policies/checks; frozen dispatcher bootstrap excluded; not full Rust Gates timing",
+    "lint_mode": "native"
+  },
+  "qualification": "Matched serial warmed-cache bounded composition-prefix comparison on frozen candidate source using baseline public precommit graph replay. Actual native policy/check/lint, same machine/config/flags/source and recorded argv/env. Not complete Rust Gates/hosted timing; excludes driver bootstrap and action setup. No full-lane savings estimate."
+}

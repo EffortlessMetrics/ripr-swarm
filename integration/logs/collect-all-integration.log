@@ -1,0 +1,14 @@
+[1m[92m   Compiling[0m xtask v0.1.0 (/tmp/7826-integration/xtask)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+[1m[92m     Running[0m tests/policy_all.rs (target/debug/deps/policy_all-ac3e7b04cfe8ba39)
+
+running 6 tests
+test policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report ... ok
+test policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written ... ok
+test policy_all_healthy_fixture_passes_with_original_leaf_reports ... ok
+test policy_all_report_write_error_preserves_leaf_failures ... ok
+test ci_policy_collects_real_cheap_failures_before_expensive_work ... ok
+test policy_all_reports_two_independent_violations_and_runs_later_leaves ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+

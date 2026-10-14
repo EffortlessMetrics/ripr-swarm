@@ -1,0 +1,115 @@
+{
+  "label": "native-candidate-prefix",
+  "scope": "complete bounded workflow prefix Formatting preflight through Strict workspace Clippy, excluding action-only setup; actual policies/checks; frozen dispatcher bootstrap excluded; not full Rust Gates timing",
+  "lint_mode": "native",
+  "baseline_graph_replay": false,
+  "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+  "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+  "workflow_sha256": "56e32fd825fe61a9641068ab87555b0d46b7c567fedbc50fdba4199fb0b8bf13",
+  "binary_sha256": "267244f1c9711c8864f0b95df4a614b247077b521ea58405aad43f81ca0ec082",
+  "steps": [
+    {
+      "name": "Formatting preflight",
+      "run": "cargo fmt --check",
+      "exit": 0,
+      "elapsed_seconds": 16.715482243000224
+    },
+    {
+      "name": "Agent skill contracts",
+      "run": "cargo policy preflight",
+      "exit": 0,
+      "elapsed_seconds": 2.024993832000291
+    },
+    {
+      "name": "Prepare locked owner-return fixture dependencies",
+      "run": "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+      "exit": 0,
+      "elapsed_seconds": 0.2274275579998175
+    },
+    {
+      "name": "Repository policy preflight",
+      "run": "cargo xtask ci-policy",
+      "exit": 0,
+      "elapsed_seconds": 93.54501567200032
+    },
+    {
+      "name": "Evidence promotion honesty",
+      "run": "cargo xtask check-evidence-promotion-honesty",
+      "exit": 0,
+      "elapsed_seconds": 0.11401143399962166
+    },
+    {
+      "name": "Dependency policy",
+      "run": "cargo xtask check-dependencies",
+      "exit": 0,
+      "elapsed_seconds": 0.055439437000131875
+    },
+    {
+      "name": "Process policy",
+      "run": "cargo xtask check-process-policy",
+      "exit": 0,
+      "elapsed_seconds": 0.6008317910000187
+    },
+    {
+      "name": "Network policy",
+      "run": "cargo xtask check-network-policy",
+      "exit": 0,
+      "elapsed_seconds": 1.6809443559995998
+    },
+    {
+      "name": "Workspace and all-target check",
+      "run": "cargo check --workspace --all-targets",
+      "exit": 0,
+      "elapsed_seconds": 0.29060850700079754
+    },
+    {
+      "name": "All-features ripr target check",
+      "run": "cargo check -p ripr --all-targets --all-features",
+      "exit": 0,
+      "elapsed_seconds": 0.2663338410002325
+    },
+    {
+      "name": "Strict workspace Clippy",
+      "run": "cargo clippy --workspace --all-targets -- -D warnings",
+      "exit": 0,
+      "elapsed_seconds": 0.3499082279995491
+    }
+  ],
+  "elapsed_seconds": 115.87268761600035,
+  "success": true,
+  "cargo_invocations": 31,
+  "clippy": [
+    {
+      "argv": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/workspace/ripr-swarm",
+      "environment": {
+        "CARGO_BUILD_JOBS": "2",
+        "CARGO_TERM_COLOR": "always",
+        "CARGO_TARGET_DIR": "/workspace/ripr-swarm/target",
+        "CARGO_HOME": "/workspace/.cargo",
+        "RUSTUP_HOME": "/workspace/.rustup",
+        "RUSTUP_TOOLCHAIN": null,
+        "RUSTC": null,
+        "RUSTC_WRAPPER": null,
+        "RUSTC_WORKSPACE_WRAPPER": null,
+        "RUSTFLAGS": null,
+        "CARGO_ENCODED_RUSTFLAGS": null,
+        "RUSTDOCFLAGS": null,
+        "RIPR_POLICY_PREFLIGHT_RECEIPT": null,
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_PROFILE_DEV_DEBUG": null,
+        "SCCACHE_DIR": null,
+        "TMPDIR": null
+      },
+      "start_ns": 4182350759293,
+      "route": "native Cargo delegate"
+    }
+  ]
+}

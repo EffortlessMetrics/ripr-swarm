@@ -1,0 +1,21 @@
+{
+  "subject": {
+    "repository": "EffortlessMetrics/ripr-swarm",
+    "pull_request": 7918,
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7"
+  },
+  "independent_reviewer": "fresh independent /root/frozen_review",
+  "source_review": "none outstanding",
+  "disposition": "REVIEW_INCOMPLETE",
+  "accepted_finding_and_repair": "legacy precommit.md overwrite reproduced9cdec, repaired3abb and actual native success isolation verified",
+  "automated_review_adjudication": "source adjudicated/refuted; no new actionable finding",
+  "binding_evidence": {
+    "candidate_validation": "../candidate/final-validation.json",
+    "native_policy_pass": "../candidate/final-native-ci-policy-pass.json",
+    "report_isolation": "../candidate/final-native-report-isolation.json",
+    "ordinary_precommit_argv_environment": "../candidate/final-precommit.commands.jsonl"
+  },
+  "qualification_boundary": "Source review is complete with no outstanding actionable source findings. REVIEW_INCOMPLETE is retained for the published-head/full hosted lane qualification; it is not represented as REVIEW_READY.",
+  "provenance_note": "This compact record transcribes the independent exact-head review outcome retained in the authorized task handoff; it is bound to the subject hashes above and is not a cryptographic reviewer signature."
+}

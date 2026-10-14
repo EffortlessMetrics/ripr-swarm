@@ -1,0 +1,17 @@
+[1m[92m   Compiling[0m xtask v0.1.0 (/tmp/7826-integration/xtask)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 53.94s
+[1m[92m     Running[0m tests/rust_gate_workflow_contract.rs (target/debug/deps/rust_gate_workflow_contract-a737434d82bf85b9)
+
+running 9 tests
+test rust_gate_workflow_preserves_complete_ordered_command_inventory ... ok
+test rust_gate_workflow_rejects_duplicate_required_command ... ok
+test rust_gate_workflow_rejects_failure_only_summary ... ok
+test rust_gate_workflow_rejects_missing_required_command ... ok
+test rust_gate_workflow_rejects_local_convenience_clippy_composition ... ok
+test rust_gate_workflow_rejects_fabricated_success_or_missing_outcome ... ok
+test rust_gate_workflow_rejects_policy_after_workspace_tests ... ok
+test rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage ... ok
+test rust_gate_workflow_rejects_suppressed_or_optional_required_command ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

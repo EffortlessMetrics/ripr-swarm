@@ -1,0 +1,8 @@
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m repo-policy v0.1.0 (/tmp/7826-integration/tools/repo-policy)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 3.29s
+[1m[92m     Running[0m `target/debug/repo-policy preflight`
+check-workflows: pass (target/ripr/reports/workflows.md)
+check-agent-skills: pass (target/ripr/reports/agent-skills.md)

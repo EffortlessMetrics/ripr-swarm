@@ -1,0 +1,20 @@
+{
+  "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+  "required_route": "Routed Rust Small / Ripr Rust Small Result",
+  "status": "unqualified; not dispatched",
+  "connector": "available tools read workflow runs/jobs and rerun failed jobs; no dispatch callable",
+  "read_probe": {
+    "argv": [
+      "gh",
+      "api",
+      "repos/EffortlessMetrics/ripr-swarm/actions/workflows/routed-rust.yml",
+      "--jq",
+      "{id,path,state,html_url}"
+    ],
+    "exit": 1,
+    "error": "Get https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/workflows/routed-rust.yml: Forbidden",
+    "outcome": "read denied; no mutation attempted"
+  },
+  "draft_ci_readback": "CI run38524560149 success; substantive Rust-only feature test skipped; no full required Rust Gate qualification inferred",
+  "complete_lane_timing": "not established; bounded prefix receipts cannot satisfy complete-lane timing"
+}

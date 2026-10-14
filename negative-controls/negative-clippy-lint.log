@@ -1,0 +1,15 @@
+[1m[92m   Compiling[0m ripr v0.11.0 (/workspace/7826-baseline/crates/ripr)
+[1m[92m   Compiling[0m repo-policy v0.1.0 (/workspace/7826-baseline/tools/repo-policy)
+[1m[92m    Checking[0m xtask v0.1.0 (/workspace/7826-baseline/xtask)
+[1m[91merror[0m[1m: unnecessary map of the identity function[0m
+   [1m[94m--> [0mxtask/src/command.rs:188:37
+    [1m[94m|[0m
+[1m[94m188[0m [1m[94m|[0m         let rest: Vec<String> = args.map(|value| value).collect();
+    [1m[94m|[0m                                     [1m[91m^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: remove the call to `map`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_identity
+    [1m[94m= [0m[1mnote[0m: `-D clippy::map-identity` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::map_identity)]`
+
+[1m[91merror[0m: could not compile `xtask` (bin "xtask") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...

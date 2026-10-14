@@ -1,0 +1,149 @@
+[
+  {
+    "name": "build",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "/workspace/.cargo/bin/cargo",
+      "build",
+      "--locked",
+      "-p",
+      "xtask"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 142.936984683
+  },
+  {
+    "name": "focused",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "xtask",
+      "--test",
+      "policy_all",
+      "--test",
+      "rust_gate_workflow_contract"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 61.42191095699991
+  },
+  {
+    "name": "precommit-tests",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "xtask",
+      "--bin",
+      "xtask",
+      "precommit"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 92.30589790400018
+  },
+  {
+    "name": "ci-policy-tests",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "xtask",
+      "--bin",
+      "xtask",
+      "ci_policy"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.19003615800011175
+  },
+  {
+    "name": "plan-tests",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "xtask",
+      "--bin",
+      "xtask",
+      "product_gate_plan"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.2321309420003672
+  },
+  {
+    "name": "receipt-tests",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "repo-policy",
+      "--test",
+      "frontdoor"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 4.143969325999933
+  },
+  {
+    "name": "lane-ledger",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "xtask",
+      "check-ci-lane-whitelist"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.031616794999990816
+  },
+  {
+    "name": "process-policy",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "xtask",
+      "check-process-policy"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.5772176370001034
+  },
+  {
+    "name": "check-fast",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "xtask",
+      "check-fast"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 341.08614713900033
+  },
+  {
+    "name": "precommit",
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "tree": "171375b330c38394c78c5ba619a1601d0c82edf7",
+    "argv": [
+      "cargo",
+      "xtask",
+      "precommit"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 92.82188792399984
+  }
+]

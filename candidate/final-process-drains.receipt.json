@@ -1,0 +1,15 @@
+{
+  "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+  "argv": [
+    "/workspace/ripr-swarm/target/debug/deps/xtask-4a3c046c937d54ae",
+    "run::tests::capture_output"
+  ],
+  "exit": 0,
+  "env": {
+    "PATH": "/workspace/.cargo/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup"
+  },
+  "binary_sha256": "cc3a8552766df99ea5ed12ffdbb6c021460bb9a6728910fea22c904a1ecba980",
+  "log_sha256": "5d656a353b5d8006004232ecad635b063a236c3816599c3f0e957ca7c8283c48"
+}

@@ -1,0 +1,74 @@
+[
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "schema",
+    "exit": 1,
+    "elapsed_seconds": 0.34704870199948346,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "inputs",
+    "exit": 1,
+    "elapsed_seconds": 0.6690062890002082,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "source",
+    "exit": 1,
+    "elapsed_seconds": 0.6398960309998074,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "compiler",
+    "exit": 1,
+    "elapsed_seconds": 0.667470547999983,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "checks",
+    "exit": 1,
+    "elapsed_seconds": 0.6547431609997147,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "partial",
+    "exit": 1,
+    "elapsed_seconds": 0.3452678450003077,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "missing",
+    "exit": 1,
+    "elapsed_seconds": 0.34237647199915955,
+    "report_status": "source_or_policy_failure",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  },
+  {
+    "head": "3abb3b69f88e9865ce97c41c3e1db2e24010737f",
+    "name": "compiler-launch",
+    "exit": 1,
+    "elapsed_seconds": 0.18933295999977418,
+    "report_status": "incomplete_evidence",
+    "cargo_invocations": 2,
+    "test_fmt_clippy_children": 0
+  }
+]
