@@ -1387,6 +1387,33 @@ enum PinCall {
         receivers: Vec<ReceiverType>,
         trait_scope: Option<TraitScope>,
     },
+    /// `T::name(..)` (#6617, RIPR-SPEC-0172): the owner is an associated
+    /// function (no `self`) of an inherent `impl T`, and the test must name
+    /// the owner's own `T` through a direct import of the owner's library.
+    /// A bare `name(..)` never takes it: that call names a module-level
+    /// function, never an associated one.
+    Associated { type_name: String },
+}
+
+/// Which call syntax [`other_definition_competes`] judges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallKind {
+    /// `name(..)` or a module path `a::b::name(..)`.
+    Bare,
+    /// `recv.name(..)`.
+    Method,
+    /// `T::name(..)` on an inherent associated function (#6617).
+    Associated,
+}
+
+impl PinCall {
+    fn kind(&self) -> CallKind {
+        match self {
+            Self::Bare => CallKind::Bare,
+            Self::Method { .. } => CallKind::Method,
+            Self::Associated { .. } => CallKind::Associated,
+        }
+    }
 }
 
 /// A trait method is callable with method syntax only while its trait is
@@ -1506,16 +1533,14 @@ impl OwnerReturnPin {
             return None;
         }
         let call = pin_call(owner, index)?;
-        let method = matches!(call, PinCall::Method { .. });
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
-        let identity = if method {
-            None
-        } else {
-            OwnerCallIdentity::new(owner, index.functions().iter(), index)
+        let identity = match call.kind() {
+            CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+            CallKind::Method | CallKind::Associated => None,
         };
-        if other_definition_competes(owner, index, method, identity.as_ref()) {
+        if other_definition_competes(owner, index, call.kind(), identity.as_ref()) {
             return None;
         }
         Some(Self {
@@ -1592,7 +1617,7 @@ impl OwnerReturnPin {
             || !field_compares_with_derived_equality(type_name, field, index)
             || derives_clone(type_name, index)
             || workspace_declares_trait(index, "Clone")
-            || other_definition_competes(owner, index, true, None)
+            || other_definition_competes(owner, index, CallKind::Method, None)
         {
             return None;
         }
@@ -1682,7 +1707,11 @@ impl OwnerReturnPin {
             })
         });
         let call = pin_call(owner, index)?;
-        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. }), None) {
+        // #6617 keeps the associated-function pin to a return value: a
+        // `T::new()` whole-value field pin is a separate claim.
+        if matches!(call, PinCall::Associated { .. })
+            || other_definition_competes(owner, index, call.kind(), None)
+        {
             return None;
         }
         Some(Self {
@@ -1885,7 +1914,7 @@ impl OwnerReturnPin {
                         matches!(receiver_type, ReceiverType::Named(type_name)
                             if clone_receiver_is_independent(test, receiver, type_name, index))
                     }),
-                    PinCall::Bare => false,
+                    PinCall::Bare | PinCall::Associated { .. } => false,
                 };
                 if expected.trim() != receiver
                     || imports_foreign(&test.file, "Clone")
@@ -1894,7 +1923,10 @@ impl OwnerReturnPin {
                     return false;
                 }
             }
-            (ReturnPathGate::CloneReceiver, CallShape::Bare | CallShape::Path(_)) => return false,
+            (
+                ReturnPathGate::CloneReceiver,
+                CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_),
+            ) => return false,
             (path, _) => {
                 if !path.admits(expected) {
                     return false;
@@ -2012,7 +2044,7 @@ impl OwnerReturnPin {
                         owner_scope,
                         syntax,
                     ),
-                    CallShape::Bare | CallShape::Path(_) => None,
+                    CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
                 };
                 let Some(receiver_type) = receiver_type else {
                     return false;
@@ -2029,6 +2061,35 @@ impl OwnerReturnPin {
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
                         self.trait_in_scope(test, test_source, &scope.trait_name, index)
+                    })
+            }
+            // #6617: `T::name(..)` names the owner only through the owner's
+            // own `T`. A module path `a::b::name(..)` is `CallShape::Path`
+            // (its segments are never CamelCase), so it never reaches here.
+            //
+            // A cfg on the owner, its `impl`, an enclosing module or its file
+            // may drop it from the build, and `T::name` then reaches a trait
+            // default the index never sees (#7082, #7724).
+            (PinCall::Associated { type_name }, CallShape::Associated(named)) => {
+                helper.is_none()
+                    && named == type_name
+                    && index
+                        .files()
+                        .get(&self.owner_file)
+                        .and_then(|facts| {
+                            item_nesting_with_impl(
+                                &facts.source,
+                                &self.name,
+                                self.owner_start_line,
+                                true,
+                            )
+                        })
+                        .is_some_and(|owner| !owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
+                    && !bound_by_macro(&masked_body, type_name)
+                    && !body_rebinds_type(&masked_body, type_name)
+                    && test_source.is_some_and(|source| {
+                        self.associated_type_reaches_owner(type_name, test, source, index, syntax)
                     })
             }
             _ => false,
@@ -2064,6 +2125,90 @@ impl OwnerReturnPin {
     ) -> bool {
         self.binding()
             .bare_call_reaches_owner(test, test_source, index, syntax)
+    }
+
+    /// #6617 (RIPR-SPEC-0172): whether a top-level test's `T::name(..)`
+    /// names the owner's own `T`. The owner-side gate already made `T` the
+    /// one workspace type of that name, with no `mod`, `trait` or `type` of
+    /// it and no competing path-callable `fn name`. Here the test's file
+    /// must import `T` directly, `use <krate>::T;`, at file level,
+    /// where `<krate>` names the owner's library from the test's crate (the
+    /// RIPR-SPEC-0197 manifest authority) and nothing in the test's crate
+    /// binds it, and the library must not export another `T`. Every `use`
+    /// of the file that names `T` must be such an import: an alias (`as`),
+    /// a glob, a brace list or another root refuses, and so does a
+    /// declaration of `T` in the test's file. Any doubt refuses.
+    fn associated_type_reaches_owner(
+        &self,
+        type_name: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        // Only file-level imports reach a test at the file's top level.
+        if syntax
+            .item_nesting(index, &test.file, &test.name, test.start_line)
+            .is_none_or(|nesting| !nesting.modules.is_empty())
+        {
+            return false;
+        }
+        if file_renames_to(test_source, type_name) || file_aliases_type(test_source, type_name) {
+            return false;
+        }
+        let masked = mask_comments_and_strings(test_source);
+        let declares_name = ["struct", "enum", "union", "trait", "mod"]
+            .iter()
+            .any(|keyword| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), type_name)
+                    })
+            });
+        if declares_name {
+            return false;
+        }
+        let file_level = file_use_statements(&super::related_tests::file_level_use_text(&masked));
+        if !file_level
+            .iter()
+            .any(|statement| contains_as_whole_word(statement, type_name))
+        {
+            return false;
+        }
+        let binding = self.binding();
+        let imports_owner_type = |statement: &String| {
+            let Some(path) = statement.trim_start().strip_prefix("use") else {
+                return false;
+            };
+            let path = path.trim();
+            let path = path.strip_prefix("::").map_or(path, str::trim_start);
+            if path.contains(['{', '}', '*']) || !whole_word_offsets(path, "as").is_empty() {
+                return false;
+            }
+            // Only `use <krate>::T;`: a middle segment can be a `pub use`
+            // of another crate (`pub use other as fs;`), whose own `T` this
+            // check cannot place.
+            let segments: Vec<&str> = path.split("::").map(str::trim).collect();
+            let [root, last] = segments[..] else {
+                return false;
+            };
+            last == type_name
+                && is_plain_identifier(root)
+                && binding.krate_root_names_owner_crate(root, &test.file, test_source, index)
+                && !test_crate_binds_root(test, root, index, syntax)
+        };
+        if !file_use_statements(test_source)
+            .iter()
+            .filter(|statement| contains_as_whole_word(statement, type_name))
+            .all(imports_owner_type)
+        {
+            return false;
+        }
+        syntax
+            .target_roots(index)
+            .root(&self.owner_file, index)
+            .is_some_and(|owner_root| !library_may_export_other(index, &owner_root, type_name))
     }
 
     fn trait_in_scope(
@@ -2235,28 +2380,7 @@ impl FreeOwnerBinding<'_> {
         {
             return false;
         }
-        let Some(test_root) = roots.root(&test.file, index) else {
-            return false;
-        };
-        let binds_key = (test_root, root.to_string());
-        let known = syntax
-            .path_memo
-            .borrow()
-            .test_crate_binds
-            .get(&binds_key)
-            .copied();
-        let binds = known.unwrap_or_else(|| {
-            let binds = workspace_renames_to(index, root)
-                || workspace_mentions_raw(index, root)
-                || test_crate_may_bind(&binds_key.0, root, index, roots);
-            syntax
-                .path_memo
-                .borrow_mut()
-                .test_crate_binds
-                .insert(binds_key.clone(), binds);
-            binds
-        });
-        !binds
+        !test_crate_binds_root(test, root, index, syntax)
     }
 
     /// #7097: whether the test's bare `name(..)` can only reach the
@@ -2616,11 +2740,16 @@ fn whole_word_count(text: &str, name: &str) -> usize {
 }
 
 /// How a test calls `owner`: a bare call for a free function, a method call
-/// on a receiver of one of the owner's `impl` types otherwise. `None` for a
-/// shape no pin reads (an associated function, a free fn with `self`).
+/// on a receiver of one of the owner's `impl` types, or `T::name(..)` for an
+/// associated function of an inherent `impl T` (#6617). `None` for a shape
+/// no pin reads (a trait or trait-impl associated function, a generic or
+/// ambiguous self type, a free fn with `self`).
 fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
     Some(match (&owner.item.container, owner.item.has_self_param) {
         (FunctionContainer::Free, false) => PinCall::Bare,
+        (FunctionContainer::Inherent { self_ty }, false) => PinCall::Associated {
+            type_name: associated_owner_type(self_ty, index)?,
+        },
         (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
             receivers: vec![declared_receiver(self_ty, index)?],
             trait_scope: None,
@@ -2694,6 +2823,10 @@ enum CallShape<'a> {
     /// `a::b::name(..)`: a free-function call through a module path of
     /// plain identifiers; holds the path before `::name` (#6974).
     Path(&'a str),
+    /// `T::name(..)` with one CamelCase identifier `T` (#6617): an
+    /// associated-function call; holds `T`. A module path never has a
+    /// CamelCase segment ([`path_call_prefix`]), so the two never overlap.
+    Associated(&'a str),
 }
 
 /// Whether `owner` is declared `async fn`, read from the parsed `async`
@@ -2764,6 +2897,15 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
             .trim()
             .is_empty()
             .then_some(CallShape::Path(prefix));
+    }
+    if let Some(type_name) = associated_call_type(operand, name) {
+        let opening = type_name.len() + "::".len() + name.len();
+        let masked = mask_comments_and_strings(operand);
+        let closing = matching_close(&masked, opening, b'(', b')')?;
+        return operand[closing + 1..]
+            .trim()
+            .is_empty()
+            .then_some(CallShape::Associated(type_name));
     }
     let call_start = if operand.starts_with(name) {
         0
@@ -2860,6 +3002,39 @@ fn bound_owner_call<'a>(
     };
     let initializer = test.body.get(equals + 1..end)?;
     owner_call_shape(initializer, owner)
+}
+
+/// #6974: whether `test`'s crate (or the workspace) may bind `root` before
+/// the extern prelude does: a rename to it, a raw twin, or a `mod`, `use`,
+/// type or glob in the test's crate. An unplaced test crate binds.
+fn test_crate_binds_root(
+    test: &TestSummary,
+    root: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let roots = syntax.target_roots(index);
+    let Some(test_root) = roots.root(&test.file, index) else {
+        return true;
+    };
+    let binds_key = (test_root, root.to_string());
+    let known = syntax
+        .path_memo
+        .borrow()
+        .test_crate_binds
+        .get(&binds_key)
+        .copied();
+    known.unwrap_or_else(|| {
+        let binds = workspace_renames_to(index, root)
+            || workspace_mentions_raw(index, root)
+            || test_crate_may_bind(&binds_key.0, root, index, roots);
+        syntax
+            .path_memo
+            .borrow_mut()
+            .test_crate_binds
+            .insert(binds_key.clone(), binds);
+        binds
+    })
 }
 
 /// #6974 review: whether the test's own crate may bind `root` before the
@@ -3110,6 +3285,19 @@ fn path_call_prefix<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
             return Some(&operand[..segment_end]);
         }
     }
+}
+
+/// #6617: `T` when `operand` starts `T::name(` with `T` one CamelCase
+/// identifier other than `Self`.
+fn associated_call_type<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
+    let (head, tail) = operand.split_once("::")?;
+    (is_plain_identifier(head)
+        && head != "Self"
+        && head.starts_with(|character: char| character.is_ascii_uppercase())
+        && tail
+            .strip_prefix(name)
+            .is_some_and(|after| after.starts_with('(')))
+    .then_some(head)
 }
 
 /// The value expression of `unsafe { <expr> }` when `operand` is exactly that
@@ -4871,7 +5059,7 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
 ) -> bool {
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
-        || other_definition_competes(owner, index, false, None)
+        || other_definition_competes(owner, index, CallKind::Bare, None)
         || index
             .files()
             .get(&owner.file)
@@ -5511,12 +5699,20 @@ fn resolve_module_path(
 /// dispatches to the same method on the pointee. A definition whose item
 /// container is unknown (lexical fallback) always competes, and so does a
 /// `fn name` the parser never indexed (inside a `macro_rules!` body).
+///
+/// An associated `T::name(..)` call (#6617, RIPR-SPEC-0172) competes with
+/// every other definition of the name that is not a module-level or local
+/// function: inherent and trait-impl functions of any type, trait items,
+/// unknown containers, and every unindexed `fn name`. A free function
+/// cannot be the target of a type path, so it never competes.
 fn other_definition_competes(
     owner: &FunctionSummary,
     index: &RustIndex,
-    method: bool,
+    kind: CallKind,
     settled_per_test: Option<&OwnerCallIdentity>,
 ) -> bool {
+    let method = kind == CallKind::Method;
+    let associated = kind == CallKind::Associated;
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
     let indexed_competes = index.functions().iter().any(|function| {
@@ -5527,8 +5723,11 @@ fn other_definition_competes(
             FunctionContainer::Unknown => true,
             FunctionContainer::Local => false,
             FunctionContainer::Free => {
-                !method && !settled_per_test.is_some_and(|identity| identity.settles(function))
+                !method
+                    && !associated
+                    && !settled_per_test.is_some_and(|identity| identity.settles(function))
             }
+            _ if associated => true,
             _ => {
                 method
                     && function.item.has_self_param
@@ -5562,6 +5761,11 @@ fn other_definition_competes(
                     || is_owner(path, line);
                 if indexed {
                     return false;
+                }
+                // An unindexed definition cannot be placed: it may be an
+                // associated function of any type.
+                if associated {
+                    return true;
                 }
                 let Some(definition) = unindexed_definition(&facts.source, &masked, offset) else {
                     return true;
@@ -5691,8 +5895,18 @@ pub(in crate::analysis) fn pin_scope_needs(
     if !owner.item.has_body {
         return needs;
     }
-    let method = match (&owner.item.container, owner.item.has_self_param) {
-        (FunctionContainer::Free, false) => false,
+    let kind = match (&owner.item.container, owner.item.has_self_param) {
+        (FunctionContainer::Free, false) => CallKind::Bare,
+        // #6617: another file's declaration of `T` (or a `mod`, `trait` or
+        // `type` of its name) changes `associated_owner_type`, so the type
+        // is always a need, declared yet or not.
+        (FunctionContainer::Inherent { self_ty }, false) => {
+            if !is_associated_type_name(self_ty) {
+                return needs;
+            }
+            needs.receiver_type = Some(self_ty.clone());
+            CallKind::Associated
+        }
         (FunctionContainer::Inherent { self_ty }, true)
         | (FunctionContainer::TraitImpl { self_ty, .. }, true) => {
             needs.constructor_type = path_base_name(self_ty).map(str::to_string);
@@ -5707,24 +5921,87 @@ pub(in crate::analysis) fn pin_scope_needs(
                 };
                 needs.receiver_type = Some(base.to_string());
             }
-            true
+            CallKind::Method
         }
         (FunctionContainer::Trait { trait_name }, true) => {
             needs.trait_impls = Some(trait_name.clone());
-            true
+            CallKind::Method
         }
         _ => return needs,
     };
     // Same rivals `establish` settles per test (#6544): once indexed they no
     // longer refuse, but files that define more of them still widen scope.
-    let identity = if method {
-        None
-    } else {
-        OwnerCallIdentity::new(owner, index.functions().iter(), index)
+    let identity = match kind {
+        CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+        CallKind::Method | CallKind::Associated => None,
     };
-    needs.competing_definitions =
-        !other_definition_competes(owner, index, method, identity.as_ref());
+    needs.competing_definitions = !other_definition_competes(owner, index, kind, identity.as_ref());
     needs
+}
+
+/// #6617: a self type an associated-function pin can name: one CamelCase
+/// identifier (no generics, path, reference or `Self`).
+fn is_associated_type_name(self_ty: &str) -> bool {
+    is_plain_identifier(self_ty)
+        && self_ty != "Self"
+        && self_ty.starts_with(|character: char| character.is_ascii_uppercase())
+}
+
+/// #6617: the type an associated-function owner's `T::name(..)` call must
+/// name. `T` must be one CamelCase identifier that exactly one `struct`,
+/// `enum` or `union` in the index declares, and no indexed file may give
+/// the name to a `mod`, `trait` or `type` alias: a module `T` would turn
+/// `T::name(..)` into a free-function path, and a second declaration or an
+/// alias could be the `T` a test imports. Anything else refuses.
+fn associated_owner_type(self_ty: &str, index: &RustIndex) -> Option<String> {
+    if !is_associated_type_name(self_ty) {
+        return None;
+    }
+    let mut declarations = 0usize;
+    for facts in index.files().values() {
+        if whole_word_offsets(&facts.source, self_ty).is_empty() {
+            continue;
+        }
+        let masked = mask_comments_and_strings(&facts.source);
+        declarations += ["struct", "enum", "union"]
+            .iter()
+            .map(|keyword| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .filter(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), self_ty)
+                    })
+                    .count()
+            })
+            .sum::<usize>();
+        let names_other_item = ["mod", "trait", "type"].iter().any(|keyword| {
+            whole_word_offsets(&masked, keyword)
+                .into_iter()
+                .any(|offset| {
+                    starts_with_word(masked[offset + keyword.len()..].trim_start(), self_ty)
+                })
+        });
+        if names_other_item || declarations > 1 {
+            return None;
+        }
+    }
+    (declarations == 1).then(|| self_ty.to_string())
+}
+
+/// #6617: whether a test body may rebind `type_name` itself: any nested
+/// `use`, or a `struct`/`enum`/`union`/`type`/`trait`/`mod` item of that
+/// name.
+fn body_rebinds_type(masked: &str, type_name: &str) -> bool {
+    !whole_word_offsets(masked, "use").is_empty()
+        || ["struct", "enum", "union", "type", "trait", "mod"]
+            .iter()
+            .any(|keyword| {
+                whole_word_offsets(masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), type_name)
+                    })
+            })
 }
 
 /// The receiver type an `impl` block's self type names, when it is one this
