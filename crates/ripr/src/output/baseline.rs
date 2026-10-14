@@ -215,6 +215,10 @@ pub(crate) fn baseline_entry_count(report: &BaselineCreateReport) -> usize {
     report.entries.len()
 }
 
+pub(crate) fn baseline_warnings(report: &BaselineCreateReport) -> &[String] {
+    &report.warnings
+}
+
 pub(crate) use crate::output::path::display_path;
 
 fn baseline_entry_from_decision(
