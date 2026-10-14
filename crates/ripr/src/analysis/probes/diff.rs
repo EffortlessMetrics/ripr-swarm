@@ -1163,7 +1163,13 @@ pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
     let connectives = |source: &str| {
         let text = crate::analysis::extract::mask_comments_and_strings(source);
         let opens_closure = |at: usize| {
-            if source[..at].trim_end().ends_with(['"', '\'', '#']) {
+            // The blanked run before `||` is a literal when it opens with
+            // one: a line comment that ends in `"` is still a comment.
+            let blanked = &source[text[..at].trim_end().len()..at];
+            if blanked.trim_end().ends_with(['"', '\'', '#'])
+                && !blanked.trim_start().starts_with("//")
+                && !blanked.trim_start().starts_with("/*")
+            {
                 return false;
             }
             let before = text[..at].trim_end();
@@ -2150,6 +2156,9 @@ mod tests {
         // A comment before `||` changes neither reading.
         assert!(!same_connectives("x || y", "f(/*c*/ || 1)"));
         assert!(!same_connectives("100 < p", "a // note:\n || 100 <= p"));
+        // A line comment ending in a quote is not a literal.
+        assert!(same_connectives("f( // \"x\"\n || 1)", "f( // ok\n || 2)"));
+        assert!(same_connectives("f( // r#\n || 1)", "f( // ok\n || 2)"));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
