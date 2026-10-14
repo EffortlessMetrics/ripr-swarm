@@ -864,3 +864,25 @@ Apply the existing portable root/head/worktree normalization from
 `normalize_unchanged_repo_exposure_producer_fixture`, and recompute the existing
 raw-JSON placeholder commitment. The receipt retains its established portable
 projection; only dependent artifact hashes are refreshed.
+
+## Pending — #7809 corpus-currentness cache generation
+
+Reason: RIPR-SPEC-0229 advances classified cache generation 1.66 to 1.67.
+Refresh the real producer's portable before/after snapshots and dependent
+verify/receipt commitments. Only the generation and digests change: source
+corpus content hash, classifications, evidence, unchanged movement and the
+historical incomplete receipt's fail-closed routing are preserved.
+
+Commands: `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`,
+then the corpus's canonical `ripr agent verify`, `ripr agent receipt` and
+`ripr assistant-loop proof` commands. Apply the existing
+`normalize_unchanged_repo_exposure_producer_fixture` root/head/worktree and
+raw-JSON placeholder normalization. Retain the established portable receipt
+projection and refresh its producer-bound artifact hashes. Regenerated assistant
+proof and first-action routing remain unchanged.
+
+Updated:
+- `expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json`
+- `expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json`
+- `expected/first-useful-action/unchanged-after-attempt/agent-verify.json`
+- `expected/first-useful-action/unchanged-after-attempt/agent-receipt.json`
