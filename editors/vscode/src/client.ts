@@ -1794,6 +1794,18 @@ export class RiprClientController {
   }
 
   private updateStatus(status: RiprStatusState): void {
+    // A disable restart hides immediately, then awaits client.stop(). Session
+    // notifications can still fire in that window and would otherwise replace
+    // `disabled` with a visible analysis kind. While ripr.enabled is false,
+    // only an explicit disabled paint may occupy the main item.
+    if (status.kind !== 'disabled') {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      if (!enabled) {
+        return;
+      }
+    }
     this.status = status;
     this.renderStatusBar();
   }

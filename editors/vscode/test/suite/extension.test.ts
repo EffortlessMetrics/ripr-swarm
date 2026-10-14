@@ -3792,6 +3792,54 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('disable restart keeps the status item hidden if analysis status arrives during stop', async () => {
+    let releaseStop: (() => void) | undefined;
+    let sawStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStarted = new Promise<void>((resolve) => {
+      sawStop = resolve;
+    });
+    const context = createControllerTestContext({
+      beforeClientStop: async () => {
+        sawStop?.();
+        await stopGate;
+      }
+    });
+    let restarting: Promise<void> | undefined;
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      context.setEnabled(false);
+      restarting = context.controller.restart();
+      await stopStarted;
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'running',
+        attempt_id: '1',
+        run_status: 'in_progress'
+      });
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'analysis status during disabled stop must not unhide the main item'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseStop?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+      assert.ok(context.status.text.includes('ripr: disabled'));
+    } finally {
+      releaseStop?.();
+      await restarting?.catch(() => undefined);
+      await context.dispose();
+    }
+  });
+
   test('disable restart hides the status item before setup-file reads finish', async () => {
     let releaseRead: (() => void) | undefined;
     let sawDisabledRead: (() => void) | undefined;
