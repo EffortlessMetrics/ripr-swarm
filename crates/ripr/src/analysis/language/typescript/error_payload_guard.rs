@@ -201,12 +201,21 @@ fn without_trailing_semicolon(tokens: &[LineToken]) -> &[LineToken] {
     }
 }
 
+/// Whether `token` is a `throw` keyword or a `Promise.reject` callee.
+fn is_throw_site(token: &LineToken) -> bool {
+    matches!(token, LineToken::Other(word) if word == "throw" || word == "Promise.reject")
+}
+
+/// How many `throw` / `Promise.reject` sites the line has. More than one
+/// makes the first-site message untrustworthy (#7950).
+fn throw_site_count(tokens: &[LineToken]) -> usize {
+    tokens.iter().filter(|token| is_throw_site(token)).count()
+}
+
 /// The tokens before and from the `throw` keyword or the `Promise.reject`
 /// callee, or `None` when the line has neither.
 fn split_at_throw(tokens: &[LineToken]) -> Option<(&[LineToken], &[LineToken])> {
-    let index = tokens.iter().position(|token| {
-        matches!(token, LineToken::Other(word) if word == "throw" || word == "Promise.reject")
-    })?;
+    let index = tokens.iter().position(is_throw_site)?;
     Some(tokens.split_at(index))
 }
 
@@ -258,12 +267,34 @@ impl ErrorChangeFacts {
     pub(crate) fn read(old_line: Option<&str>, new_line: &str) -> Self {
         let old_tokens = old_line.and_then(tokenize);
         let old_split = old_tokens.as_deref().and_then(split_at_throw);
-        let old_message = old_split.and_then(|(_, throw)| thrown_message(throw));
-        let old_string_form = old_split.and_then(|(_, throw)| thrown_string_form(throw));
+        // Two sites on one line: the first-site message is not the thrown
+        // value of every path, so it is unread. The split itself stays,
+        // because refusing it would leave `message_only` false and restore
+        // the ladder's credit (#7950, RIPR-SPEC-0243 rule 4).
+        let old_ambiguous = old_tokens
+            .as_deref()
+            .is_some_and(|tokens| throw_site_count(tokens) > 1);
+        let (old_message, old_string_form) = if old_ambiguous {
+            (None, None)
+        } else {
+            (
+                old_split.and_then(|(_, throw)| thrown_message(throw)),
+                old_split.and_then(|(_, throw)| thrown_string_form(throw)),
+            )
+        };
         let new_tokens = tokenize(new_line);
         let new_split = new_tokens.as_deref().and_then(split_at_throw);
-        let new_message = new_split.and_then(|(_, throw)| thrown_message(throw));
-        let new_string_form = new_split.and_then(|(_, throw)| thrown_string_form(throw));
+        let new_ambiguous = new_tokens
+            .as_deref()
+            .is_some_and(|tokens| throw_site_count(tokens) > 1);
+        let (new_message, new_string_form) = if new_ambiguous {
+            (None, None)
+        } else {
+            (
+                new_split.and_then(|(_, throw)| thrown_message(throw)),
+                new_split.and_then(|(_, throw)| thrown_string_form(throw)),
+            )
+        };
         let message_only = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
                 let (old_throw, new_throw) = (
@@ -937,6 +968,73 @@ mod tests {
             r#"return Promise.reject(new Error("bad")).b;"#,
         );
         assert!(!member.message_only);
+    }
+
+    #[test]
+    fn multiple_throw_sites_read_no_message() {
+        use TypeScriptErrorPayloadKind as Kind;
+        // Two throw sites: the first-site messages would "separate"
+        // `toThrow("a")`, which credits a test that may only hit the
+        // second throw (#7950).
+        let two_throws = ErrorChangeFacts::read(
+            Some(r#"if (a) throw new Error("a"); if (b) throw new Error("b");"#),
+            r#"if (a) throw new Error("x"); if (b) throw new Error("b");"#,
+        );
+        assert_eq!(two_throws.old_message, None);
+        assert_eq!(two_throws.new_message, None);
+        // The split is kept, so a literal-only first-site change is still
+        // message-only; unread messages then keep `separates` false.
+        assert!(two_throws.message_only);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsLiteral, r#""a""#),
+            &two_throws
+        ));
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsLiteral, r#""x""#),
+            &two_throws
+        ));
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsLiteral, r#""b""#),
+            &two_throws
+        ));
+
+        let two_rejects = ErrorChangeFacts::read(
+            Some(r#"c ? Promise.reject("a") : Promise.reject("b")"#),
+            r#"c ? Promise.reject("x") : Promise.reject("b")"#,
+        );
+        assert_eq!(two_rejects.old_message, None);
+        assert_eq!(two_rejects.new_message, None);
+        assert!(!error_payload_credits(
+            &payload(Kind::RejectsThrowLiteral, r#""a""#),
+            &two_rejects
+        ));
+
+        let mixed = ErrorChangeFacts::read(
+            Some(r#"throw new Error("a"); return Promise.reject("b");"#),
+            r#"throw new Error("x"); return Promise.reject("b");"#,
+        );
+        assert_eq!(mixed.old_message, None);
+        assert_eq!(mixed.new_message, None);
+
+        // A `throw` inside a string is not a second site.
+        let literal_word = ErrorChangeFacts::read(
+            Some(r#"throw new Error("throw a");"#),
+            r#"throw new Error("throw x");"#,
+        );
+        assert_eq!(literal_word.old_message.as_deref(), Some("throw a"));
+        assert_eq!(literal_word.new_message.as_deref(), Some("throw x"));
+
+        // One throw site still reads the message (control).
+        let one = ErrorChangeFacts::read(
+            Some(r#"if (a) throw new Error("a");"#),
+            r#"if (a) throw new Error("x");"#,
+        );
+        assert_eq!(one.old_message.as_deref(), Some("a"));
+        assert_eq!(one.new_message.as_deref(), Some("x"));
+        assert!(error_payload_credits(
+            &payload(Kind::ThrowsLiteral, r#""a""#),
+            &one
+        ));
     }
 
     #[test]
