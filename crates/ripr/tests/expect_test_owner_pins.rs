@@ -169,11 +169,18 @@ fn other_expect_test_and_snapshot_shapes_keep_their_medium_grade() -> Result<(),
             "",
             "insta::assert_snapshot!(render(4), @\"w12\");",
         ),
+        // A tautology compared through the expectation stays weak.
+        (
+            EXPECT_TEST,
+            IMPORT,
+            "",
+            "let r = render(4);\n    expect![[\"true\"]].assert_eq(&(r.is_empty() || !r.is_empty()).to_string());",
+        ),
     ] {
         let finding = render_finding(OLD, NEW, dev, imports, attributes, test)?;
         // The nested comparison sits under a deciding `||`, so it earns
         // no snapshot grade at all.
-        let expected = if test.contains("||") {
+        let expected = if test.starts_with("let _ok") {
             "reachable_unrevealed"
         } else {
             "weakly_exposed"

@@ -12358,6 +12358,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::expect_test_comparisons_extract_as_one_snapshot_oracle",
   "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::an_owner_body_expect_macro_keeps_its_return_paths_open",
   "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::a_nested_expect_comparison_is_not_its_own_snapshot",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/expect_test_pins.rs::a_weak_expect_comparison_keeps_its_weak_grade",
   "crates/ripr/tests/expect_test_owner_pins.rs::every_parsed_inline_expect_spelling_pins_the_owner",
   "crates/ripr/tests/expect_test_owner_pins.rs::other_expect_test_and_snapshot_shapes_keep_their_medium_grade",
   "crates/ripr/tests/expect_test_owner_pins.rs::a_captured_identifier_format_tail_propagates",

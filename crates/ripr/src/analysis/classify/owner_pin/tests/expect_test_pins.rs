@@ -221,6 +221,24 @@ fn an_owner_body_expect_macro_keeps_its_return_paths_open() {
     assert_eq!(admitted(&score("dbg!(x).unwrap_or(0)")).len(), 1);
 }
 
+/// #7856 review: the parsed `snapshot` / medium grade is a ceiling. A
+/// comparison whose compared value is a tautology or a broad `is_err()`
+/// keeps the weak reading the line scan gives it.
+#[test]
+fn a_weak_expect_comparison_keeps_its_weak_grade() {
+    let function = "fn renders() {\n    expect![[\"true\"]].assert_eq(&(r.is_ok() || r.is_err()).to_string());\n    expect![[\"true\"]].assert_eq(&render(1).is_err().to_string());\n}\n";
+    let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
+    let expect_oracles: Vec<_> = oracles
+        .iter()
+        .filter(|oracle| oracle.text.starts_with("expect!"))
+        .collect();
+    assert_eq!(expect_oracles.len(), 2, "{oracles:?}");
+    for oracle in expect_oracles {
+        assert_eq!(oracle.strength, OracleStrength::Weak, "{oracle:?}");
+        assert_ne!(oracle.kind, OracleKind::Snapshot, "{oracle:?}");
+    }
+}
+
 /// A comparison nested under `||` may never run, so only a statement or
 /// tail of the function's own body is extracted as a parser oracle; the
 /// line scan keeps reading the nested line as it did before.

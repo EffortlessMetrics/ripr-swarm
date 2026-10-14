@@ -2416,15 +2416,27 @@ fn extract_parser_oracles(
     {
         let range = method_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        // The parser verified the comparison's shape, so its grade does
-        // not depend on the substring recognizer's spelling (`expect![..]`,
-        // `expect! [[..]]`, `.assert_eq (..)`, a call split across lines).
+        // The parser verified the comparison's shape, so its `snapshot` /
+        // medium grade does not depend on the substring recognizer's
+        // spelling (`expect![..]`, `expect! [[..]]`, `.assert_eq (..)`, a
+        // call split across lines). That grade is a ceiling: a weaker
+        // reading of the compared value (a tautology, a broad `is_err()`)
+        // is kept, as the line scan keeps it.
+        let classification = classify_assertion(&assertion_text);
+        let (kind, strength) = if matches!(
+            classification.strength,
+            OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
+        ) {
+            (classification.kind, classification.strength)
+        } else {
+            (OracleKind::Snapshot, OracleStrength::Medium)
+        };
         let line = line_index.line(range.start());
         expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
         assertions.push(OracleFact {
             line,
-            kind: OracleKind::Snapshot,
-            strength: OracleStrength::Medium,
+            kind,
+            strength,
             observed_tokens: extract_identifier_tokens(&assertion_text),
             text: assertion_text,
             ok_value_observed: None,
