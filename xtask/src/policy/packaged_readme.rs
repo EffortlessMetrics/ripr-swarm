@@ -112,7 +112,13 @@ fn stale_current_line_violations(readme: &str, workspace_version: &str) -> Vec<S
     let workspace_line = major_minor(workspace_version);
 
     for line in readme.lines() {
-        if line.contains(CURRENT_LINE_CLAIM) && !line.contains(workspace_version) {
+        if let Some(claimed) = claimed_current_release_version(line)
+            && claimed != workspace_version
+        {
+            violations.push(format!(
+                "packaged README names `{claimed}` as the current public release line; workspace version is `{workspace_version}`"
+            ));
+        } else if line.contains(CURRENT_LINE_CLAIM) && !line.contains(workspace_version) {
             violations.push(format!(
                 "packaged README names a current public release line that is not workspace version `{workspace_version}`: {}",
                 line.trim()
@@ -130,16 +136,36 @@ fn stale_current_line_violations(readme: &str, workspace_version: &str) -> Vec<S
     violations
 }
 
+fn claimed_current_release_version(line: &str) -> Option<String> {
+    let before = line.split_once(" is the current public release line")?.0;
+    let version = before.rsplit('`').nth(1)?.trim();
+    if looks_like_version(version) {
+        Some(version.to_string())
+    } else {
+        None
+    }
+}
+
+fn looks_like_version(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let major = parts.next();
+    let minor = parts.next();
+    match (major, minor) {
+        (Some(major), Some(minor)) => {
+            !major.is_empty()
+                && !minor.is_empty()
+                && major.bytes().all(|byte| byte.is_ascii_digit())
+                && minor.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
 fn claimed_x_line(line: &str) -> Option<String> {
     let after_tick = line.split('`').nth(1)?;
     let (major_minor, rest) = after_tick.split_once(".x")?;
-    if rest.starts_with(" line") || rest.is_empty() {
-        if major_minor
-            .split('.')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-        {
-            return Some(major_minor.to_string());
-        }
+    if (rest.starts_with(" line") || rest.is_empty()) && looks_like_version(major_minor) {
+        return Some(major_minor.to_string());
     }
     None
 }
@@ -200,10 +226,11 @@ pub(crate) fn crate_readme_filename(crate_toml: &str) -> String {
             in_package = line == "[package]";
             continue;
         }
-        if in_package && let Some(readme) = toml_string_value(line, "readme") {
-            if !readme.is_empty() {
-                return readme;
-            }
+        if in_package
+            && let Some(readme) = toml_string_value(line, "readme")
+            && !readme.is_empty()
+        {
+            return readme;
         }
     }
     DEFAULT_README.to_string()
@@ -372,7 +399,7 @@ ripr check --base origin/main
             "expected stale 0.8.x current-line claim; got {violations:?}"
         );
         assert!(
-            joined.contains("current public release line that is not workspace version `0.11.0`"),
+            joined.contains("names `0.8.0` as the current public release line"),
             "expected stale current-public-release-line claim; got {violations:?}"
         );
         assert!(
@@ -419,9 +446,10 @@ ripr check --base origin/main
         let violations =
             packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
         assert!(
-            violations.iter().any(|v| v
-                .contains("current public release line that is not workspace version `0.11.0`")),
-            "expected wrong current-line claim to fail; got {violations:?}"
+            violations
+                .iter()
+                .any(|v| v.contains("names `0.8.0` as the current public release line")),
+            "expected wrong current-line claim to fail even when the line also names 0.11.0; got {violations:?}"
         );
     }
 
@@ -476,10 +504,11 @@ ripr check --base origin/main
 
     #[test]
     fn workspace_package_version_ignores_other_sections() -> Result<(), String> {
-        let err = workspace_package_version(
+        let Err(err) = workspace_package_version(
             "[package]\nversion = \"0.8.0\"\n[workspace]\nresolver = \"2\"\n",
-        )
-        .expect_err("other-section version must not count");
+        ) else {
+            return Err("other-section version must not count".to_string());
+        };
         if !err.contains("missing") {
             return Err(format!(
                 "expected missing workspace.package version, got {err}"
