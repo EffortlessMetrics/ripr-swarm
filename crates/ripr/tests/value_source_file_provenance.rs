@@ -40,6 +40,41 @@ struct Fixture {
 }
 
 impl Fixture {
+    #[cfg(unix)]
+    fn native_collision() -> Result<Self, String> {
+        let fixture = Self::new("assert_eq!(summary[\"status\"], \"not_collected\");")?;
+        let assertion = "assert_eq!(summary[\"status\"], \"not_collected\");";
+        let source = std::fs::read_to_string(fixture.root.join("src/decoy.rs"))
+            .map_err(|error| error.to_string())?
+            .replace(
+                "    let shared_context = text;",
+                "    let summary = serde_json::json!({\"status\": \"not_collected\"});",
+            );
+        assert_eq!(
+            source.lines().nth(11),
+            Some(format!("    {assertion}").as_str())
+        );
+        std::fs::remove_file(fixture.root.join("src/decoy.rs"))
+            .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(fixture.root.join("src/odd")).map_err(|error| error.to_string())?;
+        fixture.write(
+            "src/odd\\receipt.rs",
+            &source.replace(
+                "unrelated_coverage_summary_receipt_text",
+                "backslash_coverage_summary_receipt_text",
+            ),
+        )?;
+        fixture.write(
+            "src/odd/receipt.rs",
+            &source.replace(
+                "unrelated_coverage_summary_receipt_text",
+                "directory_coverage_summary_receipt_text",
+            ),
+        )?;
+        fixture.write("src/lib.rs", &OWNER.replace("mod decoy;", "#[path = \"odd\\\\receipt.rs\"]\nmod backslash;\n#[cfg(test)]\n#[path = \"odd/receipt.rs\"]\nmod directory;"))?;
+        Ok(fixture)
+    }
+
     fn new(decoy_assertion: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
@@ -256,6 +291,174 @@ fn legacy_facts_keep_unknown_source_identity_without_changing_serialization() ->
     assert_eq!(
         serde_json::to_value(&fact).map_err(|error| error.to_string())?,
         legacy
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn native_backslash_and_directory_assertions_keep_distinct_public_sources() -> Result<(), String> {
+    let fixture = Fixture::native_collision()?;
+    let finding = fixture.finding()?;
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    assert_eq!(
+        sources_for_value(&finding, "\"not_collected\""),
+        vec![
+            serde_json::json!("src/lib.rs"),
+            serde_json::json!("src/odd%5Creceipt.rs"),
+            serde_json::json!("src/odd/receipt.rs"),
+        ]
+    );
+    assert_eq!(finding, fixture.finding()?);
+    let relocated = Fixture::native_collision()?.finding()?;
+    assert_eq!(
+        sources_for_value(&finding, "\"not_collected\""),
+        sources_for_value(&relocated, "\"not_collected\"")
+    );
+    // An unambiguous filename is an independent representation control. Only
+    // the file spelling changes; test names, bodies, lines and calls stay put.
+    std::fs::rename(
+        fixture.root.join("src/odd\\receipt.rs"),
+        fixture.root.join("src/plain_receipt.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    let owner = std::fs::read_to_string(fixture.root.join("src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    fixture.write(
+        "src/lib.rs",
+        &owner.replace("odd\\\\receipt.rs", "plain_receipt.rs"),
+    )?;
+    let unambiguous = fixture.finding()?;
+    for field in [
+        "classification",
+        "ripr",
+        "oracle_kind",
+        "oracle_strength",
+        "recommended_next_step",
+        "suggested_next_action",
+    ] {
+        assert!(
+            finding.get(field).is_some(),
+            "control must inspect real {field}"
+        );
+        assert_eq!(
+            finding[field], unambiguous[field],
+            "filename identity must preserve {field}"
+        );
+    }
+    let oracles =
+        |report: &serde_json::Value| -> Result<Vec<serde_json::Value>, String> {
+            let tests = report["related_tests"]
+                .as_array()
+                .ok_or("missing related tests")?;
+            assert_eq!(tests.len(), 3, "must retain all three related tests");
+            Ok(tests.iter().map(|test| serde_json::json!({
+            "name": test["name"], "oracle": test["oracle"],
+            "oracle_kind": test["oracle_kind"], "oracle_strength": test["oracle_strength"],
+        })).collect())
+        };
+    assert_eq!(oracles(&finding)?, oracles(&unambiguous)?);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn native_collision_fixture_compiles_and_runs_all_three_real_tests() -> Result<(), String> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let fixture = Fixture::native_collision()?;
+    let stdout = fixture.root.join("runtime.stdout");
+    let stderr = fixture.root.join("runtime.stderr");
+    let mut command = std::process::Command::new(env!("CARGO"));
+    command
+        .args(["test", "--offline", "--lib"])
+        .current_dir(&fixture.root)
+        .env("CARGO_TARGET_DIR", fixture.root.join("target"))
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&stdout).map_err(|error| error.to_string())?)
+        .stderr(std::fs::File::create(&stderr).map_err(|error| error.to_string())?);
+    let mut child =
+        ripr::process_owner::OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(120) {
+            child.terminate_tree()?;
+            return Err("native collision fixture exceeded 120-second runtime budget".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let output = std::fs::read_to_string(stdout).map_err(|error| error.to_string())?;
+    let errors = std::fs::read_to_string(stderr).map_err(|error| error.to_string())?;
+    assert!(status.success(), "fixture failed: {output}\n{errors}");
+    assert!(
+        output.contains("3 passed; 0 failed"),
+        "must execute all three real tests: {output}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn removing_each_native_collision_assertion_removes_only_its_source_value() -> Result<(), String> {
+    for (removed, retained) in [
+        ("src/odd\\receipt.rs", "src/odd/receipt.rs"),
+        ("src/odd/receipt.rs", "src/odd%5Creceipt.rs"),
+    ] {
+        let fixture = Fixture::native_collision()?;
+        let before = fixture.finding()?;
+        let source = std::fs::read_to_string(fixture.root.join(removed))
+            .map_err(|error| error.to_string())?;
+        fixture.write(
+            removed,
+            &source.replace(
+                "assert_eq!(summary[\"status\"], \"not_collected\");",
+                "let _ = summary[\"status\"] == \"not_collected\";",
+            ),
+        )?;
+        let after = fixture.finding()?;
+        assert_eq!(
+            sources_for_value(&after, "\"not_collected\""),
+            vec![serde_json::json!("src/lib.rs"), serde_json::json!(retained)]
+        );
+        for field in [
+            "classification",
+            "ripr",
+            "recommended_next_step",
+            "suggested_next_action",
+        ] {
+            assert!(
+                before.get(field).is_some(),
+                "control must inspect real {field}"
+            );
+            assert_eq!(
+                before[field], after[field],
+                "metadata/removal must preserve {field}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn quoted_percent_and_newline_native_origin_survives_public_projection() -> Result<(), String> {
+    let fixture = Fixture::new("assert!(shared_context.contains(\"## UB Ledger Context\"));")?;
+    let native = "src/quoted\"%\nreceipt.rs";
+    std::fs::rename(fixture.root.join("src/decoy.rs"), fixture.root.join(native))
+        .map_err(|error| error.to_string())?;
+    fixture.write(
+        "src/lib.rs",
+        &OWNER.replace(
+            "mod decoy;",
+            "#[path = \"quoted\\\"%\\nreceipt.rs\"]\nmod decoy;",
+        ),
+    )?;
+    assert_eq!(
+        sources_for_value(&fixture.finding()?, "\"## UB Ledger Context\""),
+        vec![serde_json::json!("src/quoted\"%25\nreceipt.rs")]
     );
     Ok(())
 }

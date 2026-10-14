@@ -136,6 +136,11 @@ assertions at the same line. The JSON numeric assertion map remains a legacy
 text-deduplication surface, not a file identity; source-file metadata composes
 with the existing per-value provenance fallback.
 
+Source identity preserves native filename bytes before display normalization.
+Native Windows separators render as `/`; literal Unix backslashes use `%5C`,
+reserved percent signs use `%25`, and non-UTF8 bytes retain the existing `%XX`
+encoding. A literal `%5C` therefore stays distinct as `%255C` (#7838).
+
 This is representation only. Source identity cannot admit an assertion,
 resolve a derived/helper origin, strengthen classification, or manufacture
 an observation path. Derived and legacy facts without an originating-file
@@ -145,3 +150,6 @@ Public-path evidence: `crates/ripr/tests/value_source_file_provenance.rs` pins
 same-line unrelated assertions, assertion removal and identical assertions
 across files while retaining weak classification. Legacy typed facts without
 the optional field deserialize with unknown source identity.
+Unix public controls also pin real backslash-versus-directory files, compiling
+all three fixture tests, removing each colliding assertion with stimuli retained,
+quoted/percent/newline names, and parity across both JSON arrays and SARIF.

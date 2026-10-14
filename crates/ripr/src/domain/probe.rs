@@ -297,7 +297,8 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
-    /// Producer-owned stable path text of the retained source. None means unknown, including
+    /// Producer-owned stable source identity (literal Unix backslashes use `%5C`).
+    /// None means unknown, including
     /// legacy serialized facts and derived values without a source-file witness.
     /// This metadata grants no assertion execution or oracle admission.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -10538,6 +10538,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/activation/source_provenance.rs",
+  "crates/ripr/src/analysis/mod.rs::stable_source_path_text",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/output/sarif.rs",

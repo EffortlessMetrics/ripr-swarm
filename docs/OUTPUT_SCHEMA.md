@@ -1289,6 +1289,9 @@ The evidence-first fields are additive in schema `0.2`:
 - Per-value objects may carry **optional `source_file`** (#7805), the
   producer-owned originating file as stable path text (including the existing
   percent encoding for reserved percent signs and native non-UTF8 bytes).
+  Native separators render as `/`; literal Unix backslashes encode as `%5C`
+  before display normalization, and a literal `%5C` spelling encodes as `%255C`.
+  Thus `src/odd\\receipt.rs` and `src/odd/receipt.rs` retain distinct identities.
   The public struct field is `Option<String>`, so metadata serialization does
   not require the native filename to be UTF-8. Ordinary Rust diff-test source values retain
   their indexed test file. This additive field appears in both observed-value
