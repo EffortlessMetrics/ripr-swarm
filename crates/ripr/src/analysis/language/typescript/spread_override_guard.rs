@@ -8,7 +8,7 @@
 //! change is one such field keeps its credit only when an observed owner
 //! call passes an input that lacks the field or holds another literal there.
 
-use super::{identifier_offsets, ts_mask_literals_and_comments, ts_members_written};
+use super::{identifier_offsets, ts_local_only_read, ts_mask_literals_and_comments};
 
 /// The field one side of the change sets after spreading `subject` and the
 /// other side lacks: `return { ...x, k: L }` against `return { ...x }` (other
@@ -126,7 +126,7 @@ impl SpreadOverride {
 
 /// The object literal a test binds once to `name` with `const name = { ... }`,
 /// or `None` when `name` is bound another way, more than once, or not at all.
-pub(crate) fn ts_test_local_object(body: &str, name: &str) -> Option<String> {
+pub(crate) fn ts_test_local_object(body: &str, name: &str, callees: &[&str]) -> Option<String> {
     let mut found = None;
     for keyword in ["const", "let", "var"] {
         let mut rest = body;
@@ -166,10 +166,11 @@ pub(crate) fn ts_test_local_object(body: &str, name: &str) -> Option<String> {
             found = Some(balanced_object(initializer)?.to_string());
         }
     }
-    // A member written later (`cfg.ok = false`), or a callback parameter of
-    // the same name, means the call may not see the bound literal.
+    // A member written later (`cfg.ok = false`), any use but a read or a
+    // whole owner or matcher argument, or a callback parameter of the same
+    // name, means the call may not see the bound literal.
     let masked = ts_mask_literals_and_comments(body);
-    if ts_members_written(&masked, name, false) || bound_as_parameter(&masked, name) {
+    if !ts_local_only_read(&masked, name, callees) || bound_as_parameter(&masked, name) {
         return None;
     }
     found
@@ -204,7 +205,16 @@ fn skip_type_annotation(text: &str) -> Option<&str> {
 /// `true` when `name` is a parameter of a function or arrow written in the
 /// masked body: `name => ...`, `(a, name) => ...` or `function f(name)`.
 fn bound_as_parameter(masked: &str, name: &str) -> bool {
-    identifier_offsets(masked, name).into_iter().any(|at| {
+    // `identifier_offsets` skips `...name`, which binds in `({ ...name }) =>`.
+    let spreads = masked
+        .match_indices("...")
+        .map(|(at, _)| at + 3)
+        .filter(|&at| {
+            masked[at..].starts_with(name)
+                && !masked[at + name.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        });
+    identifier_offsets(masked, name).into_iter().chain(spreads).any(|at| {
         let after = &masked[at + name.len()..];
         if after.trim_start().starts_with("=>") {
             return true;
@@ -405,6 +415,7 @@ fn is_identifier(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ts_members_written;
     use super::*;
 
     #[test]
@@ -543,17 +554,20 @@ mod tests {
     fn reads_a_test_local_bound_once_to_an_object_literal() {
         let body = "const cfg = { name: \"bo\", ok: true };\n  expect(markOk(cfg)).toEqual(cfg);";
         assert_eq!(
-            ts_test_local_object(body, "cfg").as_deref(),
+            ts_test_local_object(body, "cfg", &["markOk"]).as_deref(),
             Some("{ name: \"bo\", ok: true }")
         );
+        // The same body names another owner, so `markOk(cfg)` is a helper.
+        assert_eq!(ts_test_local_object(body, "cfg", &["ready"]), None);
         assert_eq!(
-            ts_test_local_object("const cfg: Settings = { ok: true };", "cfg").as_deref(),
+            ts_test_local_object("const cfg: Settings = { ok: true };", "cfg", &["ready"]).as_deref(),
             Some("{ ok: true }")
         );
         assert_eq!(
             ts_test_local_object(
                 "const cfg: Map<string, () => boolean> = { ok: true };",
-                "cfg"
+                "cfg",
+                &["ready"]
             )
             .as_deref(),
             Some("{ ok: true }")
@@ -572,22 +586,32 @@ mod tests {
             "const cfg = { ok: true }; [{}].forEach((cfg) => check(ready(cfg)));",
             "const cfg = { ok: true }; [{}].forEach(cfg => check(ready(cfg)));",
             "const cfg = { ok: true }; [{}].forEach(function (cfg) { check(ready(cfg)); });",
+            "const cfg = { ok: true }; [{}].forEach(({ ...cfg }) => check(ready(cfg)));",
+            "const cfg = { ok: true }; try { x(); } catch (cfg) { ready(cfg); }",
+            // any use but a read or a whole owner or matcher argument
+            "const cfg = { ok: true }; (cfg as any).ok = false;",
+            "const cfg = { ok: true }; withOk(cfg);",
+            "const cfg = { ok: true }; Reflect.set(cfg, \"ok\", false);",
+            "const cfg = { ok: true }; const c = cfg; c.ok = false;",
+            "const cfg = { ok: true }; if (cfg.ok == true) { log(cfg); }",
+            "const cfg = { ok: true }; expect(ready([cfg][0])).toEqual(cfg);",
         ] {
-            assert_eq!(ts_test_local_object(body, "cfg"), None, "{body}");
+            assert_eq!(ts_test_local_object(body, "cfg", &["ready"]), None, "{body}");
         }
         assert_eq!(
-            ts_test_local_object("const cfgs = { ok: true };", "cfg"),
+            ts_test_local_object("const cfgs = { ok: true };", "cfg", &["ready"]),
             None
         );
-        // Reading a member, passing the binding to a call, or a ternary
-        // after a call keeps the read.
+        // Reading a member, a whole owner or matcher argument, a spread
+        // copy, or a ternary after a call keeps the read.
         for body in [
             "const cfg = { ok: true }; expect(ready(cfg).ok).toBe(cfg.ok);",
             "const cfg = { ok: true }; const r = flag ? ready(cfg) : null;",
-            "const cfg = { ok: true }; if (cfg.ok == true) { log(cfg); }",
+            "const cfg = { ok: true }; expect(ns.ready(cfg)).toEqual({ ...cfg, ok: true });",
+            "const cfg = { ok: true }; expect(await ready(cfg, 1)).toStrictEqual(cfg);",
         ] {
             assert_eq!(
-                ts_test_local_object(body, "cfg").as_deref(),
+                ts_test_local_object(body, "cfg", &["ready"]).as_deref(),
                 Some("{ ok: true }"),
                 "{body}"
             );

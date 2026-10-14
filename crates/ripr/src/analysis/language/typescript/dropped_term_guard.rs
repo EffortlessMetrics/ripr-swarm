@@ -276,6 +276,52 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
     })
 }
 
+/// RIPR-SPEC-0246 rule 3: `true` when every mention of the test local `name`
+/// in the masked test body only reads it: its `const` declaration, a member
+/// read (`name.k`, `name?.k`, `name[k]`, never written, incremented or
+/// deleted), or a whole argument of `expect`, of a matcher (`.toEqual(name)`)
+/// or of a call named in `callees` (the owner and its renames, bare or
+/// qualified). Any other mention (a cast, an alias, an array or object
+/// entry, a helper call, a callback parameter) could hand the call another
+/// value, so it fails the read.
+pub(crate) fn ts_local_only_read(masked: &str, name: &str, callees: &[&str]) -> bool {
+    identifier_offsets(masked, name).into_iter().all(|at| {
+        let before = masked[..at].trim_end();
+        if before
+            .strip_suffix("const")
+            .is_some_and(|head| !head.ends_with(is_identifier_part))
+        {
+            return true;
+        }
+        if before
+            .strip_suffix("delete")
+            .is_some_and(|head| !head.ends_with(is_identifier_part))
+            || before.ends_with("++")
+            || before.ends_with("--")
+        {
+            return false;
+        }
+        let after = &masked[at + name.len()..];
+        if let Some(rest) = after_member_path(after) {
+            let rest = rest.trim_start();
+            return !(rest.starts_with("++") || rest.starts_with("--") || assigns_after(rest));
+        }
+        let whole = (before.ends_with('(') || before.ends_with(','))
+            && after.trim_start().starts_with([',', ')']);
+        whole
+            && call_argument_callee(masked, at).is_some_and(|callee| {
+                callee == "expect"
+                    || callee.starts_with('.')
+                    || callees.iter().any(|owner| {
+                        callee == *owner
+                            || callee
+                                .strip_suffix(owner)
+                                .is_some_and(|head| head.ends_with('.'))
+                    })
+            })
+    })
+}
+
 /// The text after a non-empty member path (`.k`, `?.k`, `[e]`, `!`, in any
 /// order) at the start of `after`, or `None` when no member follows.
 fn after_member_path(after: &str) -> Option<&str> {

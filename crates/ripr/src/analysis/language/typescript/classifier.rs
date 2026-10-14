@@ -4961,7 +4961,7 @@ pub(crate) fn ts_spread_override_unseen(
                 if argument.starts_with('{') {
                     Some(argument.to_string())
                 } else {
-                    ts_test_local_object(&candidate.test.body_text, argument)
+                    ts_test_local_object(&candidate.test.body_text, argument, &names)
                 }
             });
             match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {
@@ -5166,9 +5166,11 @@ fn ts_whole_owner_call_arguments(
 }
 
 /// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
-/// `ts_whole_owner_call_arguments` names it) whose member `key` `observed`
-/// reads first: `owner(...).key`, `owner(...)?.key` or `owner(...)["key"]`,
-/// optionally followed by a deeper path. `None` for anything else.
+/// `ts_whole_owner_call_arguments` names it) when `observed` is exactly its
+/// member `key`: `owner(...).key`, `owner(...)?.key` or `owner(...)["key"]`,
+/// with nothing after it. `None` for anything else, including an operator
+/// after the member (`.key ?? true` passes on both versions) and an awaited
+/// form (`await owner(x).key` awaits the member, not the call).
 fn ts_owner_call_member_arguments(
     observed: &str,
     names: &[&str],
@@ -5177,9 +5179,6 @@ fn ts_owner_call_member_arguments(
     key: &str,
 ) -> Option<Vec<String>> {
     let observed = observed.trim();
-    let observed = observed
-        .strip_prefix("await ")
-        .map_or(observed, str::trim_start);
     let qualified = receivers
         .iter()
         .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
@@ -5187,24 +5186,13 @@ fn ts_owner_call_member_arguments(
         .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
     let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
     for rest in bare.chain(qualified).map(str::trim_start) {
-        if !rest.starts_with('(') {
+        let Some(arguments) = rest
+            .strip_prefix('(')
+            .and_then(balanced_call_arguments)
+        else {
             continue;
-        }
-        let masked = ts_mask_literals_and_comments(rest);
-        let mut depth = 0usize;
-        let Some(end) = masked.char_indices().find_map(|(index, c)| {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some(index + 1);
-                    }
-                }
-                _ => {}
-            }
-            None
-        }) else {
+        };
+        let Some(end) = call_list_end(rest) else {
             continue;
         };
         let tail = rest[end..].trim_start();
@@ -5213,22 +5201,52 @@ fn ts_owner_call_member_arguments(
             .filter(|tail| !tail.starts_with('['))
             .or_else(|| tail.strip_prefix('.').map(str::trim_start))
             .and_then(|tail| tail.strip_prefix(key))
-            .is_some_and(|after| !after.starts_with(is_identifier_part));
+            .is_some_and(|after| after.trim().is_empty());
         let bracketed = optional
             .unwrap_or(tail)
             .strip_prefix('[')
             .map(str::trim_start)
             .and_then(|inner| {
-                ['"', '\''].into_iter().find_map(|quote| {
-                    inner
-                        .strip_prefix(quote)?
-                        .strip_prefix(key)?
-                        .strip_prefix(quote)
-                })
+                ['"', '\'']
+                    .into_iter()
+                    .find_map(|quote| inner.strip_prefix(quote)?.strip_prefix(key)?.strip_prefix(quote))
             })
-            .is_some_and(|after| after.trim_start().starts_with(']'));
+            .and_then(|after| after.trim_start().strip_prefix(']'))
+            .is_some_and(|after| after.trim().is_empty());
         if dotted || bracketed {
-            return balanced_call_arguments(&rest[1..]);
+            return Some(arguments);
+        }
+    }
+    None
+}
+
+/// The byte offset just past the `)` that closes the argument list opening
+/// `rest`, skipping brackets and quoted text, or `None` when it never closes.
+fn call_list_end(rest: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in rest.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (ch == ')').then_some(index + 1);
+                }
+            }
+            _ => {}
         }
     }
     None

@@ -354,6 +354,33 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
             "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).name).toBe(\"bo\");",
             ExposureClass::WeaklyExposed,
         ),
+        // Anything after the key can pass on both versions.
+        (
+            "spread-key-pin-nullish",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).ok ?? true).toBe(true);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-key-pin-or",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).ok || true).toBe(true);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-key-pin-deeper",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).ok?.foo).toBe(undefined);",
+            ExposureClass::WeaklyExposed,
+        ),
+        // Non-ASCII text in the call reads without a panic.
+        (
+            "spread-key-pin-non-ascii",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"éé\" }).ok).toBe(true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-key-pin-non-ascii-other",
+            "const ñ = 1;\n  expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready(\"éé\", ñ).ok).toBe(true);",
+            ExposureClass::WeaklyExposed,
+        ),
         (
             "spread-key-pin-carries",
             "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ ok: true }).ok).toBe(true);",
