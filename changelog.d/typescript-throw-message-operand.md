@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript: a change confined to the thrown message argument, such as `"limit " + max` becoming `"limit "`, now counts as message-only under RIPR-SPEC-0243 rule 4 unless both sides read the same message. A string `toThrow` payload credits only when it matches exactly one of the old and new messages, so `toThrow("limit ")` no longer reads `exposed` for a change it cannot see (#6654).

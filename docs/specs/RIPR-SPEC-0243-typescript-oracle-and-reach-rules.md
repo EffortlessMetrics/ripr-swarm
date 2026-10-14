@@ -299,10 +299,19 @@ because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
-differs between its old and new text lies inside a string literal in the
-message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
-literal text of a template literal counts; a `${...}` interpolation does
-not, so a changed interpolation is not message-only. On such a change a
+differs between its old and new text lies inside the message argument of
+the thrown or rejected error: the first argument of `new X(...)` or
+`X(...)` with `X` one undotted name, or otherwise the whole thrown or
+rejected operand, a literal, a name, a ternary or a call alike (a literal
+in a condition on the same line does not count). A changed string literal, a
+changed `${...}` interpolation and an added or dropped operand
+(`"limit " + max` against `"limit "`) all count. A change to the class,
+to a member-path class (`new errors.ParseError(...)`), to a later
+argument or after the call does not, and neither does a respelling that
+reads the same message on both sides (`"unsupported currency"` against
+`"unsupported " + "currency"`), which keeps the ladder's reading (amended
+2026-10-14; before that, only changed string literals counted). On such a
+change a
 payload credits only if it separates the two versions: it matches
 exactly one of the old and new messages. A test that passes on the new
 side and one that pins the old message and fails on the new side both

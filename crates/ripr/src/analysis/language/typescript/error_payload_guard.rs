@@ -207,9 +207,11 @@ fn literal_value(token: &LineToken) -> Option<&str> {
 /// The facts rule 4 reads from one changed line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ErrorChangeFacts {
-    /// Every token that differs between the old and new line lies inside a
-    /// string literal (or the literal text of a template) of the thrown or
-    /// rejected expression, and at least one literal's value changed.
+    /// Every token that differs between the old and new line lies inside the
+    /// message argument of the thrown or rejected error (or the thrown
+    /// operand itself), and the argument changed: a literal's value, or a
+    /// whole operand such as `+ max` (amended 2026-10-14). A respelling that
+    /// reads the same message on both sides is not message-only.
     pub(crate) message_only: bool,
     /// The old thrown message with adjacent `+` literals joined; `None` when
     /// an operand is not a literal or the message cannot be located.
@@ -244,11 +246,17 @@ impl ErrorChangeFacts {
         let new_string_form = new_split.and_then(|(_, throw)| thrown_string_form(throw));
         let message_only = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
+                let (old_throw, new_throw) = (
+                    without_trailing_semicolon(old_throw),
+                    without_trailing_semicolon(new_throw),
+                );
                 old_prefix == new_prefix
-                    && literals_alone_differ(
-                        without_trailing_semicolon(old_throw),
-                        without_trailing_semicolon(new_throw),
-                    )
+                    && (literals_alone_differ(old_throw, new_throw)
+                        || (message_argument_alone_differs(old_throw, new_throw)
+                            && !same_readable_message(
+                                old_message.as_deref(),
+                                new_message.as_deref(),
+                            )))
             }
             _ => false,
         };
@@ -341,6 +349,78 @@ fn literals_alone_differ(old: &[LineToken], new: &[LineToken]) -> bool {
         }
     }
     changed
+}
+
+/// The tokens before the message argument of a `throw ...` /
+/// `Promise.reject(...)` run, the argument itself, and the tokens after it,
+/// split where [`thrown_message`] reads the message.
+fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
+    let mut start = 1;
+    if let Some(LineToken::Other(word)) = throw.get(start)
+        && word == "("
+    {
+        start += 1;
+    }
+    let constructed = matches!(throw.get(start), Some(LineToken::Other(word)) if word == "new");
+    if constructed {
+        start += 1;
+    }
+    if let (Some(LineToken::Other(callee)), Some(LineToken::Other(open))) =
+        (throw.get(start), throw.get(start + 1))
+        && open == "("
+        && callee
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && !callee.contains('.')
+    {
+        start += 2;
+    } else if constructed {
+        // `new errors.ParseError(...)` (the tokenizer keeps the dotted path
+        // as one word) or `new X<T>(...)`: the class is not one name, so
+        // the split is refused.
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut end = start;
+    while let Some(token) = throw.get(end) {
+        match token {
+            LineToken::Other(open) if open == "(" || open == "[" || open == "{" => depth += 1,
+            LineToken::Other(close) if close == ")" || close == "]" || close == "}" => {
+                let Some(next) = depth.checked_sub(1) else {
+                    break;
+                };
+                depth = next;
+            }
+            LineToken::Other(comma) if comma == "," && depth == 0 => break,
+            _ => {}
+        }
+        end += 1;
+    }
+    (depth == 0 && end > start).then_some((start, end))
+}
+
+/// Whether the two thrown expressions differ only inside their message
+/// argument (`new RangeError("limit " + max)` against
+/// `new RangeError("limit ")`). The message is then unreadable on the side
+/// with a non-literal operand, so a payload cannot be shown to separate the
+/// versions.
+fn message_argument_alone_differs(old: &[LineToken], new: &[LineToken]) -> bool {
+    let (Some((old_start, old_end)), Some((new_start, new_end))) =
+        (split_message_argument(old), split_message_argument(new))
+    else {
+        return false;
+    };
+    old.get(..old_start) == new.get(..new_start)
+        && old.get(old_end..) == new.get(new_end..)
+        && old.get(old_start..old_end) != new.get(new_start..new_end)
+}
+
+/// Whether both sides read the same message (`"unsupported currency"`
+/// respelled as `"unsupported " + "currency"`): a rewrite, not a message
+/// change, so the ladder's reading stands.
+fn same_readable_message(old: Option<&str>, new: Option<&str>) -> bool {
+    matches!((old, new), (Some(old), Some(new)) if old == new)
 }
 
 /// The thrown message of a `throw ...` / `Promise.reject(...)` token run: the
@@ -570,12 +650,14 @@ mod tests {
         );
         assert!(!respelled.message_only);
 
-        // A `+` split adds an operator token: not message-only (rule 4 text).
+        // A `+` split that reads the same message on both sides is a
+        // rewrite, not a message change (rule 4 text).
         let split = ErrorChangeFacts::read(
             Some(r#"    throw new Error("unsupported currency");"#),
             r#"    throw new Error("unsupported " + "currency");"#,
         );
         assert!(!split.message_only);
+        assert_eq!(split.new_message.as_deref(), Some("unsupported currency"));
         assert_eq!(split.old_message.as_deref(), Some("unsupported currency"));
 
         // A changed condition on the same line is not message-only.
@@ -611,13 +693,77 @@ mod tests {
         assert!(!unicode.message_only);
         assert_eq!(unicode.old_message, None);
 
-        // A changed interpolation is not message-only.
+        // A changed interpolation, or a dropped operand, changes only the
+        // message argument; the side with a non-literal operand stays
+        // unread.
         let interpolation = ErrorChangeFacts::read(
             Some("throw new Error(`bad ${a}`);"),
             "throw new Error(`bad ${b}`);",
         );
-        assert!(!interpolation.message_only);
+        assert!(interpolation.message_only);
         assert_eq!(interpolation.old_message, None);
+        let dropped = ErrorChangeFacts::read(
+            Some(r#"  throw new RangeError("limit " + max);"#),
+            r#"  throw new RangeError("limit ");"#,
+        );
+        assert!(dropped.message_only);
+        assert_eq!(dropped.old_message, None);
+        assert_eq!(dropped.new_message.as_deref(), Some("limit "));
+        let primitive =
+            ErrorChangeFacts::read(Some(r#"throw "limit " + max;"#), r#"throw "limit ";"#);
+        assert!(primitive.message_only);
+        // A member-path class is not one name: the split is refused even
+        // when the class is unchanged.
+        let member_class = ErrorChangeFacts::read(
+            Some(r#"throw new errors.ParseError("bad " + x);"#),
+            r#"throw new errors.ParseError("bad ");"#,
+        );
+        assert!(!member_class.message_only);
+        let member_changed = ErrorChangeFacts::read(
+            Some(r#"throw new errors.A("bad");"#),
+            r#"throw new errors.B("bad");"#,
+        );
+        assert!(!member_changed.message_only);
+        // A change in another argument, or after the call, is not.
+        let cause = ErrorChangeFacts::read(
+            Some(r#"throw new Error("bad", { cause: a });"#),
+            r#"throw new Error("bad", { cause: b });"#,
+        );
+        assert!(!cause.message_only);
+        let member = ErrorChangeFacts::read(
+            Some(r#"return Promise.reject(new Error("bad")).a;"#),
+            r#"return Promise.reject(new Error("bad")).b;"#,
+        );
+        assert!(!member.message_only);
+    }
+
+    #[test]
+    fn a_dropped_message_operand_leaves_no_payload_exact() {
+        // RIPR-SPEC-0248 example 10: `toThrow("limit ")` matches both
+        // `limit 5` and `limit `, and the old message is not a literal.
+        let facts = ErrorChangeFacts::read(
+            Some(r#"  throw new RangeError("limit " + max);"#),
+            r#"  throw new RangeError("limit ");"#,
+        );
+        for (kind, expected) in [
+            (TypeScriptErrorPayloadKind::ThrowsLiteral, r#""limit ""#),
+            (TypeScriptErrorPayloadKind::ThrowsLiteral, r#""limit 5""#),
+            (TypeScriptErrorPayloadKind::ThrowsClass, "RangeError"),
+        ] {
+            assert!(
+                !error_payload_credits(&payload(kind, expected), &facts),
+                "{expected}"
+            );
+        }
+        // A pinned rejection reason that only the old, readable message
+        // holds separates the versions and keeps its credit.
+        let shortened = ErrorChangeFacts::read(
+            Some(r#"return Promise.reject(new Error("bad " + "input"));"#),
+            r#"return Promise.reject(new Error("bad "));"#,
+        );
+        assert!(shortened.message_only);
+        assert!(literal_rejection_credits(Some(r#""input""#), &shortened));
+        assert!(!literal_rejection_credits(Some(r#""bad""#), &shortened));
     }
 
     #[test]
@@ -835,6 +981,19 @@ mod tests {
             &facts
         ));
         // Not a message-only change: anchored regexes keep their credit.
+        let class = ErrorChangeFacts::read(
+            Some(r#"throw new Error("unsupported currency");"#),
+            r#"throw new TypeError("unsupported currency");"#,
+        );
+        assert!(error_payload_credits(
+            &payload(
+                Kind::AssertThrowsRegex,
+                "/^TypeError: unsupported currency$/"
+            ),
+            &class
+        ));
+        // A `+` split that keeps the message is a rewrite: anchored regexes
+        // keep their credit.
         let split = ErrorChangeFacts::read(
             Some(r#"throw new Error("unsupported currency");"#),
             r#"throw new Error("unsupported " + "currency");"#,
@@ -842,6 +1001,17 @@ mod tests {
         assert!(error_payload_credits(
             &payload(Kind::AssertThrowsRegex, "/^Error: unsupported currency$/"),
             &split
+        ));
+        // A readable dropped operand that changes the message is
+        // message-only, and an exact payload for one side separates them.
+        let shortened = ErrorChangeFacts::read(
+            Some(r#"throw new Error("unsupported " + "currency");"#),
+            r#"throw new Error("unsupported ");"#,
+        );
+        assert!(shortened.message_only);
+        assert!(error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^Error: unsupported $/"),
+            &shortened
         ));
     }
 }
