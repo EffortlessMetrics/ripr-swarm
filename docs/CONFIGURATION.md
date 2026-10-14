@@ -200,7 +200,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |

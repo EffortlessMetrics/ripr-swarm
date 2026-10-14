@@ -253,3 +253,15 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+## Unused suppression-policy disclosure
+
+The [repository configuration contract](specs/RIPR-SPEC-0007-repository-configuration.md#unused-default-suppression-disclosure-7759)
+is exercised by a genuine changed Rust fixture and the built CLI:
+
+```bash
+cargo test --locked -p ripr --test default_suppression_disclosure -- --test-threads=1
+```
+
+The suite distinguishes unused presence from explicit application/refusal,
+preserves complete stdout, and excludes foreign-CWD and directory false positives.

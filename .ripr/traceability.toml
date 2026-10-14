@@ -885,6 +885,7 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/tests/default_suppression_disclosure.rs",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry",
   "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_header",
