@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "field_construction",
   "test_shape": "iter_any_field_eq_literal",
-  "hard_case": "Measured defect: the oracle reads exact_value / strong as the spec adopts (rule 7), yet the field-construction finding stays weakly_exposed (\"no field-value assertion observes the constructed field\"): the `.any(|r| r.total == 33)` projection is not linked to the constructed `total` field. Truth is discriminated (#7858).",
+  "hard_case": "Measured defect: the oracle reads exact_value / strong as the spec adopts (rule 7), yet the field-construction finding stays weakly_exposed (\"no field-value assertion observes the constructed field\"). Two links are missing: the `.any(|r| r.total == 33)` closure projection is not tied to the constructed `total` field, and even an indexed `assert_eq!(rows[1].total, 33)` on a struct inside the returned array is not credited. Truth is discriminated (#7858).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
