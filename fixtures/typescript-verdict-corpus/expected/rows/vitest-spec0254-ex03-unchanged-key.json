@@ -1,0 +1,22 @@
+{
+  "case_id": "vitest-spec0254-ex03-unchanged-key",
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "anchor": "src/unitPriceApple.ts:2",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_resolves_tobe_unchanged_key",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0248-multiplied-term",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0248-multiplied-term.diff",
+  "anchor": {
+    "file": "src/scaledTotal.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_removed_span_before_multiplication",
+  "hard_case": "the removed span `+ b` is followed by `*`, so it is not an additive term; read as one, `b` would fold to the tested 0 and wrongly withdraw the credit",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return a * c;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "scaledTotal",
+        "equivalence_review": "not equivalent: `scaledTotal(2, 0, 4)` gives 8 instead of 2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return a + b * c` becomes `return a * c`. The removed span `+ b` binds into `b * c`, so dropping it changes the product, not one additive term. The test pins `expect(scaledTotal(2, 0, 4)).toBe(2)` and the edit returns 8, so the test fails. RIPR-SPEC-0248 example 9: the rule does not apply, so the ladder's `exposed` stands even though `b` is 0 in the only call. ripr reports `exposed` with exact_value / strong, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0248#9"
+  ]
+}

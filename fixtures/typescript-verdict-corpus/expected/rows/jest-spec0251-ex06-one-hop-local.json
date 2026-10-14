@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0251-ex06-one-hop-local",
+  "subject_id": "authored-ts-jest-relations",
+  "origin": "authored",
+  "anchor": "src/priceOneHop.ts:3",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "jest_default_import_one_hop_local",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
