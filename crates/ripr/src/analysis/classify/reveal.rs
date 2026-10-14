@@ -967,14 +967,6 @@ fn analyze_related_assertions(
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
         let credits_oracle = credits(*reason);
-        // #7794: kind alone does not connect a sibling parser equality
-        // to an effect in the owner reached by another test. Unknown
-        // standard-method dispatch is not an observation witness. Keep
-        // token/collection confirmation and opaque macro allowances.
-        let effect_kind_confirms = !is_effect_family(&probe.family)
-            || !(owner_reaching_related
-                && is_proximity_only(*reason)
-                && !invokes_opaque_macro(&test.body));
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -996,6 +988,14 @@ fn analyze_related_assertions(
             && is_proximity_only(*reason)
             && !invokes_opaque_macro(&test.body)
             && !(return_admission.proximity_may_reach_owner)(test));
+        // #7794: kind alone does not connect a sibling parser equality
+        // to an effect in the owner reached by another test. Unknown
+        // standard-method dispatch is not an observation witness. Keep
+        // token/collection confirmation and opaque macro allowances.
+        let effect_kind_confirms = !is_effect_family(&probe.family)
+            || !(owner_reaching_related
+                && is_proximity_only(*reason)
+                && !invokes_opaque_macro(&test.body));
         let assertions: Vec<_> = test
             .assertions
             .iter()
