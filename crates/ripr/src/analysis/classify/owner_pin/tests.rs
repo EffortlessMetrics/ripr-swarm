@@ -7764,3 +7764,40 @@ fn an_integer_projection_that_keeps_the_value_pins() {
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }
+
+#[test]
+fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
+    // trap-pile-first-element-control: `vec![call][0]` is the call's value.
+    for body in [
+        "assert_eq!(vec![crate::weight(4)][0], 12);",
+        "assert_eq!(12, vec![crate::weight(4)][0]);",
+        "assert_eq!(vec![crate::weight(4),][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Another element, index, repeat form or projection.
+        "assert_eq!(vec![crate::weight(4), 1][0], 12);",
+        "assert_eq!(vec![1, crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4); 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0] + 1, 13);",
+        "assert_eq!(vec![crate::weight(4)].len(), 1);",
+        "assert_eq!(vec![crate::weight(4)], vec![12]);",
+        // A qualified `vec!`, another nested macro, or another assertion.
+        "assert_eq!(std::vec![crate::weight(4)][0], 12);",
+        "assert_eq!(vec![dbg!(crate::weight(4))][0], 12);",
+        "assert_eq!(vec![format!(\"{}\", crate::weight(4))][0], \"12\");",
+        "assert_ne!(vec![crate::weight(4)][0], 13);",
+        "assert!(vec![crate::weight(4)][0] == 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // A non-scalar owner keeps only the bare call.
+    let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}

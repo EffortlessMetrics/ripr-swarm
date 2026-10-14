@@ -2664,11 +2664,12 @@ fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
         .any(|(name, plain)| !(plain && NESTED_EXPANSIONS.contains(&name)))
 }
 
-/// A bare `matches!` or `format!` in a macro operand expands to one `match`
-/// or call over its own operands (RIPR-SPEC-0197 literal `matches!` and
-/// rendered scalar pins), which the token scan above already reads for
-/// exits; its binding is checked with the invoking macros'.
-const NESTED_EXPANSIONS: &[&str] = &["matches", "format"];
+/// A bare `matches!`, `format!` or `vec!` in a macro operand expands to one
+/// `match`, call or vector over its own operands (RIPR-SPEC-0197 literal
+/// `matches!`, rendered scalar pins and single-element indexes), which the
+/// token scan above already reads for exits; its binding is checked with the
+/// invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()

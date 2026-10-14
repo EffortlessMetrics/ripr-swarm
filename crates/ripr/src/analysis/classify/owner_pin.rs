@@ -1945,10 +1945,13 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
-        // A nested `format!` is read only as a rendered scalar pin.
-        let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
-        let reads_assert_eq =
-            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
+        // A nested `format!` is read only as a rendered scalar pin, and a
+        // nested `vec!` only as a single-element index.
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let reads_assert_eq = renders
+            || indexes
+            || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -1985,14 +1988,27 @@ impl OwnerReturnPin {
                             })
                         })
                         .flatten()
+                })
+                // trap-pile-first-element-control: `vec![call][0]` is the
+                // call's own value.
+                .or_else(|| {
+                    (self.returns_scalar && matches!(self.path, ReturnPathGate::Any) && indexes)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                single_element_index(operands[at])
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other]))
+                            })
+                        })
+                        .flatten()
                 });
             match (
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
                 rendered,
             ) {
-                (_, _, Some(pin)) if renders => pin,
-                _ if renders => return false,
+                (_, _, Some(pin)) if renders || indexes => pin,
+                _ if renders || indexes => return false,
                 (Some(call), None, _) => (call, operands[1]),
                 (None, Some(call), _) => (call, operands[0]),
                 (None, None, Some(pin)) => pin,
@@ -5317,9 +5333,10 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
-/// `assert_eq!` whose only nested macros are `format!`, which
-/// [`rendered_scalar_operand`] reads.
-fn is_assert_eq_of_render(text: &str) -> bool {
+/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// [`rendered_scalar_operand`] reads, or `vec!`, which
+/// [`single_element_index`] reads).
+fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
@@ -5327,7 +5344,7 @@ fn is_assert_eq_of_render(text: &str) -> bool {
     };
     *first == "assert_eq"
         && !nested.is_empty()
-        && nested.iter().all(|(name, _)| *name == "format")
+        && nested.iter().all(|(name, _)| *name == expansion)
         && masked
             .find("assert_eq")
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
@@ -6868,6 +6885,26 @@ fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a 
         .or_else(|| before(operand, '*', '1'))
         .or_else(|| before(operand, '+', '0'))
         .filter(|call| !call.is_empty())
+}
+
+/// trap-pile-first-element-control: the call inside `vec![call][0]`, a
+/// one-element vector indexed at zero, which is the call's own value. A
+/// repeat form (`vec![call; n]`), a second element or any other index
+/// refuses.
+fn single_element_index(operand: &str) -> Option<&str> {
+    let inner = operand
+        .trim()
+        .strip_suffix("[0]")?
+        .trim_end()
+        .strip_prefix("vec![")?
+        .strip_suffix(']')?;
+    if inner.contains(';') {
+        return None;
+    }
+    match split_top_level_arguments(inner)?.as_slice() {
+        [call] | [call, ""] => Some(call),
+        _ => None,
+    }
 }
 
 /// A plain `"..."` string literal with no escapes or inner quotes.
