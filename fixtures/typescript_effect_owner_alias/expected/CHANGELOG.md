@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_effect_owner_alias (2)
+
+Reason:
+RIPR-SPEC-0243 (#7514): retain the full-human class and oracle projection required by the independent honesty assertions.
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
