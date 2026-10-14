@@ -2395,11 +2395,10 @@ pub(in crate::cli) fn before_phase_stdout(
         });
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
-            &crate::agent::loop_commands::human_after_phase_follow_up(&continuation.next_command),
+            &crate::agent::human_after_phase_follow_up(&continuation.next_command),
         ));
     } else {
-        let follow_up =
-            crate::agent::loop_commands::human_after_phase_follow_up(&continuation.next_command);
+        let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));

@@ -479,43 +479,6 @@ pub(crate) fn shell_path(path: &Path) -> String {
     shell_arg(&display_path(path))
 }
 
-/// Human-facing after-phase follow-up for an ordinary repair attempt (#7879).
-///
-/// The persisted manifest `next_command` stays the advanced
-/// `ripr agent repair --attempt … --phase after` spelling so machine
-/// drivers and trust-bound routes keep a canonical form. Ordinary human
-/// next-step lines teach `ripr continue` instead, matching the façade
-/// help. Trust-bound, store-qualified, and unparseable commands keep the
-/// persisted spelling because `ripr continue` cannot carry those flags.
-pub(crate) fn human_after_phase_follow_up(persisted_next_command: &str) -> String {
-    if after_phase_requires_advanced_spelling(persisted_next_command) {
-        return persisted_next_command.to_string();
-    }
-    continue_from_agent_after(persisted_next_command)
-        .unwrap_or_else(|| persisted_next_command.to_string())
-}
-
-fn after_phase_requires_advanced_spelling(command: &str) -> bool {
-    command.contains("--edit-authorized")
-        || command.contains("--edit-authority")
-        || command.contains("--verify-authorized")
-        || command.contains("--store")
-}
-
-fn continue_from_agent_after(persisted: &str) -> Option<String> {
-    const PREFIX: &str = "ripr agent repair --root ";
-    const PHASE: &str = " --phase after";
-    const ATTEMPT: &str = " --attempt ";
-    let rest = persisted.strip_prefix(PREFIX)?.strip_suffix(PHASE)?;
-    let attempt_at = rest.find(ATTEMPT)?;
-    let root = &rest[..attempt_at];
-    let attempt = &rest[attempt_at + ATTEMPT.len()..];
-    if root.is_empty() || attempt.is_empty() || attempt.contains(" --") {
-        return None;
-    }
-    Some(format!("ripr continue --root {root} --attempt {attempt}"))
-}
-
 /// Render `value` as a single bash argv token for an advisory command string.
 ///
 /// These strings are published for a human or an agent to copy into a shell, so
@@ -630,30 +593,6 @@ mod tests {
     /// cannot race `set_current_dir` writers in the same process.
     fn hold_cwd_read_guard() -> impl Drop {
         super::super::loop_commands_cwd_read_guard()
-    }
-
-    /// Ordinary after-phase follow-ups teach `ripr continue`; routes the
-    /// façade cannot run keep the persisted advanced spelling (#7879).
-    #[test]
-    fn ordinary_after_phase_follow_up_names_ripr_continue() {
-        assert_eq!(
-            human_after_phase_follow_up(
-                "ripr agent repair --root /tmp/probe --attempt repair-attempt-de699662a4338840692e0700 --phase after"
-            ),
-            "ripr continue --root /tmp/probe --attempt repair-attempt-de699662a4338840692e0700"
-        );
-        assert_eq!(
-            human_after_phase_follow_up(
-                "ripr agent repair --root 'repo root' --attempt 'abc def' --phase after"
-            ),
-            "ripr continue --root 'repo root' --attempt 'abc def'"
-        );
-        let trust_bound = "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after --edit-authorized --edit-authority <operator-or-agent-identity>";
-        assert_eq!(human_after_phase_follow_up(trust_bound), trust_bound);
-        let store_bound = "ripr agent repair --root . --store /tmp/store --attempt repair-attempt-aa --phase after";
-        assert_eq!(human_after_phase_follow_up(store_bound), store_bound);
-        let incomplete = "ripr agent repair --phase after";
-        assert_eq!(human_after_phase_follow_up(incomplete), incomplete);
     }
 
     /// #4000: a portable command's analyzed root and redirect target must

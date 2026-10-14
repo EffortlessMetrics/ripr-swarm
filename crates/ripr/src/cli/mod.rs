@@ -440,8 +440,7 @@ fn persist_before_repair_attempt(
     // Human next-step lines teach `ripr continue` for ordinary attempts
     // (#7879). The persisted manifest and JSON continuation keep the
     // advanced `--phase after` spelling.
-    let follow_up =
-        crate::agent::loop_commands::human_after_phase_follow_up(&result.manifest.next_command);
+    let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
     eprintln!("ripr: attempt next command: {follow_up}");
     let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
     if let Some(form) = &next_powershell {

@@ -598,7 +598,7 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(crate::agent::loop_commands::human_after_phase_follow_up(
+                        Some(crate::agent::human_after_phase_follow_up(
                             &manifest.next_command,
                         )),
                     ),
