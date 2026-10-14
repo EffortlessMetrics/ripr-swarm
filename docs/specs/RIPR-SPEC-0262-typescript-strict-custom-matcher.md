@@ -108,7 +108,7 @@ file may register or replace it:
   `import { expect }`; it has no namespace import, no default import from
   `@jest/globals`, `@jest/expect`, `vitest` or `bun:test`, and no dynamic
   `import(` or `import` mention beyond its import declarations; no `[`
-  after a name, `)`, `]`, `}`, `!`, `?.`, a comment or a non-ASCII
+  after a name, `)`, `]`, `}`, `!`, `?.`, a block comment or a non-ASCII
   character holds anything but a number (so no computed member can build
   `"ext" + "end"`; a reserved word starts an array instead, but not after
   `.`, and `of`, `keyof` and `readonly` count as names); and it never
@@ -176,6 +176,8 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
   found, ordinary and reflective. A file that builds code at runtime, or
   reaches the runner's matcher table through a reflective path the list
   does not name (a timer given a code string, for example), is not seen.
+  So is an index that a line comment ending in a reserved word hides
+  (`g // return` and then `["exp" + "ect"]` on the next line).
 - `Object.is(received, expected)` stays `unknown`.
 - A matcher whose comparison goes through a helper (`equals(r, e)`,
   `this.equals`) or another statement stays `unknown`.

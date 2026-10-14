@@ -164,7 +164,7 @@ const GLOBAL_ROOTS: &[&str] = &[
 ];
 
 /// `true` when `source` holds a `[` that may index a value by a name other
-/// than a number literal: one after a name, `)`, `]`, `}`, `!`, `?.`, a
+/// than a number literal: one after a name, `)`, `]`, `}`, `!`, `?.`, a block
 /// comment or a non-ASCII character. A `[` after a reserved word
 /// (`return [a]`, `const [a]`) starts an array or a pattern instead; one in
 /// a type (`number[]`) is empty. `of`, `keyof` and `readonly` may name a

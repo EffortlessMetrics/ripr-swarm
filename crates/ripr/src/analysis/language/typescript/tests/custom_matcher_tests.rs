@@ -273,6 +273,16 @@ fn custom_matcher_assertion_shape_must_compare_one_value() {
             "{test}"
         );
     }
+    // A negated assertion reads strong under no matcher name either.
+    let negated = format!(
+        "{CENTS_MATCHER}test(\"cents\", () => {{\n  expect(toCents(1.5)).not.toBeCents(150);\n}});\n"
+    );
+    assert!(
+        extract_tests(Path::new("test/cents.test.ts"), &negated)
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .all(|assertion| assertion.oracle_strength != OracleStrength::Strong)
+    );
     // A shadowed `expect` reaches no runner matcher at all.
     let shadowed = format!("const expect = (x: unknown) => x;\n{CENTS_MATCHER}{CENTS_TEST}");
     assert!(cents_oracles(&shadowed).is_empty());
