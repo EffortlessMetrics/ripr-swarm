@@ -1,11 +1,22 @@
 //! #7807: real multi-file Git changes must not count replacements as deletions.
 use super::{run_command, run_git, unique_external_workspace};
 use serde_json::Value;
+use std::path::Path;
+
+struct FixtureCleanup<'a>(&'a Path);
+
+impl Drop for FixtureCleanup<'_> {
+    fn drop(&mut self) {
+        // Normal completion checks cleanup errors below; unwinding remains bounded.
+        let _ = std::fs::remove_dir_all(self.0);
+    }
+}
 
 #[test]
 fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_external_workspace("short-predicate-pairing")?;
+    let _cleanup = FixtureCleanup(&root);
     let result: Result<(), Box<dyn std::error::Error>> = (|| {
         std::fs::create_dir_all(root.join("src"))?;
         std::fs::write(

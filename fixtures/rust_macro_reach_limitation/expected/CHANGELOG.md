@@ -417,3 +417,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_reach_limitation (15)
+
+Reason:
+RIPR-SPEC-0001, issue #7807: exact equal-sized replacement reconciliation removes only represented base_deleted duplicates; independently verified surviving finding IDs/classes and distinct family/constructor obligations.
+
+Command:
+`cargo xtask goldens bless rust_macro_reach_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
