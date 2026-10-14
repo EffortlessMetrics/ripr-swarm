@@ -256,26 +256,32 @@ Two pattern terms are used below.
    turbofish, `->`, `=>` and a shift are not comparisons), `||` or `&&`
    (through any `!` or `.not()`), an `X` asserted false,
    an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
-   relational all cap the reading at `relational_check` / weak. An `&&`
+   relational all cap the reading at `relational_check` / weak (a `<`
+   that opens the operand or follows `::` opens a path, not a comparison:
+   `<T as Tr>::f(x) == y`). An `&&`
    chain asserted true with a `matches!` conjunct and no pinning `==`
    conjunct reads like the same chain in `assert!` (rule 3). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
-   `matches!` (the polarity rule above) keep their readings. `^`, `&`
-   and `|` over an operand holding a `matches!` or a comparison, with no
+   `matches!` (the polarity rule above) keep their readings. `^` and a
+   single `|` over an operand holding a `matches!` or a comparison, with no
    top-level comparison of their own, also cap (`assert_eq!((r ==
    Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
-   they still pin a bool result. In a boolean assertion condition, or an
+   they still pin a bool result; a single `&` over booleans is a
+   conjunction and reads like `&&`. In a boolean assertion condition, or an
    equality-macro operand compared with a boolean literal, a `matches!`
-   that is an operand of `^`, `&`, `|`, `<`, `>`, `<=` or `>=`, an
+   that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=`, an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
-   directly or through nested calls), or inside an `if`, `while` or
-   `match` condition may be inverted or discarded, so it caps the reading
-   like a negated pattern: in a top-level `&&` chain with no top-level `||`
-   its conjunct drops out and the other conjuncts decide
+   directly or through nested calls), or after an `if`, `while` or
+   `match` keyword anywhere in the condition may be inverted or
+   discarded, so it caps the reading like a negated pattern. In a boolean
+   assertion's top-level `&&` chain with no top-level `||` its conjunct
+   drops out and the other conjuncts decide
    (`ensure!(check(matches!(r, Ok(3))) && score == 4)` reads as
-   `ensure!(score == 4)`). A call whose result is read again
+   `ensure!(score == 4)`); in the equality-macro form the whole compared
+   operand caps (`assert_eq!(score == 4 && check(matches!(r, Ok(3))),
+   true)` reads `relational_check` / weak). A call whose result is read again
    (`foo(matches!(..)).is_ok()`, `Some(true) == Some(matches!(..))`), a
    `matches!` scrutinee (`matches!(build(matches!(..)), Ok(_))`) and a
    closure body (`xs.iter().any(|x| f(matches!(x, Some(3))))`) keep their

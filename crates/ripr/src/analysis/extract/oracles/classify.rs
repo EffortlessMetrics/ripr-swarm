@@ -177,8 +177,10 @@ pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     let polarity = pattern_comparison_polarity(line);
     is_inequality_macro_assertion(line)
         || bool_literal_comparison_reading(line) == Some(BoolOperandReading::Capped)
-        || (contains_unread_pattern_operand(line)
-            && unread_pattern_conjunct_rest(line).is_none_or(|rest| rest.is_empty()))
+        || unread_pattern_conjunct_rest(line).map_or_else(
+            || contains_unread_pattern_operand(line),
+            |rest| rest.is_empty(),
+        )
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
         || (contains_negated_pattern(line)

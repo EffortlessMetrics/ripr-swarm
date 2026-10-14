@@ -658,15 +658,26 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // An unspaced comparison is still a relation.
         ("assert_eq!(score(2)>0, true);", &weak),
         ("assert_eq!(true, 0<score(2));", &weak),
-        // `^`, `&` and `|` over a pattern or comparison may invert it, in
-        // either assertion form, and so may a call taking it at any position.
+        ("assert_eq!(Vec::<Vec<u8>>::new().len() > 0, true);", &weak),
+        // `^` and `|` over a pattern or comparison may invert it, in either
+        // assertion form, and so may a call taking it at any position.
         ("assert_eq!(matches!(r, Ok(3)) ^ true, true);", &weak),
         ("assert_eq!((r == Err(E::Bad)) ^ true, true);", &weak),
         ("assert_eq!(f(matches!(r, Err(E::Bad))), true);", &weak),
         ("assert!(f(1, matches!(r, Err(E::Bad))));", &weak),
         ("assert!(f(g(matches!(r, Err(E::Bad)))));", &weak),
         ("assert!(matches!(r, Err(E::Bad)) | true);", &weak),
-        ("assert!(matches!(r, Err(E::Bad)) & ready);", &weak),
+        // A single `&` over booleans is a conjunction: both must hold.
+        ("assert!(matches!(r, Err(E::Bad)) & ready);", &err),
+        (
+            "assert_eq!(xs.iter().any(|x| *x == 3) & flag, true);",
+            &exact,
+        ),
+        // An `if` anywhere in the condition may invert the pattern it tests.
+        (
+            "assert!(flag == if matches!(r, Ok(3)) { false } else { true });",
+            &weak,
+        ),
         (
             "assert!(match r { Ok(_) => matches!(s, Ok(3)), _ => false });",
             &weak,
@@ -683,6 +694,21 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("ensure!(check(matches!(r, Ok(3))) && ready);", &weak),
+        (
+            "assert!(f(matches!(r, Ok(3))) && g(matches!(s, Ok(4))));",
+            &weak,
+        ),
+        // In the equality-macro form the whole compared operand caps.
+        (
+            "assert_eq!(score == 4 && check(matches!(r, Ok(3))), true);",
+            &weak,
+        ),
+        // A pattern under a call inside a closure guard is not an operand of
+        // the asserted condition.
+        (
+            "assert!(xs.iter().filter(|x| f(matches!(x, Some(3)))).count() == 2);",
+            &exact,
+        ),
         // Controls: a comparison asserted true, a bare value or call, a
         // pinning chain and a pattern in a closure keep today's reading.
         ("assert_eq!(r == Err(E::Bad), true);", &err),
@@ -694,6 +720,9 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(Vec::<u8>::new() == v, true);", &exact),
         ("assert_eq!(Vec::<u8 >::new() == v, true);", &exact),
         ("assert_eq!(Vec::<Vec<u8>>::new() == v, true);", &exact),
+        // A leading or qualified `<` opens a path, not a comparison.
+        ("assert_eq!(<Vec<u8>>::new() == v, true);", &exact),
+        ("assert_eq!(<T as Tr>::f(x) == y, true);", &exact),
         ("assert_eq!(a << 2 == b, true);", &exact),
         ("assert_eq!(a & mask == b, true);", &exact),
         ("assert_eq!(is_a(x) ^ true, true);", &exact),
@@ -726,6 +755,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
     for text in [
         "assert_eq!(r == Err(E::Bad), false);",
         "assert!(std::ops::Not::not(matches!(r, Err(E::Bad))));",
+        "assert!(f(matches!(r, Ok(3))) && g(matches!(s, Ok(4))));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
