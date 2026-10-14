@@ -70,7 +70,10 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     // (`is_a(x) ^ true`) they still pin a bool result.
     let holds_test = {
         let masked = mask_comments_and_strings(core);
-        masked.contains("matches!") || masked.contains("==") || masked.contains("!=")
+        masked.contains("matches!")
+            || masked.contains("==")
+            || masked.contains("!=")
+            || holds_comparison_call(&masked)
     };
     let bitwise =
         comparison.is_none() && !relational && holds_test && has_top_level_bitwise_operator(core);
@@ -280,8 +283,7 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
             let receiver = text.get(..receiver.len())?.trim();
             // A leading unary operator applies to the call's result
             // (`!x.eq(&y)` is `!(x.eq(&y))`), so it is not the receiver.
-            let unary = receiver.starts_with(['!', '&', '*', '-'])
-                && unwrap_parentheses(receiver).len() == receiver.len();
+            let unary = receiver.starts_with(['!', '&', '*', '-']);
             if !receiver.is_empty() && !unary && is_single_operand(receiver) {
                 return Some((name, receiver, arguments.trim()));
             }
@@ -317,7 +319,11 @@ fn split_two_arguments(arguments: &str) -> Option<(&str, &str)> {
         match byte {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b'<' if index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..]) => {
+            // Inside a turbofish every `<` opens a nested generic
+            // (`::<Vec<u8>, u8>`).
+            b'<' if generics > 0
+                || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..])) =>
+            {
                 generics += 1;
             }
             // `->` inside generics (`Fn() -> T`) closes nothing.
@@ -403,10 +409,18 @@ fn conjunct_states_relation(conjunct: &str) -> bool {
     let (core, negated, _) = strip_negations(conjunct.trim());
     let relational = has_top_level_relational_operator(core);
     let masked = mask_comments_and_strings(core);
-    let holds_test =
-        relational || masked.contains("matches!") || masked.contains("==") || masked.contains("!=");
+    let holds_test = relational
+        || masked.contains("matches!")
+        || masked.contains("==")
+        || masked.contains("!=")
+        || holds_comparison_call(&masked);
     (negated && holds_test)
         || relational
+        // `^` and `|` may invert or discard a comparison call
+        // (`flag ^ r.ne(&x)`), as they do an operator comparison.
+        || (holds_comparison_call(&masked)
+            && top_level_comparison_operator(core).is_none()
+            && has_top_level_bitwise_operator(core))
         || method_comparison(core).is_some_and(|method| method != "eq" || negated)
         || top_level_comparison_operator(core).and_then(|(at, width)| core.get(at..at + width))
             == Some("!=")
@@ -600,35 +614,106 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     })
 }
 
+/// Whether masked `text` spells a comparison as a call anywhere
+/// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931).
+fn holds_comparison_call(text: &str) -> bool {
+    text.contains("PartialEq::")
+        || text.contains("PartialOrd::")
+        || ["eq", "ne", "lt", "le", "gt", "ge"].iter().any(|name| {
+            text.match_indices(&format!(".{name}"))
+                .any(|(at, matched)| {
+                    text.get(at + matched.len()..)
+                        .is_some_and(|rest| rest.trim_start().starts_with(['(', ':']))
+                })
+        })
+}
+
 /// Whether a method is called on the `matches!` result itself, through only
-/// the parentheses that wrap it (`matches!(..).eq(&false)`,
+/// the parentheses or one-expression blocks that wrap it (`matches!(..).eq(&false)`,
 /// `(matches!(..)).then(|| false)`; #7931). A method can compare, invert or
 /// discard the bool, so the pattern is not read. A method after a call that
 /// takes the `matches!` as an argument (`xs.iter().filter(|x| matches!(..))
 /// .count()`) is the call's, not the pattern's.
 fn method_on_pattern(before: &str, after: &str) -> bool {
-    // Only grouping parentheses wrap the pattern; a `(` after a name, `!`
-    // or closing delimiter opens a call (`foo(matches!(..)).is_ok()`).
-    let mut wrapping = 0;
+    // Only grouping parentheses and one-expression blocks wrap the pattern
+    // (`({ matches!(..) }).then(..)`). A `(` after a name, `!` or closing
+    // delimiter opens a call (`foo(matches!(..)).is_ok()`), and a `{` after
+    // one opens a closure, `if` or `match` body (`|| { matches!(..) }`).
+    let mut closers = Vec::new();
     let mut head = before.trim_end();
-    while let Some(rest) = head.strip_suffix('(') {
+    while let Some((rest, closer)) = head
+        .strip_suffix('(')
+        .map(|rest| (rest, ')'))
+        .or_else(|| head.strip_suffix('{').map(|rest| (rest, '}')))
+    {
         let rest = rest.trim_end();
-        if rest
-            .ends_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '!' | ')' | ']' | '>'))
-        {
+        if rest.ends_with(|ch: char| {
+            ch.is_alphanumeric() || matches!(ch, '_' | '!' | ')' | ']' | '>' | '|')
+        }) {
             break;
         }
-        wrapping += 1;
+        closers.push(closer);
         head = rest;
     }
     let mut rest = after.trim_start();
-    for _ in 0..wrapping {
-        match rest.strip_prefix(')') {
+    for closer in closers {
+        match rest.strip_prefix(closer) {
             Some(next) => rest = next.trim_start(),
             None => break,
         }
     }
-    rest.starts_with('.') && !rest.starts_with("..")
+    rest.starts_with('.') && !rest.starts_with("..") && !asserts_pattern_through_literal_calls(rest)
+}
+
+/// Whether `rest`, the method chain on a `matches!` result, is only `eq` or
+/// `ne` calls against boolean literals that keep the pattern's polarity
+/// (`.eq(&true)`, `.ne(&false)`, `.eq(&false).eq(&false)`), ending the
+/// operand. Such a chain asserts the pattern itself; any other method,
+/// operator or odd number of negations leaves it unread.
+fn asserts_pattern_through_literal_calls(mut rest: &str) -> bool {
+    let mut negated = false;
+    let mut calls = 0;
+    while let Some(method) = rest.strip_prefix('.') {
+        let Some((name, tail)) = ["eq", "ne"].iter().find_map(|name| {
+            method
+                .strip_prefix(name)
+                .map(|tail| (*name, tail.trim_start()))
+        }) else {
+            return false;
+        };
+        let Some(close) = closing_parenthesis(tail) else {
+            return false;
+        };
+        let Some(value) = tail.get(1..close).and_then(literal_spelling_value) else {
+            return false;
+        };
+        negated ^= value == (name == "ne");
+        calls += 1;
+        rest = tail.get(close + 1..).unwrap_or_default().trim_start();
+    }
+    let rest = rest.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+    calls > 0 && !negated && (rest.is_empty() || rest.starts_with("&&") || rest.starts_with("||"))
+}
+
+/// The index of the `)` that closes the `(` starting `text`.
+fn closing_parenthesis(text: &str) -> Option<usize> {
+    if !text.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (byte == b')').then_some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether `before` (masked) ends inside the condition or scrutinee of an

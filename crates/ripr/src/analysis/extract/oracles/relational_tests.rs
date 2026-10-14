@@ -841,6 +841,16 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &err,
         ),
         ("assert_eq!(flag.eq(&false), true);", &exact),
+        // An `eq`/`ne` chain against literals that keeps a pattern's
+        // polarity asserts the pattern (review of #7992).
+        ("assert!(matches!(r, Err(E::Bad)).eq(&true));", &err),
+        ("assert!(matches!(r, Err(E::Bad)).ne(&false));", &err),
+        (
+            "assert!((matches!(r, Err(E::Bad))).eq(&false).eq(&false));",
+            &err,
+        ),
+        ("assert_eq!(r == Err(E::Bad), (true as bool));", &err),
+        ("assert_eq!(&(r == Err(E::Bad)) == &false, false);", &err),
         // A double negation through literal spellings asserts the
         // comparison itself, like `(r == Err(E::Bad)) == false` asserted
         // false.
@@ -930,6 +940,20 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(flag && r.eq(&Err(E::Bad)).eq(&false), false);",
         "assert_eq!(flag && (r == Err(E::Bad)).eq(&false), false);",
         "assert_eq!(flag && PartialEq::eq(&(r == Err(E::Bad)), &false), false);",
+        "assert_eq!(PartialEq::eq(&HashMap::<Vec<u8>, u8>::new(), &m), false);",
+        // `^` and `|` over a comparison call, and a pattern method behind a
+        // one-expression block or an odd literal-call chain.
+        "assert_eq!(r.eq(&Err(E::Bad)) ^ true, true);",
+        "assert_eq!(flag ^ r.ne(&Err(E::Bad)), true);",
+        "assert_eq!(flag ^ r.eq(&Err(E::Bad)), false);",
+        "assert_eq!(flag | score(2).lt(&3), true);",
+        "assert_eq!(flag ^ PartialEq::ne(&r, &Err(E::Bad)), true);",
+        "assert_eq!(ready && (flag ^ r.ne(&Err(E::Bad))), true);",
+        "assert!(({ matches!(r, Err(E::Bad)) }).then(|| false).unwrap_or(true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&false));",
+        "assert!(matches!(r, Err(E::Bad)).ne(&true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true).then(|| false).unwrap_or(true));",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true) ^ flag);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
@@ -945,6 +969,8 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "ensure!(check(matches!(r, Ok(3))) && score == 4);",
         "assert!(matches!(build(matches!(k, Kind::A)), Ok(Mode::Dark)));",
         "assert!(foo(matches!(x, A)).is_ok());",
+        "assert!(foo(|| { matches!(x, A) }).is_ok());",
+        "assert!(matches!(r, Err(E::Bad)).eq(&true));",
     ] {
         if is_inequality_assertion(text) {
             return Err(format!("{text}: must not read as an inequality"));

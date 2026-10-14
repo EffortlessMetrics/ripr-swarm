@@ -291,9 +291,10 @@ Two pattern terms are used below.
    false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
    `r == Err(E::Bad)`).
    `^` and a
-   single `|` over an operand holding a `matches!` or a comparison, with no
-   top-level comparison of their own, also cap (`assert_eq!((r ==
-   Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
+   single `|` over an operand holding a `matches!` or a comparison, in
+   operator or call spelling, with no top-level comparison of their own,
+   also cap (`assert_eq!((r == Err(E::Bad)) ^ true, true)`,
+   `assert_eq!(flag ^ r.ne(&Err(E::Bad)), true)`); over plain bool values (`is_a(x) ^ true`)
    they still pin a bool result. A top-level single `&` over booleans is a
    conjunction and reads like `&&`; beside a top-level comparison it is a
    bitwise operand (`a & mask == b`). A string or char literal before `<`
@@ -301,9 +302,12 @@ Two pattern terms are used below.
    equality-macro operand compared with a boolean literal, a `matches!`
    that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=` (on either
    side; a closure's parameter bars are not `|`), cast with `as`, the
-   receiver of a method call through only grouping parentheses
-   (`matches!(..).eq(&false)`, `matches!(..).then(|| false).unwrap_or(true)`;
-   a method after a call that takes the `matches!` is the call's), an
+   receiver of a method call through only grouping parentheses or
+   one-expression blocks
+   (`matches!(..).eq(&false)`, `({ matches!(..) }).then(|| false).unwrap_or(true)`;
+   a method after a call or closure that takes the `matches!` is the call's,
+   and an `eq`/`ne` chain against literals that keeps the pattern's polarity,
+   `matches!(..).eq(&true)`, asserts the pattern), an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
    directly or through nested calls), or inside the condition or
