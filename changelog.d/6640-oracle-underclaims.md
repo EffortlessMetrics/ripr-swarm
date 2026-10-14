@@ -9,5 +9,6 @@
   `Err(E::Big)` read `relational_check` / weak instead of being dropped as
   sibling-variant pins, because they exclude the sibling from the owner's
   own result. This removes the last 3 verdict-corpus oracle underclaims, so
-  the corpus oracle rows read 35/35 and the `match_floor` gate is raised
-  to 35 ([#6640](https://github.com/EffortlessMetrics/ripr-swarm/issues/6640)).
+  every labeled Rust corpus oracle row matches (37/37) and the gates hold
+  `match_floor` at 37 and `overclaim_ceiling` at 0
+  ([#6640](https://github.com/EffortlessMetrics/ripr-swarm/issues/6640)).
