@@ -1325,6 +1325,14 @@ owner = "product-analysis"
 standalone_reason = "Reads a committed Jest or Vitest snapshot entry the assertion compares with as strong, amending RIPR-SPEC-0247 rule 3 from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0262"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0262-typescript-strict-custom-matcher.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a same-file expect.extend matcher that passes only on strict equality as exact_value / strong, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0254"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"

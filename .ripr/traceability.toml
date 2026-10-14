@@ -14690,6 +14690,31 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0262"
+name = "TypeScript strict custom matcher"
+spec = "docs/specs/RIPR-SPEC-0262-typescript-strict-custom-matcher.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/custom_matcher_tests.rs::strict_equality_custom_matcher_reads_exact",
+  "crates/ripr/src/analysis/language/typescript/tests/custom_matcher_tests.rs::custom_matcher_that_may_pass_without_strict_equality_stays_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests/custom_matcher_tests.rs::custom_matcher_another_registration_may_replace_stays_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests/custom_matcher_tests.rs::custom_matcher_assertion_shape_must_compare_one_value",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/custom_matcher_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0262-typescript-strict-custom-matcher.md",
+]
+metrics = [
+  "typescript_strict_custom_matcher_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0254"
 name = "TypeScript lookup-table entry"
 spec = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
