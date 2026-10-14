@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-mock-fn-spread-object",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-mock-fn-spread-object.diff",
+  "anchor": {
+    "file": "src/saveSpread.ts",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_mock_fn_tohavebeencalledwith_spread_object",
+  "hard_case": "the literal `{ write: jest.fn(), ...defaults }` carries a spread, so the spec withholds the strong mock grade although the argument pin discriminates",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "db.write(v + 2);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "saveSpread",
+        "equivalence_review": "not equivalent: `write` is called with 3 instead of 2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`saveSpread(db, v)` calls `db.write(v + 1)`. The test declares `const db = { write: jest.fn(), ...defaults }`, calls `saveSpread(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 2` calls `write(3)` and the test fails. RIPR-SPEC-0247 example 4 reads the spread object as `weakly_exposed`. ripr reports `weakly_exposed` with mock_expectation / medium, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0247#4"
+  ]
+}

@@ -910,7 +910,8 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
     if !matches!(
         finding.language,
         Some(LanguageId::TypeScript | LanguageId::JavaScript)
-    ) {
+    ) || !finding.is_candidate_actionable()
+    {
         return;
     }
 

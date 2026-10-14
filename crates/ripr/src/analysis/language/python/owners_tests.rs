@@ -127,6 +127,12 @@ fn owner_from_function(
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
+    // A decorator whose name cannot be read still wraps the call.
+    let binding_only = !is_async
+        && decorator_names.len() == decorators.len()
+        && decorator_names
+            .iter()
+            .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
     let owner_kind = if context.class_context.is_some()
         && decorator_names.iter().any(|decorator| {
             decorator.ends_with("classmethod") || decorator.ends_with("staticmethod")
@@ -154,6 +160,7 @@ fn owner_from_function(
         &parameters,
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
+        binding_only,
     );
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
@@ -282,6 +289,7 @@ pub(super) struct TestImportContext<'a> {
     pub(super) body: &'a [PythonImport],
     pub(super) definition: &'a [PythonImport],
     pub(super) admission: &'a PythonAdmissionContext,
+    pub(super) standard_unittest_list: bool,
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -318,7 +326,15 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(&function.body, source);
+                let assertions = collect_assertions_from_statements(
+                    &function.body,
+                    source,
+                    import_context.standard_unittest_list
+                        && super::oracles::unittest_list::eligible_method(
+                            &function.args,
+                            &function.decorator_list,
+                        ),
+                );
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
@@ -387,7 +403,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(&function.body, source);
+                let assertions = collect_assertions_from_statements(&function.body, source, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
@@ -460,6 +476,11 @@ pub(super) fn collect_tests_from_statements(
                             body: imports,
                             definition: &definition_imports,
                             admission,
+                            standard_unittest_list: class_context.is_none()
+                                && super::oracles::unittest_list::eligible_class(
+                                    class,
+                                    &definition_imports,
+                                ),
                         },
                         out,
                     );
@@ -487,6 +508,7 @@ pub(super) fn collect_tests_from_statements(
                                     .map(Vec::as_slice)
                                     .unwrap_or(&definition_imports),
                                 admission,
+                                standard_unittest_list: false,
                             },
                             &mut from_mixin,
                         );

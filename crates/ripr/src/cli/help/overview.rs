@@ -86,6 +86,7 @@ Setup:
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--json]
+  ripr cache export [--root PATH] --out NEW_DIRECTORY
   ripr cache clear [--dry-run] [--force]
 
 Analysis:

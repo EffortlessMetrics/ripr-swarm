@@ -1,0 +1,69 @@
+{
+  "case_id": "jest-mined-tomatchobject-bound-local",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-tomatchobject-bound-local.diff",
+  "anchor": {
+    "file": "src/profileLocal.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_tomatchobject_field_pinned_bound_local",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; mutants hand-applied to the anchor line (the set StrykerJS 10 listed for the same line in `jest-mined-tomatchobject-field`), each run with the test command on the whole package",
+    "mutants": [
+      {
+        "replacement": "adult: true,",
+        "mutated_line": "adult: true,",
+        "outcome": "tests_failed",
+        "failing_test": "a bound profile records adulthood",
+        "equivalence_review": "not equivalent: 17 reads as adult"
+      },
+      {
+        "replacement": "adult: false,",
+        "mutated_line": "adult: false,",
+        "outcome": "tests_failed",
+        "failing_test": "a bound profile records adulthood",
+        "equivalence_review": "not equivalent: 18 reads as not adult"
+      },
+      {
+        "replacement": "adult: 18 < age,",
+        "mutated_line": "adult: 18 < age,",
+        "outcome": "tests_failed",
+        "failing_test": "a bound profile records adulthood",
+        "equivalence_review": "not equivalent: the result differs at the boundary value 18"
+      },
+      {
+        "replacement": "adult: 18 > age,",
+        "mutated_line": "adult: 18 > age,",
+        "outcome": "tests_failed",
+        "failing_test": "a bound profile records adulthood",
+        "equivalence_review": "not equivalent: 17 reads as adult and 18 as not"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0250's problem change (`age >= 18` rewritten `18 <= age`) with the 18-year-old result bound once: `const bo = buildProfileLocal(\"bo\", 18); expect(bo).toMatchObject({ adult: true });` beside `toMatchObject({ name: \"ana\", adult: false })` at 17. Every mutant of the field fails one pin. RIPR-SPEC-0250 example 2: `exposed`. ripr reports `exposed` with exact_value / strong, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0250#2"
+  ]
+}

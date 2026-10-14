@@ -328,6 +328,7 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     build_mutation_calibration_report, build_sarif_policy_report, mutation_calibration_report_json,
@@ -600,18 +601,35 @@ fn check_identity_registry() -> Result<(), String> {
 }
 
 fn precommit() -> Result<(), String> {
+    precommit_policy(false)
+}
+
+fn precommit_policy(collect_all: bool) -> Result<(), String> {
     ensure_reports_dir()?;
+    let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
+    // CI rejects stale/partial proof before compilation-bearing file policy.
+    // Local ordering and its ordinary workflow check remain unchanged.
+    if collect_all && let Some(path) = &preflight_receipt {
+        repo_policy::verify_preflight(Path::new(path))?;
+    }
     run("cargo", &["fmt", "--check"])?;
-    check_static_language()?;
-    check_no_panic_family()?;
-    check_allow_attributes()?;
-    check_local_context()?;
+    if collect_all {
+        policy::check_policy_all()?;
+    } else {
+        check_static_language()?;
+        check_no_panic_family()?;
+        check_allow_attributes()?;
+        check_local_context()?;
+    }
     check_file_policy()?;
-    check_covered_by()?;
-    check_executable_files()?;
+    if !collect_all {
+        check_covered_by()?;
+        check_executable_files()?;
+    }
     check_text_encoding()?;
-    match std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT") {
-        Some(path) => repo_policy::verify_preflight(Path::new(&path))?,
+    match preflight_receipt {
+        Some(path) if !collect_all => repo_policy::verify_preflight(Path::new(&path))?,
+        Some(_) => {}
         None => check_workflows()?,
     }
     check_droid_review_config()?;
@@ -643,9 +661,18 @@ fn precommit() -> Result<(), String> {
     check_proof_packs()?;
     check_release_targets()?;
     check_dependencies()?;
-    check_process_policy()?;
-    check_network_policy()?;
-    check_lint_policy()?;
+    if !collect_all {
+        check_process_policy()?;
+        check_network_policy()?;
+        check_lint_policy()?;
+    }
+    publish_precommit_policy_report(collect_all)
+}
+
+fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
+    if ci_policy {
+        return Ok(());
+    }
     let body = precommit_report_body();
     write_report("precommit.md", &body)
 }
@@ -2464,12 +2491,16 @@ fn command_catalog_ci_drift_violations_for_repo(
     Ok(command_catalog_ci_drift_violations(catalog, &enforced))
 }
 
-/// An enforced `cargo xtask precommit` invocation transitively enforces every
-/// gate in the precommit table (issue #2258): expand it so gates invoked only
+/// An enforced `cargo xtask precommit` or `cargo xtask ci-policy`
+/// invocation transitively enforces every gate
+/// in the precommit table (issues #2258, #7826): expand it so gates invoked only
 /// through precommit still count as CI-enforced. Advisory precommit
 /// invocations never reach the enforced set, so they expand nothing.
 fn expand_precommit_ci_invocations(enforced: &mut BTreeSet<WorkflowXtaskInvocation>) {
-    if !enforced.contains(&("precommit".to_string(), String::new())) {
+    if !["precommit", "ci-policy"]
+        .iter()
+        .any(|command| enforced.contains(&(command.to_string(), String::new())))
+    {
         return;
     }
     for gate in PRECOMMIT_GATE_COMMANDS {
@@ -3317,15 +3348,15 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if readiness.behind_main {
-        return "rebase";
-    }
     if pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
     {
         return "wait";
+    }
+    if readiness.behind_main {
+        return "inspect integration";
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {
@@ -3791,6 +3822,8 @@ fn pr_triage_stale_draft_findings(prs: &[PrTriagePullRequest], today: i64) -> Ve
         .collect()
 }
 
+const PR_BEHIND_RECOMMENDED_ACTION: &str = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+
 fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding> {
     prs.iter()
         .filter(|pr| pr.merge_state_status.eq_ignore_ascii_case("BEHIND"))
@@ -3804,8 +3837,7 @@ fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding
                 format_pr_triage_ref(pr),
                 pr.merge_state_status
             )],
-            recommended_action: "Update the branch before relying on CI or merge-readiness state."
-                .to_string(),
+            recommended_action: PR_BEHIND_RECOMMENDED_ACTION.to_string(),
         })
         .collect()
 }
@@ -3916,12 +3948,6 @@ fn pr_triage_queue_disposition(
             "duplicate or stale work needs canonical owner selection",
             "Choose the canonical branch, refresh the stale draft, or close superseded variants.",
         )
-    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
-        (
-            "needs_rebase",
-            "branch is behind its base",
-            "Update the branch before relying on CI or merge-readiness state.",
-        )
     } else if pr_has_finding(findings, pr.number, "policy-sensitive surface") {
         (
             "do_not_touch_wrong_lane",
@@ -3942,6 +3968,12 @@ fn pr_triage_queue_disposition(
             "needs_review",
             "PR is draft or still requires review",
             "Finish review before merge or further queue disposition.",
+        )
+    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
+        (
+            "needs_integration_review",
+            "branch is behind its base; material integration judgment is pending",
+            PR_BEHIND_RECOMMENDED_ACTION,
         )
     } else if pr.merge_state_status.eq_ignore_ascii_case("CLEAN") {
         (
@@ -12568,7 +12600,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 11] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -12579,6 +12611,9 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // the public-API path limit. Moved here from `language/rust/mod.rs`
         // so `ripr check` and seam reach (#5411) share one mapping.
         "crates/ripr/src/analysis/classify/transitive_reach.rs",
+        // #5577: a gated trait's syntax in a test-file helper counts for any
+        // type, like a test's; in production code only for types it names.
+        "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module

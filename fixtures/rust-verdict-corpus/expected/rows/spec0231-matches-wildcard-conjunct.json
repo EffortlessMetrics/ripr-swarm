@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231-matches-wildcard-conjunct",
+  "subject_id": "authored-matches-wildcard-conjunct",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "ok_return",
+  "test_shape": "assert_matches_ok_wildcard_conjunct",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "relational_check",
+      "strength": "weak",
+      "spec": "RIPR-SPEC-0231#7"
+    },
+    "observed_kind": "relational_check",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "check_accepts_five",
+        "kind": "relational_check",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
+}

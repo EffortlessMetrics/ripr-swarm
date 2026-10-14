@@ -213,6 +213,41 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+### A guard-only edit is the guard's predicate
+
+When an edit lies wholly inside an arm's guard (`n if 0 > n =>` from
+`n if n < 0 =>`), the line carries the guard's `predicate` finding alone.
+Arm selection never evaluates guards, so an arm finding there can only
+read unconfirmed, while the predicate's boundary pairing is the
+discriminator the edit needs. The arm head is kept when the edit reaches
+past the guard's predicate (a renamed binding, a changed pattern) or when
+the line has no predicate shape that holds the edit.
+
+A bare binding in a guarded arm (`p if 100 <= p =>`) holds the scrutinee's
+value, so when the owner body's only `match` is on a parameter
+(`match points {`), the guard's boundary reads that parameter's test
+inputs and can name `p == 100` as missing. The operand stays unread when:
+
+- the body has a second `match` (the arm could belong to either);
+- the binding's name appears anywhere but inside a one-line guard,
+  between `if` and `=>`: on another line or in the arm body after `=>`
+  (a `let`, a loop variable, a closure parameter), or in a guard that holds
+  a closure parameter list;
+- the parameter appears anywhere but the signature (which ends at its
+  first `{`) and its `match` line, read with comments and string contents
+  masked so neither hides code after it (`let points = points - 50;`, a closure
+  `|points|`, a statement after the `{` on the signature line), since it
+  may be rebound or shadowed before the `match`;
+- the binding's name may resolve to a constant (a `const` or `static` of
+  that name in the owner file, or an import of it), since the pattern then
+  compares the constant instead of binding the scrutinee, or the owner
+  file is unavailable;
+- the binding is not a bare identifier.
+
+The old line such an edit replaced (its positional counterpart, not any
+line with the same text) is not probed again as deleted behavior: the
+guard's predicate already carries the old guard as its `before`.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented
@@ -333,14 +368,48 @@ implies but does not spell out:
   (`use other_crate::prelude::*`) is not read and stays a known gap;
 - a qualified name with no lowercase letter (`Kind::A`, `Method::GET`) may
   be an associated constant, which a pattern compares by value. It reads as
-  a variant only when its path is `Type::NAME`, with `Type` the
+  a variant, in the changed, earlier and later arms alike (#7670), only
+  when its path is `Type::NAME`, with `Type` the
   scrutinee's type written unqualified (in the parameter's signature, or
   the impl header for `self`), or `Self` in that type's own impl. The
   owner's file must declare exactly one enum of that name listing `NAME`
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
   module, such as `mod tests`, brings in only that file's items) and call
-  no macro at file or module item level. A test's uncased input is read
+  no macro at file or module item level, nor any macro in statement
+  position inside a function named like the owner (its expansion may
+  declare a local `Kind` scoped to the match), and no function named like
+  the owner may be nested in a block. Alternatively, the owner's file
+  may bind that name through exactly one import, a top-level `use` without
+  a rename, whose module path (`kinds::Kind` after `mod kinds;`,
+  `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
+  declarations to exactly one workspace file, and that file must meet the
+  same declaration rule. The owner's file must then declare no item of
+  that name and call no such macro, glob-import no module inside an
+  inline module (except `super::*`), and its recorded module chain must
+  start at the workspace's `src/lib.rs` or `src/main.rs` or a
+  `crates/<name>/src/` one. That root must be its package manifest's
+  default target root (`autolib` and `autobins` on, no target moved by a
+  `path` other than a `[[bin]]` naming `src/main.rs`). No workspace file
+  may declare a `mod` of that file's stem (a package-root `lib.rs` with
+  `mod src { mod lib; }`), use the `mod` keyword other than to start a
+  plain `mod name;` or `mod name {` (macro input such as `mod $name;` or
+  `m!(mod, lib)`), call or name `include!`, or carry a `#[path]`, which
+  reaches anywhere; the sibling root (`src/main.rs` beside `src/lib.rs`)
+  may not mention the stem at all, call an item macro, or carry an
+  attribute other than a compiler builtin (a derive only of the standard
+  derivable traits, and no `cfg_attr`), or import a glob or a name that
+  may shadow a builtin attribute or derive, since an unread macro or proc macro there may declare
+  the root a module; and no package file may sit outside
+  `src/`, `tests/`, `benches/`, `examples/` and `build.rs`. Each path step
+  must be the one `mod` of that name in its parent file, declared out of
+  line at the file's top level, and its file may carry no inner
+  `#![cfg]` or `#![cfg_attr]`. An inline or
+  `cfg`-duplicated module on the path, a `cfg` or `cfg_attr` on the import
+  or a module step, a chain below an inline module, a
+  re-export, a rename, an `include!` or an unresolved module edge reads
+  nothing. A
+  test's uncased input is read
   only when no related test file outside the owner's file declares an item
   of that name, renames an import to it, or glob-imports a module other
   than `super`, a workspace root or the type's own variants, since a
@@ -369,7 +438,9 @@ implies but does not spell out:
 - A selected-arm control (`assert_eq!(reason(None), 0)`) reads `exposed`.
 - An unresolved-input control reads no named missing discriminator and is
   not upgraded.
-- A guarded-arm control reads no named missing discriminator.
+- A guarded-arm control reads no arm-selection missing discriminator. A
+  guard-only edit carries only its guard's predicate finding, which may name
+  the boundary under RIPR-SPEC-0186.
 - The expected-side trap reads below `exposed`.
 - Golden drift on the #5432 list is reviewed row by row: each finding that
   leaves `static_unknown` names its unselected arm, and none gains `exposed`
@@ -400,7 +471,9 @@ the diff changes `None => 1` to `None => 0`.
    `assert_eq!(f(Kind::A), 1)`: `weakly_exposed`; missing discriminator
    `value` `_`.
 5. `match x { Some(v) if v > 4 => 1, _ => 0 }`, the diff changes the guard
-   from `v > 3`, test `assert_eq!(f(Some(5)), 1)`: no named missing discriminator.
+   from `v > 3`, test `assert_eq!(f(Some(5)), 1)`: no arm-selection missing
+   discriminator. The guard-only edit carries only the predicate finding
+   `v > 4`, which stays `weakly_exposed` and names `v == 4` as its boundary.
 6. `match k { Kind::A => Kind::B, Kind::B => Kind::A }`, arm `Kind::B =>`
    changed, test `assert_eq!(f(Kind::A), Kind::B)`: `weakly_exposed`; missing
    discriminator `value` `Kind::B`.
@@ -444,7 +517,19 @@ the diff changes `None => 1` to `None => 0`.
   inputs, matches the call may skip, mutable typed receivers and foreign
   call paths.
 - `crates/ripr/tests/match_arm_uncased_variant.rs`: examples 4 and 6 with
-  single-letter variants, and the same crate with the enum imported.
+  single-letter variants; the enum imported from its module file or
+  through `super::`; a struct with constants, a renamed import or a
+  re-export in its place; and an owner item shadowing the import, a
+  `cfg`-alternative inline module, a `cfg`-gated import beside a glob, a
+  `crate::` path from below an inline module or from a module file named
+  `src/main.rs` below inline modules or a package-root library, a
+  nested module step beside a renamed import, a moved library root that
+  declares `mod lib` through a macro (`mod $name;` or a passed `mod`
+  token) or an included file, a module file compiled out by an inner
+  `#![cfg]`, a sibling root whose unread macro, proc-macro attribute or
+  custom derive may declare the owner a module, and a statement macro in
+  the owner, including one shadowing
+  `assert!`, that may declare a local `Kind`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).

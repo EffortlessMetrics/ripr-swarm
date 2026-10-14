@@ -1,0 +1,22 @@
+{
+  "case_id": "nodetest-legacy-equal-literal-one",
+  "subject_id": "authored-ts-nodetest-billing",
+  "origin": "authored",
+  "anchor": "src/linecount.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_legacy_assert_equal_coercible_literal",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

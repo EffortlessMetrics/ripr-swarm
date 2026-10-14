@@ -81,6 +81,7 @@ impl ConfigDiagnostic {
             | "severity.findings.static_unknown" => vec!["info", "warning", "note"],
             path if path.starts_with("severity.seams.") => vec!["off", "info", "warning", "note"],
             "lsp.diagnostic_profile" => vec!["actionable", "full"],
+            "perl.producer" => vec!["perl-ripr-facts", "perllsp", "perl-lsp"],
             _ => Vec::new(),
         };
         Self {

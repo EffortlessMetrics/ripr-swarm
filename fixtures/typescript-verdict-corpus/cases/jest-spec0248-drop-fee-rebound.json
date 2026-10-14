@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0248-drop-fee-rebound",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0248-drop-fee-rebound.diff",
+  "anchor": {
+    "file": "src/priceFeeRebound.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_dropped_term_rebound_parameter",
+  "hard_case": "`fee=fee-5;` rebinds the parameter before the return, so the tested argument 5 makes the dropped term 0",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return subtotal + FLAT;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent in general, but the tested argument 5 is rebound to 0 before the return, so both versions give 6499"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The owner runs `fee=fee-5;` and then `return subtotal + fee + FLAT`; the edit drops `+ fee`. The only test pins `expect(priceFeeRebound(6000, 5)).toBe(6499)`: `fee` is 0 at the return, so both versions return 6499 and the test passes. RIPR-SPEC-0248 example 6: `weakly_exposed`, because `fee` is rebound and so not bound to the argument. ripr reports `weakly_exposed` and its missing line says `fee` is not shown to be non-zero, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0248#6"
+  ]
+}

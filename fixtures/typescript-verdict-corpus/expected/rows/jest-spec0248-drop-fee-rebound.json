@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0248-drop-fee-rebound",
+  "subject_id": "authored-ts-jest-oracles",
+  "origin": "authored",
+  "anchor": "src/priceFeeRebound.ts:5",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_dropped_term_rebound_parameter",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

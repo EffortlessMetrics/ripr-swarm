@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (3)
+
+Reason:
+RIPR-SPEC-0255: #7577 names the loaded ripr.toml in the human header and JSON config_path; re-bless the fixture #7680 added before #7577 merged
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

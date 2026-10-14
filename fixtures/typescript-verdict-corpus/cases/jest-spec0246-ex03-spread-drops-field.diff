@@ -1,0 +1,11 @@
+diff --git a/src/settingsOk.ts b/src/settingsOk.ts
+index 0000000..1111111 100644
+--- a/src/settingsOk.ts
++++ b/src/settingsOk.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function markOk(cfg: Flags): Flags {
+-  return { ...cfg, ok: true };
++  return { ...cfg };
+ }

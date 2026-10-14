@@ -11,11 +11,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "common/advisory_write_safety.rs"]
 mod advisory_write_safety;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/agent_policy_guidance.rs"]
+mod agent_policy_guidance;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/artifact_mode_precedence.rs"]
+mod artifact_mode_precedence;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[path = "cli_smoke/closed_stderr.rs"]
+mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -32,6 +40,9 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/init_followups.rs"]
+mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -56,17 +67,25 @@ mod repair_orderfile;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
+#[path = "cli_smoke/sample_output.rs"]
+mod sample_output;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/source_unicode.rs"]
 mod source_unicode;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_effect_aliases.rs"]
+mod typescript_effect_aliases;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_diff_exit.rs"]
+mod unsupported_diff_exit;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -1794,26 +1813,10 @@ fn unknown_command_typo_reports_nearest_known_command() {
 }
 
 #[test]
-fn check_human_output_reports_sample_findings() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff();
-    assert!(diff.exists());
-
-    let diff = diff.display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 4 probe(s)"));
-    assert!(stdout.contains("Start here:"));
-    assert!(stdout.contains("Static exposure: weak (weakly_exposed, "));
-    assert!(stdout.contains("Evidence:"));
-    // #4320: the digest missing-discriminator line discloses its one-of-N
-    // window, so the pin carries the parenthesized window opening.
-    assert!(stdout.contains("Missing discriminator ("));
-    assert!(stdout.contains("Next step:"));
-    assert!(stdout.contains("lower-priority finding(s) omitted"));
-    assert!(stdout.contains("--format human-full"));
+fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::human(fixture.run(&[])?)?;
+    Ok(())
 }
 
 #[test]
@@ -2731,23 +2734,10 @@ fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(),
 }
 
 #[test]
-fn check_json_output_has_stable_contract_fields() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.2""#));
-    assert!(stdout.contains(r#""classification": "weakly_exposed""#));
-    assert!(stdout.contains(r#""evidence_path""#));
-    assert!(stdout.contains(r#""flow_sinks""#));
-    assert!(stdout.contains(r#""assertion_texts""#));
-    assert!(stdout.contains(r#""activation""#));
-    assert!(stdout.contains(r#""missing_discriminators""#));
-    assert!(stdout.contains(r#""oracle_kind""#));
-    assert!(stdout.contains(r#""recommended_next_step""#));
-    assert!(stdout.contains(r#""suggested_next_action""#));
+fn check_json_output_has_stable_contract_fields() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::contract(fixture.run(&["--json"])?)?;
+    Ok(())
 }
 
 // ── `check --suppression-policy` (#1441) ──
@@ -4483,30 +4473,9 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
 /// result and no success field moved. Byte-identity against the base
 /// binary is demonstrated in the PR evidence.
 #[test]
-fn check_json_success_carries_no_refusal_shape() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let value: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|err| format!("success stdout should parse as JSON: {err}\n{stdout}"))?;
-    if value.get("analysis_scope").is_some() {
-        return Err(format!(
-            "success output must not carry analysis_scope: {value}"
-        ));
-    }
-    if value.get("run_limitations").is_some() {
-        return Err(format!(
-            "success output must not carry run_limitations: {value}"
-        ));
-    }
-    if value["schema_version"] != "0.2" {
-        return Err(format!("success schema_version must stay 0.2: {value}"));
-    }
-    if value["findings"].as_array().is_none() {
-        return Err(format!("success output must carry findings: {value}"));
-    }
+fn check_json_success_carries_no_refusal_shape() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::success(fixture.run(&["--json"])?)?;
     Ok(())
 }
 
@@ -9055,11 +9024,10 @@ fn agent_packet_rejects_configured_off_seam() -> Result<(), Box<dyn std::error::
             .join("fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt"),
     )?;
     assert!(stderr.contains(expected.trim()));
-    // #4332: the policy-omitted refusal names the listing route instead of
-    // dead-ending.
+    // #7736: policy omission names policy inspection rather than re-listing.
     assert!(
-        stderr.contains("Run `ripr pilot"),
-        "the policy-omitted refusal must name the listing command:\n{stderr}"
+        stderr.contains("Inspect the agent policy with `ripr agent brief"),
+        "the policy-omitted refusal must name policy inspection:\n{stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -11237,81 +11205,17 @@ fn agent_receipt_keeps_unmoved_target_unchanged_when_another_seam_moves()
 }
 
 #[test]
-fn check_badge_json_output_has_native_badge_shape() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-json",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.8""#));
-    // Diff-scoped badge JSON never carries a public projection.
-    assert!(!stdout.contains(r#""public_projection""#));
-    assert!(stdout.contains(r#""kind": "ripr""#));
-    assert!(stdout.contains(r#""scope": "diff""#));
-    assert!(stdout.contains(r#""basis": "finding_exposure""#));
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""counts""#));
-    assert!(stdout.contains(r#""reason_counts""#));
-    assert!(stdout.contains(r#""policy""#));
-    assert!(stdout.contains(r#""unsuppressed_exposure_gaps""#));
-    assert!(stdout.contains(r#""duplicate_activation_and_oracle_shape": 0"#));
-    assert!(!stdout.contains(r#""schemaVersion""#));
-    // The sample diff has 4 weakly_exposed findings after nested call shapes are
-    // excluded; the badge headline reflects the surviving semantic probes.
-    assert!(stdout.contains(r#""message": "4""#));
-    assert!(stdout.contains(r#""status": "warn""#));
-    assert!(stdout.contains(r#""color": "orange""#));
+fn check_badge_json_output_has_native_badge_shape() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::native(fixture.run(&["--format", "badge-json"])?)?;
+    Ok(())
 }
 
 #[test]
-fn check_badge_shields_output_has_exactly_four_top_level_fields() {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-shields",
-    ]);
-    assert_success(&output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schemaVersion": 1"#));
-    assert!(stdout.contains(r#""label": "ripr""#));
-    assert!(stdout.contains(r#""message": "4""#));
-    assert!(stdout.contains(r#""color": "orange""#));
-    // Native-JSON-only fields must not leak into the Shields shape.
-    for forbidden in [
-        r#""counts""#,
-        r#""reason_counts""#,
-        r#""policy""#,
-        r#""kind""#,
-        r#""status""#,
-        r#""scope""#,
-        r#""basis""#,
-        r#""schema_version""#,
-    ] {
-        assert!(
-            !stdout.contains(forbidden),
-            "Shields projection must not contain `{forbidden}`: {stdout}"
-        );
-    }
-    // Message has no denominator and no coverage framing.
-    assert!(!stdout.contains('/') || !stdout.contains(r#""message""#));
-    assert!(!stdout.to_ascii_lowercase().contains("coverage"));
-    assert!(!stdout.to_ascii_lowercase().contains("uncovered"));
+fn check_badge_shields_output_has_exactly_four_top_level_fields() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::shields(fixture.run(&["--format", "badge-shields"])?)?;
+    Ok(())
 }
 
 fn fixture_test_efficiency_report() -> &'static str {
@@ -14696,6 +14600,61 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     let stdout = String::from_utf8_lossy(&dry_run.stdout);
     assert!(stdout.contains("\"kind\": \"gate_baseline\""));
     assert!(!dry_run_out.exists());
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), String> {
+    // Issue #7421 review: the missing producing-build identity must reach
+    // the operator at creation time on stdout, not only inside the ledger.
+    let workspace = unique_temp_workspace("baseline-create-unversioned");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let source = workspace.join("gate-decision-unversioned.json");
+    std::fs::write(
+        &source,
+        r#"{
+  "schema_version": "0.1",
+  "mode": "visible-only",
+  "decisions": [
+    {
+      "decision": "advisory",
+      "id": "ripr-gate-unversioned-smoke",
+      "seam_id": "unversioned-smoke",
+      "static_class": "weakly_gripped",
+      "placement": {"path": "src/unversioned.rs", "line": 9},
+      "evidence": {}
+    }
+  ]
+}"#,
+    )
+    .map_err(|e| format!("write source: {e}"))?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let source_arg = source.display().to_string();
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from",
+        &source_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("source gate-decision report carries no subject.analyzer_version"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Warnings: 1"), "{stdout}");
+
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"analyzer_version\": null"),
+        "{baseline}"
+    );
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -18397,6 +18356,10 @@ fn calibrate_cargo_mutants_prints_markdown_by_default() {
     assert!(stdout.contains("Status: advisory"));
     assert!(stdout.contains("Static/runtime agreement"));
     assert!(stdout.contains("Runtime Outcome Counts"));
+    assert!(
+        !stdout.contains("this import has no observed runtime outcomes"),
+        "the fixture sample carries an observed outcome and must not use the mutants.json-only note:\n{stdout}"
+    );
 }
 
 #[test]
@@ -18482,6 +18445,60 @@ fn calibrate_foreign_same_line_join_discloses_missing_head() -> Result<(), Strin
     assert!(
         !stdout.contains("does not carry a head SHA"),
         "the caveat is stderr-only so JSON/markdown stdout stays the report:\n{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #7451: pointing --mutants-json at a directory that holds only
+/// mutants.json still joins the candidate and still counts it in
+/// matched_total. The default Markdown Summary must say those rows carry
+/// no runtime observation.
+#[test]
+fn calibrate_mutants_json_only_directory_discloses_unexecuted_denominator() -> Result<(), String> {
+    let workspace = unique_temp_workspace("calibrate-mutants-json-only");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let mutants_dir = workspace.join("cm-dir");
+    std::fs::create_dir_all(&mutants_dir).map_err(|e| format!("create cm-dir: {e}"))?;
+    std::fs::write(
+        mutants_dir.join("mutants.json"),
+        r#"{"mutants":[{"id":"candidate-only","file":"src/lib.rs","line":2,"operator":"replace >= with >"}]}"#,
+    )
+    .map_err(|e| format!("write mutants.json: {e}"))?;
+    let root = workspace_root();
+    let repo =
+        root.join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json");
+
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &mutants_dir.display().to_string(),
+        "--repo-exposure-json",
+        &repo.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let after_summary = stdout
+        .split("## Summary")
+        .nth(1)
+        .and_then(|rest| rest.split("## Static/runtime agreement").next())
+        .ok_or("default markdown must keep Summary before agreement")?;
+    assert!(
+        after_summary.contains("| matched_total | 1 |"),
+        "matched_total still counts the joined candidate:\n{after_summary}"
+    );
+    assert!(
+        after_summary.contains("this import has no observed runtime outcomes")
+            && after_summary.contains("`matched_total` counts joined candidate mutants")
+            && after_summary.contains("`unknown` / `no_runtime_data`"),
+        "the default Markdown Summary must disclose the unexecuted denominator:\n{after_summary}"
+    );
+    assert!(
+        stdout.contains("| unknown | 1 |") && stdout.contains("`no_runtime_data`"),
+        "row-level unknown / no_runtime_data must still render:\n{stdout}"
     );
 
     ignore_remove_dir_all(&workspace);
@@ -19459,21 +19476,10 @@ index 0000000..1111111 100644
 }
 
 #[test]
-fn check_badge_command_exits_zero_even_with_nonzero_count() {
-    // Default policy is fail_on_nonzero=false. The sample diff has gaps but
-    // the command must still exit successfully so CI artifact pipelines work.
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&[
-        "check",
-        "--root",
-        &root,
-        "--diff",
-        &diff,
-        "--format",
-        "badge-json",
-    ]);
-    assert_success(&output);
+fn check_badge_command_exits_zero_even_with_nonzero_count() -> sample_output::TestResult {
+    let fixture = sample_output::Fixture::new()?;
+    sample_output::badge_exit(fixture.run(&["--format", "badge-json"])?)?;
+    Ok(())
 }
 
 #[test]

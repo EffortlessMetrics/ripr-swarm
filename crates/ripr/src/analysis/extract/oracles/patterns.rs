@@ -3,6 +3,7 @@ use super::arguments::{
     boolean_assertion_macro_condition, comparable_expression, custom_assertion_arguments,
     equality_assertion_arguments, is_complete_macro_invocation,
 };
+use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -559,7 +560,76 @@ pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     if rest.is_empty() {
         return Some(String::new());
     }
-    Some(format!("{macro_name}({});", rest.join(" && ")))
+    // Each conjunct ends its own line, so a trailing `//` comment on one
+    // cannot swallow the next conjunct or the closing `);`.
+    Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
+}
+
+/// RIPR-SPEC-0231 rule 3 (#7695): for a boolean assertion whose condition is
+/// a top-level `&&` chain with at least one whole `matches!(..)` conjunct,
+/// the same assertion over each conjunct alone (`None` otherwise). A
+/// conjunction is no stronger than its strongest conjunct, so the caller
+/// reads each one and a `matches!` keeps its pattern's reading inside the
+/// chain (`assert!(ready && matches!(r, Ok(_)))` reads as `Ok(_)` does).
+pub(super) fn pattern_conjunct_assertions(line: &str) -> Option<Vec<String>> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let is_pattern = |conjunct: &str| {
+        // Masked, so a leading comment cannot hide the pattern.
+        let masked = mask_comments_and_strings(conjunct.trim());
+        is_complete_macro_invocation(unwrap_parentheses(masked.trim()), "matches!")
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| is_pattern(conjunct)) {
+        return None;
+    }
+    // Each conjunct ends its own line, so a trailing `//` comment cannot
+    // swallow the closing `);`.
+    Some(
+        conjuncts
+            .iter()
+            .map(|conjunct| format!("{macro_name}({}\n);", conjunct.trim()))
+            .collect(),
+    )
+}
+
+/// RIPR-SPEC-0231 rule 1 (#7558): the boolean assertion with every
+/// parenthesized `&&` conjunct that a `||` decides removed, so the other
+/// conjuncts decide the reading, as they do beside a negated pattern
+/// (`ensure!(c == d && (a || b))` reads as `ensure!(c == d)`). `None` when
+/// no conjunct is such a group or a top-level `||` decides the whole
+/// condition; an empty string when nothing else remains. A group that also
+/// holds a pinning conjunct (`(x == 1 || y) && z == 2` in parentheses)
+/// drops whole, which only weakens the reading.
+pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let is_deciding_group = |conjunct: &str| {
+        let masked = mask_comments_and_strings(conjunct.trim());
+        super::arguments::parenthesized_contents(masked.trim())
+            .is_some_and(has_deciding_disjunction)
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| is_deciding_group(conjunct)) {
+        return None;
+    }
+    let rest = conjuncts
+        .iter()
+        .filter(|conjunct| !is_deciding_group(conjunct))
+        .map(|conjunct| conjunct.trim())
+        .collect::<Vec<_>>();
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    // Each conjunct ends its own line, so a trailing `//` comment on one
+    // cannot swallow the next conjunct or the closing `);`.
+    Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
 
 /// Splits on `&&` outside any delimiter, string or comment.
@@ -589,7 +659,7 @@ fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
 }
 
 /// Whether `condition` has `||` outside any delimiter, string or comment.
-fn has_top_level_disjunction(condition: &str) -> bool {
+pub(super) fn has_top_level_disjunction(condition: &str) -> bool {
     let masked = mask_comments_and_strings(condition);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
@@ -960,8 +1030,10 @@ fn has_mock_named_receiver(line: &str) -> bool {
     })
 }
 
-/// An `ensure!` condition whose only comparison is `!=`. One `==` anywhere
-/// still pins a value, so a mixed condition keeps its exact reading.
+/// An `ensure!` condition whose only comparison is `!=`: rule 1 at step 0.
+/// A mixed condition falls through, and earns exact credit only from a
+/// top-level `==` conjunct with no deciding `||`
+/// ([`has_top_level_exact_equality`], #7558).
 pub(super) fn is_inequality_only_comparison(condition: &str) -> bool {
     let (equal, not_equal) = comparison_operators(condition);
     not_equal && !equal
@@ -993,12 +1065,82 @@ pub(super) fn is_duplicative_comparison(condition: &str) -> bool {
 
 pub(super) fn is_exact_value_assertion(line: &str) -> bool {
     // `assert_ne!` is owned by RIPR-SPEC-0231 rule 1 and never exact.
-    line.contains("assert_eq!") || line.contains("assert_matches!") || line.contains("matches!")
+    line.contains("assert_eq!")
+        || line.contains("assert_matches!")
+        || (line.contains("matches!")
+            && (some_matches_pins_a_value(line)
+                // A pinning `==` conjunct keeps the chain exact (RIPR-SPEC-0231
+                // rule 3's decision), including the runtime controls'
+                // `matches!(value, _) && value == 2`.
+                || boolean_assertion_macro_condition(line)
+                    .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition))))
 }
 
-pub(super) fn contains_exact_comparison(condition: &str) -> bool {
-    let (equal, not_equal) = comparison_operators(condition);
-    equal || not_equal
+/// RIPR-SPEC-0231 rule 1 (#7558): whether an `||` decides the condition:
+/// at the top level, or inside a parenthesized `&&` conjunct (read again by
+/// the same rule), so the condition passes whenever one arm does and pins
+/// nothing. An `||` inside a call argument, closure, index or block belongs
+/// to that operand.
+pub(super) fn has_deciding_disjunction(condition: &str) -> bool {
+    has_top_level_disjunction(condition)
+        || split_top_level_conjuncts(condition)
+            .into_iter()
+            .any(|conjunct| {
+                // Masked, so a leading comment cannot hide the group.
+                let masked = mask_comments_and_strings(conjunct.trim());
+                super::arguments::parenthesized_contents(masked.trim())
+                    .is_some_and(has_deciding_disjunction)
+            })
+}
+
+/// RIPR-SPEC-0231 rule 1 (#7558): whether a boolean condition pins a value.
+/// It must have no top-level `||` (a disjunction passes whenever one arm
+/// does), and some top-level `&&` conjunct must itself be an `==`
+/// comparison at its own top level. An `==` inside a closure, a call
+/// argument, a negation or an `||` arm pins nothing; a parenthesized
+/// conjunct is read again by the same rule.
+pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
+    !has_top_level_disjunction(condition)
+        && split_top_level_conjuncts(condition)
+            .into_iter()
+            .any(|conjunct| {
+                // Masked, so a leading comment cannot hide the group.
+                let masked = mask_comments_and_strings(conjunct.trim());
+                let masked = masked.trim();
+                if let Some(inner) = super::arguments::parenthesized_contents(masked) {
+                    return has_top_level_exact_equality(inner);
+                }
+                is_pinning_equality(conjunct, masked)
+            })
+}
+
+/// Whether one conjunct is a top-level `==` that pins a value. `masked` is
+/// the conjunct trimmed and masked. `value == value` compares a value with
+/// itself, and `matches!(r, Ok(_)) == true` restates an unpinned pattern, so
+/// neither pins anything.
+fn is_pinning_equality(conjunct: &str, masked: &str) -> bool {
+    top_level_comparison_operator(masked).is_some_and(|(at, _)| {
+        masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
+            && !compares_unpinned_pattern_with_bool(conjunct, at)
+    }) && !is_duplicative_comparison(conjunct.trim())
+}
+
+/// RIPR-SPEC-0231 rule 3 (#7715): `matches!(r, Ok(_)) == true` states the
+/// pattern and nothing more, so it pins no value when the pattern does not.
+/// `at` is the `==` offset in the trimmed, masked conjunct.
+fn compares_unpinned_pattern_with_bool(conjunct: &str, at: usize) -> bool {
+    let conjunct = conjunct.trim();
+    let masked = mask_comments_and_strings(conjunct);
+    let offset = masked.len() - masked.trim_start().len();
+    let at = offset + at;
+    let (Some(left), Some(right)) = (conjunct.get(..at), conjunct.get(at + 2..)) else {
+        return false;
+    };
+    // Redundant parentheses (`(true)`, `(matches!(r, Ok(_)))`) change nothing.
+    let is_bool =
+        |side: &str| boolean_literal_value(mask_comments_and_strings(side).trim()).is_some();
+    let is_pattern = |side: &str| is_unpinned_pattern(unwrap_parentheses(side.trim()));
+    (is_bool(left) && is_pattern(right)) || (is_bool(right) && is_pattern(left))
 }
 
 /// Which of `==` and `!=` appear outside string literals and comments.
@@ -1024,25 +1166,17 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
 }
 
 fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+    // Comments and literals are not delimiters. Mask them before counting
+    // brackets so an unmatched `}` inside a nested comment cannot hide a
+    // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
+    // valid on the original because masking preserves byte length.
+    let masked = mask_comments_and_strings(condition);
     let mut paren_depth = 0i32;
     let mut bracket_depth = 0i32;
     let mut brace_depth = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut chars = condition.char_indices().peekable();
+    let mut chars = masked.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
         match ch {
-            '"' => in_string = true,
             '(' => paren_depth += 1,
             ')' => paren_depth = paren_depth.saturating_sub(1),
             '[' => bracket_depth += 1,
@@ -1869,18 +2003,92 @@ mod spec_0106_tests {
     }
 
     #[test]
-    fn exact_comparison_ignores_string_contents_and_escapes() -> Result<(), String> {
+    fn exact_equality_ignores_string_contents_and_escapes() -> Result<(), String> {
         for (condition, expected) in [
             ("state == TerminalState::Pass", true),
-            ("state != TerminalState::Pending", true),
+            ("state != TerminalState::Pending", false),
             (r#"label.contains("==")"#, false),
+            (r#"label == "a || b""#, true),
             (r#"label.contains("escaped \"!=\" text")"#, false),
             ("ready = true", false),
+            // #7558: only a top-level `==` outside every `||` arm pins a value.
+            ("a != b || c == d", false),
+            ("a == b || c == d", false),
+            ("xs.iter().position(|x| *x == 1) != None", false),
+            ("f(|x| x == 1)", false),
+            ("!(a == b)", false),
+            ("a != b && c == d", true),
+            ("(a == b) && ready", true),
+            ("(a == b || c) && ready", false),
+            ("total(&cart) == 42 // a || b", true),
+            ("/* pinned */ (a == b) && ready", true),
+            // #7822: comment brackets are not delimiters of the `==`.
+            ("matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true", true),
+            ("matches!(r, // , ( [ ) ] }\n Ok(3)) == true", true),
+            // An unpinned pattern compared with a bool still pins nothing.
+            (
+                "matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true",
+                false,
+            ),
         ] {
-            let actual = contains_exact_comparison(condition);
+            let actual = has_top_level_exact_equality(condition);
             if actual != expected {
                 return Err(format!(
                     "comparison classification mismatch for {condition}: {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bool_compared_matches_polarity_ignores_comment_brackets() -> Result<(), String> {
+        // #7822: an unmatched `}` in a nested comment must not turn a
+        // positive `== true` comparison into NotPositive.
+        for (line, expected) in [
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == false);",
+                Some(PatternPolarity::NotPositive),
+            ),
+            (
+                "assert!(true == matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)));",
+                Some(PatternPolarity::Positive),
+            ),
+        ] {
+            let actual = pattern_comparison_polarity(line);
+            if actual != expected {
+                return Err(format!(
+                    "polarity mismatch for {line}: {actual:?}, expected {expected:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deciding_disjunctions_are_found_past_comments_and_groups() -> Result<(), String> {
+        for (condition, expected) in [
+            ("a || b", true),
+            ("ready && (a || b)", true),
+            ("ready && /* fallback */ (a || b)", true),
+            ("((a == b || c))", true),
+            ("ready && f(a || b)", false),
+            ("xs.iter().any(|x| x == 1 || x == 2)", false),
+            ("a == b // || c", false),
+            (r#"a == "x || y""#, false),
+        ] {
+            let actual = has_deciding_disjunction(condition);
+            if actual != expected {
+                return Err(format!(
+                    "deciding disjunction mismatch for {condition}: {actual}"
                 ));
             }
         }

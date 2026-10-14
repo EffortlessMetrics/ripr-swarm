@@ -415,7 +415,7 @@ pub(super) fn delimited_contents_at(text: &str, open_index: usize) -> Option<Str
     None
 }
 
-fn split_top_level_commas(text: &str) -> Vec<String> {
+pub(super) fn split_top_level_commas(text: &str) -> Vec<String> {
     let masked = mask_comments_and_strings(text);
     let mut args = Vec::new();
     let mut start = 0usize;

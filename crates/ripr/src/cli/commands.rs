@@ -61,7 +61,7 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // Cache help bodies live beside the cache parser but are also the flag source
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
-pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_EXPORT_HELP, CACHE_STATUS_HELP};
 pub(super) use task_first::{
     CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
 };
@@ -2913,7 +2913,12 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             print!("{}", output::diff_report::render_diff_report_json(&report)?)
         }
     }
-    Ok(())
+    // Preserve the already-rendered report, including supported subjects in
+    // an unsupported input. A second refusal would corrupt JSON stdout.
+    crate::cli::commands_context::analysis_outcome_exit_result(
+        "diff",
+        output.analysis_outcome.as_ref(),
+    )
 }
 
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {

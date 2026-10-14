@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 919a536..3965a9e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,7 +18,7 @@ pub struct Order {
+ 
+ impl Order {
+     pub fn add(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(Line { sku: sku.to_uppercase(), qty });
++        self.lines.push(Line { sku: str::to_uppercase(sku), qty });
+     }
+ 
+     pub fn tag(&mut self, label: &str, weight: u32) {

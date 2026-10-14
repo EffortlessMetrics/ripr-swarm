@@ -1,0 +1,12 @@
+diff --git a/src/chargeAfterIf.ts b/src/chargeAfterIf.ts
+index 0000000..1111111 100644
+--- a/src/chargeAfterIf.ts
++++ b/src/chargeAfterIf.ts
+@@ -7,6 +7,6 @@
+   if (total < 0) {
+     throw new RangeError("negative total");
+   }
+-  notifier.send(owner, "charged " + total);
++  notifier.send(owner, "charged " + total + " cents");
+   return total;
+ }

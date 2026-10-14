@@ -24,6 +24,11 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Whether the assertion's macros are the standard ones (no visible
+    /// binding rebinds `assert_ne!`, `assert!` or `matches!`). Consulted
+    /// only before a RIPR-SPEC-0231 sibling exclusion is credited.
+    pub(in crate::analysis) sibling_exclusion_admitted:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Whether a test related only by file or module may run the owner
     /// (#6297). One that cannot, by any name path, does not confirm a match
     /// arm while another related test reaches the owner.
@@ -73,6 +78,7 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
@@ -441,6 +447,230 @@ pub(in crate::analysis) fn owner_call_precedes_read(
         })
 }
 
+/// Whether nothing from the first unconditional `binding.method(..)` call
+/// before `read_line` up to that line may write through `binding` or copy
+/// what the call left, so the read sees the owner's value and nothing else
+/// holds it. Fails closed:
+/// - every owner call in the window must be a bare statement
+///   `binding.method(..);`, optionally ending in `.unwrap()`, `.expect(..)`
+///   or `?`: a bound or chained result (`let o = order.add(..)`,
+///   `order.add(..).clear()`) may write through `binding` without naming it;
+/// - the read line must start with its assertion, so nothing earlier on it
+///   runs between;
+/// - any other statement in the window may name `binding` only as a plain
+///   field read that is a whole `assert!`/`assert_eq!`/`assert_ne!`
+///   argument (`assert_eq!(order.total, 4)`); any other mention
+///   (`order.log.clear()`, `let before = order.log.clone()`,
+///   `order.log[0] = ..`, `&mut order`, a `ref mut` pattern, a block)
+///   refuses. Starting at the first call, not the last, also refuses a
+///   snapshot taken between two calls, however it is spelled.
+pub(in crate::analysis) fn binding_untouched_after_owner_call(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(lines_before) = read_line.checked_sub(start_line) else {
+        return false;
+    };
+    let read_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    if !masked
+        .get(read_at..)
+        .is_some_and(|line| line.trim_start().starts_with("assert"))
+    {
+        return false;
+    }
+    let call = format!("{binding}.{method}(");
+    let Some(call_at) = masked[..read_at]
+        .match_indices(&call)
+        .map(|(at, _)| at)
+        .find(|at| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| ident(before) || before == '.')
+                && runs_unconditionally(&masked, *at)
+        })
+    else {
+        return false;
+    };
+    let statement_start = masked[..call_at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    if !masked[statement_start..call_at].trim().is_empty() {
+        return false;
+    }
+    let Some(mut window_at) = bare_call_end(&masked[..read_at], call_at, call.len()) else {
+        return false;
+    };
+    while window_at < read_at {
+        let statement_len = masked[window_at..read_at]
+            .find(';')
+            .map_or(read_at - window_at, |semi| semi + 1);
+        let statement = &masked[window_at..window_at + statement_len];
+        let leading = statement.len() - statement.trim_start().len();
+        // A later owner call on the binding, itself a bare statement whose
+        // arguments do not name the binding: an argument runs before the
+        // call and may copy what the earlier one left
+        // (`order.add((snap = order.log.clone(), 4).1)`).
+        if statement.trim_start().starts_with(&call)
+            && bare_call_end(&masked[..read_at], window_at + leading, call.len())
+                == Some(window_at + statement_len)
+            && statement.trim_start()[call.len()..]
+                .match_indices(binding)
+                .all(|(at, name)| {
+                    let arguments = &statement.trim_start()[call.len()..];
+                    arguments[..at].chars().next_back().is_some_and(ident)
+                        || arguments[at + name.len()..].starts_with(ident)
+                })
+        {
+            window_at += statement_len;
+            continue;
+        }
+        if !plain_assertion_or_unrelated(statement.trim_end_matches(';'), binding) {
+            return false;
+        }
+        window_at += statement_len;
+    }
+    true
+}
+
+/// The offset just past the `;` that ends the bare call statement whose
+/// `binding.method(` (`call_len` bytes) starts at `call_at` in masked
+/// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
+/// consume its result, so a returned `&mut Self` is never written.
+fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+    let args_at = call_at + call_len;
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in code.get(args_at..)?.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(args_at + offset);
+                break;
+            }
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    let mut tail = code[close? + 1..].trim_start();
+    loop {
+        if let Some(rest) = tail.strip_prefix(".unwrap()") {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix('?') {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix(".expect(") {
+            let end = rest.find(')')?;
+            if rest[..end].contains('(') {
+                return None;
+            }
+            tail = rest[end + 1..].trim_start();
+        } else {
+            break;
+        }
+    }
+    tail.starts_with(';').then(|| code.len() - tail.len() + 1)
+}
+
+/// Whether a masked `statement` (no trailing `;`) leaves `binding` alone:
+/// it does not name it, or names it only as plain field reads that are
+/// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
+/// no block, closure or nested macro other than `vec!`/`format!`.
+fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions: Vec<usize> = statement
+        .match_indices(binding)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            !statement[..*at].chars().next_back().is_some_and(ident)
+                && !statement[at + binding.len()..].starts_with(ident)
+        })
+        .collect();
+    if mentions.is_empty() {
+        return true;
+    }
+    let trimmed = statement.trim_start();
+    let opener = ["assert!(", "assert_eq!(", "assert_ne!("]
+        .iter()
+        .find(|plain| trimmed.starts_with(**plain));
+    // `reset![order]` and other macros may write through the binding.
+    opener.is_some_and(|opener| {
+        let inner = &trimmed[opener.len()..];
+        inner.match_indices('!').all(|(bang, _)| {
+            let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
+            let name_start = inner[..bang]
+                .rfind(|ch: char| !ident(ch))
+                .map_or(0, |index| index + 1);
+            !invoked
+                || (matches!(&inner[name_start..bang], "vec" | "format")
+                    && !inner[..name_start].ends_with(':'))
+        })
+    }) && !statement.contains(['{', '|'])
+        && mentions.iter().all(|at| {
+            let before = statement[..*at].trim_end();
+            let mut rest = &statement[at + binding.len()..];
+            while let Some(member) = rest.strip_prefix('.') {
+                let len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+                if len == 0 {
+                    return false;
+                }
+                rest = &member[len..];
+            }
+            // A whole argument of the assertion itself, not of a call
+            // nested in it (`assert!(reset(&mut (order)))`).
+            before.matches('(').count() == before.matches(')').count() + 1
+                && (before.ends_with('(') || before.ends_with(','))
+                && rest.trim_start().starts_with([',', ')'])
+        })
+}
+
+/// Whether the test body calls `method` on anything but `binding`: another
+/// receiver (`expected.add(..)`, `o.add(..)` in a block), a path call
+/// (`Order::add(&mut expected, ..)`) or a chained receiver
+/// (`Order::new().add(..)`). Such a value may carry the owner's changed
+/// value into the other side of the equality, which then cannot fail on it.
+/// Fails closed: a call on an unrelated value also counts.
+pub(in crate::analysis) fn owner_called_on_other_receiver(
+    body: &str,
+    binding: &str,
+    method: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(method).any(|(at, name)| {
+        let before = &masked[..at];
+        if before.chars().next_back().is_some_and(ident)
+            || masked[at + name.len()..].starts_with(ident)
+        {
+            // Part of a longer name.
+            return false;
+        }
+        // A path (`Order::add(..)`, `let f = Order::add;`) may run the owner
+        // on any value.
+        if before.trim_end().ends_with("::") {
+            return true;
+        }
+        let Some(receiver_end) = before.trim_end().strip_suffix('.').map(str::len) else {
+            // A free function or local of the same name is not the method.
+            return false;
+        };
+        let receiver_end = masked[..receiver_end].trim_end().len();
+        let receiver_start = masked[..receiver_end]
+            .rfind(|ch: char| !ident(ch))
+            .map_or(0, |index| index + 1);
+        masked[..receiver_start].trim_end().ends_with('.')
+            || masked[receiver_start..receiver_end] != *binding
+    })
+}
+
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
 /// is a top-level statement of that body: not inside a nested block, branch,
 /// loop or closure, any of which may never run it. Fails closed.
@@ -649,6 +879,8 @@ fn analyze_related_assertions(
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
         owner_scoped_tokens: &owner_scoped_tokens,
+        owner_shadowed: false,
+        sibling_excluded: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -739,10 +971,22 @@ fn analyze_related_assertions(
             // expression (#7094 review).
             || error_construction_path.is_some()));
 
+    // #7763: a reason string also occurs in unrelated plan/gate values.
+    // When another test reaches the owner, proximity alone cannot make that
+    // shared literal an oracle for its predicate. Preserve possible opaque or
+    // transitive owner calls, and retain the uncredited row for explanation.
+    let shared_string_predicate = matches!(probe.family, ProbeFamily::Predicate)
+        && !rust_string_literals(&probe.expression).is_empty();
+
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = credits(*reason);
+        let credits_oracle = credits(*reason)
+            && !(shared_string_predicate
+                && owner_reaching_related
+                && is_proximity_only(*reason)
+                && !invokes_opaque_macro(&test.body)
+                && !(return_admission.proximity_may_reach_owner)(test));
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -819,6 +1063,9 @@ fn analyze_related_assertions(
             arm_inputs_readable: arm_selector.is_some_and(|selector| {
                 selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
             }),
+            owner_shadowed: match_context
+                .owner_callee
+                .is_some_and(|owner| test_body_shadows_owner(test, owner)),
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
@@ -826,12 +1073,37 @@ fn analyze_related_assertions(
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            // RIPR-SPEC-0231 examples 19 and 20: an inequality on the owner
+            // call that excludes only a sibling variant of the changed error
+            // observes the changed result, but only as `relational_check` /
+            // weak (rule 1), whatever the classifier read.
+            // A test-visible `macro_rules! assert_ne` (or `assert`,
+            // `matches`) may check nothing, so the exclusion is credited
+            // only under the shared assertion-context admission.
+            let sibling_excluded =
+                excludes_only_sibling_variant(
+                    &match_context,
+                    assertion,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                ) && (return_admission.sibling_exclusion_admitted)(test, assertion);
+            let excluded_sibling;
+            let assertion = if sibling_excluded {
+                excluded_sibling = OracleFact {
+                    kind: OracleKind::RelationalCheck,
+                    strength: OracleStrength::Weak,
+                    ..assertion.clone()
+                };
+                &excluded_sibling
+            } else {
+                assertion
+            };
             // #4478: whether this `assert_eq!` pins the owner's whole return
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins. #6692: a field of a hand-written
-            // `Clone::clone`'s returned literal is pinned by
+            // for return-value and error-path exact pins. #6692: a field of a
+            // hand-written `Clone::clone`'s returned literal is pinned by
             // `assert_eq!(recv.clone(), recv)` under the same gates
             // (`OwnerReturnPin::establish_clone_field`).
             //
@@ -839,14 +1111,23 @@ fn analyze_related_assertions(
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
             // observes a predicate that is that owner's whole tail. Its kind
             // stays the classifier's `relational_check` (RIPR-SPEC-0231);
-            // only its strength relative to this probe rises.
+            // only its strength relative to this probe rises. #6578: the
+            // same holds for an inline expect-test comparison
+            // (`expect![["5"]].assert_eq(&owner(..))`), whose kind stays
+            // `snapshot` (RIPR-SPEC-0231 step 6); the pin admits no other
+            // snapshot spelling.
             let owner_pinned = match probe.family {
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
                     OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
+                        | OracleKind::Snapshot
                 ),
+                // A changed `return Err(..);` is an `error_path` probe; its
+                // pin compares the owner's whole `Err(..)` result.
+                ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,
@@ -855,8 +1136,9 @@ fn analyze_related_assertions(
                 _ => false,
             } && pin_strength_admits(assertion)
                 && (return_admission.owner_return_pin)(test, assertion);
-            let bool_owner_pinned =
-                owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
+            let strength_raising_pin = owner_pinned
+                && (matches!(assertion.kind, OracleKind::RelationalCheck)
+                    || is_inline_expect_snapshot(assertion));
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
@@ -867,6 +1149,7 @@ fn analyze_related_assertions(
                 arm_pattern_pinned: match_context
                     .arm_selector
                     .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                sibling_excluded,
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -1002,7 +1285,7 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let mut relative_strength = if bool_owner_pinned {
+                let mut relative_strength = if strength_raising_pin {
                     OracleStrength::Strong
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
@@ -1136,6 +1419,141 @@ fn names_only_sibling_variants(text: &str, qualifier: &str, variant: &str) -> bo
     named_any
 }
 
+/// RIPR-SPEC-0231 examples 19 and 20: `assert_ne!(owner(..), Err(E::Bad))`
+/// or `assert!(!matches!(owner(..), Err(E::Bad)))` against a changed
+/// `Err(E::Big)`. The assertion names the changed error's enum only through
+/// a sibling variant, but it excludes that sibling from the owner's own
+/// result, so a change that returned the sibling would fail it: it observes
+/// the result, weakly. One compared operand (or the whole `matches!`
+/// scrutinee) must be a bare call to the owner, with no foreign import,
+/// nested `fn` or local binding making that call ambiguous, and the negated
+/// `matches!` must be the whole condition with an unguarded pattern. An
+/// inequality on any other value shares only the enum qualifier and stays
+/// refused.
+fn excludes_only_sibling_variant(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    let (Some(variant), Some(qualifier), Some(owner)) = (
+        context.error_construction_variant,
+        context.error_construction_qualifier,
+        context.owner_callee,
+    ) else {
+        return false;
+    };
+    if import_defeats_owner || cross_package_defeats_owner || context.owner_shadowed {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let statement = masked.trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    let excluded = if let Some(rest) = statement.strip_prefix("assert_ne!") {
+        // The message arguments after the two operands never decide it.
+        let operands = macro_arguments(rest);
+        match operands.as_slice() {
+            [left, right, ..] if is_whole_owner_call(left, owner) => Some(*right),
+            [left, right, ..] if is_whole_owner_call(right, owner) => Some(*left),
+            _ => None,
+        }
+    } else if let Some(rest) = statement.strip_prefix("assert!") {
+        // The negated `matches!` must be the whole condition (no `||`,
+        // `^` or other operand beside it) with an unguarded pattern.
+        macro_arguments(rest)
+            .first()
+            .and_then(|condition| condition.strip_prefix('!'))
+            .and_then(|negated| negated.trim_start().strip_prefix("matches!"))
+            .and_then(|rest| match macro_arguments(rest).as_slice() {
+                [scrutinee, pattern]
+                    if is_whole_owner_call(scrutinee, owner) && !has_word(pattern, "if") =>
+                {
+                    Some(*pattern)
+                }
+                _ => None,
+            })
+    } else {
+        None
+    };
+    excluded.is_some_and(|excluded| names_only_sibling_variants(excluded, qualifier, variant))
+}
+
+/// The trimmed top-level comma-separated arguments of a macro call whose
+/// parenthesised arguments are all of `rest` (`(a, f(b, c))`), or nothing
+/// when `rest` is not exactly one balanced group.
+fn macro_arguments(rest: &str) -> Vec<&str> {
+    let rest = rest.trim();
+    if !rest.starts_with('(') || group_end(rest) != Some(rest.len() - 1) {
+        return Vec::new();
+    }
+    let inner = &rest[1..rest.len() - 1];
+    let mut parts = Vec::new();
+    let mut depth = 0_usize;
+    let mut start = 0;
+    for (at, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(inner[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = inner[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// The byte index of the delimiter closing the group `text` opens with.
+fn group_end(text: &str) -> Option<usize> {
+    let mut depth = 0_usize;
+    for (at, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `operand` is exactly one bare call `owner(..)`: not a path
+/// segment, method, nested argument or larger expression.
+fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
+    operand.strip_prefix(owner).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.starts_with('(') && group_end(rest) == Some(rest.len() - 1)
+    })
+}
+
+fn has_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|part| part == word)
+}
+
+/// Whether the test body defines a nested `fn <owner>` or binds a local
+/// named `owner` anywhere, under either shadow authority. Conservative: a
+/// binding after the assertion also refuses the sibling exclusion.
+fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, owner, usize::MAX)
+        || ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &test.nested_fn_names,
+            let_bindings: &test.let_bindings,
+        }
+        .body_shadows_callee_at_line("", owner, usize::MAX)
+}
+
 /// Whether an assertion observes an error at all: a typed error oracle, a
 /// guarded `Result` match, or an identifier that names an error or a panic
 /// (`Err`, `ParseError`, `unwrap_err`, `is_err`, `err`, `should_panic`).
@@ -1216,6 +1634,14 @@ struct RevealMatchContext<'a> {
     /// an assertion that calls the owner; anywhere else the shared name is
     /// coincidence (#5830).
     owner_scoped_tokens: &'a [String],
+    /// Whether the current test's body defines or binds a local under the
+    /// owner's bare name, so a bare call to it may not reach the owner
+    /// (RIPR-SPEC-0231 sibling exclusion).
+    owner_shadowed: bool,
+    /// Whether the current assertion is an admitted RIPR-SPEC-0231
+    /// sibling exclusion on the owner call (`excludes_only_sibling_variant`
+    /// under standard macro bindings), decided once per assertion.
+    sibling_excluded: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -2095,6 +2521,8 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable,
         arm_pattern_pinned,
         owner_scoped_tokens,
+        owner_shadowed: _,
+        sibling_excluded,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -2271,6 +2699,9 @@ fn assertion_matches_probe_detail_with_literals(
         (error_construction_variant, error_construction_qualifier)
         && names_only_sibling_variants(&assertion.text, qualifier, variant)
     {
+        if sibling_excluded {
+            return (true, true);
+        }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
         }
@@ -2349,6 +2780,8 @@ fn assertion_matches_probe_detail(
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
             owner_scoped_tokens: &[],
+            owner_shadowed: false,
+            sibling_excluded: false,
         },
         assertion,
         assertion_count,
@@ -3380,7 +3813,17 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
 /// the whole two-valued result, and `owner_pin` alone admits that shape.
 fn pin_strength_admits(assertion: &OracleFact) -> bool {
     matches!(assertion.kind, OracleKind::RelationalCheck)
+        || is_inline_expect_snapshot(assertion)
         || assertion.strength == OracleStrength::Strong
+}
+
+/// #6578: a `snapshot` oracle the owner pin may raise is only the inline
+/// `expect![[..]].assert_eq(..)` comparison it reads like `assert_eq!`; an
+/// `insta` macro, `expect_file!`, `assert_debug_eq` or any other text the
+/// classifier grades `snapshot` keeps its medium strength.
+fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::Snapshot)
+        && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
 }
 
 #[cfg(test)]
@@ -3389,6 +3832,91 @@ mod tests {
 
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn binding_untouched_after_owner_call_refuses_writes_between_call_and_read() {
+        // The body starts at file line 10; the read sits on line 14.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let untouched =
+            |lines: &str| binding_untouched_after_owner_call(&body(lines), 10, "order", "add", 14);
+        for kept in [
+            "    let mut order = Order::new();\n    order.add(4);\n\n    assert_eq!(order.log, vec![4]);",
+            // Plain field reads in an assertion between are not writes.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.total, 4);\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.tags, vec![]);\n    assert_eq!(order.log, vec![4]);",
+            // Statements that do not name the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    let expected = vec![4];\n    assert_eq!(order.log, expected);",
+            // The result consumed by `unwrap`, `expect` or `?`.
+            "    let mut order = Order::new();\n    order.add(4).unwrap();\n    order.add(5).expect(\"added\")?;\n    assert_eq!(order.log, vec![4, 5]);",
+            // Further bare owner calls in the window.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4);\n    assert_eq!(order.log, vec![1, 4]);",
+        ] {
+            assert!(untouched(kept), "{kept}");
+        }
+        for refused in [
+            "    order.add(4);\n    order.log.clear();\n    order.log.push(4);\n    assert_eq!(order.log, vec![4]);",
+            // A snapshot between two calls, however it is spelled.
+            "    order.add(4);\n    let before = order.log.clone();\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    let before = if true { order.log.clone() } else { vec![] };\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    before.extend_from_slice(&order.log);\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(1);\n    order.log.clear();\n    order.add(4);\n    assert_eq!(order.log, vec![4]);",
+            // A later owner call whose arguments copy the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    order.add((snap = order.log.clone(), 4).1);\n    assert_eq!(order.log, [snap.clone(), snap].concat());",
+            // A later owner call that is not a bare statement.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4).clear();\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    order.log = vec![4];\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    let log = &mut order.log;\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log.pop(), Some(4));\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    normalize(&mut order);\n    assert_eq!(order.log, vec![4]);",
+            // No call before the read, or only one that may not run.
+            "    let mut order = Order::new();\n\n\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    if false { order.add(4); }\n\n    assert_eq!(order.log, vec![4]);",
+            // A chained or bound call result may write without naming `order`.
+            "    let mut order = Order::new();\n    order.add(4).clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4).unwrap().clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    let o = order.add(4);\n    o.log.clear();\n    assert_eq!(order.log, vec![]);",
+            // A write earlier on the read line.
+            "    let mut order = Order::new();\n    order.add(4);\n\n    order.log.clear(); assert_eq!(order.log, vec![]);",
+            // Assertions that write, or are not plain assertions.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!({ order.log[0] = 1; true });\n    assert_eq!(order.log, vec![1]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log[0], 4);\n    assert_eq!(order.log, vec![4]);",
+            "    order.add(4);\n    assert!(match order { Order { ref mut log, .. } => { log.clear(); true } });\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset![1, order, 2], \"m\");\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(my::vec![1, order, 2].is_empty());\n    assert_eq!(order.log, vec![]);",
+        ] {
+            assert!(!untouched(refused), "{refused}");
+        }
+    }
+
+    /// #7688 review: a value built through the owner on another receiver
+    /// may carry the changed value into the other side of the equality.
+    #[test]
+    fn owner_called_on_other_receiver_sees_every_other_owner_call() {
+        let called = |lines: &str| {
+            owner_called_on_other_receiver(&format!("fn case() {{\n{lines}\n}}"), "order", "add")
+        };
+        for kept in [
+            "    order.add(1);\n    order.add(2);",
+            "    order.add(1);\n    readd(3);\n    order.address();",
+            "    order.add(1);\n    // other.add(2);\n    let s = \"x.add(1)\";",
+        ] {
+            assert!(!called(kept), "{kept}");
+        }
+        for refused in [
+            "    other.add(1);\n    order.add(1);",
+            "    let exp = { let mut o = Order::new(); o.add(4); o };\n    order.add(4);",
+            "    Order::add(&mut exp, 4);\n    order.add(4);",
+            "    let exp = Order::new().add(4).clone();\n    order.add(4);",
+            "    let exp = self.order.add(4);\n    order.add(4);",
+            "    let f = Order::add;\n    f(&mut exp, 4);\n    order.add(4);",
+            "    exp. add(4);\n    order.add(4);",
+            "    Order::new()\n        .add(4);\n    order.add(4);",
+        ] {
+            assert!(called(refused), "{refused}");
+        }
+    }
+
     #[test]
     fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
         // The body starts at file line 10; the read sits on line 13.
@@ -3743,6 +4271,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -3838,6 +4367,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -4190,6 +4720,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -4261,6 +4792,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -4545,6 +5077,8 @@ mod tests {
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
                 owner_scoped_tokens: &empty,
+                owner_shadowed: false,
+                sibling_excluded: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -5229,6 +5763,23 @@ return Err(\"typed pin\".into());
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
         )));
+        // #6578: of the medium snapshots, only the inline expect-test
+        // comparison the owner pin reads like `assert_eq!`.
+        assert!(pin_strength_admits(&oracle(
+            "expect![[\"w12\"]].assert_eq(&render(4));",
+            OracleKind::Snapshot,
+            OracleStrength::Medium,
+        )));
+        for text in [
+            "insta::assert_snapshot!(render(4));",
+            "expect![[\"w12\"]].assert_debug_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ] {
+            assert!(
+                !pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -5885,6 +6436,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -5941,6 +6493,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -5968,6 +6521,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6014,6 +6568,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6062,6 +6617,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6235,6 +6791,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6265,6 +6822,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -6654,6 +7212,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -6930,6 +7489,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7021,6 +7581,7 @@ return Err(\"typed pin\".into());
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
@@ -7055,6 +7616,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7407,6 +7969,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
@@ -7706,6 +8269,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,

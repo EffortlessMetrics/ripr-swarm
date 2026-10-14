@@ -6,17 +6,23 @@ use super::arguments::{
 };
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
-    PatternPolarity, contains_exact_comparison, contains_negated_pattern,
-    inequality_has_struct_literal_operand, is_broad_error_assertion,
-    is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
-    is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
-    is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
-    is_exact_membership_any_assertion, is_exact_value_assertion, is_inequality_macro_assertion,
-    is_inequality_named_assertion_helper, is_inequality_named_assertion_macro,
-    is_inequality_only_comparison, is_mock_expectation_line, is_negated_pattern_assertion,
-    is_observer_named_assertion_helper, is_smoke_check, is_snapshot_assertion,
-    is_whole_object_equality_assertion, negated_pattern_conjunct_rest, pattern_comparison_polarity,
-    tests_both_sides,
+    PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
+    has_deciding_disjunction, has_top_level_exact_equality, inequality_has_struct_literal_operand,
+    is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
+    is_comparison_shaped_custom_assertion, is_custom_assertion_helper, is_duplicative_comparison,
+    is_duplicative_equality_assertion, is_effect_observer_subject_assertion,
+    is_exact_error_variant_assertion, is_exact_membership_any_assertion, is_exact_value_assertion,
+    is_inequality_macro_assertion, is_inequality_named_assertion_helper,
+    is_inequality_named_assertion_macro, is_inequality_only_comparison, is_mock_expectation_line,
+    is_negated_pattern_assertion, is_observer_named_assertion_helper, is_smoke_check,
+    is_snapshot_assertion, is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
+    pattern_comparison_polarity, pattern_conjunct_assertions, tests_both_sides,
+};
+
+/// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
+const RELATION: OracleClassification = OracleClassification {
+    kind: OracleKind::RelationalCheck,
+    strength: OracleStrength::Weak,
 };
 
 /// RIPR-SPEC-0231 rule 1: an inequality shows only that the value is not one
@@ -59,6 +65,17 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     if let Some(rest) = negated_pattern_conjunct_rest(line) {
         return if rest.is_empty() {
             INEQUALITY
+        } else {
+            classify_assertion(&rest)
+        };
+    }
+    // A parenthesized `&&` conjunct that a `||` decides pins nothing, so the
+    // other conjuncts decide, as beside a negated pattern; with nothing else
+    // left the group is only a relation (#7558). The rest's own reading is
+    // kept, never lifted, so rule 1 never raises a strength.
+    if let Some(rest) = deciding_disjunction_conjunct_rest(line) {
+        return if rest.is_empty() {
+            RELATION
         } else {
             classify_assertion(&rest)
         };
@@ -120,7 +137,9 @@ pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     is_inequality_macro_assertion(line)
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
-        || (contains_negated_pattern(line) && negated_pattern_conjunct_rest(line).is_none())
+        || (contains_negated_pattern(line)
+            && negated_pattern_conjunct_rest(line).is_none()
+            && deciding_disjunction_conjunct_rest(line).is_none())
         || ((is_inequality_named_assertion_helper(line)
             || is_inequality_named_assertion_macro(line))
             && classify_assertion(line).kind != OracleKind::MockExpectation)
@@ -143,6 +162,45 @@ fn classify_non_negated_assertion(
     line: &str,
     scalar_integer_relation: bool,
 ) -> OracleClassification {
+    let whole = classify_whole_condition(line, scalar_integer_relation);
+    // RIPR-SPEC-0231 rule 3 (#7695): without a pinning `==` conjunct (rule
+    // 1), a `&&` chain is no stronger than its strongest conjunct read alone,
+    // so a `matches!` in the chain keeps its pattern's reading instead of
+    // earning `exact_value` / strong whatever the pattern
+    // (`assert!(ready && matches!(r, Ok(_)))`). A pinning `==` keeps the
+    // chain's reading: the test does fix that value, and lowering it could
+    // turn a real discriminator into an actionable gap. It only lowers.
+    let pins_by_equality = boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition));
+    let Some(conjuncts) = pattern_conjunct_assertions(line).filter(|_| !pins_by_equality) else {
+        return whole;
+    };
+    let readings = conjuncts
+        .iter()
+        .map(|conjunct| classify_assertion(conjunct))
+        .collect::<Vec<_>>();
+    let Some(rank) = readings.iter().map(|reading| reading.strength.rank()).max() else {
+        return whole;
+    };
+    if rank > whole.strength.rank() {
+        return whole;
+    }
+    // The chain keeps its kind only when a conjunct earns that kind at the
+    // same strength alone, so an irrefutable `Ok(_) | Err(_)` conjunct
+    // cannot lend the chain `broad_error` from its `Err` text.
+    let strongest = readings
+        .iter()
+        .filter(|reading| reading.strength.rank() == rank)
+        .collect::<Vec<_>>();
+    if strongest.iter().any(|reading| **reading == whole) {
+        return whole;
+    }
+    strongest
+        .first()
+        .map_or(whole.clone(), |reading| (*reading).clone())
+}
+
+fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
     // strong as its pattern, ahead of every step that reads `matches!`.
     if let Some(classification) = pattern_assertion_classification(line) {
@@ -151,10 +209,15 @@ fn classify_non_negated_assertion(
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
+    // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`
+    // passes whenever one arm does, so no `matches!`, error variant or
+    // equality in one arm earns an exact kind.
+    let disjunction = boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| has_deciding_disjunction(&condition));
     let inequality_macro = is_inequality_macro_assertion(line);
     if inequality_macro && is_exact_error_variant_assertion(line) {
         INEQUALITY
-    } else if is_exact_error_variant_assertion(line) {
+    } else if is_exact_error_variant_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
@@ -167,9 +230,14 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Weak,
         }
     } else if is_broad_error_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::BroadError,
-            strength: OracleStrength::Weak,
+        // `ready || r.is_err()` passes without an error: only a relation.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+            }
         }
     } else if is_duplicative_equality_assertion(line) {
         OracleClassification {
@@ -187,22 +255,28 @@ fn classify_non_negated_assertion(
         } else {
             INEQUALITY
         }
-    } else if is_whole_object_equality_assertion(line) {
+    } else if is_whole_object_equality_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::WholeObjectEquality,
             strength: OracleStrength::Strong,
         }
     } else if inequality_macro {
         INEQUALITY
-    } else if is_exact_value_assertion(line) {
+    } else if is_exact_value_assertion(line) && !disjunction {
         OracleClassification {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
         }
     } else if is_snapshot_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::Snapshot,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || { assert_snapshot!(v); true })` may never run
+        // the snapshot, so a deciding `||` earns no snapshot credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::Snapshot,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_smoke_check(line) {
         OracleClassification {
@@ -215,9 +289,15 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Weak,
         }
     } else if is_mock_expectation_line(line) || is_effect_observer_subject_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::MockExpectation,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || events_sent.contains(&id))` passes without the
+        // observation, so a deciding `||` earns no observer credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::MockExpectation,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_clear_exact_custom_assertion_helper(line) {
         OracleClassification {
@@ -312,7 +392,10 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
     {
         return Some(INEQUALITY);
     }
-    if is_exact_error_variant_assertion(&condition) {
+    // A deciding `||` passes whenever one arm does, so neither an error
+    // variant nor an `==` in one arm pins the value (#7558).
+    let disjunction = has_deciding_disjunction(&condition);
+    if is_exact_error_variant_assertion(&condition) && !disjunction {
         Some(OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
@@ -323,11 +406,16 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             strength: OracleStrength::Weak,
         })
     } else if is_broad_error_assertion(&condition) {
-        Some(OracleClassification {
-            kind: OracleKind::BroadError,
-            strength: OracleStrength::Weak,
+        Some(if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+            }
         })
-    } else if (is_exact_value_assertion(&condition) || contains_exact_comparison(&condition))
+    } else if ((is_exact_value_assertion(&condition) && !disjunction)
+        || has_top_level_exact_equality(&condition))
         && !is_duplicative_comparison(&condition)
     {
         Some(OracleClassification {
@@ -846,9 +934,17 @@ mod tests {
                 RelationalCheck,
                 Weak,
             ),
-            // Control: `||` nested inside a group leaves the top-level chain.
+            // A `||` inside a parenthesized conjunct still decides the
+            // condition, so the group caps the reading (rule 1, #7558);
+            // a literal `|| false` arm is not read through.
             (
                 "assert!(!matches!(r, Err(E::Bad)) && (matches!(r, Err(E::Other)) || false));",
+                RelationalCheck,
+                Weak,
+            ),
+            // Control: with no deciding `||`, the positive conjunct decides.
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && matches!(r, Err(E::Other)));",
                 ExactErrorVariant,
                 Strong,
             ),
@@ -1266,17 +1362,25 @@ mod tests {
             ),
             ("ensure!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
             ("assert!(o.is_none_or(|v| v > 1));", SmokeOnly, Smoke),
-            // Both sides only on one receiver; a field is not a method.
-            ("assert!(left.is_ok() || right.is_err());", BroadError, Weak),
+            // Both sides only on one receiver; a field is not a method. Rule 4
+            // does not apply, but rule 1's disjunction does: the condition
+            // passes with no error at all, so it is only a relation (#7558).
+            (
+                "assert!(left.is_ok() || right.is_err());",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "assert!(get(1).is_some() || get(1).is_none());",
                 RelationalCheck,
                 Weak,
             ),
             ("assert!(status.is_err);", RelationalCheck, Weak),
+            // `|| fallback` passes with no error, so rule 1's disjunction
+            // reads it as a relation (#7558).
             (
                 "assert!(r.is_ok() && r.is_err() || fallback);",
-                BroadError,
+                RelationalCheck,
                 Weak,
             ),
             (
@@ -1442,6 +1546,138 @@ fn ok_literal() {
         ];
         if readings != expected {
             return Err(format!("parser readings {readings:?}"));
+        }
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0227 decision 2: an `unwrap_err()` whose value is never
+    /// compared reads `broad_error` / weak on the line scanner and the
+    /// parser path; a binding a later assertion compares adds nothing.
+    #[test]
+    fn spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use OracleKind::{BroadError, ExactErrorVariant};
+        use OracleStrength::{Strong, Weak};
+        let cases = [
+            (
+                "underscore_binding",
+                "let _e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "discarded",
+                "check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unused_binding",
+                "let e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "compared_binding",
+                "let e = check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "method_on_the_error",
+                "let k = check(300).unwrap_err().kind();",
+                vec![],
+            ),
+            (
+                "compared_chain_tail",
+                "let e = check(300)\n        .unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "compared_split_let",
+                "let e =\n        check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "compared_argument_tail",
+                "let e = check(\n        300,\n    ).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            // An `Ok` the adapter turns into `Err` passes whatever the call
+            // returned; only adapters that keep an `Ok` an `Ok` may sit
+            // between the call and `unwrap_err()`.
+            (
+                "fallback_error",
+                "check(300).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "option_converted",
+                "let _e = find(3).ok_or(E::Missing).unwrap_err();",
+                vec![],
+            ),
+            // A grouping is not the call: the adapter inside it still
+            // replaces the call's result (#7872).
+            (
+                "grouped_fallback_error",
+                "(check(300).and(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "nested_grouped_fallback_error",
+                "let _e = ((check(300).and(Err(E::Other)))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_or_else",
+                "(check(300).or(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_option_converted",
+                "(find(3).ok_or(E::Missing)).unwrap_err();",
+                vec![],
+            ),
+            ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
+            (
+                "turbofish_call",
+                "check::<u8>(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "error_mapped",
+                "check(300).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "method_receiver",
+                "svc.check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+        ];
+        let mut source = String::new();
+        for (name, body, expected) in &cases {
+            let lexical = crate::analysis::extract::extract_assertions(body, 1)
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &lexical != expected {
+                return Err(format!("{name}: line scanner read {lexical:?}"));
+            }
+            source.push_str(&format!("#[test]\nfn {name}() {{\n    {body}\n}}\n\n"));
+        }
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
+        for (name, _, expected) in &cases {
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == *name)
+                .ok_or_else(|| format!("parser lost test {name}"))?;
+            let parsed = test
+                .assertions
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &parsed != expected {
+                return Err(format!("{name}: parser read {parsed:?}"));
+            }
         }
         Ok(())
     }

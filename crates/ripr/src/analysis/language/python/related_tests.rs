@@ -305,6 +305,15 @@ pub(super) fn related_test_relation(
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
     }
+    // The bounded list oracle already owns a parsed direct-call operand.
+    // Preserve its identity for valid spacing/grouping that text calls miss.
+    if test.assertions.iter().any(|assertion| {
+        assertion.oracle_strength == OracleStrength::Strong
+            && super::oracles::unittest_list::calls_owner(&assertion.text, Some(test), owner)
+                == Some(true)
+    }) {
+        return Some(PythonRelationKind::SyntacticCall);
+    }
     if import_alias_calls_owner(test, owner) {
         return Some(PythonRelationKind::ImportAliasCall);
     }
@@ -1414,12 +1423,24 @@ fn construct_result_calls_method(text: &str, open_paren_idx: usize, method: &str
 /// `imported == class` form is identity-bearing: a different class aliased *to* the
 /// owner's name (`from m import Other as OwnerClass`) refers to `Other`, not the
 /// owner, so it must not contribute a local.
-fn owner_class_locals(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<String> {
+pub(super) fn owner_class_locals(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> Vec<String> {
     let mut locals = Vec::new();
     for import in &test.imports {
         if import.imported == class
             && !import.alias.is_empty()
             && !locals.contains(&import.alias)
+            && !test_rebinds_import_alias(test, &import.alias)
+            // A second import of the same name rebinds it at module level.
+            && test
+                .imports
+                .iter()
+                .filter(|other| other.alias == import.alias)
+                .count()
+                == 1
             && import_module_may_be_owners(import, owner, &test.file)
         {
             locals.push(import.alias.clone());

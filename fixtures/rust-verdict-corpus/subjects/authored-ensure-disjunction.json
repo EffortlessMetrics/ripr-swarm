@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-ensure-disjunction",
+  "origin": "authored",
+  "version_label": "authored 2026-10-13 for #7558 (RIPR-SPEC-0231 rule 1: a disjunction pins nothing)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d6dabe2adbcf0a6de50c65f3745e9df96de7eb49a345f508fca0442cd8333b92"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "82a82184ee1b796ee03000ee0d1a30b68c3bada92d2d0f9f92d44d833b7197f1"
+    }
+  ]
+}

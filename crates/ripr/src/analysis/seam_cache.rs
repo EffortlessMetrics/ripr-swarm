@@ -31,7 +31,7 @@
 //! A companion corpus fingerprint cache
 //! (`repo-corpus-fingerprint/{schema_version}/{fingerprint}.json`, issue
 //! #2108) maps a stat-only corpus signature — sorted
-//! `(path, mtime, size, ctime)` tuples — to the aggregate
+//! `(path, mtime, size, ctime, device, inode)` tuples — to the aggregate
 //! `files_content_hash` previously computed for that signature, so a warm
 //! cache-key computation does not re-read the corpus. A fingerprint miss
 //! costs nothing: the content hash is then computed exactly as before and
@@ -421,7 +421,24 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#7125).
 /// `1.62`: returned mutable-ledger partial witness and precise observer limit (#3215).
 /// `1.63`: exact fallible literal-check receipt and dependency/config validity (#4478).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.63";
+/// `1.64`: trait-dispatch reach for `Display`, `Debug`, comparison, `Hash`,
+/// `Clone`, `Default`, `FromStr`, serde and `Arbitrary` impls needs that
+/// trait's syntax in test-reached code, and a signature is no longer a call
+/// to itself (#5577). Old entries would keep those seams `opaque`.
+/// `1.65`: `#[tokio::test]` bodies admit owner-return pins read through one
+/// `.await` on an async owner (#5040). Old entries would keep those
+/// assertions refused as async tests.
+/// `1.66`: `#[rstest]` case tables whose rows hold literals admit
+/// owner-return pins. Old entries would keep those tests unidentified.
+/// `1.67`: `#[rstest]` fixture parameters admit owner-return pins, with a
+/// fixture receiver typed by its annotation (#6578). Old entries would keep
+/// those tests refused.
+/// `1.69`: inline expect-test comparisons pin owner returns, a `format!`
+/// owner tail has a direct propagation witness, and an owner-body `expect!`
+/// keeps its return paths open (#6578). Old entries keep those verdicts.
+/// `1.68` is allocated to #7828's JSON admission, so neither change can
+/// read a cache the other produced.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.69";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -527,7 +544,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.63";
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
 /// `0.68`: same partial returned-ledger evidence as full `1.62`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
+/// `0.69`: same literal-check receipt transition as full `1.63` (#4478).
+/// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
+/// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
+/// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
+/// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
+/// (`0.74` is #7828's).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -635,7 +659,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
 /// `0.68`: same partial returned-ledger evidence as full `1.62`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
+/// `0.69`: same literal-check receipt transition as full `1.63` (#4478).
+/// `0.70`: same trait-dispatch scoping transition as full `1.64` (#5577).
+/// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
+/// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
+/// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
+/// (`0.74` is #7828's).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -800,7 +831,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot report a requested name (#5363). `1.32` facts lack them.
 /// `1.34`: `call_deletion` shapes record whether the call's value is
 /// consumed (#6677). Older facts would read every call as unconsumed.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.34";
+/// `1.36`: parser-backed oracles include inline expect-test comparisons
+/// (`expect![..].assert_eq(..)`, graded from the parsed shape), and
+/// `expect` joins the trusted macro names a binding site may report
+/// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.36";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -821,7 +856,9 @@ const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
+mod export;
 mod store;
+pub(crate) use export::export_current;
 
 /// Environment variable that relocates the cache base directory. When set
 /// to a non-empty path, all cache reads and writes use that path as the
@@ -1404,11 +1441,13 @@ impl WorkspaceState<'_> {
 /// #3848 retained schema `0.2` because the unix validity rule did not change;
 /// the integrity transition below invalidates those unsigned mappings.
 /// 0.2 -> 0.3: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.3";
+/// 0.3 -> 0.4: device and inode bind replacement file identity (#7850).
+/// Earlier mappings remain on disk but cannot admit replacement-file reuse.
+pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.4";
 
 /// Cheap corpus signature: FNV-1a over sorted
 /// `(relative path, mtime secs, mtime nanos, size, ctime secs, ctime
-/// nanos)` tuples for every file in `files` (paths relative to `root`).
+/// nanos, device, inode)` tuples for every file in `files` (paths relative to `root`).
 /// Stat-only — no file contents are read. Returns `None` on any platform
 /// without a content-change witness (see below), when any file cannot be
 /// stat'd, or when a file has no portable mtime; callers must then fall
@@ -1484,6 +1523,13 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
             entry.push_str(&metadata.ctime().to_string());
             entry.push('\0');
             entry.push_str(&metadata.ctime_nsec().to_string());
+            // A replacement directory can bring a different file with the
+            // same timestamps and size. ctime describes changes to one inode,
+            // so bind its filesystem identity too; inode numbers are device-local.
+            entry.push('\0');
+            entry.push_str(&metadata.dev().to_string());
+            entry.push('\0');
+            entry.push_str(&metadata.ino().to_string());
             entry
         };
         entries.push(entry);
@@ -4236,7 +4282,9 @@ mod tests {
         // 1.31 -> 1.32: compact module item scopes for helper crediting (#5363).
         // 1.32 -> 1.33: stored trusted-macro binding candidates (#5363).
         // 1.33 -> 1.34: consumed-call shape flag (#6677).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.34");
+        // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
+        // (#6578); 1.35 is allocated to #7828.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.36");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4323,7 +4371,14 @@ mod tests {
         // 1.60 -> 1.61: Production integration helpers without assert_eq!
         // stay uncredited (#7125).
         // 1.61 -> 1.62: returned-ledger witness and observer limitation.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.63");
+        // 1.62 -> 1.63: exact fallible literal-check receipt (#4478).
+        // 1.63 -> 1.64: trait-dispatch reach scoped per trait (#5577).
+        // 1.64 -> 1.65: #[tokio::test] owner-return pins (#5040).
+        // 1.65 -> 1.66: #[rstest] case-table owner-return pins.
+        // 1.66 -> 1.67: #[rstest] fixture owner-return pins (#6578).
+        // 1.67 -> 1.69: expect-test inline pins and format! tails (#6578);
+        // 1.68 is allocated to #7828.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.69");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4379,8 +4434,14 @@ mod tests {
         // 0.66 -> 0.67: same assert_eq!-only Production helper gate as
         // full 1.61.
         // 0.67 -> 0.68: same partial returned-ledger evidence as full 1.62.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
+        // 0.68 -> 0.69: same literal-check receipt as full 1.63.
+        // 0.69 -> 0.70: same trait-dispatch scoping as the outer cache.
+        // 0.70 -> 0.71: same #[tokio::test] admission as full 1.65.
+        // 0.71 -> 0.72: same #[rstest] case-table admission as full 1.66.
+        // 0.72 -> 0.73: same #[rstest] fixture admission as full 1.67.
+        // 0.73 -> 0.75: same evidence as full 1.69 (0.74 is #7828's).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
     }
 
     #[test]
@@ -5091,7 +5152,7 @@ mod tests {
         Ok(())
     }
 
-    fn sample_classified() -> ClassifiedSeam {
+    pub(super) fn sample_classified() -> ClassifiedSeam {
         let seam = RepoSeam::new(
             PathBuf::from("src/foo.rs"),
             "src/foo.rs::foo",
@@ -5719,7 +5780,7 @@ mod tests {
         Ok(())
     }
 
-    fn empty_state() -> WorkspaceState<'static> {
+    pub(super) fn empty_state() -> WorkspaceState<'static> {
         WorkspaceState {
             workspace_root: Path::new("/repo"),
             files: &[],
@@ -5730,7 +5791,7 @@ mod tests {
         }
     }
 
-    fn isolated_dir(label: &str) -> PathBuf {
+    pub(super) fn isolated_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("ripr-cache-{label}-{}", uuid_like()))
     }
 

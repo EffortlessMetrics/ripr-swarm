@@ -158,6 +158,7 @@ pub(crate) fn collect_context_from_artifact(
     config: &RiprConfig,
     artifact_path: &Path,
     asserted_base: Option<&str>,
+    mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
     let findings = super::check_artifact::load_findings_for_reuse_core(
         artifact_path,
@@ -167,7 +168,9 @@ pub(crate) fn collect_context_from_artifact(
     )?;
     // As in `explain --from`, the navigation names the artifact: replaying
     // it keeps the verified identity without re-running the pipeline.
-    let navigation = super::finding_navigation(&input, Some(artifact_path), false);
+    // An explicit Draft must survive replay over a non-Draft repo default,
+    // just as it does on the fresh context and artifact explain routes.
+    let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     match select_finding(&findings, selector) {
         Some(finding) => Ok(output::json::render_context_packet_with_explain_command(
             finding,

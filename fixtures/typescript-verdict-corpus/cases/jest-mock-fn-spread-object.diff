@@ -1,0 +1,11 @@
+diff --git a/src/saveSpread.ts b/src/saveSpread.ts
+index 0000000..1111111 100644
+--- a/src/saveSpread.ts
++++ b/src/saveSpread.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function saveSpread(db: SpreadDb, v: number): void {
+-  db.write(v + 1);
++  db.write(v + 2);
+ }

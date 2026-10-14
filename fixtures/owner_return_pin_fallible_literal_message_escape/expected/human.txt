@@ -11,14 +11,14 @@ Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: ./src/lib.rs:1
-  Static exposure: weak (weakly_exposed, warning, confidence 0.66)
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:answer:return_value:return_value:7
   Changed behavior: 7
   Missing discriminator: No strong discriminator was detected
   Related test: src/test_support.rs:10 observes_answer (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
-  Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach answer: observes_answer
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full

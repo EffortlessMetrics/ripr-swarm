@@ -112,6 +112,17 @@ testing, enable CI blocking policy, or unlock basic CLI usefulness.
 ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 ```
 
+After writing, `init` prints `doctor` and `check` commands with the selected
+root bound explicitly. Copy those commands to inspect the same repository
+from another directory, including when `init` used a relative `--root`.
+If its supplied spelling is not lossless, `init` tries the selected directory's
+resolved filesystem path, so `--root ..` can still select a UTF-8 parent from
+a directory with non-UTF-8 bytes. Symlink traversal follows the filesystem.
+If neither spelling represents the selected root losslessly in a portable command,
+`init` keeps its completed writes and success status, omits the follow-ups,
+and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
+with non-UTF-8 bytes still provides a usable command spelling.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
@@ -1019,6 +1030,25 @@ The selected source corpus participates in cache identity, and this setting is
 finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
+`[languages.python]` and `[languages.typescript]` configure the preview
+adapters. Each admits one override:
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+
+For example, a project that keeps hand-written Python source under a `build/`
+package can admit it:
+
+```toml
+[languages.python]
+handwritten_files = ["build/lib/pipeline.py"]
+```
+
+When a changed file is still skipped by these conventions, the run's
+`language_scope_unsupported` limitation names this opt-in instead of advising a
+bare retry that cannot change the outcome (#7386).
+
 For example:
 
 ```toml
@@ -1080,7 +1110,7 @@ languages continue. The accepted managed producer values are
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. |
+| `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. Unknown values fail at parse time with a key-named error. |
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer ≥ 1 | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` is rejected at parse time with a named error — it does not disable the timeout; remove the key for the default. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |

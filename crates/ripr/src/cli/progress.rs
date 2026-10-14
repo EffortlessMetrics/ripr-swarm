@@ -9,9 +9,15 @@ use crate::app::{
 };
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+/// The `for_stderr` sink currently owning interactive stderr line discipline.
+/// Shadowed `eprintln!` asks this owner to terminate a held-open TTY row
+/// before printing, under the same mutex the heartbeat thread uses, so a
+/// notice cannot glue onto the progress line or tear with a heartbeat.
+static ACTIVE_STDERR_SINK: Mutex<Option<Weak<SinkInner>>> = Mutex::new(None);
 
 /// Documented heartbeat and visibility policy for CLI progress.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -193,7 +199,36 @@ impl CliProgressSink {
     pub(crate) fn for_stderr(tty: bool, policy: ProgressPolicy) -> Self {
         let sink = Self::with_writer(Box::new(io::stderr()), tty, policy);
         sink.hold_success_terminal();
+        sink.install_as_stderr_notice_owner();
         sink
+    }
+
+    /// Mid-run stderr notice: finish any held-open TTY progress row, then
+    /// write the notice as its own newline-delimited line on the same
+    /// writer the heartbeat uses. The next progress update resumes in-place
+    /// on the following row.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "production notices enter through try_emit_notice; tests drive this owner method on a shared buffer"
+        )
+    )]
+    pub(crate) fn notice(&self, message: &str) {
+        Self::write_notice(&mut Self::lock_state(&self.inner), message);
+    }
+
+    fn install_as_stderr_notice_owner(&self) {
+        *lock_active_stderr_sink() = Some(Arc::downgrade(&self.inner));
+    }
+
+    fn uninstall_as_stderr_notice_owner(&self) {
+        let mut slot = lock_active_stderr_sink();
+        if let Some(current) = slot.as_ref().and_then(Weak::upgrade)
+            && Arc::ptr_eq(&current, &self.inner)
+        {
+            *slot = None;
+        }
     }
 
     /// CLI command success is later than producer `completed`. Hold that
@@ -284,7 +319,18 @@ impl CliProgressSink {
             let _ = projection.writer.write_all(b"\n");
             let _ = projection.writer.flush();
             projection.in_place = false;
+            // The closed row no longer participates in overwrite padding.
+            // A later in-place resume starts width tracking on the new line.
+            projection.tty_width = 0;
         }
+    }
+
+    fn write_notice(projection: &mut Projection, message: &str) {
+        Self::finish_in_place(projection);
+        let mut owned = crate::terminal_text::terminal_safe(message.to_string());
+        owned.push('\n');
+        let _ = projection.writer.write_all(owned.as_bytes());
+        let _ = projection.writer.flush();
     }
 
     fn emit_event(&self, event: AnalysisProgressEvent) {
@@ -450,10 +496,40 @@ impl AnalysisProgressSink for CliProgressSink {
 impl Drop for CliProgressSink {
     fn drop(&mut self) {
         self.stop_heartbeat();
-        let mut projection = Self::lock_state(&self.inner);
-        Self::project_held_failure(&mut projection);
-        Self::finish_in_place(&mut projection);
+        {
+            let mut projection = Self::lock_state(&self.inner);
+            Self::project_held_failure(&mut projection);
+            Self::finish_in_place(&mut projection);
+        }
+        // Uninstall after the in-place row is closed so a concurrent
+        // `eprintln!` still serializes through this owner until Drop is done.
+        self.uninstall_as_stderr_notice_owner();
     }
+}
+
+fn lock_active_stderr_sink() -> std::sync::MutexGuard<'static, Option<Weak<SinkInner>>> {
+    match ACTIVE_STDERR_SINK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Route a shadowed `eprintln!` through the active `for_stderr` sink when
+/// one exists. Returns `false` when the caller should use `std::eprintln!`.
+pub(crate) fn try_emit_notice(message: &str) -> bool {
+    // Upgrade under the registry lock, then release it before taking the
+    // projection mutex. Holding both is a deadlock against Drop, which
+    // finishes the in-place row under the projection mutex and then
+    // uninstalls the registry entry.
+    let inner = {
+        let slot = lock_active_stderr_sink();
+        slot.as_ref().and_then(Weak::upgrade)
+    };
+    let Some(inner) = inner else {
+        return false;
+    };
+    CliProgressSink::write_notice(&mut CliProgressSink::lock_state(&inner), message);
+    true
 }
 
 #[cfg(test)]
@@ -1067,5 +1143,211 @@ mod tests {
             "non-success terminals must remain visible on a short TTY run: {text}"
         );
         assert!(!text.contains("completed"));
+    }
+
+    /// The ~170-character reverse-dependency disclosure from
+    /// `path_dependencies::scope_disclosure` (`Unavailable`). It is longer
+    /// than any STANDARD progress line, so an overwrite that only tracks
+    /// progress width leaves its tail on screen.
+    const LONG_UNAVAILABLE_NOTICE: &str = "ripr: path-dependency graph status is unavailable: \
+         no local Cargo.toml manifest was found, so reverse-dependency \
+         diff-scope expansion did not run and the diff scope stays the \
+         changed packages";
+
+    fn tty_immediate_policy() -> ProgressPolicy {
+        ProgressPolicy {
+            min_visible: Duration::ZERO,
+            first_heartbeat: Duration::from_secs(2),
+            heartbeat_every: Duration::from_secs(8),
+            max_heartbeats: u32::MAX,
+        }
+    }
+
+    #[test]
+    fn tty_notice_does_not_glue_onto_the_held_open_progress_line() {
+        let buffer = Buffer::new();
+        let sink =
+            CliProgressSink::with_writer(Box::new(buffer.clone()), true, tty_immediate_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        let before = buffer.text();
+        assert!(
+            before.contains('\r'),
+            "control requires a held-open TTY row: {before:?}"
+        );
+        assert!(
+            !before.contains('\n'),
+            "control requires the TTY row to still be open: {before:?}"
+        );
+        sink.notice(LONG_UNAVAILABLE_NOTICE);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            !text.contains("[diff]ripr:"),
+            "notice must not append onto the open progress row: {text:?}"
+        );
+        let notice_line = text
+            .lines()
+            .find(|line| line.contains("path-dependency graph status is unavailable"))
+            .unwrap_or("");
+        assert_eq!(
+            notice_line.trim_end(),
+            LONG_UNAVAILABLE_NOTICE,
+            "notice must occupy its own line: {text:?}"
+        );
+        assert!(
+            notice_line.chars().count()
+                > format_stage_line(
+                    AnalysisProgressStage::Analyzing,
+                    AnalysisProgressScope::Diff
+                )
+                .chars()
+                .count(),
+            "control requires a notice longer than the progress row"
+        );
+    }
+
+    #[test]
+    fn tty_notice_survives_a_shorter_successor_progress_overwrite() {
+        let buffer = Buffer::new();
+        let sink =
+            CliProgressSink::with_writer(Box::new(buffer.clone()), true, tty_immediate_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.notice(LONG_UNAVAILABLE_NOTICE);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            text.contains(LONG_UNAVAILABLE_NOTICE),
+            "the full notice must remain after a shorter progress overwrite: {text:?}"
+        );
+        assert!(
+            !text.contains("[diff]ripr:"),
+            "finishing the TTY row first is what keeps a later \\r from sharing the notice's line: {text:?}"
+        );
+        let visible = tty_visible_line(&text);
+        assert!(
+            visible.contains("building_output"),
+            "successor progress must be the live TTY row: {visible:?}"
+        );
+        assert!(
+            !visible.contains("unavailable"),
+            "notice tail must not remain on the overwritten progress row: {visible:?}"
+        );
+        assert!(
+            !visible.contains("Cargo.toml"),
+            "notice tail past progress width must not remain: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn non_tty_notice_stays_newline_delimited_without_cr() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.notice(LONG_UNAVAILABLE_NOTICE);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        sink.emit(event(AnalysisProgressStage::Completed));
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            !text.contains('\r'),
+            "non-TTY output must stay CR-free: {text:?}"
+        );
+        assert_eq!(
+            text,
+            format!(
+                "ripr progress: analyzing [diff]\n{LONG_UNAVAILABLE_NOTICE}\n\
+                 ripr progress: building_output [diff]\nripr progress: completed [diff]\n"
+            ),
+            "non-TTY progress wording and delimiters must be unchanged aside from the notice line"
+        );
+    }
+
+    #[test]
+    fn heartbeat_after_notice_starts_a_new_in_place_line() {
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            true,
+            tty_immediate_policy(),
+            now,
+        );
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.stop_heartbeat();
+        sink.notice(LONG_UNAVAILABLE_NOTICE);
+        clock.advance_millis(2_000);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        drop(sink);
+        let text = buffer.text();
+        assert!(
+            text.contains(&format!("\n{LONG_UNAVAILABLE_NOTICE}\n")),
+            "heartbeat must not eat the notice: {text:?}"
+        );
+        assert!(
+            !text.contains("[diff]ripr:"),
+            "heartbeat must not glue onto the notice: {text:?}"
+        );
+        assert!(
+            text.contains("still active after 2s"),
+            "progress must resume after the notice: {text:?}"
+        );
+        let visible = tty_visible_line(&text);
+        assert!(
+            visible.contains("still active after 2s"),
+            "resumed heartbeat is the live TTY row: {visible:?}"
+        );
+        assert!(
+            !visible.contains("unavailable"),
+            "notice must not remain on the heartbeat row: {visible:?}"
+        );
+    }
+
+    /// Restores any previous stderr owner so this control cannot steal
+    /// `for_stderr` from a parallel command test for the rest of the process.
+    struct ActiveStderrOwnerGuard {
+        previous: Option<Weak<SinkInner>>,
+    }
+
+    impl ActiveStderrOwnerGuard {
+        fn install(sink: &CliProgressSink) -> Self {
+            let previous = lock_active_stderr_sink().replace(Arc::downgrade(&sink.inner));
+            Self { previous }
+        }
+    }
+
+    impl Drop for ActiveStderrOwnerGuard {
+        fn drop(&mut self) {
+            *lock_active_stderr_sink() = self.previous.take();
+        }
+    }
+
+    #[test]
+    fn shadowed_eprintln_finishes_the_open_tty_row_through_the_active_sink() {
+        let buffer = Buffer::new();
+        let sink =
+            CliProgressSink::with_writer(Box::new(buffer.clone()), true, tty_immediate_policy());
+        let _owner = ActiveStderrOwnerGuard::install(&sink);
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        eprintln!("{LONG_UNAVAILABLE_NOTICE}");
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        let text = buffer.text();
+        assert!(
+            text.contains(LONG_UNAVAILABLE_NOTICE),
+            "shadowed eprintln must write through the active sink: {text:?}"
+        );
+        assert!(
+            !text.contains("[diff]ripr:"),
+            "shadowed eprintln must finish the TTY row first: {text:?}"
+        );
+        assert!(
+            try_emit_notice("ripr: second notice"),
+            "an installed owner must claim try_emit_notice"
+        );
+        assert!(
+            buffer.text().contains("ripr: second notice"),
+            "try_emit_notice must use the sink writer"
+        );
     }
 }

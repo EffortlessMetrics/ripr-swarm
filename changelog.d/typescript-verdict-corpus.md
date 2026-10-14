@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - TypeScript verdict corpus: `fixtures/typescript-verdict-corpus` holds 101
   authored cases across jest, vitest, mocha with chai and node:test,
   including at least one case for RIPR-SPEC-0243 acceptance examples 1 to

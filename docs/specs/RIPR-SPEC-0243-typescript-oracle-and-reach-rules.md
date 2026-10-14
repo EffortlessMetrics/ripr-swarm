@@ -248,11 +248,11 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
-| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium |
+| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
-| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
+| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -276,9 +276,11 @@ unexercised second throw — reads `broad_error` / weak for that change.
 `rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
 verdict.
 
-A snapshot never reaches
+A medium snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
-`typescript_snapshot_discriminator_unresolved`. A mock matcher never
+`typescript_snapshot_discriminator_unresolved`. A literal inline snapshot
+(RIPR-SPEC-0247 rule 3) or a committed entry the test names
+(RIPR-SPEC-0258) reads strong and can. A mock matcher never
 reaches `exposed` either, even with a literal payload.
 
 The exact error payload override reads `exact_error_variant` / strong for
@@ -478,8 +480,14 @@ StaticUnknown families always pass it.
   contains a changed token.
 - **Effect families** (SideEffect, CallDeletion) pass when a strong
   assertion's observed expression shares a changed identifier token, or
-  does not contain the owner name as a substring (the side channel rule,
-  which stays a substring test so that it fails closed).
+  does not contain the owner name or an admitted free-function import local
+  as a substring (the side channel rule, which stays a substring test so
+  that it fails closed). For a direct, named-alias or imported free-function
+  relation, the same module/export/call/shadow checks used by rules 5 and 7
+  and RIPR-SPEC-0251 identify both named and default locals. Mixed direct and
+  aliased calls retain every such local even when another call determines
+  the relation kind. A same-named free export cannot stand for a method.
+  Other effect confirmations and value-family rules stay unchanged (#7514).
 
 **Rule 6. Value-family references match whole identifiers.** In the value
 branch, "references the owner" and "contains a changed token" mean a whole
@@ -551,7 +559,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    static-limited" protects. RIPR-SPEC-0027 is amended. Rejected: weak,
    which would split TypeScript from Rust for no class difference.
    Amended by RIPR-SPEC-0247 rule 3: an inline snapshot with literal text
-   reads `snapshot` / strong.
+   reads `snapshot` / strong. Amended by RIPR-SPEC-0258: so does a
+   `toMatchSnapshot()` whose committed entry the test file names.
 2. **Value-family guard.** Adopted: the code's guard on ReturnValue and
    FieldConstruction, because it is the fail-closed reading and existing
    tests pin it (`ts_returnvalue_unrelated_strong_assertion_downgrades`).
@@ -653,7 +662,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
-- No resolution of custom matchers, `expect.extend`, or helper bodies.
+- No resolution of custom matchers, `expect.extend`, or helper bodies,
+  except a same-file strict-equality matcher (RIPR-SPEC-0262).
 - No expected-value liveness check for ReturnValue or ErrorPath.
 - No infection or propagation modeling.
 - No change to the per-test display oracle (filed separately).
@@ -682,6 +692,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
+   Amended by RIPR-SPEC-0258: with a committed
+   `tests/__snapshots__/lib.test.ts.snap` holding the entry `price 1`, it
+   reads `snapshot` / strong and `exposed`.
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,

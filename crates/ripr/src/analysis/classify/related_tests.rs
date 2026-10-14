@@ -30,6 +30,33 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// statements live at module level, outside the test function body the
     /// test summary carries (#3619 review).
     pub(in crate::analysis) index: &'a RustIndex,
+    /// Nearest-manifest identities of the packages with at least one
+    /// analyzable Rust file the index does not hold (#6617). Empty when the
+    /// index spans the workspace. A narrowed (Draft/Fast) index can still
+    /// carry the whole owner package, which is all the inherent type-path
+    /// admit needs; every other admit keeps the whole-workspace
+    /// precondition.
+    pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+}
+
+/// #6617: the nearest-manifest identity of every package that has an
+/// analyzable Rust file outside `indexed_files`. A file no discovered
+/// manifest covers names no package and is skipped: it cannot belong to the
+/// owner package the consumer asks about.
+pub(in crate::analysis) fn manifests_with_unindexed_files(
+    manifest_dir_prefixes: &[String],
+    analyzable_files: &[std::path::PathBuf],
+    indexed_files: &[std::path::PathBuf],
+) -> BTreeSet<String> {
+    let indexed: BTreeSet<String> = indexed_files
+        .iter()
+        .map(|file| normalize_path(file))
+        .collect();
+    analyzable_files
+        .iter()
+        .filter(|file| !indexed.contains(&normalize_path(file)))
+        .filter_map(|file| nearest_manifest_identity(manifest_dir_prefixes, file))
+        .collect()
 }
 
 /// Minimum token length for the `assertions_reference_owner` signal.
@@ -647,7 +674,11 @@ fn find_related_tests_with_candidates<'a>(
     // #4558: the definitions themselves, so a type-path call `T::name(` can
     // set aside those defined outside any impl of `T`.
     let mut same_name_definitions: Vec<&FunctionSummary> = Vec::new();
-    if workspace_complete && !owner_name.is_empty() {
+    // #6617: a narrowed index still scans when a dependency-edge context
+    // exists, for the inherent type-path admit's competitor check. The
+    // uniqueness bypass and the bare-call admit stay gated on
+    // `workspace_complete` below, so a partial count never feeds them.
+    if (workspace_complete || dependency_edges.is_some()) && !owner_name.is_empty() {
         let mut record_same_name = |function: &'a FunctionSummary| {
             same_name_function_count += 1;
             same_name_definitions.push(function);
@@ -939,7 +970,6 @@ fn find_related_tests_with_candidates<'a>(
             && !(calls_owner && owner_name_is_unique)
             && !calls_helper_entry
             && !(calls_owner
-                && workspace_complete
                 && owner_fn.is_some_and(|owner| {
                     dependency_edges.is_some_and(|context| {
                         dependency_edge_admits_owner_call(
@@ -951,6 +981,7 @@ fn find_related_tests_with_candidates<'a>(
                                 unattributed: same_name_unattributed_definition,
                                 definitions: &same_name_definitions,
                             },
+                            workspace_complete,
                         )
                     })
                 }))
@@ -1172,11 +1203,15 @@ struct SameNameDefinitions<'s> {
 /// - a type-path call `T::name(` (#4558) is admitted before the shadow
 ///   checks when `T` is the owner's impl self type and is imported from
 ///   the owner's crate: see `type_path_call_admits_owner`.
+/// - the index must span the workspace (`workspace_complete`), except for
+///   the type-path route on an inherent-impl owner whose whole package is
+///   indexed (#6617): see `type_path_index_covers_competitors`.
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
     test: &TestSummary,
     same_name: &SameNameDefinitions<'_>,
+    workspace_complete: bool,
 ) -> bool {
     let owner_name = owner.name.as_str();
     if context.adjacency.status() != PathDependencyGraphStatus::Complete {
@@ -1227,16 +1262,23 @@ fn dependency_edge_admits_owner_call(
     let file_level_imports = file_level_use_text(&stripped_file);
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
-    if type_path_call_admits_owner(
-        context,
-        &owner_manifest,
-        owner,
-        test,
-        &callable_dependency_names,
-        &file_level_imports,
-        same_name.definitions,
-    ) {
+    if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
+        && type_path_call_admits_owner(
+            context,
+            &owner_manifest,
+            owner,
+            test,
+            &callable_dependency_names,
+            &file_level_imports,
+            same_name.definitions,
+        )
+    {
         return true;
+    }
+    // The bare-call route counts same-named definitions across the
+    // workspace: a narrowed index cannot refute an unindexed competitor.
+    if !workspace_complete {
+        return false;
     }
     if body_binds_owner_name(&test.body, owner_name) {
         return false;
@@ -1280,6 +1322,33 @@ fn dependency_edge_admits_owner_call(
         bare_call_captured
             && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
     })
+}
+
+/// #6617: whether a narrowed index still holds every definition that could
+/// compete with an inherent owner for a `T::name(` call, so the type-path
+/// admit needs no whole-workspace index.
+///
+/// Path resolution of `T::name` prefers inherent associated items over
+/// trait items, so for an owner declared in an inherent `impl T` block the
+/// only possible other target is another inherent `name` on a type named
+/// `T`. Inherent impls live in the type's own crate, and whether
+/// `dep::...::T` is the owner's type or a type the owner's crate imports is
+/// read from the owner's crate (`owner_crate_imports_type_name`): both need
+/// the whole owner package indexed, and nothing else. A trait-impl owner
+/// keeps the whole-workspace precondition, since a trait default or blanket
+/// impl in any crate the test can name could share the path.
+fn type_path_index_covers_competitors(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
+    owner: &FunctionSummary,
+) -> bool {
+    // Both parser facts describe the owner's nearest enclosing impl: a
+    // lexical-fallback owner carries `Unknown` for either and never passes.
+    let inherent_owner = matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) && matches!(owner.impl_context, FunctionImplContext::Impl { .. });
+    inherent_owner && !context.unindexed_manifests.contains(owner_manifest)
 }
 
 /// #4558: a captured call spelled `T::name(` where `T` is the owner's impl
@@ -3402,83 +3471,6 @@ pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &s
 /// of `name`, with comments and strings masked first.
 pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
     free_function_call_start_in(&mask_comments_and_strings(text), name).is_some()
-}
-
-/// Specific call-site syntax for targeted owner selection. A captured fact
-/// contains a whole line, so retain every same-named site on that line.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::analysis) enum TargetedCallShape {
-    Bare,
-    Path { prefix: String, generic: bool },
-    Unsupported,
-}
-
-pub(in crate::analysis) fn targeted_call_shapes(
-    text: &str,
-    name: &str,
-) -> BTreeSet<TargetedCallShape> {
-    let masked = mask_comments_and_strings(text);
-    let mut shapes = BTreeSet::new();
-    for (at, _) in masked.match_indices(name) {
-        if !ident_boundary(masked.as_bytes(), at, at + name.len())
-            || !call_paren_follows(&masked, at + name.len())
-        {
-            continue;
-        }
-        let before = masked[..at].trim_end();
-        // A raw callee marker otherwise hides a preceding path from this
-        // line-level selector; retain it as unresolved, never as bare.
-        if before.ends_with("r#") {
-            shapes.insert(TargetedCallShape::Unsupported);
-            continue;
-        }
-        if ident_ending_at(before, before.len()) == Some("fn") {
-            continue;
-        }
-        if let Some(qualifier) = before.strip_suffix("::") {
-            let mut qualifier = qualifier.trim_end();
-            let generic = qualifier.ends_with('>');
-            if generic {
-                let Some(open) =
-                    matching_open(qualifier.as_bytes(), qualifier.len() - 1, b'<', b'>')
-                else {
-                    shapes.insert(TargetedCallShape::Unsupported);
-                    continue;
-                };
-                // A turbofish qualifies a named type; UFCS and unresolved
-                // generic syntax remain unsupported here.
-                let Some(base) = qualifier[..open].trim_end().strip_suffix("::") else {
-                    shapes.insert(TargetedCallShape::Unsupported);
-                    continue;
-                };
-                qualifier = base.trim_end();
-            }
-            let start = qualifier
-                .char_indices()
-                .rev()
-                .find(|(_, ch)| !ch.is_alphanumeric() && !matches!(ch, '_' | ':'))
-                .map_or(0, |(at, ch)| at + ch.len_utf8());
-            let prefix = &qualifier[start..];
-            let preceding = qualifier[..start].trim_end();
-            if prefix.is_empty()
-                || prefix.starts_with("::")
-                || preceding.ends_with("::")
-                || preceding.ends_with("r#")
-            {
-                shapes.insert(TargetedCallShape::Unsupported);
-            } else {
-                shapes.insert(TargetedCallShape::Path {
-                    prefix: prefix.to_string(),
-                    generic,
-                });
-            }
-        } else if is_free_function_call_at(&masked, at, name) {
-            shapes.insert(TargetedCallShape::Bare);
-        } else {
-            shapes.insert(TargetedCallShape::Unsupported);
-        }
-    }
-    shapes
 }
 
 /// The suffix of a captured call's raw source text that starts at its first
@@ -6688,10 +6680,12 @@ mod tests {
         manifest_dir_prefixes: &'a [String],
         index: &'a RustIndex,
     ) -> DependencyEdgeContext<'a> {
+        static NONE_UNINDEXED: BTreeSet<String> = BTreeSet::new();
         DependencyEdgeContext {
             adjacency,
             manifest_dir_prefixes,
             index,
+            unindexed_manifests: &NONE_UNINDEXED,
         }
     }
 
@@ -8676,6 +8670,219 @@ fn crate_c_score_test() {
         let mut index = level_filter_index(imported, Vec::new());
         *index.function_at_mut(0) = unknown_owner.clone();
         assert!(level_filter_related(&index, &unknown_owner).is_empty());
+    }
+
+    // --- #6617: the inherent type-path admit on a package-narrowed index ---
+
+    /// `impl Gauge { fn reading() }` in `crate_a`, as the parser records an
+    /// inherent method.
+    fn inherent_gauge_reading() -> FunctionSummary {
+        let mut owner = impl_method("crates/crate_a/src/lib.rs", "Gauge", "reading");
+        owner.item.container = crate::analysis::facts::FunctionContainer::Inherent {
+            self_ty: "Gauge".to_string(),
+        };
+        owner
+    }
+
+    /// The Draft-mode shape of the old-deps corpus subject: `crate_a` (the
+    /// changed owner package) and `crate_c` (its dependent, whose test calls
+    /// the owner) are indexed; `crate_b`, which `crate_c` also depends on and
+    /// which defines a free `reading`, is not. `extra` adds indexed
+    /// definitions; `unindexed` names the packages the index left partial.
+    fn narrowed_gauge_related(
+        owner: &FunctionSummary,
+        test_body: &str,
+        extra: Vec<FunctionSummary>,
+        unindexed: &[&str],
+        workspace_complete: bool,
+    ) -> Vec<RelationReason> {
+        let mut functions = vec![owner.clone()];
+        functions.extend(extra);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test_with_call(
+                "crates/crate_c/tests/direct.rs",
+                "gauge_reads_forty_two",
+                test_body,
+                "reading",
+            )],
+            ..Default::default()
+        });
+        let adjacency = adjacency_with(
+            "complete",
+            &[
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_a",
+                    PathDependencySection::Dependencies,
+                    "crate_a",
+                ),
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_b",
+                    PathDependencySection::Dependencies,
+                    "crate_b",
+                ),
+            ],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let unindexed_manifests: BTreeSet<String> = unindexed
+            .iter()
+            .map(|manifest| (*manifest).to_string())
+            .collect();
+        let context = DependencyEdgeContext {
+            adjacency: &adjacency,
+            manifest_dir_prefixes: &prefixes,
+            index: &index,
+            unindexed_manifests: &unindexed_manifests,
+        };
+        let probe = probe("crates/crate_a/src/lib.rs", "42");
+        find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            workspace_complete,
+            None,
+            Some(&context),
+        )
+        .into_iter()
+        .map(|(_, reason)| reason)
+        .collect()
+    }
+
+    const DIRECT_IMPORT: &str = "use crate_a::Gauge; assert_eq!(Gauge::reading(), 42)";
+    const SPARE: &str = "crates/crate_b/Cargo.toml";
+
+    /// #6617 positive: inherent `T::name` resolution prefers inherent items,
+    /// so with the owner's whole package indexed no unindexed crate can hold
+    /// a competing target; the dependent crate's test relates although the
+    /// index does not span the workspace.
+    #[test]
+    fn inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package() {
+        let owner = inherent_gauge_reading();
+        assert_eq!(
+            narrowed_gauge_related(&owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // An indexed free `reading` in the sibling crate cannot be the
+        // target of `Gauge::reading()` either.
+        assert_eq!(
+            narrowed_gauge_related(
+                &owner,
+                DIRECT_IMPORT,
+                vec![free_function("crates/crate_b/src/lib.rs", "reading")],
+                &[],
+                false,
+            ),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    /// #6617 negatives: the narrowed-index route keeps every #4558 import
+    /// boundary and refuses whenever its own premise does not hold.
+    #[test]
+    fn inherent_type_path_call_on_narrowed_index_fails_closed() {
+        let owner = inherent_gauge_reading();
+        let rows: Vec<(&str, &str, Vec<FunctionSummary>, Vec<&str>)> = vec![
+            (
+                "aliased import",
+                "use crate_a::Gauge as Knob; assert_eq!(Knob::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "glob import",
+                "use crate_a::*; assert_eq!(Gauge::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "same type name from the other dependency",
+                "use crate_b::Gauge; assert_eq!(Gauge::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "owner package only partly indexed",
+                DIRECT_IMPORT,
+                Vec::new(),
+                vec![SPARE, "crates/crate_a/Cargo.toml"],
+            ),
+            (
+                "another indexed impl of a type with the same name",
+                DIRECT_IMPORT,
+                vec![impl_method(
+                    "crates/crate_c/src/gauge.rs",
+                    "Gauge",
+                    "reading",
+                )],
+                vec![SPARE],
+            ),
+        ];
+        for (label, body, extra, unindexed) in rows {
+            assert!(
+                narrowed_gauge_related(&owner, body, extra, &unindexed, false).is_empty(),
+                "{label}: must not relate"
+            );
+        }
+        // A trait-impl owner can share `T::name` with a trait default or a
+        // blanket impl in an unindexed crate: only the complete index admits.
+        let mut trait_owner = owner.clone();
+        trait_owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+            trait_path: "Read".to_string(),
+            self_ty: "Gauge".to_string(),
+        };
+        assert!(
+            narrowed_gauge_related(&trait_owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false)
+                .is_empty()
+        );
+        assert_eq!(
+            narrowed_gauge_related(&trait_owner, DIRECT_IMPORT, Vec::new(), &[], true),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // A bare call keeps the whole-workspace precondition.
+        let mut free_owner = free_function("crates/crate_a/src/lib.rs", "reading");
+        free_owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        assert!(
+            narrowed_gauge_related(
+                &free_owner,
+                "use crate_a::reading; assert_eq!(reading(), 42)",
+                Vec::new(),
+                &[SPARE],
+                false,
+            )
+            .is_empty()
+        );
+    }
+
+    /// #6617: the partial-package inventory names exactly the packages with
+    /// an analyzable file outside the index; unattributable files name none.
+    #[test]
+    fn manifests_with_unindexed_files_names_partial_packages() {
+        let prefixes = owned_prefixes(&["crates/crate_a/", "crates/crate_b/", "crates/crate_c/"]);
+        let analyzable: Vec<PathBuf> = [
+            "crates/crate_a/src/lib.rs",
+            "crates/crate_b/src/lib.rs",
+            "crates/crate_c/src/lib.rs",
+            "crates/crate_c/tests/direct.rs",
+            "scripts/loose.rs",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        let indexed: Vec<PathBuf> = ["crates/crate_a/src/lib.rs", "crates/crate_c/src/lib.rs"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(
+            manifests_with_unindexed_files(&prefixes, &analyzable, &indexed),
+            BTreeSet::from([
+                "crates/crate_b/Cargo.toml".to_string(),
+                "crates/crate_c/Cargo.toml".to_string(),
+            ])
+        );
+        assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {
