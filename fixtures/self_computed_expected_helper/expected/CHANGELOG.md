@@ -38,3 +38,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — self_computed_expected_helper (4)
+
+Reason:
+RIPR-SPEC-0259: Next step for error_path/return_value weakly_exposed findings names the missing input when the strongest related oracle is already exact (#7393); guidance text only, no class or evidence change
+
+Command:
+`cargo xtask goldens bless self_computed_expected_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — self_computed_expected_helper (5)
+
+Reason:
+RIPR-SPEC-0259: the exact-oracle Next step now requires an admitted strong oracle on a credited row; self-computed expectations and uncredited rows keep the family template (#7393); guidance text only, no class or evidence change
+
+Command:
+`cargo xtask goldens bless self_computed_expected_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

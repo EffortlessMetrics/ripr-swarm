@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0231-oracle-any-threshold-not-pinned",
+  "subject_id": "authored-spec0231-29",
+  "diff": "cases/spec0231-oracle-any-threshold-not-pinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "closure_in_iterator_adaptor",
+  "test_shape": "iter_any_threshold",
+  "hard_case": "`.any(|x| x > 1)` has the `.any()` shape the exact rule credits, but a threshold never pins a value, so it must stay relational_check / weak.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.iter().map(|x| x * 3).collect()",
+        "mutated_line": "xs.iter().map(|x| x * 3).collect()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: scale(&[1, 2]) is [3, 6]"
+      },
+      {
+        "replacement": "xs.iter().map(|x| x + 2).collect()",
+        "mutated_line": "xs.iter().map(|x| x + 2).collect()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: scale(&[1, 2]) is [3, 4]"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Any output with one element above 1 satisfies xs.into_iter().any(|x| x > 1), so both mutants survive. Spec cells: RIPR-SPEC-0231 example 29.",
+  "labeling_observation": {
+    "ripr_commit": "78312b335",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#29"
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#29"
+  }
+}

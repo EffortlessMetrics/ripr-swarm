@@ -36,6 +36,9 @@ use super::reveal::{
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::Probe;
 
+mod guard_entry;
+pub(in crate::analysis) use guard_entry::GuardEntry;
+
 /// Where the owner's `match` reads its scrutinee from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ScrutineeBinding {
@@ -1345,6 +1348,28 @@ fn declared_enum_variants(
         }
     }
     found
+}
+
+/// Whether a macro's unread expansion may declare an item the function
+/// `owner` sees, such as a `const p` that a bare guard binding `p` then
+/// names (#7922 review): a `macro_rules!` or `include!` anywhere in the
+/// file, any node [`may_shadow_in_owner_scope`] flags (an item-level macro
+/// call in any module, a statement macro inside `owner`), or a file that
+/// does not parse cleanly.
+pub(in crate::analysis) fn may_declare_items_in_owner_scope(source: &str, owner: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    let masked = mask_comments_and_strings(source);
+    if masked.contains("macro_rules!") || masked.contains("include!") {
+        return true;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| may_shadow_in_owner_scope(&node, owner))
 }
 
 /// Whether `node` may bring an unread local item into the owner's scope:

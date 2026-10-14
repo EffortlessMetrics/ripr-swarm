@@ -247,7 +247,62 @@ Two pattern terms are used below.
    reads `exact_value` / strong). A `||` inside a call argument, closure or pattern
    does not decide the condition
    (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
-   `exact_value`). At
+   `exact_value`). A boolean-valued operand compared with a boolean
+   literal is read as what it asserts (#7598): in an equality macro with
+   one boolean-literal operand (`assert_eq!(X, true)`, `assert_ne!(false,
+   X)` and the `debug_` and `prop_` spellings), or a boolean assertion
+   whose whole condition is such a comparison (`ensure!((a == b) ==
+   false)`), when `X` has a top-level `==`, `!=`, `<`, `>`, `<=` or `>=` (a
+   turbofish, `->`, `=>` and a shift are not comparisons), `||` or `&&`
+   (through any `!`, `.not()` or comparison with a boolean literal, read
+   first: `x != true` is `!x` and pins a bool value), an `X` asserted false,
+   an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
+   relational all cap the reading at `relational_check` / weak (a `<`
+   that opens the operand or follows `::` opens a path, not a comparison:
+   `<T as Tr>::f(x) == y`). An `&&`
+   chain asserted true with a `matches!` conjunct and no pinning `==`
+   conjunct reads like the same chain in `assert!` (rule 3); with no
+   pinning `==` conjunct, a negated test (`!matches!(..)`, `!(a == b)`,
+   `(a == b) == false`) or a `!=` or relational comparison as a conjunct,
+   through any literal comparison (`(r != Err(E::Bad)) == true`), caps
+   before the chain is read (`assert_eq!(score(2) != 0 && flag, true)`,
+   `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`); a bool value
+   compared with `false` pins it like `!x`. A leading `!`
+   negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
+   asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
+   call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
+   `matches!` (the polarity rule above) keep their readings. `^` and a
+   single `|` over an operand holding a `matches!` or a comparison, with no
+   top-level comparison of their own, also cap (`assert_eq!((r ==
+   Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
+   they still pin a bool result. A top-level single `&` over booleans is a
+   conjunction and reads like `&&`; beside a top-level comparison it is a
+   bitwise operand (`a & mask == b`). A string or char literal before `<`
+   is an operand (`"x+" < s` compares). In a boolean assertion condition, or an
+   equality-macro operand compared with a boolean literal, a `matches!`
+   that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=` (on either
+   side; a closure's parameter bars are not `|`), cast with `as`, an
+   argument at any position of a call that is the whole condition
+   (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
+   directly or through nested calls), or inside the condition or
+   scrutinee of an `if`, `while` or `match` anywhere in the condition
+   (`flag == if ready && matches!(..) { false } else { true }`; a guard
+   inside an earlier `matches!(..)` and a raw `r#match` are not such
+   keywords) may be inverted or
+   discarded, so it caps the reading like a negated pattern. In a boolean
+   assertion's top-level `&&` chain with no top-level `||` its conjunct
+   drops out and the other conjuncts decide
+   (`ensure!(check(matches!(r, Ok(3))) && score == 4)` reads as
+   `ensure!(score == 4)`); in the equality-macro form the whole compared
+   operand caps (`assert_eq!(score == 4 && check(matches!(r, Ok(3))),
+   true)` reads `relational_check` / weak). A call whose result is read again
+   (`foo(matches!(..)).is_ok()`, `Some(true) == Some(matches!(..))`), a
+   `matches!` scrutinee (`matches!(build(matches!(..)), Ok(_))`) and a
+   closure body (`xs.iter().any(|x| f(matches!(x, Some(3))))`) keep their
+   readings. A whole condition or equality-macro operand compared with a
+   literal whose operand is an `&&` chain with a `matches!` conjunct keeps
+   the compared-pattern cap above
+   (`assert_eq!((flag && matches!(r, Ok(3))) == true, true)`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns
@@ -401,6 +456,37 @@ Two pattern terms are used below.
      `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
      the log format.
 
+### Reveal admission of an excluded sibling
+
+Rule 1 sets the kind and strength of an inequality; reveal still decides
+whether it observes the change. When the changed line constructs an error
+variant (`return Err(E::Big)`), RIPR-SPEC-0106 Part B refuses an assertion
+that names the enum only through sibling variants, because the shared
+qualifier is not the changed error's identity. An inequality is the
+exception (examples 19 and 20): `assert_ne!(check(20), Err(E::Bad))` or
+`assert!(!matches!(check(20), Err(E::Bad)))` excludes the sibling from the
+owner's own result, so a change that returned `E::Bad` would fail it.
+Reveal admits it as `relational_check` / weak for every family, whatever
+the classifier read, when all of these hold:
+
+- the assertion is `assert_ne!` with one of its two operands exactly a
+  bare call to the changed owner, or `assert!` whose whole condition is one negated `matches!` with
+  that call as the whole scrutinee and an unguarded pattern (message
+  arguments never count, and nothing such as `||` or `^` may sit beside
+  the `matches!`);
+- no foreign import, same-named function in the test's package, nested
+  `fn` or local binding of the owner's name makes the call ambiguous;
+- no binding visible to the test (a `macro_rules!`, an import or a
+  `macro_use`) may rebind `assert!`, `assert_ne!` or `matches!`, and the
+  test's file and module chain pass the shared assertion-context gates;
+- the other operand, or the pattern, names the changed error's enum only
+  through sibling variants.
+
+Any other sibling-only assertion stays refused, so an inequality on a value
+that is not the owner's result shares only the enum qualifier and observes
+nothing. The admitted oracle is weak, so the finding reads
+`weakly_exposed`, never `exposed`.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented
@@ -438,7 +524,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. Rejected: requiring the classifier to read that shape as
+   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
+   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   step 6's `snapshot` / medium kind, and only an owner pin that admits that
+   exact spelling raises its probe-relative strength; `insta`,
+   `expect_file!` and `assert_debug_eq` snapshots never pin
+   (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
+   Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
    in the oracle extractor. Rejected: a new kind for weak whole-object
    inequality (decision 1).
@@ -496,7 +588,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
-  exact owner pin needs a strong oracle (decision 4).
+  exact owner pin needs a strong oracle, apart from the bool-owner and
+  inline expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -626,6 +719,15 @@ rejected alternative. Any can be reversed later without touching the rest.
     text alone. A binding in another file reached through a glob import, and
     a Cargo package rename, are not detected.
 
+31. `assert_eq!(score(2) != 0, true)`, `assert_eq!(check(20) == Err(E::Bad),
+    false)`, `ensure!((score(2) == 4) == false)`,
+    `assert!((matches!(check(5), Ok(5)) || ready) == true)`,
+    `assert_eq!(ready && matches!(check(5), Ok(_)), true)` and
+    `assert!(std::ops::Not::not(matches!(check(20), Err(E::Bad))))`:
+    `relational_check` / weak (all `exact_value` or `exact_error_variant` /
+    strong before #7598). `assert_eq!(check(20) == Err(E::Bad), true)` and
+    `assert_eq!(!is_valid(5), true)` keep their exact readings.
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
@@ -691,6 +793,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   the polarity rule in every operand order and macro form, the
   `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
   name-and-receiver-only observer exemption.
+- Reveal admission of an excluded sibling (examples 19 and 20):
+  `crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_inequality_excluding_a_sibling_reads_relational_weak`
+  and its control `spec_0231_sibling_inequality_off_the_owner_call_stays_refused`.
+  Corpus: `spec0231-oracle-assert-ne-err-variant` and
+  `spec0231-oracle-negated-matches-err-variant` read `relational_check` /
+  weak in their `oracle` rows.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
@@ -713,6 +821,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
   override is a cap that never raises a classifier-weakened strength, and an
   exact owner pin needs a strong oracle (decision 4; `pin_strength_admits`).
+  `excludes_only_sibling_variant` admits an excluded sibling as
+  `relational_check` / weak.
 
 ## Metrics
 

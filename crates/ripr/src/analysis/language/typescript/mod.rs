@@ -62,6 +62,7 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod committed_snapshot;
+mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -104,6 +105,7 @@ mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
 pub(crate) mod tsconfig;
+mod typed_loose_equality_guard;
 mod types;
 mod workspace_packages;
 
@@ -119,6 +121,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
@@ -143,6 +146,7 @@ pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
     TsAliasMap, TsAliasMapLoadGap, TsAliasUnresolveCause, load_alias_map_with_read_error,
 };
+pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.

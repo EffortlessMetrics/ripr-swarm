@@ -1,0 +1,7 @@
+pub fn tier(total: u64) -> u64 {
+    if total >= 100 { 20 } else { 0 }
+}
+
+pub fn flat_fee() -> u64 {
+    5
+}

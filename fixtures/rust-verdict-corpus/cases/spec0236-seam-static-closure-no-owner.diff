@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8a86e77..db2b0ac 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+-pub static PICK: fn(u64) -> u64 = |total| if total >= 100 { 20 } else { 0 };
++pub static PICK: fn(u64) -> u64 = |total| if 100 <= total { 20 } else { 0 };
+ 
+ #[cfg(test)]
+ mod tests {

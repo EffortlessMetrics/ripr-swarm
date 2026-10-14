@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_return",
   "test_shape": "negated_matches_err_variant",
-  "hard_case": "Measured defect: ripr relates no test at all (reachable_unrevealed, related_tests empty), so no oracle kind is reported; the spec says today exact_error_variant / strong and adopts relational_check / weak (rule 1). The negated matches! apparently breaks test relation.",
+  "hard_case": "ripr once related the test but read no oracle: the sibling-variant gate (RIPR-SPEC-0106 Part B) dropped the negated matches! because it names PayError only through a sibling. Reveal now admits a negated matches! that excludes a sibling from the owner's own result as relational_check / weak (rule 1's reading for this shape).",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
