@@ -376,6 +376,160 @@ fn constant_owner_tail_line(
     Some(owner.start_line + before.matches('\n').count())
 }
 
+/// #6578: a `return_value` probe whose changed expression is the owner's
+/// whole body, one `format!("literal", args..)` tail. `format!` evaluates
+/// every argument once and writes each into the `String` it returns (an
+/// unused argument does not compile), so the changed argument reaches the
+/// owner's return with nothing in between, as a constant tail does
+/// ([`constant_tail_witness`]). Only the bare standard `format!` with a
+/// string-literal format and arguments free of macros, closures, blocks,
+/// branches, loops, `?`, `return`, `break`, `continue`, `.await` and
+/// `yield`; the owner's file
+/// must hold no binding site that may rebind `format` (a `macro_rules!`, an
+/// import, `#[macro_use]`, `#![no_implicit_prelude]` or a foreign glob).
+/// Whether formatting keeps two values apart (`{:.0}`, a lossy `Display`)
+/// is not settled here, as integer division is not for an arithmetic tail.
+pub(in crate::analysis) fn format_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    owner_source: Option<&str>,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let identity = normalize_semantic_text(&probe.expression);
+    let tail_line = format_owner_tail_line(owner, &identity)?;
+    if tail_line != probe.location.line {
+        return None;
+    }
+    // The file parse runs only for an owner whose tail already matched.
+    let source = crate::analysis::syntax::parse_clean_source_file(owner_source?)?;
+    if crate::analysis::syntax::macro_binding_candidates(&source.tree()).may_bind("format") {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner.id)
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: owner.id.clone(),
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec!["format_owner_tail".into(), "static_local_flow_only".into()],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// The line of the owner's body when that body is exactly one bare
+/// `format!` call with a string-literal format and plain arguments, whose
+/// normalized text is `identity`.
+fn format_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::MacroExpr(tail) = list.tail_expr()? else {
+        return None;
+    };
+    let call = tail.macro_call()?;
+    if call.path()?.syntax().text() != "format" {
+        return None;
+    }
+    let tree = call.token_tree()?;
+    // Only the parenthesized `format!(..)` spelling.
+    tree.l_paren_token()?;
+    // The arguments as a tuple, `("literal", a, b)`, or a lone format
+    // string, `("{name}")`, which parses as a parenthesized expression.
+    let arguments = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_format() {{ let _ = {}; }}",
+        tree.syntax().text()
+    ))?;
+    let fields: Vec<ast::Expr> = match arguments
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?
+        .initializer()?
+    {
+        ast::Expr::TupleExpr(tuple) => tuple.fields().collect(),
+        ast::Expr::ParenExpr(lone) => vec![lone.expr()?],
+        _ => return None,
+    };
+    let mut fields = fields.into_iter();
+    let ast::Expr::Literal(format) = fields.next()? else {
+        return None;
+    };
+    if format
+        .syntax()
+        .first_token()
+        .is_none_or(|token| token.kind() != SyntaxKind::STRING)
+    {
+        return None;
+    }
+    let plain = fields.all(|field| {
+        field.syntax().descendants().all(|node| {
+            !matches!(
+                node.kind(),
+                SyntaxKind::MACRO_CALL
+                    | SyntaxKind::MACRO_EXPR
+                    | SyntaxKind::CLOSURE_EXPR
+                    | SyntaxKind::BLOCK_EXPR
+                    | SyntaxKind::IF_EXPR
+                    | SyntaxKind::MATCH_EXPR
+                    | SyntaxKind::LOOP_EXPR
+                    | SyntaxKind::WHILE_EXPR
+                    | SyntaxKind::FOR_EXPR
+                    | SyntaxKind::TRY_EXPR
+                    | SyntaxKind::RETURN_EXPR
+                    | SyntaxKind::BREAK_EXPR
+                    | SyntaxKind::CONTINUE_EXPR
+                    | SyntaxKind::AWAIT_EXPR
+                    | SyntaxKind::YIELD_EXPR
+            )
+        })
+    });
+    if !plain || normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
+}
+
 /// A field-to-push route may contain a macro initializer that the complete
 /// local adapter refuses. Retain its exact local field as a candidate only;
 /// the independently parsed returned-ledger route never completes this path.
@@ -1842,6 +1996,129 @@ mod tests {
         let sinks = super::super::local_flow_sinks(&other, Some(&owner));
         assert!(!sinks.is_empty());
         assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
+    }
+
+    /// #6578: a `format!` tail writes every argument into the `String` the
+    /// owner returns; only the bare standard macro with plain arguments.
+    #[test]
+    fn format_owner_tail_line_reads_only_a_plain_format_tail() {
+        let positive = [
+            "format!(\"{name}: {}\", score + 1)",
+            "format!(\"{}-{}\", a.len(), b)",
+            // A lone format string with captured identifiers.
+            "format!(\"{name}\")",
+        ];
+        for expression in positive {
+            let body = format!("fn calculate() -> String {{\n    {expression}\n}}");
+            assert_eq!(
+                format_owner_tail_line(&constant_owner(&body), expression),
+                Some(2),
+                "{body}"
+            );
+        }
+        for (body, expression) in [
+            // A statement before the tail.
+            (
+                "fn calculate() -> String {\n    let _x = 1;\n    format!(\"{}\", x)\n}",
+                "format!(\"{}\", x)",
+            ),
+            // A path-qualified, bracketed or other macro.
+            (
+                "fn calculate() -> String {\n    std::format!(\"{}\", x)\n}",
+                "std::format!(\"{}\", x)",
+            ),
+            (
+                "fn calculate() -> String {\n    format![\"{}\", x]\n}",
+                "format![\"{}\", x]",
+            ),
+            (
+                "fn calculate() -> String {\n    print!(\"{}\", x)\n}",
+                "print!(\"{}\", x)",
+            ),
+            // A non-literal format string.
+            (
+                "fn calculate() -> String {\n    format!(concat!(\"{}\"), x)\n}",
+                "format!(concat!(\"{}\"), x)",
+            ),
+            // A lone argument that is not a string literal.
+            (
+                "fn calculate() -> String {\n    format!(concat!(\"{x}\"))\n}",
+                "format!(concat!(\"{x}\"))",
+            ),
+            (
+                "fn calculate() -> String {\n    format!(name)\n}",
+                "format!(name)",
+            ),
+            // Arguments that may not evaluate the changed value plainly.
+            (
+                "fn calculate() -> String {\n    format!(\"{}\", m!(x))\n}",
+                "format!(\"{}\", m!(x))",
+            ),
+            (
+                "fn calculate() -> String {\n    format!(\"{}\", if a { x } else { y })\n}",
+                "format!(\"{}\", if a { x } else { y })",
+            ),
+            (
+                "fn calculate() -> String {\n    format!(\"{}\", (|| x)())\n}",
+                "format!(\"{}\", (|| x)())",
+            ),
+            (
+                "fn calculate() -> String {\n    format!(\"{}\", f(x)?)\n}",
+                "format!(\"{}\", f(x)?)",
+            ),
+            // The changed expression is not the whole tail.
+            (
+                "fn calculate() -> String {\n    format!(\"{}\", x + 1)\n}",
+                "x + 1",
+            ),
+        ] {
+            assert_eq!(
+                format_owner_tail_line(&constant_owner(body), expression),
+                None,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_tail_witness_refuses_a_file_that_may_rebind_format() {
+        let expression = "format!(\"{}\", x * 3)";
+        let body = format!("fn calculate() -> String {{\n    {expression}\n}}");
+        let owner = constant_owner(&body);
+        let probe = probe_at(ProbeFamily::ReturnValue, expression, 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = format_tail_witness(&probe, &owner, Some(&body), &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        assert_eq!(
+            witness.map(|witness| witness.limitations),
+            Some(vec![
+                "format_owner_tail".to_string(),
+                "static_local_flow_only".to_string()
+            ])
+        );
+        // No owner source, or a file that may bind another `format`.
+        assert!(format_tail_witness(&probe, &owner, None, &sinks).is_none());
+        for prefix in [
+            "macro_rules! format { ($($t:tt)*) => { String::new() }; }\n",
+            "use other::format;\n",
+            "#[macro_use]\nextern crate other;\n",
+        ] {
+            let source = format!("{prefix}{body}");
+            assert!(
+                format_tail_witness(&probe, &owner, Some(&source), &sinks).is_none(),
+                "{source}"
+            );
+        }
+        // Another family or line gets nothing.
+        let predicate = probe_at(ProbeFamily::Predicate, expression, 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(format_tail_witness(&predicate, &owner, Some(&body), &sinks).is_none());
+        let elsewhere = probe_at(ProbeFamily::ReturnValue, expression, 3);
+        let sinks = super::super::local_flow_sinks(&elsewhere, Some(&owner));
+        assert!(format_tail_witness(&elsewhere, &owner, Some(&body), &sinks).is_none());
     }
 
     #[test]

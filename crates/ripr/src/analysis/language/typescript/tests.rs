@@ -5036,6 +5036,93 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
     Ok(())
 }
 
+/// Aggregate refusals must reach the same eight-path sample and true-total
+/// summary as per-file refusals (#7868). Literal expectations independently
+/// pin the advertised disclosure cap instead of deriving it from production.
+#[test]
+fn analyze_diff_bounds_workspace_budget_disclosure_with_true_total() -> Result<(), String> {
+    let root = ts_unique_tempdir("workspace-budget-sample")?;
+    let source = "// synthetic source padding exceeds the 32-byte workspace budget\nexport const value = 1;\n";
+    assert!(
+        source.len() > 32 && source.len() <= 1024,
+        "fixture must trigger only the aggregate cap"
+    );
+    for index in (0..12).rev() {
+        ts_write_file(&root.join(format!("src/pkg_{index:02}.ts")), source)?;
+    }
+    let options = ts_analysis_options(root.clone());
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(&options, &[], 1024, 32);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let disclosure = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.bounded_detail.as_deref().is_some_and(|detail| {
+                detail.starts_with("workspace_read_budget_exhausted:")
+                    || detail.starts_with("typescript_read_limit_sampled:")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(disclosure.len(), 9, "eight paths plus one summary");
+    assert_eq!(
+        disclosure
+            .iter()
+            .filter_map(|limitation| limitation.path.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            "src/pkg_00.ts",
+            "src/pkg_01.ts",
+            "src/pkg_02.ts",
+            "src/pkg_03.ts",
+            "src/pkg_04.ts",
+            "src/pkg_05.ts",
+            "src/pkg_06.ts",
+            "src/pkg_07.ts"
+        ],
+    );
+    for limitation in &disclosure[..8] {
+        assert_eq!(limitation.affected_items, Some(1));
+        assert_eq!(
+            limitation.bounded_detail.as_deref(),
+            Some(
+                "workspace_read_budget_exhausted: per-run read budget exhausted with only 32 bytes remaining (RIPR_TS_MAX_WORKSPACE_READ_BYTES)"
+            )
+        );
+    }
+    let summary = disclosure[8];
+    assert_eq!(summary.path, None);
+    assert_eq!(summary.affected_items, Some(12));
+    assert!(summary.bounded_detail.as_deref().is_some_and(|detail| {
+        detail.starts_with(
+            "typescript_read_limit_sampled: 12 workspace file(s) refused by read caps;",
+        ) && detail.contains("4 further refused path(s)")
+    }));
+    for limitation in &disclosure {
+        assert_eq!(
+            limitation.kind,
+            AnalysisLimitationKind::LanguageScopeUnsupported
+        );
+        assert_eq!(
+            limitation.producer_stage,
+            crate::analysis_outcome::AnalysisStage::LanguageAdapter
+        );
+        assert_eq!(
+            limitation.recovery.kind,
+            AnalysisRecoveryKind::IncreaseConfiguredLimit
+        );
+        assert_eq!(
+            limitation.recovery.detail,
+            "Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, then re-run the analysis."
+        );
+    }
+    assert!(
+        result.findings.is_empty(),
+        "refused sources produce no findings"
+    );
+    Ok(())
+}
+
 /// #5022: a capped monorepo whose refused-file count exceeds the disclosure
 /// sample cap must emit a bounded limitation count — a stable-sorted sample
 /// of refused paths plus one summary entry carrying the true refused count —

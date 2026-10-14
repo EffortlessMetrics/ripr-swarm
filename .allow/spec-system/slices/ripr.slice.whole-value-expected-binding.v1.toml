@@ -1,0 +1,36 @@
+schema_version = "2.0"
+id = "ripr.slice.whole-value-expected-binding.v1"
+generation = 1
+source_issue = "issue:7105"
+design_reference = "RIPR-SPEC-0225#expected-binding"
+change_class = "behavior_change"
+
+claim_boundary = """
+Admit only an adjacent immutable once-used same-test-block expected binding
+initialized with a literal that passes the existing WholeValueField gates.
+This repairs measured spec0225-wv-expected-binding; #7105's actual-side brace
+refusal is a distinct residual and remains unchanged.
+"""
+non_goals = [
+  "actual-side field reads inside assertion literals",
+  "expected helpers, aliases and mutable or shadowed bindings",
+  "functional-update expected values",
+  "field-guard oracle pins under issue 7726",
+]
+return_conditions = [
+  "Return to the parent if another candidate owns this exact measured case.",
+]
+owned_seams = ["seam:ripr:analysis:whole-value-field-pin"]
+shared_seams = []
+forbidden_seams = ["seam:ripr:analysis:pattern-field-guard-pin"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0225#expected-binding"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"
