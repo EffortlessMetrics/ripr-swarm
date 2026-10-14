@@ -51018,7 +51018,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
     assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
     assert_eq!(caught.runtime_outcome, "caught");
-    assert_eq!(caught.mutation_operator, "None");
+    assert_eq!(caught.mutation_operator, "FnValue");
     assert_eq!(
         caught.mutant_id.as_deref(),
         Some("src/lib.rs:101:9: replace next -> Option<Self::Item> with None")
@@ -51029,7 +51029,7 @@ fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -
         .find(|record| record.line == Some(104))
         .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
     assert_eq!(missed.runtime_outcome, "missed");
-    assert_eq!(missed.mutation_operator, "<<");
+    assert_eq!(missed.mutation_operator, "BinaryOperator");
 
     let timeout = mutants
         .iter()
