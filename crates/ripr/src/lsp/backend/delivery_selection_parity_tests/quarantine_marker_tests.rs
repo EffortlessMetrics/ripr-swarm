@@ -291,9 +291,9 @@ fn quarantine_marker_has_no_finding_context_action() -> Result<(), String> {
     let actions = code_action_response(&params, None, &features);
     let titles = actions
         .iter()
-        .filter_map(|action| match action {
-            CodeActionOrCommand::CodeAction(action) => Some(action.title.as_str()),
-            CodeActionOrCommand::Command(command) => Some(command.title.as_str()),
+        .map(|action| match action {
+            CodeActionOrCommand::CodeAction(action) => action.title.as_str(),
+            CodeActionOrCommand::Command(command) => command.title.as_str(),
         })
         .collect::<Vec<_>>();
     if titles != [REFRESH_ANALYSIS_TITLE] {
