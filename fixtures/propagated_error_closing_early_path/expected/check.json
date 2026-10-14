@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "Failure::Missing",
             "context": "enum_variant"
           },
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "early = true",
             "context": "function_argument"
           }
@@ -69,11 +71,13 @@
       "observed_values": [
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "Failure::Missing",
           "context": "enum_variant"
         },
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "early = true",
           "context": "function_argument"
         }
@@ -148,11 +152,13 @@
         "observed_values": [
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "Failure::Missing",
             "context": "enum_variant"
           },
           {
             "line": 17,
+            "source_file": "src/lib.rs",
             "value": "early = true",
             "context": "function_argument"
           }
@@ -163,11 +169,13 @@
       "observed_values": [
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "Failure::Missing",
           "context": "enum_variant"
         },
         {
           "line": 17,
+          "source_file": "src/lib.rs",
           "value": "early = true",
           "context": "function_argument"
         }
