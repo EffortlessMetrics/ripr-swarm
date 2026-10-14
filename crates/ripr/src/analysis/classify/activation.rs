@@ -4,6 +4,8 @@ use super::text::{
 };
 use crate::domain::*;
 
+mod source_provenance;
+
 #[cfg(test)]
 pub(in crate::analysis) fn activation_evidence(
     probe: &Probe,
@@ -327,6 +329,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    source_provenance::attach_test_source(&mut facts, &test.file);
     sort_value_facts(&mut facts);
     facts
 }
@@ -3210,12 +3213,14 @@ pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            .then(left.source_file.cmp(&right.source_file))
     });
     facts.dedup_by(|left, right| {
         left.line == right.line
             && left.text == right.text
             && left.value == right.value
             && left.context == right.context
+            && left.source_file == right.source_file
     });
 }
 

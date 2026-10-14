@@ -1,5 +1,5 @@
 //! Public-path source identity controls for #7805.
-//! These assertions intentionally fail before source-file provenance is retained.
+//! Source identity is metadata and cannot strengthen oracle admission.
 
 use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -90,7 +90,7 @@ impl Fixture {
         let rendered = ripr::output::json::render(&output);
         let report: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
-        report["findings"]
+        let finding = report["findings"]
             .as_array()
             .and_then(|findings| {
                 findings
@@ -98,7 +98,35 @@ impl Fixture {
                     .find(|finding| finding["probe"]["expression"] == "None")
             })
             .cloned()
-            .ok_or_else(|| "changed None is missing from rendered findings".to_owned())
+            .ok_or_else(|| "changed None is missing from rendered findings".to_owned())?;
+        assert_eq!(
+            finding["observed_values"],
+            finding["activation"]["observed_values"]
+        );
+        let sarif: serde_json::Value =
+            serde_json::from_str(&ripr::render_check(&output, &OutputFormat::Sarif)?)
+                .map_err(|error| error.to_string())?;
+        let sarif_values = sarif["runs"][0]["results"]
+            .as_array()
+            .and_then(|results| {
+                results
+                    .iter()
+                    .find(|result| result["properties"]["finding_id"] == finding["id"])
+            })
+            .map(|result| &result["properties"]["observed_values"])
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "changed None is missing from SARIF".to_owned())?;
+        let json_values = finding["observed_values"]
+            .as_array()
+            .ok_or_else(|| "JSON observed values are not an array".to_owned())?;
+        assert_eq!(sarif_values.len(), json_values.len());
+        for (sarif, json) in sarif_values.iter().zip(json_values) {
+            assert_eq!(sarif["source_file"], json["source_file"]);
+            assert_eq!(sarif["line"], json["line"]);
+            assert_eq!(sarif["value"], json["value"]);
+            assert_eq!(sarif["context"], json["context"]);
+        }
+        Ok(finding)
     }
 }
 
@@ -168,5 +196,66 @@ fn identical_assertion_text_in_two_files_keeps_two_source_identities() -> Result
         ]
     );
     assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    Ok(())
+}
+
+#[test]
+fn a_renamed_decoy_keeps_its_own_indexed_file() -> Result<(), String> {
+    let fixture = Fixture::new("assert!(shared_context.contains(\"## UB Ledger Context\"));")?;
+    std::fs::rename(
+        fixture.root.join("src/decoy.rs"),
+        fixture.root.join("src/ledger_decoy.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    fixture.write(
+        "src/lib.rs",
+        &OWNER.replace("mod decoy;", "mod ledger_decoy;"),
+    )?;
+    let finding = fixture.finding()?;
+    assert_eq!(
+        sources_for_value(&finding, "\"not_collected\""),
+        vec![serde_json::json!("src/lib.rs")]
+    );
+    assert_eq!(
+        sources_for_value(&finding, "\"## UB Ledger Context\""),
+        vec![serde_json::json!("src/ledger_decoy.rs")]
+    );
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    Ok(())
+}
+
+#[test]
+fn repeated_and_relocated_fixtures_keep_relative_source_identity() -> Result<(), String> {
+    let first = Fixture::new("assert!(shared_context.contains(\"## UB Ledger Context\"));")?;
+    let second = Fixture::new("assert!(shared_context.contains(\"## UB Ledger Context\"));")?;
+    assert_ne!(first.root, second.root);
+    let first_finding = first.finding()?;
+    assert_eq!(first_finding, first.finding()?);
+    let second_finding = second.finding()?;
+    for value in ["\"not_collected\"", "\"## UB Ledger Context\""] {
+        assert_eq!(
+            sources_for_value(&first_finding, value),
+            sources_for_value(&second_finding, value)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn legacy_facts_keep_unknown_source_identity_without_changing_serialization() -> Result<(), String>
+{
+    let legacy = serde_json::json!({
+        "line": 12,
+        "text": "assert_eq!(summary[\"status\"], \"not_collected\");",
+        "value": "\"not_collected\"",
+        "context": "assertion_argument",
+    });
+    let fact: ripr::domain::ValueFact =
+        serde_json::from_value(legacy.clone()).map_err(|error| error.to_string())?;
+    assert!(fact.source_file.is_none());
+    assert_eq!(
+        serde_json::to_value(&fact).map_err(|error| error.to_string())?,
+        legacy
+    );
     Ok(())
 }
