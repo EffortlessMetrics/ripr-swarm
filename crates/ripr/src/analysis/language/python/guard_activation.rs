@@ -361,12 +361,81 @@ fn line_is_assignment(line: &str) -> bool {
     false
 }
 
-/// True when the owner body assigns the parameter a new value between the
-/// owner header and the guard line, so a call binding no longer predicts the
-/// value the guard reads. Deliberately conservative (clear assignment forms
-/// only: `name = ..`, single- and multi-character augmented assignment,
-/// annotated assignment, destructuring targets, a `for` target); anything
-/// subtler keeps the existing limitation.
+/// True when `line` names `name` as an assignment target anywhere on the
+/// line: plain, annotated, augmented, destructuring, chained, or walrus
+/// binding. Conservative (refuses on ambiguous shapes like a subscript
+/// slice, which only over-refuses in the safe fail-open direction); it
+/// never awards credit. Requires identifier-bounded occurrences so `totals`
+/// or `subtotal` never match, and skips attribute access (`self.total`)
+/// which names a different binding.
+fn line_rebinds_parameter(line: &str, name: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut search = 0;
+    while let Some(offset) = line[search..].find(name) {
+        let start = search + offset;
+        let end = start + name.len();
+        search = end;
+        // Identifier bounds: reject `totals` and `subtotal`.
+        if start > 0 && is_identifier_byte(bytes[start - 1]) {
+            continue;
+        }
+        if bytes.get(end).is_some_and(|byte| is_identifier_byte(*byte)) {
+            continue;
+        }
+        // An attribute (`self.total`) is a different binding.
+        if start > 0 && bytes[start - 1] == b'.' {
+            continue;
+        }
+        let rest = line[end..].trim_start();
+        // `name = ..`; `name == ..` is a comparison, not a binding. This
+        // also covers chained (`other = total = 2000`) and reversed
+        // destructuring (`other, total = 2000, 0`) targets, where the name
+        // is followed directly by the assignment operator.
+        if let Some(after) = rest.strip_prefix('=') {
+            if !after.starts_with('=') {
+                return true;
+            }
+        }
+        // Augmented assignments, single- and multi-character
+        // (`+=`, `**=`, `//=`, `>>=`, `|=`, ..).
+        if [
+            "+=", "-=", "*=", "/=", "%=", "**=", "//=", ">>=", "<<=", "|=", "&=", "^=",
+        ]
+        .iter()
+        .any(|op| rest.starts_with(op))
+        {
+            return true;
+        }
+        // Annotated assignment `name: T = ..` and walrus `name := ..`; an
+        // `as name:` target (`with .. as name`, `except .. as name`) ends
+        // the same way. A subscript slice (`x[name:]`) over-refuses, which
+        // is the safe fail-open direction.
+        if rest.starts_with(':') {
+            return true;
+        }
+        // Destructuring targets later in the target list: `(total, other) =
+        // ..`, `[total, other] = ..`, `total, other = ..`. Refuse when the
+        // line is an assignment.
+        if rest.starts_with(',') && line_is_assignment(line) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Leading-whitespace width of `raw`, so a guard nested inside a loop can be
+/// told apart from the loop header that encloses it.
+fn indent_width(raw: &str) -> usize {
+    raw.len() - raw.trim_start().len()
+}
+
+/// True when the owner body assigns the parameter a new value so a call
+/// binding no longer predicts the value the guard reads. Scans the lines
+/// from the owner header to the guard, plus the WHOLE owner when a `for` or
+/// `while` header encloses the guard: a rebinding later in the loop body
+/// changes what the guard reads on the next iteration, and linear scanning
+/// cannot prove execution order there (#7874 follow-up). Deliberately
+/// conservative; anything subtler keeps the existing limitation.
 fn parameter_rebound_before(
     owner_source: &str,
     owner_start: usize,
@@ -374,35 +443,30 @@ fn parameter_rebound_before(
     name: &str,
 ) -> bool {
     let lines: Vec<&str> = owner_source.lines().collect();
-    for raw in lines.get(owner_start..guard_line).unwrap_or(&[]) {
+    let Some(guard_raw) = lines.get(guard_line) else {
+        return false;
+    };
+    let guard_indent = indent_width(guard_raw);
+    let loop_enclosed = lines
+        .get(owner_start..guard_line)
+        .unwrap_or(&[])
+        .iter()
+        .any(|raw| {
+            let trimmed = raw.trim_start();
+            (trimmed.starts_with("for ") || trimmed.starts_with("while "))
+                && indent_width(raw) < guard_indent
+        });
+    let scan_end = if loop_enclosed {
+        // Execution order is not linear inside a loop: any rebinding
+        // anywhere in the owner may run before a later iteration's guard.
+        lines.len()
+    } else {
+        guard_line
+    };
+    for raw in lines.get(owner_start..scan_end).unwrap_or(&[]) {
         let trimmed = raw.trim();
-        if let Some(rest) = trimmed.strip_prefix(name).map(str::trim_start) {
-            // Multi-character augmented assignments (`total **= 2`,
-            // `total //= 2`, `total >>= 1`, `total <<= 1`, `total |= 1`,
-            // `total &= 1`, `total ^= 1`) rebind the parameter just like the
-            // single-character forms below (#7874).
-            if ["**=", "//=", ">>=", "<<=", "|=", "&=", "^="]
-                .iter()
-                .any(|op| rest.starts_with(op))
-            {
-                return true;
-            }
-            let mut chars = rest.chars();
-            match chars.next() {
-                // `name = ..`; `name == ..` is a comparison, not a binding.
-                Some('=') if chars.next() != Some('=') => return true,
-                // Annotated assignment `name: T = ..`.
-                Some(':') => return true,
-                // Destructuring target: `total, other = 2000, 0` rebinds
-                // `total` whenever the line is an assignment.
-                Some(',') if line_is_assignment(trimmed) => return true,
-                Some(op)
-                    if ['+', '-', '*', '/', '%'].contains(&op) && chars.next() == Some('=') =>
-                {
-                    return true;
-                }
-                _ => {}
-            }
+        if line_rebinds_parameter(trimmed, name) {
+            return true;
         }
         if let Some(targets) = trimmed
             .strip_prefix("for ")
@@ -890,5 +954,62 @@ mod tests {
         );
         // Mixed integer/float forms still order by value.
         assert_eq!(compare_literal_values("100", ">", "99.5"), Some(true));
+    }
+
+    #[test]
+    fn rebinding_scan_finds_parameter_later_on_the_line() {
+        // The parameter is an assignment target even when it is not the
+        // first token: reversed destructuring, parenthesized/bracketed
+        // targets, chained assignments, and the walrus operator all rebind
+        // it before the guard reads it.
+        let row = test_row(&[("total", "100.0")]);
+        for assignment in [
+            "other, total = 2000, 0",
+            "(total, other) = (2000, 0)",
+            "[total, other] = [2000, 0]",
+            "other = total = 2000",
+            "x = (total := 2000)",
+        ] {
+            let source = format!(
+                "def quote(total):\n    {assignment}\n    if total > 1000:\n        return 42\n"
+            );
+            assert_eq!(
+                eval_comparison("total > 1000", 2, &row, &[], &source, 0),
+                None,
+                "{assignment} must fail open"
+            );
+        }
+    }
+
+    #[test]
+    fn rebinding_after_guard_inside_loop_fails_open() {
+        // A rebinding later in the loop body changes what the guard reads
+        // on the next iteration; linear scanning cannot prove execution
+        // order there, so the whole owner is scanned and the row stays.
+        let source = "def quote(total):\n    for _ in range(3):\n        if total > 1000:\n            return 42\n        total *= 20\n";
+        let row = test_row(&[("total", "100.0")]);
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], source, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn rebinding_scan_keeps_reads_and_attributes_readable() {
+        // Reading the parameter, comparisons, and attribute access on a
+        // same-named field never rebind the parameter.
+        let row = test_row(&[("total", "100.0")]);
+        let read =
+            "def quote(total):\n    other = total + 1\n    if total > 1000:\n        return 42\n";
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], read, 0),
+            Some(false)
+        );
+        let compare =
+            "def quote(total):\n    total == 2000\n    if total > 1000:\n        return 42\n";
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], compare, 0),
+            Some(false)
+        );
     }
 }

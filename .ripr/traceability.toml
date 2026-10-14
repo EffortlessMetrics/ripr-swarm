@@ -15292,6 +15292,11 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::multi_character_augmented_rebinding_keeps_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::tuple_rebinding_keeps_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::large_integer_guard_orders_exactly",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_scan_finds_parameter_later_on_the_line",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_after_guard_inside_loop_fails_open",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_scan_keeps_reads_and_attributes_readable",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_body_rebinding_after_guard_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::reversed_tuple_rebinding_keeps_oracle_credit",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

@@ -1630,6 +1630,35 @@ fn large_integer_guard_orders_exactly() -> Result<(), String> {
 }
 
 #[test]
+fn loop_body_rebinding_after_guard_keeps_oracle_credit() -> Result<(), String> {
+    // `total *= 20` after the guard inside the loop changes what the guard
+    // reads on the next iteration (the changed return executes for
+    // `quote(100.0)`), so the call binding cannot exclude the row.
+    let finding = classify_added_case(
+        "def quote(total):\n    for _ in range(3):\n        if total > 1000:\n            return round(total * 1.02, 2)\n        total *= 20\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn reversed_tuple_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // The destructuring target with the parameter later on the line
+    // (`other, total = 2000, 0`) rebinds it the same as the leading form.
+    let finding = classify_added_case(
+        "def quote(total):\n    other, total = 2000, 0\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn bool_numeric_guard_equality_follows_python() -> Result<(), String> {
     // Python enters `flag == 1` for `flag=True`; mixed-kind literal equality
     // would wrongly exclude the call.
