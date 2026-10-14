@@ -8015,7 +8015,11 @@ Field contract:
 
   `error` is the terse final error; `narration` is the ordered cause and
   recovery lines stderr carries (without the `ripr: ` prefix), the same lines
-  the attempt joins into `last_after_refusal.reason`. Operational failures after
+  the attempt joins into `last_after_refusal.reason`. On no movement, these
+  lines name the selected awaiting attempt, its retained packet's focused test
+  surface (including an inline-module restriction), edit then retry, and a
+  root/attempt-bound status command; `error` keeps the original verify refusal.
+  Operational failures after
   attempt selection exit `2`; stdout is empty when the failure precedes the
   verify render, and is the bare verify 0.3 document when it follows it (for
   example a failed receipt publication with the attempt still
