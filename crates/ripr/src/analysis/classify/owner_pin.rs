@@ -4960,10 +4960,9 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
             // This bounded construction admits only the ordinary test
             // harness attributes; expansion is not type-identity evidence.
             ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                !matches!(
-                    collapse_whitespace(&attr.syntax().text().to_string()).as_str(),
-                    "#[test]" | "#[cfg(test)]"
-                )
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
             }) ||
             // Arbitrary expansion can introduce a constructor binding that
             // the parsed item index never saw. The two observation macros

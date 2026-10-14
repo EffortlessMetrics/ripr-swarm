@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn plain_test_gate_excludes_conditional_attribute_expansion() {
+    for (text, expected) in [
+        ("#[cfg(test)]", true),
+        ("#[ cfg ( test ) ]", true),
+        ("#[cfg(/* ordinary gate */ test)]", true),
+        ("#![cfg(test)]", false),
+        ("#[cfg(all(test))]", false),
+        ("#[cfg(not(test))]", false),
+        ("#[cfg(any(test, feature = \"other\"))]", false),
+        ("#[cfg(\"test\")]", false),
+        ("#[cfg_attr(test, factory)]", false),
+        ("#[cfg_attr(test, cfg(test))]", false),
+        ("#[cfg(test,)]", false),
+        ("#[cfg(r#test)]", false),
+        ("#[tool::cfg(test)]", false),
+        ("#[factory]", false),
+        ("#[derive(Factory)]", false),
+        ("#[test]", false),
+        ("#[cfg(test)", false),
+    ] {
+        assert_eq!(attribute_is_plain_test_gate(text), expected, "{text}");
+    }
+}
+
+#[test]
 fn inactive_prelude_flags_keep_unknown_and_malformed_boundaries() {
     for attribute in [
         "#![cfg_attr(not(test), no_std)]",
