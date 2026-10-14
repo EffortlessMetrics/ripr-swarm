@@ -560,7 +560,8 @@ mod tests {
         assert_eq!(report.changed_files[0].path, "src/lib.rs");
         assert_eq!(report.changed_seams[0].file, "src/lib.rs");
         assert_eq!(report.changed_seams[0].line, 2);
-        let leaked = root.to_string_lossy().trim_start_matches(['/', '\\']);
+        let root_text = root.to_string_lossy();
+        let leaked = root_text.trim_start_matches(['/', '\\']);
         assert!(
             !report.changed_seams[0].file.contains(leaked),
             "absolute root leaked into changed_seams: {} vs root {root:?}",
