@@ -630,7 +630,9 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
 fn is_whole_pattern(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     pattern_invocation_spans(text).iter().any(|&(start, end)| {
-        masked.get(..start).is_some_and(|head| head.trim().is_empty())
+        masked
+            .get(..start)
+            .is_some_and(|head| head.trim().is_empty())
             && masked.get(end..).is_some_and(|tail| tail.trim().is_empty())
     })
 }
