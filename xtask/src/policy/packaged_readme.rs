@@ -183,33 +183,28 @@ fn names_version(text: &str, version: &str) -> bool {
 }
 
 fn documents_cascade_start(readme: &str) -> bool {
-    readme
-        .lines()
-        .any(|line| claim_clauses(line).any(clause_documents_cascade_start))
+    readme.lines().any(line_documents_cascade_start)
 }
 
-fn claim_clauses(line: &str) -> impl Iterator<Item = &str> {
-    line.split([';', ','])
-}
-
-fn clause_documents_cascade_start(clause: &str) -> bool {
-    if !clause.contains(CASCADE_HEAD) || negated_origin_head(clause) {
+fn line_documents_cascade_start(line: &str) -> bool {
+    if !line.contains(CASCADE_HEAD) || locally_negated_origin_head(line) {
         return false;
     }
-    let lower = clause.to_ascii_lowercase();
+    let lower = line.to_ascii_lowercase();
     lower.contains("default") || lower.contains("cascade") || lower.contains("trying")
 }
 
-fn negated_origin_head(clause: &str) -> bool {
-    let lower = clause.to_ascii_lowercase();
+fn locally_negated_origin_head(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
     let Some(idx) = lower.find("origin/head") else {
         return false;
     };
-    let before = &lower[..idx];
-    before.contains("not ")
-        || before.contains("don't ")
-        || before.contains("do not ")
-        || before.contains("never ")
+    let before: Vec<&str> = lower[..idx].split_whitespace().collect();
+    let start = before.len().saturating_sub(4);
+    before[start..].iter().any(|word| {
+        let token = word.trim_matches(|c: char| !c.is_ascii_alphabetic() && c != '\'');
+        matches!(token, "not" | "don't" | "never")
+    })
 }
 
 fn claimed_current_x_line(line: &str) -> Option<String> {
@@ -849,6 +844,22 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
             "comma-joined cascade-start clause must still count; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn appositive_default_base_after_origin_head_still_counts() {
+        let readme = CURRENT_LIKE.replace(
+            "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
+            "Use `origin/HEAD`, the default base, then `origin/main`",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
+            "appositive default-base after origin/HEAD must still count; got {violations:?}"
         );
     }
 
