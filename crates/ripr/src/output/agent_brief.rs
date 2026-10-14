@@ -197,7 +197,12 @@ fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value 
             WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
             None,
         ),
-        "suggested_test_command": format!("cargo test {recommended_name}"),
+        // #7391: a `not_applicable` repair target names no test, so a
+        // literal `cargo test not_applicable` command would silently
+        // select zero tests (exit 0) and read as success. Only a real
+        // recommended test name earns a suggested command.
+        "suggested_test_command": (recommended_name != "not_applicable")
+            .then(|| format!("cargo test {recommended_name}")),
     })
 }
 
@@ -443,5 +448,31 @@ mod tests {
         assert!(left.starts_with("fnv1a64:"));
         assert_eq!(left.len(), "fnv1a64:0000000000000000".len());
         assert_ne!(left, right);
+    }
+
+    #[test]
+    fn verification_omits_suggested_test_command_for_not_applicable_target() -> Result<(), String> {
+        // #7391: `cargo test not_applicable` matches zero tests and exits 0,
+        // so a not-applicable repair target must serialize a null suggested
+        // command instead of a literal filter that silently selects nothing.
+        let value = verification_json(Path::new("."), &Mode::Draft, "not_applicable");
+        if !value["suggested_test_command"].is_null() {
+            return Err(format!(
+                "not_applicable target leaked a suggested command: {}",
+                value["suggested_test_command"]
+            ));
+        }
+        let concrete = verification_json(
+            Path::new("."),
+            &Mode::Draft,
+            "parse_port_exact_error_variant",
+        );
+        let command = concrete["suggested_test_command"]
+            .as_str()
+            .ok_or("concrete target must keep a suggested command")?;
+        if command != "cargo test parse_port_exact_error_variant" {
+            return Err(format!("unexpected suggested command: {command}"));
+        }
+        Ok(())
     }
 }

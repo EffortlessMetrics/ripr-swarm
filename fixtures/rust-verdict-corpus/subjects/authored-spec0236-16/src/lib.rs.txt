@@ -1,0 +1,23 @@
+use std::fmt;
+
+pub struct Plural(pub u64);
+
+fn suffix(v: u64) -> &'static str {
+    if v > 1 { "items" } else { "item" }
+}
+
+impl fmt::Display for Plural {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", suffix(self.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plural_three_reads_items() {
+        assert_eq!(Plural(3).to_string(), "items");
+    }
+}

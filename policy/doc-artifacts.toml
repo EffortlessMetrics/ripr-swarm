@@ -1317,12 +1317,44 @@ owner = "product-analysis"
 standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0265"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a Rust owner whose whole body is one closure in a filter, map, any or all adaptor over a slice parameter: literal-sequence test inputs feed the closure binding's boundary, and a non-empty one admits the owner-return pin, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0258"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Reads a committed Jest or Vitest snapshot entry the assertion compares with as strong, amending RIPR-SPEC-0247 rule 3 from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0259"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Weakly_exposed error_path/return_value findings name the missing input when the strongest related oracle is already exact, instead of presuming an assertion shape the suite does not have; guidance text only, no class, stage, or evidence change (#7393)."
+
+[[artifact]]
+id = "RIPR-SPEC-0260"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Python return_value credit inside a guarding if arm is gated on guarded-arm activation: fails closed to weakly_exposed when every strong related call provably fails the guard, fails open on or/not guards, rebound parameters, unbound strong calls, and source-less entries (#7392)."
+
+[[artifact]]
+id = "RIPR-SPEC-0261"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0261-agent-brief-error-variant-example.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Agent brief error_variant assertion examples generate from typed parts so they compile (owned string payloads bind by value), non-pattern payloads downgrade to unresolved, and suggested_test_command is null for not_applicable targets (#7391)."
 
 [[artifact]]
 id = "RIPR-SPEC-0262"
