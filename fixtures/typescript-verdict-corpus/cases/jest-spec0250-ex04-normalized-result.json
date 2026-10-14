@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0250-ex04-normalized-result",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0250-ex04-normalized-result.diff",
+  "anchor": {
+    "file": "src/profileNorm.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_tomatchobject_wrapped_owner_call",
+  "hard_case": "the pins observe `normalize(buildProfileNorm(...))`, not the owner call itself, so the spec withholds the field-pin credit although `normalize` returns its argument",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "adult: age > 18,",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "normalized profile records adulthood",
+        "equivalence_review": "not equivalent: at age 18 `adult` becomes `false` instead of `true`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`adult: age >= 18` becomes `adult: age > 18`. The test pins `expect(normalize(buildProfileNorm(\"ana\", 17))).toMatchObject({ name: \"ana\", adult: false })` and the same for `(\"bo\", 18)` with `adult: true`, where the test-local `normalize` returns its argument; at 18 the edit gives `adult: false` and the test fails. RIPR-SPEC-0250 example 4: a pin on `normalize(buildProfile(...))` is not `exposed`. ripr reads the pins `relational_check` / weak and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0250#4"
+  ]
+}

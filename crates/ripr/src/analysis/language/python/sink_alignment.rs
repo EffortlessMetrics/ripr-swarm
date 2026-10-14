@@ -537,6 +537,10 @@ pub(super) fn classify_sink_alignment_with_old(
         &focus,
         effect.as_ref(),
     ));
+    // Each credited list assertion must call this owner in its own test row.
+    // Apply the guard to the gate text, after per-assertion expansion.
+    units
+        .retain(|unit| super::oracles::unittest_list::observes_owner(&unit.text, unit.test, owner));
     if units.is_empty() {
         if strong_tests.is_empty() {
             return SinkAlignment::unknown(changed_sink);
@@ -719,6 +723,11 @@ pub(super) fn classify_sink_alignment_with_old(
     let module_call_observed = |unit: &AlignmentUnit<'_>| {
         !is_method_owner
             && unit.test.is_some_and(|test| {
+                if let Some(observes) =
+                    super::oracles::unittest_list::calls_owner(&unit.text, Some(test), owner)
+                {
+                    return observes;
+                }
                 let callees = owner_module_callees(test, owner);
                 callees
                     .iter()
@@ -767,8 +776,14 @@ pub(super) fn classify_sink_alignment_with_old(
     } else {
         None
     };
+    let list_equality_discriminates = units
+        .iter()
+        .any(|unit| super::oracles::unittest_list::literal_text(&unit.text))
+        && super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
-        if let Some((changed_keys, changed_values)) = &dict_change {
+        if super::oracles::unittest_list::literal_text(&unit.text) {
+            list_equality_discriminates
+        } else if let Some((changed_keys, changed_values)) = &dict_change {
             oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
         } else if let Some((changed_indices, changed_values)) = &list_change {
             oracle_observes_changed_list_element(&unit.text, changed_indices, changed_values)
@@ -972,6 +987,7 @@ fn alignment_units<'a>(
         let test = all_tests.iter().find(|test| {
             test.name == related.name
                 && test.file == related.file
+                && test.line == related.line
                 && super::test_activation::activation_control(test).is_none()
         });
         let before = units.len();

@@ -62,7 +62,7 @@ bump rules live in `docs/OUTPUT_SCHEMA.md`:
 - A version denotes one envelope shape, selected by any documented
   discriminator. Distinct versions for success and refusal documents are
   preferred for new contracts. The one grandfathered exception is
-  `ripr agent stub --json` 0.1, where the `state` field (`ready` vs
+  `ripr agent stub --json` (legacy 0.1 and its 0.2 successor), where the `state` field (`ready` vs
   `refused`) selects the shape; consumers must dispatch on `state`, never
   on the version alone.
 - Consumers select on `schema_version`, never on shape familiarity: one

@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0247-ex03-second-send",
+  "subject_id": "authored-ts-jest-relations",
+  "origin": "authored",
+  "anchor": "src/announceRetry.ts:2",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_mock_fn_tohavebeencalledwith_owner_calls_twice",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
