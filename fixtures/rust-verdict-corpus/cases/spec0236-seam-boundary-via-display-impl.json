@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0236-seam-boundary-via-display-impl",
+  "subject_id": "authored-spec0236-16",
+  "diff": "cases/spec0236-seam-boundary-via-display-impl.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "display_impl_to_string_exact",
+  "hard_case": "Seam class matches example 16: the `suffix` boundary seam reads activation_unknown (reach weak, activate unknown, propagate/observe/discriminate yes) and keeps the one missing discriminator `1 (boundary value)`; the evidence record reads static_limitation. The diff finding reads weakly_exposed, so check reports the gap that the seam inventory files as an unknown.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if v >= 1 { \"items\" } else { \"item\" }",
+        "mutated_line": "if v >= 1 { \"items\" } else { \"item\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: v == 1 now reads items; Plural(3)/suffix(3) still reads items so the test cannot see it"
+      },
+      {
+        "replacement": "if v > 3 { \"items\" } else { \"item\" }",
+        "mutated_line": "if v > 3 { \"items\" } else { \"item\" }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::plural_three_reads_items",
+        "equivalence_review": "not equivalent: 2 and 3 now read item"
+      },
+      {
+        "replacement": "if v > 1 { \"item\" } else { \"items\" }",
+        "mutated_line": "if v > 1 { \"item\" } else { \"items\" }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::plural_three_reads_items",
+        "equivalence_review": "not equivalent: the branches swap, so 3 reads item"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Plural(3).to_string() == \"items\" pins the value at 3 but no test sits on the v == 1 boundary, so the boundary shift survives while the two value-changing mutants fail. Spec cells: RIPR-SPEC-0236 example 16.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0236#16"
+  ]
+}
