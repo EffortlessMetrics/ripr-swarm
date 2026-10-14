@@ -14571,6 +14571,7 @@ tests = [
 fixtures = [
   "fixtures/inequality_assertion_not_exact",
   "fixtures/inequality_struct_assertion_not_exact",
+  "fixtures/bool_compared_inequality_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",

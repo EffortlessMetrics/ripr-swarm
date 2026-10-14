@@ -667,6 +667,20 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert!(f(1, matches!(r, Err(E::Bad))));", &weak),
         ("assert!(f(g(matches!(r, Err(E::Bad)))));", &weak),
         ("assert!(matches!(r, Err(E::Bad)) | true);", &weak),
+        ("assert!(ready | matches!(r, Err(E::Bad)));", &weak),
+        ("assert!(ready | (matches!(r, Err(E::Bad))));", &weak),
+        ("ensure!(ready | matches!(r, Ok(3)) && score == 4);", &exact),
+        (
+            "assert_eq!(matches!(r, Err(E::Bad)) as u8 == 0, true);",
+            &weak,
+        ),
+        ("assert!(matches!(r, Err(E::Bad)) as u8 == 1);", &weak),
+        // A closure parameter list is not a `|` operator.
+        ("assert!(xs.iter().all(|x| matches!(x, Some(3))));", &exact),
+        (
+            "assert!(xs.iter().all(move |x| matches!(x, Some(3))));",
+            &exact,
+        ),
         // A string or char literal before `<` is an operand, not a path.
         ("assert_eq!(\"x+\" < s, true);", &weak),
         ("assert_eq!('+' < c, true);", &weak),
@@ -844,6 +858,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(f(matches!(r, Ok(3))) && g(matches!(s, Ok(4))));",
         "assert_eq!(\"x+\" < s, true);",
         "assert_eq!((r != Err(E::Bad)) & flag, true);",
+        "assert!(ready | matches!(r, Err(E::Bad)));",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));

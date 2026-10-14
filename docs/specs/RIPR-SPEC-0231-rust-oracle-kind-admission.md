@@ -280,7 +280,8 @@ Two pattern terms are used below.
    bitwise operand (`a & mask == b`). A string or char literal before `<`
    is an operand (`"x+" < s` compares). In a boolean assertion condition, or an
    equality-macro operand compared with a boolean literal, a `matches!`
-   that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=`, an
+   that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=` (on either
+   side; a closure's parameter bars are not `|`), cast with `as`, an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
    directly or through nested calls), or inside the condition or

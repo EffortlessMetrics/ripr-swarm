@@ -373,9 +373,14 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
             .unwrap_or_default()
             .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
         unread_operator_before(before)
+            || binary_bar_before(before)
             || in_keyword_condition(before)
             || after.starts_with(['^', '<', '>'])
             || (after.starts_with('|') && !after.starts_with("||"))
+            // A cast reads the bool as a number (`matches!(..) as u8 == 0`).
+            || after
+                .strip_prefix("as")
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
     })
 }
 
@@ -458,6 +463,64 @@ fn conjoin_single_ampersands(text: &str) -> String {
     }
     out.push_str(text.get(copied..).unwrap_or_default());
     out
+}
+
+/// Whether `before` (masked) ends with a binary single `|`
+/// (`ready | matches!(..)`), not `||` or the closing bar of a closure
+/// parameter list (`|x| matches!(..)`). An opening closure bar follows an
+/// operator or group start; a binary bar follows an operand.
+fn binary_bar_before(before: &str) -> bool {
+    let unopened = before.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '(');
+    if !unopened.ends_with('|') || unopened.ends_with("||") {
+        return false;
+    }
+    // Scan only the innermost group still open at the pattern.
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (at, byte) in unopened.bytes().enumerate().rev() {
+        match byte {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth == 0 => {
+                start = at + 1;
+                break;
+            }
+            b'(' | b'[' | b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let group = unopened.get(start..).unwrap_or_default();
+    let mut depth = 0usize;
+    let mut in_params = false;
+    let mut binary = false;
+    let mut index = 0;
+    let bytes = group.as_bytes();
+    while let Some(&byte) = bytes.get(index) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'|' if depth == 0 && !in_params && bytes.get(index + 1) == Some(&b'|') => {
+                binary = false;
+                index += 2;
+                continue;
+            }
+            b'|' if depth == 0 && in_params => {
+                in_params = false;
+                binary = false;
+            }
+            b'|' if depth == 0 => {
+                let head = group.get(..index).unwrap_or_default().trim_end();
+                let operand_end = head.ends_with(|ch: char| {
+                    ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}' | '?')
+                }) && !head.ends_with("move")
+                    && !head.ends_with("return");
+                binary = operand_end;
+                in_params = !operand_end;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    binary
 }
 
 fn unread_operator_before(before: &str) -> bool {
