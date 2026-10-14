@@ -1,4 +1,5 @@
 //! #7807: real multi-file Git changes must not count replacements as deletions.
+use super::common::fixture_git::fixture_git_output;
 use super::{run_command, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::path::Path;
@@ -55,9 +56,7 @@ fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
             root.join("src/b.rs"),
             "pub fn g(n: i32) -> bool {\n    if n <= 0 {\n        true\n    } else {\n        false\n    }\n}\n",
         )?;
-        let patch = run_command("git", Some(&root), &["diff", "--unified=0", "HEAD", "--"])?;
-        assert!(patch.status.success());
-        let patch = String::from_utf8(patch.stdout)?;
+        let patch = fixture_git_output(&root, &["diff", "--unified=0", "HEAD", "--"])?;
         assert!(patch.contains("@@ -2 +3 @@"), "{patch}");
         assert!(patch.contains("@@ -2 +2 @@"), "{patch}");
         let output = run_command(
