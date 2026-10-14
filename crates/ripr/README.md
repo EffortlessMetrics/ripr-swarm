@@ -47,6 +47,11 @@ Use the [versioned release instructions](https://github.com/EffortlessMetrics/ri
 for that release, or the [source installation guide](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/QUICKSTART.md#installation)
 for development features.
 
+Upgrading an existing 0.10 repository? Follow the
+[0.10 to 0.11 upgrade guide](https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011)
+for CI refresh, configuration, stale suppressions, receipts, caches and editor
+settings. It distinguishes development preparation from a published upgrade.
+
 ## Quick Start
 
 Run this from a Rust repository on a branch with committed changes. The 0.10
