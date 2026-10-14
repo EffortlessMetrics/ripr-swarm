@@ -15,7 +15,7 @@ use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
 use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{group_end, mask_comments_and_strings};
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -1491,7 +1491,7 @@ fn excludes_only_sibling_variant(
 /// when `rest` is not exactly one balanced group.
 fn macro_arguments(rest: &str) -> Vec<&str> {
     let rest = rest.trim();
-    if !rest.starts_with('(') || group_end(rest) != Some(rest.len() - 1) {
+    if !rest.starts_with('(') || group_end(rest, 0) != Some(rest.len() - 1) {
         return Vec::new();
     }
     let inner = &rest[1..rest.len() - 1];
@@ -1516,30 +1516,12 @@ fn macro_arguments(rest: &str) -> Vec<&str> {
     parts
 }
 
-/// The byte index of the delimiter closing the group `text` opens with.
-fn group_end(text: &str) -> Option<usize> {
-    let mut depth = 0_usize;
-    for (at, byte) in text.bytes().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(at);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Whether `operand` is exactly one bare call `owner(..)`: not a path
 /// segment, method, nested argument or larger expression.
 fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
     operand.strip_prefix(owner).is_some_and(|rest| {
         let rest = rest.trim_start();
-        rest.starts_with('(') && group_end(rest) == Some(rest.len() - 1)
+        rest.starts_with('(') && group_end(rest, 0) == Some(rest.len() - 1)
     })
 }
 

@@ -12,8 +12,8 @@ use super::patterns::{
     is_snapshot_assertion, is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
-use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::text::extract_identifier_tokens;
+use crate::analysis::extract::{delimiters_balance, group_end, mask_comments_and_strings};
 
 pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
@@ -2514,7 +2514,7 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         masked
             .match_indices(".expect_err(")
             .map(|(start, call)| (start, start + call.len() - 1))
-            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .find(|&(_, open)| group_end(masked, open) == Some(masked.len() - 1))
             .map(|(start, _)| &masked[..start])
     });
     receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
@@ -2528,7 +2528,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
     const MAX_GROUPING_DEPTH: usize = 8;
     let expr = expr.trim();
     let close = if expr.starts_with('(') {
-        let Some(close) = balanced_group_end(expr, 0) else {
+        let Some(close) = group_end(expr, 0) else {
             return false;
         };
         if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
@@ -2544,7 +2544,7 @@ fn keeps_call_result(expr: &str, depth: usize) -> bool {
         if !is_call_path(&expr[..open]) {
             return false;
         }
-        let Some(close) = balanced_group_end(expr, open) else {
+        let Some(close) = group_end(expr, open) else {
             return false;
         };
         close
@@ -2584,44 +2584,11 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
         if !KEEPS_OK.contains(&name) || !after.starts_with('(') {
             return false;
         }
-        let Some(close) = balanced_group_end(after, 0) else {
+        let Some(close) = group_end(after, 0) else {
             return false;
         };
         rest = &after[close + 1..];
     }
-}
-
-/// The byte index of the `)` closing the `(` at `open`.
-pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
-    let mut depth = 0_i64;
-    for (index, byte) in text.bytes().enumerate().skip(open) {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn delimiters_balance(masked: &str) -> bool {
-    let mut depth = 0_i64;
-    for byte in masked.bytes() {
-        match byte {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth -= 1,
-            _ => {}
-        }
-        if depth < 0 {
-            return false;
-        }
-    }
-    depth == 0
 }
 
 fn ends_with_unwrap_err(expr: &str) -> bool {
@@ -2643,7 +2610,7 @@ fn ends_with_expect_err(expr: &str) -> bool {
     masked
         .match_indices(".expect_err(")
         .map(|(start, call)| start + call.len() - 1)
-        .find(|&open| balanced_group_end(masked, open) == Some(close))
+        .find(|&open| group_end(masked, open) == Some(close))
         .is_some_and(|open| has_argument_tokens(&expr[open + 1..close]))
 }
 
