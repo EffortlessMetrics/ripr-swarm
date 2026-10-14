@@ -66,7 +66,7 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness,
+    constant_tail_witness, fallible_literal_witness, format_tail_witness,
 };
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,

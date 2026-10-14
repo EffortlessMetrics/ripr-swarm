@@ -6906,6 +6906,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod expect_test_pins;
 mod helper_pins;
 
 /// One `#[test]` over `weight`, with `body` as its statements.

@@ -1776,6 +1776,7 @@ impl OwnerReturnPin {
         }
         let condition;
         let matches_operands: [String; 2];
+        let expect_operands: [String; 2];
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -1871,6 +1872,16 @@ impl OwnerReturnPin {
                 return false;
             }
             (call, matches_operands[1].as_str())
+        } else if let Some(operands) = inline_expect_operands(&assertion.text) {
+            // #6578: `expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`
+            // compares the actual text with the inline literal and panics on
+            // a mismatch, as `assert_eq!(render_row("alice", 41), "alice: 42")`
+            // does.
+            expect_operands = operands;
+            let Some(call) = self.awaited_call_shape(&expect_operands[0], &self.name) else {
+                return false;
+            };
+            (call, expect_operands[1].as_str())
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
@@ -3615,10 +3626,23 @@ fn final_statement(masked: &str, end: usize) -> Option<(usize, usize)> {
 /// [`crate::analysis::syntax::MacroBindingCandidates`] can report.
 const NON_RETURNING_MACROS: &[&str] = TRUSTED_MACRO_NAMES;
 
+/// Trusted names whose trust is the test-side binding scan's alone (#6578).
+/// `expect!` is no `std` macro: outside a test that verifies
+/// `use expect_test::expect;`, a bare `expect!` is a crate's own (a try-style
+/// `expect!(x)` may hide a `return`), so owner bodies and binding reads never
+/// count it as bounded.
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect"];
+
+/// Whether a macro named `name` neither returns nor binds a name, whatever
+/// file it sits in.
+fn is_bounded_macro(name: &str) -> bool {
+    NON_RETURNING_MACROS.contains(&name) && !TEST_SCOPED_TRUSTED_MACROS.contains(&name)
+}
+
 fn has_unbounded_macro(masked: &str) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .any(|(name, _)| !NON_RETURNING_MACROS.contains(&name))
+        .any(|(name, _)| !is_bounded_macro(name))
 }
 
 /// Every `name!` macro invocation in masked text, with the offset of its
@@ -4937,6 +4961,83 @@ fn is_admission_gated_assert_eq(text: &str) -> bool {
     leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
 }
 
+/// #6578: the actual operand and the expected literal of an inline
+/// expect-test comparison, `expect![["text"]].assert_eq(actual)`, as
+/// `[actual, "text"]`. `expect_test::Expect::assert_eq(&self, actual: &str)`
+/// compares `actual` with the literal (indentation-trimmed when it spans
+/// lines) and panics on a mismatch unless `UPDATE_EXPECT` is set. Only the
+/// bare `expect!` with one string literal (or none, the empty expectation)
+/// and one argument; a single leading `&` borrows the actual value and is
+/// dropped. `assert_debug_eq`, `expect_file!` and a qualified
+/// `expect_test::expect!` stay `snapshot` / medium (RIPR-SPEC-0231 step 6).
+pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String; 2]> {
+    let statement = text.trim().trim_end_matches(';').trim_end();
+    let parse = parse_clean_source_file(&format!("fn ripr_expect() {{ {statement}; }}"))?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    let mut statements = body.statements();
+    let ast::Stmt::ExprStmt(only) = statements.next()? else {
+        return None;
+    };
+    if statements.next().is_some() || body.tail_expr().is_some() {
+        return None;
+    }
+    let ast::Expr::MethodCallExpr(call) = only.expr()? else {
+        return None;
+    };
+    if call.name_ref()?.text() != "assert_eq" || call.generic_arg_list().is_some() {
+        return None;
+    }
+    let ast::Expr::MacroExpr(receiver) = call.receiver()? else {
+        return None;
+    };
+    let receiver = receiver.macro_call()?;
+    if receiver.excl_token().is_none() || receiver.path()?.syntax().text() != "expect" {
+        return None;
+    }
+    let tokens: Vec<_> = receiver
+        .token_tree()?
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| (token.kind(), token.text().to_string()))
+        .collect();
+    let texts: Vec<&str> = tokens.iter().map(|(_, text)| text.as_str()).collect();
+    let literal = match texts.as_slice() {
+        ["[", "[", _, "]", "]"] | ["[", _, "]"] => {
+            let (kind, text) = &tokens[tokens.len() / 2];
+            // expect-test trims a multi-line literal's indentation before
+            // comparing, so its raw text is not the compared value.
+            if *kind != ra_ap_syntax::SyntaxKind::STRING || text.contains('\n') {
+                return None;
+            }
+            text.clone()
+        }
+        ["[", "[", "]", "]"] | ["[", "]"] => "\"\"".to_string(),
+        _ => return None,
+    };
+    let mut arguments = call.arg_list()?.args();
+    let actual = arguments.next()?;
+    if arguments.next().is_some() {
+        return None;
+    }
+    let actual = match actual {
+        ast::Expr::RefExpr(borrowed) => {
+            if borrowed.mut_token().is_some() || borrowed.raw_token().is_some() {
+                return None;
+            }
+            borrowed.expr()?.syntax().text().to_string()
+        }
+        other => other.syntax().text().to_string(),
+    };
+    Some([actual, literal])
+}
+
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
 /// or of the assertion twin of a terminal Err-return guard
 /// `if lhs != rhs { return Err(..) }` (RIPR-SPEC-0154). The condition must
@@ -5024,7 +5125,7 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
 fn bound_by_macro(masked: &str, name: &str) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .filter(|(macro_name, _)| !NON_RETURNING_MACROS.contains(macro_name))
+        .filter(|(macro_name, _)| !is_bounded_macro(macro_name))
         .any(|(_, delimiter)| {
             let (open, close) = match masked.as_bytes()[delimiter] {
                 b'(' => (b'(', b')'),
