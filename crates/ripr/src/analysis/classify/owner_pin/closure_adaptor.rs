@@ -491,7 +491,12 @@ pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize
     let masked = mask_comments_and_strings(text);
     whole_word_offsets(&masked, name)
         .into_iter()
-        .filter(|offset| masked[offset + name.len()..].trim_start().starts_with('('))
+        .filter(|offset| {
+            // A turbofish or macro call counts too, so it can only overcount
+            // (fail closed), never hide a second call on the line.
+            let rest = masked[offset + name.len()..].trim_start();
+            rest.starts_with('(') || rest.starts_with("::<") || rest.starts_with('!')
+        })
         .count()
 }
 
@@ -1011,6 +1016,30 @@ mod tests {
         assert!(pinned(vec![11, 12]));
         assert!(!pinned(vec![12]));
         assert!(!pinned(vec![11, 14]));
+    }
+
+    #[test]
+    fn call_count_counts_every_call_form_of_the_name() {
+        assert_eq!(call_count("assert_eq!(score(&[0]), 1);", "score"), 1);
+        assert_eq!(
+            call_count("assert_eq!(score(&[0]), score(&v));", "score"),
+            2
+        );
+        // A turbofish or macro call next to a plain call still makes two.
+        assert_eq!(
+            call_count("assert_eq!(score(&[0]), score::<i32>(&v));", "score"),
+            2
+        );
+        assert_eq!(
+            call_count("assert_eq!(score(&[0]), score!(v));", "score"),
+            2
+        );
+        // Comments, strings and longer names are not calls.
+        assert_eq!(call_count("score(&[0]); // score(&v)", "score"), 1);
+        assert_eq!(
+            call_count("score(&[0]); \"score(&v)\"; scores(&v);", "score"),
+            1
+        );
     }
 
     #[test]
