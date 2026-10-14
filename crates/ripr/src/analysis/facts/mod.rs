@@ -10,6 +10,13 @@ mod harness_registry;
 mod includes;
 mod index;
 mod macro_generated_tests;
+
+/// The index builder's macro-generated test registration, for fixtures that
+/// assemble an index by hand.
+#[cfg(test)]
+pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustIndex) {
+    macro_generated_tests::register_macro_generated_tests(index);
+}
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;

@@ -91,10 +91,20 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-1. Oracle shape. The assertion is one plain `assert_eq!` (never
-   `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
-   `*_assert_eq!`) with an exact-value, whole-object or `exact_error_variant`
-   oracle kind, on a line
+1. Oracle shape. The assertion is one plain `assert_eq!`, or that
+   `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
+   `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's
+   real file (for a generated test, the file holding the invocation) has no
+   module, import or `extern crate` rename with the root's name, no
+   item-position macro call, no `#![no_implicit_prelude]` and no glob import
+   other than `self::*` or `super::*` inside an inline module; and the root
+   passes the proof targeted call syntax uses: the package manifests bind no
+   dependency to the name, and every file on the test's module path keeps
+   the root available (no `#![no_std]` without `extern crate std`). Never
+   `assert_ne!`, `debug_assert_eq!`, another drop-in or crate-specific
+   qualified `assert_eq!` (`pretty_assertions::assert_eq!`, which needs a
+   manifest check) or a `*_assert_eq!`. Its oracle kind is exact-value,
+   whole-object or `exact_error_variant`, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
    test's outer attributes admit only `#[test]` and the `serial_test` locks
@@ -565,8 +575,9 @@ rule only for an assertion whose context was admitted.
    (`ensure !(..)`), leaves the return paths unestablished.
 4. Macro binding. The existing non-returning standard-macro vocabulary is
    reused for test bodies; any other invoked macro may hide an early exit
-   and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
-   their roots can be rebound.
+   and refuses the pin. Only bare standard names qualify, plus a
+   `std`/`core`-rooted `assert_eq!` whose root rule 1 proves unrebound;
+   other qualified paths stay unknown because their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!` or `format!` expands to one call over
@@ -1668,9 +1679,10 @@ assertions. This repair shares the existing callback without that larger migrati
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
   the lone-equality forms above, and from `assert_eq!` qualified through a
   drop-in assertion crate (`std`, `core`, `pretty_assertions`,
-  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
-  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
-  reads `assertion_not_credited`. Other qualified assertion macros, other
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches the bare
+  spelling and the `std`/`core`-rooted one (rule 1), so another qualified
+  drop-in `assert_eq!` is refused here and its row reads
+  `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 

@@ -113,10 +113,48 @@ pub(in crate::analysis) struct OwnerReturnPin {
     identity: Option<OwnerCallIdentity>,
 }
 
+/// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
+/// rooted spellings, whether the file can rebind that root.
+#[derive(Clone, Debug, Default)]
+struct StdRootedCalls {
+    calls: BTreeSet<String>,
+    unrebound: BTreeSet<String>,
+}
+
+const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+    "std::assert_eq",
+    "core::assert_eq",
+    "::std::assert_eq",
+    "::core::assert_eq",
+];
+
+impl StdRootedCalls {
+    fn of(source: &str) -> Self {
+        let Some(file) = parse_clean_source_file(source) else {
+            return Self::default();
+        };
+        let root = file.tree().syntax().clone();
+        Self {
+            calls: std_rooted_assert_eq_calls(&root),
+            unrebound: STD_ROOTED_ASSERT_EQ
+                .iter()
+                .filter(|path| {
+                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                })
+                .map(|path| (*path).to_string())
+                .collect(),
+        }
+    }
+}
+
 /// Run-scoped syntax decisions shared by every probe against one index.
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
+    /// of those roots the file itself leaves unrebound (#7857). Parsed once
+    /// per file, not once per assertion.
+    std_rooted: RefCell<BTreeMap<PathBuf, StdRootedCalls>>,
     fallible_dependencies:
         RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
@@ -892,6 +930,31 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
+        // #7857: a `std`/`core`-rooted `assert_eq!` needs the same root proof
+        // as targeted call syntax (manifest, crate provenance) plus the
+        // test's real file, which a generated test's expansion does not show.
+        // The escape scan admits every such call in the file's tests and
+        // helpers on file-local evidence, so each one anywhere in the file
+        // needs the proof, not only the credited assertion: an unproved
+        // `std::assert_eq!` may expand to an early return that skips it.
+        let rooted = self
+            .std_rooted
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| StdRootedCalls::of(&facts.source))
+            .clone();
+        let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .into_iter()
+            .chain(rooted.calls)
+            .collect();
+        if let Some(path) = qualified.into_iter().find(|path| {
+            !(rooted.unrebound.contains(path)
+                && self.targeted_macro_binding_is_unambiguous(test, assertion.line, path, index))
+        }) {
+            return Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::OpaqueMacro(path),
+            ));
+        }
         let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
@@ -1969,7 +2032,7 @@ impl OwnerReturnPin {
         // A nested `format!` is read only as a rendered scalar pin.
         let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
         let reads_assert_eq =
-            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
+            renders || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -5446,6 +5509,48 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
         && masked
             .find(macro_name)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
+/// [`is_plain_macro`], or the same single invocation under a `std` or `core`
+/// root (`std::assert_eq!(..)`, `::core::assert_eq!(..)`). Admission
+/// credits the qualified form only when [`OwnerPinSyntax`] proves the root
+/// unrebound (#7857).
+fn is_plain_or_std_macro(text: &str, macro_name: &str) -> bool {
+    is_plain_macro(text, macro_name) || std_rooted_macro_path(text, macro_name).is_some()
+}
+
+/// The whitespace-free path of every `std`/`core`-rooted `assert_eq!` call
+/// under `root` (#7857).
+fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.path())
+        .map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+        })
+        .filter(|path| STD_ROOTED_ASSERT_EQ.contains(&path.as_str()))
+        .collect()
+}
+
+/// The whitespace-free path (`std::assert_eq`, `::core::assert_eq`) when
+/// `text` is one `macro_name` invocation under a `std` or `core` root.
+fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [(name, _)] = invocations.as_slice() else {
+        return None;
+    };
+    let offset = masked.find(macro_name)?;
+    let root: String = masked[..offset]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    (*name == macro_name && matches!(root.as_str(), "std::" | "core::" | "::std::" | "::core::"))
+        .then(|| format!("{root}{macro_name}"))
 }
 
 /// `assert_eq!` whose only nested macros are `format!`, which

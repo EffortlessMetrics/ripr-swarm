@@ -21,7 +21,7 @@ floor = 112
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 40
+match_floor = 41
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
