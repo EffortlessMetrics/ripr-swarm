@@ -29,11 +29,13 @@
 
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::activation::function_parameters;
+use super::boundary_pairing::loan_call_literals;
 use super::reveal::{
     UsePath, assertion_comparison_operands, find_fat_arrow, flattened_use_paths, lex_strings,
     matching_parenthesis, split_top_level_arguments, string_span_ranges,
 };
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literals};
+use crate::analysis::syntax::HelperLoan;
 use crate::domain::Probe;
 
 mod guard_entry;
@@ -135,6 +137,12 @@ pub(in crate::analysis) struct ArmSelector {
     /// exact pattern pin, keyed by test file, test start line, test name,
     /// assertion line and assertion text.
     pattern_pins: std::collections::BTreeMap<PatternPinKey, String>,
+    /// RIPR-SPEC-0229 decision 5: the admitted assertions related tests
+    /// borrow from a check helper (#6482) whose compared operand is a
+    /// direct owner call passing a helper parameter as the scrutinee, where
+    /// an eager call to the helper fills that parameter with a literal
+    /// selecting this arm. Same key as `pattern_pins`.
+    helper_selections: std::collections::BTreeSet<PatternPinKey>,
 }
 
 type PatternPinKey = (std::path::PathBuf, usize, String, usize, String);
@@ -411,6 +419,7 @@ impl ArmSelector {
             owner_file: owner.file.clone(),
             test_imports: None,
             pattern_pins: std::collections::BTreeMap::new(),
+            helper_selections: std::collections::BTreeSet::new(),
         })
     }
 
@@ -715,6 +724,102 @@ impl ArmSelector {
                 assertion.text.clone(),
             ))
             .is_some_and(|value| self.operand_selects(value))
+    }
+
+    /// RIPR-SPEC-0229 decision 5: keeps each related test's admitted
+    /// assertion borrowed from a check helper (#6482) that selects this arm
+    /// through the helper's parameters, as `loan` lends them.
+    pub(in crate::analysis) fn with_helper_loans<'a>(
+        mut self,
+        tests: impl IntoIterator<Item = &'a TestSummary>,
+        loan: impl Fn(&TestSummary, &crate::analysis::facts::OracleFact) -> Option<HelperLoan>,
+    ) -> Self {
+        for test in tests {
+            for assertion in &test.assertions {
+                if let Some(loan) = loan(test, assertion)
+                    && self.loan_selects(test, &assertion.text, &loan)
+                {
+                    self.helper_selections.insert((
+                        test.file.clone(),
+                        test.start_line,
+                        test.name.clone(),
+                        assertion.line,
+                        assertion.text.clone(),
+                    ));
+                }
+            }
+        }
+        self
+    }
+
+    /// Whether `assertion` is a borrowed check-helper assertion that
+    /// selects this arm (`with_helper_loans`).
+    pub(in crate::analysis) fn helper_loan_selects(
+        &self,
+        test: &TestSummary,
+        assertion: &crate::analysis::facts::OracleFact,
+    ) -> bool {
+        !self.helper_selections.is_empty()
+            && self.helper_selections.contains(&(
+                test.file.clone(),
+                test.start_line,
+                test.name.clone(),
+                assertion.line,
+                assertion.text.clone(),
+            ))
+    }
+
+    /// `fn check(suit: char, want: &str) { assert_eq!(suit_color(suit),
+    /// want); }` called as `check('S', "black")` compares
+    /// `suit_color('S')`: the helper's compared operand is exactly a direct
+    /// owner call whose scrutinee argument is one of the helper's plain,
+    /// never-rebound parameters, the expected side does not name the owner,
+    /// and some eager call to the helper, alone on its line, passes only
+    /// scalar literals and fills that parameter with an input selecting
+    /// this arm. That call runs the helper's assertion on its own owner
+    /// call, so it is a selecting call with an exact oracle on its result.
+    fn loan_selects(&self, test: &TestSummary, assertion_text: &str, loan: &HelperLoan) -> bool {
+        if loan.parameters.is_empty()
+            || mask_comments_and_strings(assertion_text).contains("assert_ne")
+        {
+            return false;
+        }
+        let Some(operands) = assertion_comparison_operands(assertion_text) else {
+            return false;
+        };
+        if operands.iter().all(|operand| {
+            !whole_word_offsets(&mask_comments_and_strings(operand), &self.owner).is_empty()
+        }) {
+            return false;
+        }
+        let Some(position) = operands.iter().find_map(|operand| {
+            let operand = operand.trim();
+            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
+                .into_iter()
+                .find(|call| call.span == (0, operand.len()))
+                .and_then(|call| self.call_input(&call))
+                .and_then(|input| loan.parameters.iter().position(|name| name == input.trim()))
+        }) else {
+            return false;
+        };
+        loan.call_lines.iter().any(|line| {
+            let mut on_line = test.calls.iter().filter(|call| call.line == *line);
+            let Some(helper_call) = on_line.next() else {
+                return false;
+            };
+            if helper_call.name != loan.name
+                || on_line.any(|call| call.name != loan.name || call.text != helper_call.text)
+            {
+                return false;
+            }
+            loan_call_literals(&helper_call.text, &loan.name).is_some_and(|literals| {
+                literals.len() == loan.parameters.len()
+                    && literals.get(position).is_some_and(|input| {
+                        !self.input_import_ambiguous(test, input)
+                            && self.judge(input) == ArmSelection::Selects
+                    })
+            })
+        })
     }
 
     /// Whether the test names the owner at all. A test that reaches the
@@ -1022,10 +1127,11 @@ fn arm_pattern_text(expression: &str) -> Option<String> {
     Some(pattern.to_string())
 }
 
-/// `text` with every comment byte blanked and string literals kept, so a
-/// `/* "x" */` beside a pattern never reads as part of it.
+/// `text` with every comment byte blanked and string and character
+/// literals kept, so a `/* "x" */` beside a pattern never reads as part of
+/// it while `'S' | 'C'` keeps its characters.
 fn without_comments(text: &str) -> Option<String> {
-    let masked = mask_comments_and_strings(text);
+    let (masked, chars) = mask_with_char_literals(text);
     let strings = string_span_ranges(text);
     let bytes = text
         .bytes()
@@ -1034,7 +1140,10 @@ fn without_comments(text: &str) -> Option<String> {
         .map(|(index, (original, masked))| {
             let in_string = strings
                 .iter()
-                .any(|(start, end)| index >= *start && index < *end);
+                .any(|(start, end)| index >= *start && index < *end)
+                || chars
+                    .iter()
+                    .any(|(start, end)| index >= *start && index <= *end);
             if original != masked && !in_string {
                 b' '
             } else {
@@ -3218,6 +3327,22 @@ mod tests {
                 .map(|observed| observed.selection),
             Some(ArmSelection::SelectsOther)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn char_literal_arms_compare_by_value() -> Result<(), String> {
+        // The arm-head reader once masked char literals as comments, so
+        // `'C' | 'S' =>` read as `|` and no char arm established.
+        let body = "pub fn suit_color(suit: char) -> &'static str {\n    match suit {\n        'H' | 'D' => \"red\",\n        'S' | 'C' => \"black\",\n        _ => \"unknown\",\n    }\n}\n";
+        let selector = ArmSelector::establish(
+            &arm_probe("'S' | 'C' => \"black\",", 4),
+            &owner(body, "suit_color"),
+        )
+        .ok_or_else(|| "premise: the char arm reads its scrutinee from suit".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(suit_color('S'), \"black\");"));
+        assert!(selector.assertion_selects("assert_eq!(suit_color('C'), \"black\");"));
+        assert!(!selector.assertion_selects("assert_eq!(suit_color('H'), \"red\");"));
         Ok(())
     }
 
