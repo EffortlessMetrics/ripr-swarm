@@ -3606,6 +3606,31 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-python")]
+    fn doctor_reports_pytest_from_zero_config_test_file_import() -> Result<(), String> {
+        // #7662: doctor must agree with check on a zero-config pytest repo
+        // whose tests import pytest without pytest.ini/conftest/section markers.
+        let root = unique_command_test_dir("doctor-pytest-import");
+        let tests_dir = root.join("tests");
+        std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            tests_dir.join("test_module.py"),
+            "import pytest\n\ndef test_n():\n    assert True\n",
+        )
+        .map_err(|err| format!("write test file: {err}"))?;
+        let lines = detect_test_surfaces(&root, &detect_languages(&root));
+        assert!(
+            lines
+                .iter()
+                .any(|surface| surface.evidence == "python: pytest"
+                    && surface.framework.as_deref() == Some("pytest")),
+            "expected python: pytest in {lines:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn doctor_requires_root_value() {
         assert_eq!(
             doctor(&args(&["--root"])),
