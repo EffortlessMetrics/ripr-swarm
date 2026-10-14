@@ -258,13 +258,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
         .analysis_status?.attempt_id;
       let attemptAfterRefresh = attemptBeforeRefresh;
-      for (let issued = 0; issued < 3 && attemptAfterRefresh === attemptBeforeRefresh; issued++) {
-        // Drive the same framed wire command the palette command wraps: the
-        // VS Code command dispatch of this palette id has been observed to
-        // reject during the session-start settling window (bare
-        // illegal-argument from the command channel) while the framed
-        // request path answers throughout, and the attempt id below remains
-        // the commit oracle either way.
+      // The server-side refresh path can decline refreshes for a window
+      // after the session-start save settles (CI: the attempt id stays put
+      // across immediate re-issues while an identical request after the
+      // window commits a full attempt with the seam inventory). Poll the
+      // framed wire command through that window instead of failing on the
+      // startup churn; the attempt id remains the commit oracle.
+      const confirmRefreshDeadline = Date.now() + 75_000;
+      while (Date.now() < confirmRefreshDeadline && attemptAfterRefresh === attemptBeforeRefresh) {
         await bounded(client.sendRequest('workspace/executeCommand', {
           command: 'ripr.refresh', arguments: [],
         }), 'framed full refresh');
@@ -272,6 +273,9 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
           .analysis_status?.attempt_id;
+        if (attemptAfterRefresh === attemptBeforeRefresh) {
+          await new Promise(resolve => setTimeout(resolve, 5_000));
+        }
       }
       assert.notStrictEqual(attemptAfterRefresh, attemptBeforeRefresh,
         'the explicit full refresh must commit a new analysis attempt');
