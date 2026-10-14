@@ -2463,22 +2463,40 @@ fn is_call_path(callee: &str) -> bool {
                     .is_some_and(|next| next.is_ascii_alphabetic() || *next == b'_'))
     });
     // Outside a `::<..>` turbofish, a path has no spaces, commas, angle
-    // brackets or `..`: `(a < check(x))`, `(return check(x))` and
-    // `(a..check(x))` group a comparison, a jump or a range, not a call.
-    let path = callee.split("::<").next().unwrap_or(callee);
-    let plain_path = !path.contains("..")
-        && path
-            .bytes()
-            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'#'));
+    // brackets or `..`: `(a < check(x))`, `(return check(x))`,
+    // `(a..check(x))` and `(x::<A> < y, check(x))` group a comparison, a
+    // jump, a range or a tuple, not a call.
+    let mut generic_depth = 0_usize;
+    let mut plain_path = !callee.contains("..");
+    let mut index = 0;
+    while plain_path && index < bytes.len() {
+        let byte = bytes[index];
+        if generic_depth == 0 {
+            if bytes[index..].starts_with(b"::<") {
+                generic_depth = 1;
+                index += 3;
+                continue;
+            }
+            plain_path = is_ident_byte(byte) || matches!(byte, b'.' | b':' | b'#');
+        } else {
+            match byte {
+                b'<' => generic_depth += 1,
+                b'>' => generic_depth -= 1,
+                _ => {
+                    plain_path =
+                        is_ident_byte(byte) || matches!(byte, b':' | b',' | b' ' | b'&' | b'\'');
+                }
+            }
+        }
+        index += 1;
+    }
+    let plain_path = plain_path && generic_depth == 0;
     raw_prefix_only
         && plain_path
         && bytes.first().is_some_and(|b| is_ident_byte(*b))
         && bytes
             .last()
             .is_some_and(|b| is_ident_byte(*b) || *b == b'>')
-        && bytes.iter().all(|b| {
-            is_ident_byte(*b) || matches!(*b, b'.' | b':' | b'<' | b'>' | b',' | b' ' | b'#')
-        })
 }
 
 /// Whether `.unwrap_err()` reads the error side of the statement's first
@@ -4945,6 +4963,7 @@ mod call_path_tests {
             "svc.r#match",
             "Api::<A, B>::check",
             "check::<u8>",
+            "parse::<Vec<&'static str>>",
         ] {
             assert!(is_call_path(callee), "{callee}");
         }
@@ -4956,6 +4975,8 @@ mod call_path_tests {
             "br#check",
             "a < check",
             "a..check",
+            "x::<A> < y, check",
+            "f::<A>> check",
         ] {
             assert!(!is_call_path(callee), "{callee}");
         }
