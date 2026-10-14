@@ -1,3 +1,8 @@
+# Matched six-case measurement receipt (#7825)
+
+All attempts and terminal outcomes are retained in this data block.
+
+```json
 {
   "schema_version": 1,
   "issue": 7825,
@@ -268,3 +273,4 @@
     }
   }
 }
+```

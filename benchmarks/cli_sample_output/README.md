@@ -30,7 +30,7 @@ and controls under existing specs 0001, 0122 and 0241.
 
 ## Matched local observations
 
-[measurements.json](measurements.json) retains all nine family attempts and all
+[measurements.md](measurements.md) retains all nine family attempts and all
 54 terminal case outcomes, identities, setup/CLI spans and trace digests.
 Base: `4ad9553adc77ef63f6cb8a134d0cfc30ce638158`, tree
 `6a9a37d0482ad6b61327bdd82b2ffe969b133b40`. Measured candidate test tree:
@@ -67,7 +67,7 @@ include instrumentation overhead and are not mixed with untraced observations.
 
 The read checker reconstructs unfinished/resumed syscalls and includes analyzer
 worker-thread reads after the one actual CLI exec. It admits exactly the owned
-`src/lib.rs` and `tests/pricing.rs`, and verifies the CLI's decoy CWD. All six
+`src/lib.rs` and `tests/pricing.rs`, and binds every read to the scratch root of the actual CLI PID's successful decoy CWD. All six
 normal and all six grown-checkout traces pass. The growth control added 64 valid
 Rust files under the actual product `crates/ripr/src/` tree, verified the untracked
 Git inventory, repeated all three attempts, then removed only that owned directory.
@@ -95,7 +95,7 @@ rustc --edition 2024 benchmarks/cli_sample_output/check_reads.rs -o check-reads
 ./check-reads owned "$RIPR_EXE" case.trace
 ```
 
-Repeat the trace command for the six names in `measurements.json`. Repeat with
+Repeat the trace command for the six names in `measurements.md`. Repeat with
 unrelated source files added under the surrounding checkout and require the
 same read checker result. Run this growth experiment serially outside other
 checkout consumers, then remove only its owned files. Baseline uses the exact
@@ -109,3 +109,10 @@ Required focused consumers: `check-process-policy`, `check-traceability`,
 `check-fast`, independent exact-head review around `precommit`. Draft remains
 in flight for any normal hosted qualification. Rollback is this test/fixture,
 traceability and evidence package alone.
+
+Independent review found that the first checker normalized sibling fixture roots
+without binding them to the CLI CWD. Its sibling-root substitution control was
+accepted; the repaired checker binds that root and rejects the same control.
+All original raw traces independently used the intended root and remain valid.
+The first precommit stopped at file policy on the standalone JSON receipt; the
+receipt is now a Markdown data document, without a policy exception or gate change.
