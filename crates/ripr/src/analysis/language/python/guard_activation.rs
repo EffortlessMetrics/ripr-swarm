@@ -472,8 +472,18 @@ fn parameter_rebound_before(
             .strip_prefix("for ")
             .and_then(|rest| rest.split(" in ").next())
         {
-            // `for name in ..` / `for a, name in ..` rebinds the name.
-            if targets.split(',').any(|target| target.trim() == name) {
+            // `for name in ..` / `for a, name in ..` rebinds the name, and
+            // so do parenthesized or bracketed tuple targets and star
+            // targets: Python binds every target before the body runs, so
+            // decoration around the name must not hide it
+            // (`for (other, total) in ..`).
+            if targets.split(',').any(|target| {
+                let normalized = target
+                    .trim()
+                    .trim_start_matches(['(', '[', '*'])
+                    .trim_end_matches([')', ']']);
+                normalized == name
+            }) {
                 return true;
             }
         }
@@ -992,6 +1002,27 @@ mod tests {
             eval_comparison("total > 1000", 2, &row, &[], source, 0),
             None
         );
+    }
+
+    #[test]
+    fn eval_comparison_fails_open_on_parenthesized_loop_target() {
+        // A parenthesized tuple loop target (`for (other, total) in ..`)
+        // binds `total` before the guard runs; the closing parenthesis and
+        // a star-prefixed target must not hide the rebinding from the scan.
+        let row = test_row(&[("total", "100.0")]);
+        for header in [
+            "    for (other, total) in [(0, 2000)]:",
+            "    for other, *total in [(0, 2000)]:",
+        ] {
+            let source = format!(
+                "def quote(total):\n{header}\n        if total > 1000:\n            return 42\n"
+            );
+            assert_eq!(
+                eval_comparison("total > 1000", 2, &row, &[], &source, 0),
+                None,
+                "{header} must fail open"
+            );
+        }
     }
 
     #[test]
