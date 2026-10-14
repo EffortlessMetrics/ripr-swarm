@@ -6848,7 +6848,9 @@ const INTEGER_TYPES: &[&str] = &[
 fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a str> {
     let decimal = |text: &str| -> Option<u128> {
         let text = text.trim();
-        (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+        // `_12` is an identifier, not a literal: the first byte is a digit.
+        (text.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
             .then(|| text.replace('_', "").parse().ok())
             .flatten()
     };

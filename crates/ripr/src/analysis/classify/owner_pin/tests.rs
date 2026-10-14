@@ -7467,7 +7467,7 @@ fn associated_function_pin_refuses_other_names_for_the_type() {
         ("use demo::Gauge;", "assert_ne!(Gauge::reading(), 41);"),
         (
             "use demo::Gauge;",
-            "assert_eq!(Gauge::reading().min(42), 42);",
+            "assert_eq!(Gauge::reading().saturating_sub(1), 41);",
         ),
     ] {
         let tests = gauge_test(prelude, body);
@@ -7751,6 +7751,9 @@ fn an_integer_projection_that_keeps_the_value_pins() {
         "assert_eq!(crate::weight(4).min(100), TWELVE);",
         "assert_eq!(crate::weight(4).min(100u32), 12);",
         "assert_eq!(crate::weight(4).min(0x64), 12);",
+        // A leading `_` names a const or binding, not a literal.
+        "assert_eq!(crate::weight(4).min(_100), 12);",
+        "assert_eq!(crate::weight(4).max(3), _12);",
         // Something else around the call.
         "assert_eq!(crate::weight(4).min(100).min(50), 12);",
         "assert_eq!(crate::weight(4) / 2 * 1, 6);",
@@ -7763,6 +7766,11 @@ fn an_integer_projection_that_keeps_the_value_pins() {
     let body = "assert_eq!(crate::weight(4).min(100), 12);";
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A float or bool owner is a scalar but not an integer.
+    for returned in ["f64", "bool"] {
+        let lib = unit_tests("", body).replace("-> u32", &format!("-> {returned}"));
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    }
 }
 
 #[test]
