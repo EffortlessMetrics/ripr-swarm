@@ -151,7 +151,9 @@ export function assertActionTargets(commands: CommandObservation[], expected: Ro
     }
   }
   for (const name of Object.keys(commandArtifacts)) {
-    assert.strictEqual(commands.filter(command => command.command === name).length, 1,
-      `fixture must exercise ${name}, including its root and artifact containment`);
+    const found = commands.filter(command => command.command === name).length;
+    assert.strictEqual(found, 1,
+      `fixture must exercise ${name}, including its root and artifact containment`
+      + ` (found ${found}; ripr actions: ${commands.map(command => command.command).join(', ')})`);
   }
 }
