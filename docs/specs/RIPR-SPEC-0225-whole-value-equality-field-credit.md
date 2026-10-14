@@ -251,8 +251,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    literal without its own base, when the workspace does not rebind
    `Default`. A derived `Default`, a second `default` for `T`, an attributed
    or generic impl, a helper or `default()` with statements, a field with an
-   attribute (`#[cfg(..)]`) in either literal, an `r#` helper name, or a name
-   a macro may declare gives no credit. Both forms apply to the test's own
+   attribute (`#[cfg(..)]`) in either literal, an `r#` helper name, a name
+   a macro may declare, or any workspace glob `use` rooted outside `crate`,
+   `self`, `super` and the workspace packages (standard library included,
+   since the index cannot list what it binds) gives no credit. Both forms apply to the test's own
    `assert_eq!` operands, not to `==` conditions or borrowed
    check-helper assertions. The substituted literal then passes every rule 2 gate, so the
    changed field still needs an independent value, whether written in the

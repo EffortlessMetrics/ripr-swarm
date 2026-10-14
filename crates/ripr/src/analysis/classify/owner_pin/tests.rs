@@ -6141,6 +6141,39 @@ fn an_expected_helper_or_default_base_reads_as_its_literal() {
         "",
         r#"assert_eq!(build(3), Config { name: "x".into(), ..base() });"#
     ));
+    // Review (#7954): a glob from outside the workspace, in the test or
+    // reaching it through another workspace file, may bind `expected` or
+    // `Default` to an item the index cannot read.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("use other::*;\n{}", helper(literal)),
+        call
+    ));
+    // `None` when the pin itself refuses: a foreign glob the library
+    // re-exports already withholds the type name's reach.
+    let through = |lib: &str, helpers: &str, body: &str| {
+        let lib = format!("{lib}pub mod helpers;\npub use crate::helpers::*;\n");
+        let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, &lib), (HELPERS, helpers), (TESTS, &tests)]);
+        field_pin_of(&index, &lib, "build", "retries: n + 1,", "retries: n + 1,")
+            .map(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let fixtures = format!("{CONFIG_LIB}mod fixtures {{\n    {}}}\n", helper(literal));
+    for (lib, body) in [(fixtures.as_str(), call), (defaulted.as_str(), update)] {
+        assert_eq!(through(lib, "", body), Some(true), "{lib}");
+        assert_ne!(
+            through(lib, "pub use other::*;\n", body),
+            Some(true),
+            "{lib}"
+        );
+        // A standard-library glob leaves the pin standing; decision 7
+        // still refuses to read through a glob it cannot list.
+        assert_eq!(
+            through(lib, "pub use std::fmt::*;\n", body),
+            Some(false),
+            "{lib}"
+        );
+    }
     // Review: a `#[cfg]`-disabled explicit field leaves the default's
     // computed value in force, so it may not override it in the merge.
     let computed =

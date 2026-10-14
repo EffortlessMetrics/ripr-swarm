@@ -1,7 +1,8 @@
 //! Bounded SPEC-0225 expected literal bindings; no general value-flow resolution.
 
 use super::{
-    OracleFact, RustIndex, TestSummary, is_plain_identifier, starts_with_word, whole_word_offsets,
+    OracleFact, RustIndex, TestSummary, file_use_statements, is_plain_identifier,
+    is_workspace_root, starts_with_word, use_statement_first_segment, whole_word_offsets,
     wrapper_may_be_rebound,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -81,6 +82,12 @@ pub(super) fn expected_item_literal(
     operand: &str,
     type_name: &str,
 ) -> Option<String> {
+    // A glob from outside the workspace can bind the helper's name or
+    // `Default` in the test's scope, directly or through `use super::*`,
+    // and the index cannot read what it brings (#7954 review).
+    if workspace_has_opaque_glob(index) {
+        return None;
+    }
     let parse = parse_clean_source_file(&format!("fn ripr_expected() {{ ({operand}); }}"))?;
     let value = parse
         .tree()
@@ -164,6 +171,19 @@ pub(super) fn expected_item_literal(
         }
         _ => None,
     }
+}
+
+/// Whether any indexed file glob-imports from a root other than `crate`,
+/// `self`, `super` or a workspace package; standard-library globs count.
+fn workspace_has_opaque_glob(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains('*')
+            && file_use_statements(&facts.source).iter().any(|statement| {
+                statement.contains('*')
+                    && use_statement_first_segment(statement)
+                        .is_none_or(|root| !is_workspace_root(root, index))
+            })
+    })
 }
 
 /// Every `fn name` in the workspace's parsed sources, or `None` when a
