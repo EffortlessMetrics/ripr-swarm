@@ -207,8 +207,10 @@ fn run() -> Result<i32, String> {
         return Err("checkout differs from exact rehearsal subject".into());
     }
     capture("git", &["merge-base", "--is-ancestor", &base, &head])?;
-    let target = env::var("CARGO_TARGET_DIR").map_err(|_| "missing governed CARGO_TARGET_DIR")?;
-    let temp = env::var("RUNNER_TEMP").map_err(|_| "missing governed RUNNER_TEMP")?;
+    let target = env::var("CARGO_TARGET_DIR")
+        .map_err(|error| format!("missing governed CARGO_TARGET_DIR: {error}"))?;
+    let temp = env::var("RUNNER_TEMP")
+        .map_err(|error| format!("missing governed RUNNER_TEMP: {error}"))?;
     if target != format!("{temp}/cargo-target") {
         return Err("Cargo target differs from governed disposable path".into());
     }
