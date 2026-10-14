@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -24,7 +24,7 @@
+ }
+ make_factory!(Bag);
+ pub fn add(v: &mut Vec<u32>, x: u32) {
+-    v.push(x);
++    v.push(x * 1);
+ }
+ #[cfg(test)]
+ mod tests {

@@ -263,6 +263,9 @@ projection passed by `&mut` in a direct owner call, for example
   competing constructor calls/values, generic declarations or field attributes.
   Constructor imports through another module refuse even when that module's
   source is absent from the index; only direct local namespace imports qualify.
+  Constructor definitions in macro token trees and arbitrary macro expansion
+  also refuse this bounded binding; the observation's assertion/vector macros
+  retain their separate canonical admission.
   Standard-library root bindings and closed `std`/`core` manifest authority must also
   admit standard identity; qualified spelling alone is insufficient;
 - the shared free-call binding authority admits that exact called owner;

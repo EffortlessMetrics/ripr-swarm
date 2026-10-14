@@ -31,6 +31,7 @@ const CASES: &[(&str, bool, bool, bool)] = &[
     ("raw_type_alias", false, false, true),
     ("raw_imported_vec", false, false, true),
     ("imported_constructor", false, false, true),
+    ("macro_constructor", false, false, true),
 ];
 
 #[test]

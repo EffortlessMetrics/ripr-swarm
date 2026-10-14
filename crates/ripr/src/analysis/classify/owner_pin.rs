@@ -4925,6 +4925,7 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
         if file_aliases_type(&masked, constructor)
             || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
             || flattened_use_paths(&masked).iter().any(|import| {
                 let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
                 if !segments
@@ -4946,7 +4947,18 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
             return true;
         };
         parsed.tree().syntax().descendants().any(|node| {
-            (file != &test.file
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != &test.file
                 && ast::Adt::cast(node.clone())
                     .and_then(|item| item.name())
                     .is_some_and(|name| names_constructor(name.text().to_string())))
