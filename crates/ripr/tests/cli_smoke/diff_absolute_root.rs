@@ -39,8 +39,8 @@ fn commit_boundary_change(root: &std::path::Path) -> TestResult {
 #[test]
 fn diff_json_absolute_root_keeps_changed_seams_workspace_relative() -> TestResult {
     let root = unique_temp_workspace("diff-abs-root");
-    init_producer_fixture_repo(&root)?;
     let _cleanup = DeclaredHunkScratch(root.clone());
+    init_producer_fixture_repo(&root)?;
     let base = run_command("git", Some(&root), &["rev-parse", "HEAD"])?;
     assert!(base.status.success(), "base setup failed");
     let base = String::from_utf8(base.stdout)?.trim().to_string();
@@ -87,5 +87,21 @@ fn diff_json_absolute_root_keeps_changed_seams_workspace_relative() -> TestResul
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let rooted_cwd = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["diff", "--root", ".", "--base", &base, "--json"],
+    )?;
+    let rooted: Value = serde_json::from_slice(&rooted_cwd.stdout)?;
+    let rooted_seams = rooted["changed_seams"]
+        .as_array()
+        .ok_or("rooted-CWD changed_seams must be an array")?;
+    assert!(
+        rooted_seams
+            .iter()
+            .all(|seam| seam["file"] == "src/lib.rs" && seam["line"] == 2),
+        "rooted-CWD --root . must keep the same workspace-relative seam: {rooted_seams:?}"
+    );
+    assert_eq!(rooted_cwd.status.code(), Some(0));
     Ok(())
 }

@@ -48,7 +48,14 @@ pub(crate) fn portable_relative_path(path: &Path) -> String {
             Component::CurDir => {}
         }
     }
-    parts.join("/")
+    let joined = parts.join("/");
+    if joined.is_empty() && path.has_root() {
+        // `/` is RootDir alone: joining `[""]` would silently emit an empty
+        // relative path. Keep the portable root.
+        "/".to_string()
+    } else {
+        joined
+    }
 }
 
 /// Relativize `file` against an absolute report root, then apply
@@ -470,6 +477,7 @@ mod tests {
             portable_relative_path(Path::new("../outside.rs")),
             "../outside.rs"
         );
+        assert_eq!(portable_relative_path(Path::new("/")), "/");
     }
 
     /// The separator defect is only *observable* on Windows: there, and only
