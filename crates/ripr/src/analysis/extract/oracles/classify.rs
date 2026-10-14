@@ -1850,4 +1850,572 @@ fn ok_literal() {
         }
         Ok(())
     }
+
+    // Independent literal #7955 controls; original proposal SHA-256:
+    // 681e7150b792e0ca65c401da3c5a1f6934bb81e786d4008ac4b403c1d7234968.
+    type Literal7955Expectation<'a> = (usize, OracleKind, OracleStrength, &'a str);
+
+    fn literal_7955_text_key(text: &str) -> String {
+        text.trim()
+            .strip_suffix(';')
+            .unwrap_or(text.trim())
+            .split_whitespace()
+            .collect()
+    }
+
+    fn literal_7955_require_facts(
+        context: &str,
+        facts: &[crate::analysis::facts::OracleFact],
+        expected: &[Literal7955Expectation<'_>],
+    ) -> Result<(), String> {
+        if !expected.is_empty() && facts.is_empty() {
+            return Err(format!("{context}: no oracle subjects were extracted"));
+        }
+        if facts.len() != expected.len() {
+            return Err(format!(
+                "{context}: got {} facts, wanted {}: {facts:?}",
+                facts.len(),
+                expected.len()
+            ));
+        }
+        let mut unmatched = facts.iter().collect::<Vec<_>>();
+        for (line, kind, strength, text) in expected {
+            let key = literal_7955_text_key(text);
+            let position = unmatched
+                .iter()
+                .position(|fact| literal_7955_text_key(&fact.text) == key)
+                .ok_or_else(|| {
+                    format!("{context}: missing complete expression {text:?}: {facts:?}")
+                })?;
+            let fact = unmatched.remove(position);
+            if fact.line != *line || &fact.kind != kind || &fact.strength != strength {
+                return Err(format!(
+                    "{context}: {text:?} got {fact:?}, wanted line {line}, {kind:?}/{strength:?}"
+                ));
+            }
+            if fact.observed_tokens.is_empty() {
+                return Err(format!(
+                    "{context}: expression has no observed identifier tokens"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn literal_7955_read_both(
+        name: &str,
+        body: &str,
+        expected: &[Literal7955Expectation<'_>],
+    ) -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+        // Two fixed wrapper rows make the first body row line 3 on BOTH paths.
+        // Expected rows below are independently counted from the literal source.
+        let lexical = crate::analysis::extract::extract_assertions(body, 3);
+        let mut failures = Vec::new();
+        if let Err(error) =
+            literal_7955_require_facts(&format!("{name}/lexical"), &lexical, expected)
+        {
+            failures.push(error);
+        }
+
+        let source = format!("#[test]\nfn {name}() {{\n{body}\n}}\n");
+        match RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source) {
+            Err(error) => failures.push(format!("{name}/parser SETUP: {error}")),
+            Ok(file) => {
+                if file.used_lexical_fallback || file.tests.len() != 1 {
+                    failures.push(format!(
+                        "{name}/parser SETUP: fallback={}, tests={}",
+                        file.used_lexical_fallback,
+                        file.tests.len()
+                    ));
+                } else if let Some(test) = file.tests.first() {
+                    if test.name != name {
+                        failures.push(format!("{name}/parser SETUP: wrong test {}", test.name));
+                    } else if let Err(error) = literal_7955_require_facts(
+                        &format!("{name}/parser"),
+                        &test.assertions,
+                        expected,
+                    ) {
+                        failures.push(error);
+                    }
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
+
+    #[test]
+    fn spec_0227_7955_complete_error_statements_keep_literal_oracles() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation, SmokeOnly};
+        use OracleStrength::{Medium, Smoke, Strong, Weak};
+
+        let cases = [
+            // Unchanged cheap positive: establishes the retained basic authority.
+            (
+                "literal_7955_direct",
+                "probe(700).unwrap_err();",
+                vec![(3, BroadError, Weak, "probe(700).unwrap_err()")],
+            ),
+            // Blank first body row also distinguishes the caller's line origin.
+            // A semicolon/closing paren in a message must not end a statement.
+            (
+                "literal_7955_wrapped_message",
+                r#"
+    let _message = probe(711).expect_err(
+        &format!("tag-7955-a ; ) {}", 711),
+    );"#,
+                vec![(
+                    4,
+                    BroadError,
+                    Weak,
+                    r#"probe(711).expect_err(&format!("tag-7955-a ; ) {}", 711),)"#,
+                )],
+            ),
+            (
+                "literal_7955_expect_chain",
+                r#"probe(722)
+        .map_err(Wrap)
+        .expect_err("tag-7955-b");"#,
+                vec![(
+                    3,
+                    BroadError,
+                    Weak,
+                    r#"probe(722).map_err(Wrap).expect_err("tag-7955-b")"#,
+                )],
+            ),
+            // The method expression starts on line 4; the statement starts on 3.
+            // Parser method_call.range.start() alone cannot satisfy this pin.
+            (
+                "literal_7955_unwrap_split_let",
+                "let _split =\n    probe(733)\n        .map_err(Wrap)\n        .unwrap_err();",
+                vec![(3, BroadError, Weak, "probe(733).map_err(Wrap).unwrap_err()")],
+            ),
+            (
+                "literal_7955_wrapped_arguments",
+                "probe(\n    744,\n)\n    .unwrap_err();",
+                vec![(3, BroadError, Weak, "probe(744,).unwrap_err()")],
+            ),
+            (
+                "literal_7955_expect_split_let",
+                r#"let _split =
+        probe(755)
+            .expect_err(
+                "tag-7955-e",
+            );"#,
+                vec![(
+                    3,
+                    BroadError,
+                    Weak,
+                    r#"probe(755).expect_err("tag-7955-e",)"#,
+                )],
+            ),
+            // Exact count + two exact expression identities defeats a whole-line
+            // SmokeOnly fake and a two-copy whole-line fake, regardless of order.
+            (
+                "literal_7955_same_row_expect",
+                r#"probe(766).expect_err("tag-7955-f"); companion(767).unwrap();"#,
+                vec![
+                    (
+                        3,
+                        BroadError,
+                        Weak,
+                        r#"probe(766).expect_err("tag-7955-f")"#,
+                    ),
+                    (3, SmokeOnly, Smoke, "companion(767).unwrap()"),
+                ],
+            ),
+            (
+                "literal_7955_same_row_unwrap",
+                r#"probe(777).unwrap_err(); companion(778).expect("tag-7955-g");"#,
+                vec![
+                    (3, BroadError, Weak, "probe(777).unwrap_err()"),
+                    (
+                        3,
+                        SmokeOnly,
+                        Smoke,
+                        r#"companion(778).expect("tag-7955-g")"#,
+                    ),
+                ],
+            ),
+            // Reversing source order must not let smoke admission consume the
+            // entire row and hide the following error-side observer.
+            (
+                "literal_7955_same_row_smoke_first",
+                r#"companion(788).unwrap(); probe(789).expect_err("tag-7955-reverse");"#,
+                vec![
+                    (3, SmokeOnly, Smoke, "companion(788).unwrap()"),
+                    (
+                        3,
+                        BroadError,
+                        Weak,
+                        r#"probe(789).expect_err("tag-7955-reverse")"#,
+                    ),
+                ],
+            ),
+            // A wrapped diagnostic string contains no executable observers.
+            // Count=1 and the full outer expression reject manufactured smoke
+            // or mock facts from message text or a detached message-only row.
+            (
+                "literal_7955_wrapped_fake_observer_message",
+                r#"probe(790).expect_err(
+        "tag-7955-message companion(999).unwrap(); expect_publish",
+    );"#,
+                vec![(
+                    3,
+                    BroadError,
+                    Weak,
+                    r#"probe(790).expect_err("tag-7955-message companion(999).unwrap(); expect_publish",)"#,
+                )],
+            ),
+            // Existing ceilings: a method on the extracted Error is not the
+            // whole statement's error-side result observer.
+            (
+                "literal_7955_error_method",
+                r#"let _kind = probe(800)
+        .expect_err("tag-7955-method")
+        .kind();"#,
+                vec![],
+            ),
+            // Unsupported adapters can turn Ok into Err, so do not observe
+            // whether the original call returned Err. No weak or mock credit.
+            (
+                "literal_7955_fallback_receiver",
+                "probe(801)\n    .and(Err(E::Other))\n    .unwrap_err();",
+                vec![],
+            ),
+            (
+                "literal_7955_option_receiver",
+                r#"lookup(802)
+        .ok_or(E::Missing)
+        .expect_err("tag-7955-option");"#,
+                vec![],
+            ),
+            // The later comparison owns the sole exact oracle: no added weak
+            // side check. A scanner must examine text after the COMPLETE binding.
+            (
+                "literal_7955_compared_binding",
+                r#"let err = probe(811)
+        .expect_err(
+            "tag-7955-compared",
+        );
+    assert_eq!(err, E::Rejected);"#,
+                vec![(7, ExactErrorVariant, Strong, "assert_eq!(err, E::Rejected)")],
+            ),
+            // The rest-of-statement cursor includes a same-row later comparison.
+            (
+                "literal_7955_compared_same_row",
+                r#"let err = probe(822).expect_err("tag-7955-compared-row"); assert_eq!(err, E::Rejected);"#,
+                vec![(3, ExactErrorVariant, Strong, "assert_eq!(err, E::Rejected)")],
+            ),
+            (
+                "literal_7955_mock_prefix",
+                "mock.expect_err_report().times(2);",
+                vec![(
+                    3,
+                    MockExpectation,
+                    Medium,
+                    "mock.expect_err_report().times(2)",
+                )],
+            ),
+            // Zero arguments identify mockall's expect_<method> for method err.
+            (
+                "literal_7955_mock_zero_arg",
+                "mock.expect_err();",
+                vec![(3, MockExpectation, Medium, "mock.expect_err()")],
+            ),
+            // Valid Rust tail expressions, but not complete semicolon-terminated
+            // statements admitted by this narrow existing authority.
+            (
+                "literal_7955_unterminated_unwrap_statement",
+                "probe(833)\n    .unwrap_err()",
+                vec![],
+            ),
+            (
+                "literal_7955_unterminated_expect_statement",
+                r#"probe(844)
+        .expect_err("tag-7955-tail")"#,
+                vec![],
+            ),
+        ];
+
+        // Run every case even when an earlier case returns a behavioral mismatch.
+        let failures = cases
+            .iter()
+            .filter_map(|(name, body, expected)| literal_7955_read_both(name, body, expected).err())
+            .collect::<Vec<_>>();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
+
+    #[test]
+    fn spec_0227_7955_lexical_adapter_routes_to_complete_statement_scanner() -> Result<(), String> {
+        use crate::analysis::syntax::{LexicalRustSyntaxAdapter, RustSyntaxAdapter};
+
+        let source = r#"#[test]
+    fn literal_7955_lexical_route() {
+    probe(955).expect_err(
+        "tag-7955-route",
+    );
+    }
+    "#;
+        let file =
+            LexicalRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), source)?;
+        if !file.used_lexical_fallback || file.tests.len() != 1 {
+            return Err(format!(
+                "lexical routing SETUP: fallback={}, tests={}",
+                file.used_lexical_fallback,
+                file.tests.len()
+            ));
+        }
+        let test = file
+            .tests
+            .first()
+            .ok_or("lexical routing SETUP: missing test")?;
+        if test.name != "literal_7955_lexical_route" {
+            return Err(format!("lexical routing SETUP: wrong test {}", test.name));
+        }
+        literal_7955_require_facts(
+            "lexical adapter routing",
+            &test.assertions,
+            &[(
+                3,
+                OracleKind::BroadError,
+                OracleStrength::Weak,
+                r#"probe(955).expect_err("tag-7955-route",)"#,
+            )],
+        )
+    }
+
+    #[test]
+    fn spec_0227_7955_malformed_source_does_not_gain_error_or_mock_credit() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+        // These inputs are intentionally parser-invalid. Do not describe their
+        // parser rejection as an executed empty-oracle behavioral negative.
+        for body in [
+            "probe(899)\n    .expect_err(\n        \"tag-7955-open\"",
+            "let _unfinished = probe(900)\n    .unwrap_err(",
+        ] {
+            let lexical = crate::analysis::extract::extract_assertions(body, 3);
+            // A literal ceiling assertion: malformed extraction must not acquire
+            // BroadError or Medium/Strong strength. This does not
+            // invent an unobserved exact baseline reading for arbitrary malformed
+            // input; another existing Smoke/Weak reading is outside this claim.
+            if lexical.iter().any(|fact| {
+                fact.kind == OracleKind::BroadError
+                    || matches!(
+                        fact.strength,
+                        OracleStrength::Medium | OracleStrength::Strong
+                    )
+            }) {
+                return Err(format!(
+                    "malformed source exceeded existing ceiling: {lexical:?}"
+                ));
+            }
+            let source = format!("#[test]\nfn literal_7955_malformed() {{\n{body}\n}}\n");
+            if RaRustSyntaxAdapter
+                .summarize_file(std::path::Path::new("src/lib.rs"), &source)
+                .is_ok()
+            {
+                return Err("malformed parser setup unexpectedly succeeded".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spec_0227_7955_executed_diagnostic_observer_survives_outer_credit() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+        let body = r#"let _diagnostic =
+        probe(901).expect_err(
+            &companion(902).unwrap().to_string(),
+        );"#;
+        let source = format!("#[test]\nfn literal_7955_nested_observer() {{\n{body}\n}}\n");
+        let lexical = crate::analysis::extract::extract_assertions(body, 3);
+        let parsed =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
+        if parsed.used_lexical_fallback || parsed.tests.len() != 1 {
+            return Err(format!(
+                "nested observer SETUP: fallback={}, tests={}",
+                parsed.used_lexical_fallback,
+                parsed.tests.len()
+            ));
+        }
+        let test = parsed
+            .tests
+            .first()
+            .ok_or("nested observer SETUP: missing test")?;
+        if test.name != "literal_7955_nested_observer" {
+            return Err(format!("nested observer SETUP: wrong test {}", test.name));
+        }
+
+        let mut failures = Vec::new();
+        for (adapter, facts) in [
+            ("lexical", lexical.as_slice()),
+            ("parser", test.assertions.as_slice()),
+        ] {
+            // Literal, independently chosen readings: exactly one of each grade.
+            let outer = facts
+                .iter()
+                .filter(|fact| {
+                    fact.kind == OracleKind::BroadError && fact.strength == OracleStrength::Weak
+                })
+                .collect::<Vec<_>>();
+            let inner = facts
+                .iter()
+                .filter(|fact| {
+                    fact.kind == OracleKind::SmokeOnly && fact.strength == OracleStrength::Smoke
+                })
+                .collect::<Vec<_>>();
+            if facts.len() != 2 || outer.len() != 1 || inner.len() != 1 {
+                failures.push(format!(
+                    "{adapter}: wanted two nonempty subjects, BroadError/Weak and SmokeOnly/Smoke: {facts:?}"
+                ));
+                continue;
+            }
+            let outer_text = outer[0].text.split_whitespace().collect::<String>();
+            let inner_text = inner[0].text.split_whitespace().collect::<String>();
+            if outer[0].line != 3 || !outer_text.contains("probe(901).expect_err(") {
+                failures.push(format!(
+                    "{adapter}: wrong outer identity/first statement line: {:?}",
+                    outer[0]
+                ));
+            }
+            // Identity only: leave the established lexical/AST text boundaries
+            // and the inner line coordinate outside this supplemental claim.
+            if !inner_text.contains("companion(902).unwrap()") {
+                failures.push(format!(
+                    "{adapter}: missing executed inner observer identity: {:?}",
+                    inner[0]
+                ));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
+
+    #[test]
+    fn spec_0227_7955_malformed_inherited_context_adds_no_error_credit() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+        let cases = [
+            (
+                "open_call_after_closed_block",
+                "consume(\n    {}\n    probe(903)\n        .unwrap_err();",
+            ),
+            (
+                "open_array_after_closed_block",
+                "let values = [\n    {}\n    probe(904)\n        .unwrap_err();",
+            ),
+            (
+                "unmatched_closer_before_new_block",
+                "];\n{}\nprobe(905)\n    .unwrap_err();",
+            ),
+            (
+                "crossed_closers_before_new_block",
+                "consume([\n)];\n{}\nprobe(906)\n    .unwrap_err();",
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, body) in cases {
+            let lexical = crate::analysis::extract::extract_assertions(body, 3);
+            if !lexical.is_empty() {
+                failures.push(format!("{name}: wanted zero lexical facts: {lexical:?}"));
+            }
+            let source = format!("#[test]\nfn literal_7955_malformed_context() {{\n{body}\n}}\n");
+            if RaRustSyntaxAdapter
+                .summarize_file(std::path::Path::new("src/lib.rs"), &source)
+                .is_ok()
+            {
+                failures.push(format!(
+                    "{name}: malformed parser setup unexpectedly succeeded"
+                ));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
+
+    #[test]
+    fn spec_0227_7955_valid_block_context_keeps_error_credit() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+        // Both fixtures put the probe statement on literal source line 4.
+        // The invoked closure also has an enclosing `(` outside its block: using
+        // "any open paren exists" instead of the innermost context would lose it.
+        let cases = [
+            (
+                "block",
+                "{\n    probe(907)\n        .unwrap_err();\n}",
+                "probe(907).unwrap_err()",
+            ),
+            (
+                "invoked_closure",
+                "(|| {\n    probe(908)\n        .unwrap_err();\n})();",
+                "probe(908).unwrap_err()",
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, body, identity) in cases {
+            let lexical = crate::analysis::extract::extract_assertions(body, 3);
+            let source = format!("#[test]\nfn literal_7955_valid_context() {{\n{body}\n}}\n");
+            let parsed =
+                RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
+            if parsed.used_lexical_fallback || parsed.tests.len() != 1 {
+                return Err(format!("{name}: parser SETUP lost the one expected test"));
+            }
+            let test = parsed
+                .tests
+                .first()
+                .ok_or("valid context SETUP: missing test")?;
+            if test.name != "literal_7955_valid_context" {
+                return Err(format!(
+                    "{name}: parser SETUP found wrong test {}",
+                    test.name
+                ));
+            }
+            for (adapter, facts) in [
+                ("lexical", lexical.as_slice()),
+                ("parser", test.assertions.as_slice()),
+            ] {
+                if facts.len() != 1 {
+                    failures.push(format!(
+                        "{name}/{adapter}: wanted one nonempty fact: {facts:?}"
+                    ));
+                    continue;
+                }
+                let fact = &facts[0];
+                let text = fact.text.split_whitespace().collect::<String>();
+                if fact.line != 4
+                    || fact.kind != OracleKind::BroadError
+                    || fact.strength != OracleStrength::Weak
+                    || !text.contains(identity)
+                {
+                    failures.push(format!(
+                        "{name}/{adapter}: wrong literal line/grade/identity: {fact:?}"
+                    ));
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    }
 }
