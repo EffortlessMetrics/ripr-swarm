@@ -634,8 +634,9 @@ mod tests {
         // producer only feeds candidates from `--pr-guidance`/`--gap-ledger`,
         // so a repo-exposure-only run always ended as a config_error after
         // writing reports. The argv layer must refuse it up front, name the
-        // received flag, name the inputs that actually feed candidates, and
-        // write no reports (#7741).
+        // received flags (including `--baseline` in the combined case), name
+        // the inputs that actually feed candidates, and write no reports
+        // (#7741).
         let dir = unique_command_test_dir("gate-repo-exposure-only");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create gate dir: {err}"))?;
         let exposure = dir.join("repo-exposure.json");
@@ -669,6 +670,14 @@ mod tests {
                 &out_md.display().to_string(),
             ]),
         ] {
+            // Flag-specific received-clause oracle: the combined case must
+            // keep naming `--baseline`, so a wording regression that reuses
+            // the repo-exposure-only clause there fails this assertion.
+            let expected_receipt = if argv.iter().any(|arg| arg == "--baseline") {
+                "received --baseline and --repo-exposure but neither is a candidate source"
+            } else {
+                "received --repo-exposure but it is not a candidate source"
+            };
             let result = gate(&argv);
             let Err(CommandError::Failure(message)) = result else {
                 return Err(CommandError::Failure(format!(
@@ -678,6 +687,10 @@ mod tests {
             assert!(
                 message.contains("--repo-exposure") && message.contains("candidate source"),
                 "refusal must name --repo-exposure as a non-candidate source: {message}"
+            );
+            assert!(
+                message.contains(expected_receipt),
+                "refusal must state the received flags precisely: {message}"
             );
             assert!(
                 message.contains("--pr-guidance") && message.contains("--gap-ledger"),

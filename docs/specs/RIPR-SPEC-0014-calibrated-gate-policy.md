@@ -119,10 +119,14 @@ or unknown confidence. They must not invent evidence. Missing required inputs
 for a configured mode should produce `config_error` with a repair command in
 the Markdown output.
 
-The first implementation should treat `repo-exposure` and `pr-guidance` as the
-primary current evidence inputs. SARIF policy, receipts, recommendation
-calibration, mutation calibration, and baseline artifacts refine the decision
-only when present.
+Only `--pr-guidance` and `--gap-ledger` feed gate candidates. `--repo-exposure`
+is advisory context, never a gate candidate source, so `gate evaluate` refuses
+an invocation that supplies `--repo-exposure`, with or without `--baseline`,
+and no candidate-feeding input up front instead of accepting it and failing
+later as `config_error` after writing reports (#7741). `--baseline` is a
+comparison input, not a candidate source (#7654). SARIF policy, receipts,
+recommendation calibration, mutation calibration, and baseline artifacts
+refine the decision only when present.
 
 ## Gate Modes
 
