@@ -689,7 +689,7 @@ pub(crate) fn expect_assertion_from_expression(
         oracle_for_matcher(matcher)
     };
     let compares_reference_identity =
-        TypeScriptAssertion::built_in_compares_reference_identity(matcher)
+        TypeScriptAssertion::jest_expect_compares_reference_identity(matcher)
             || credited_strict_custom;
 
     // Oracle metadata (RIPR-SPEC-0085 §PR5).
@@ -811,9 +811,7 @@ pub(crate) fn ava_assertion_from_expression(
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
-        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
-            method,
-        ),
+        compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),
     })
 }
 
@@ -1460,7 +1458,7 @@ fn assert_call_assertion(
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
-        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
+        compares_reference_identity: TypeScriptAssertion::node_assert_compares_reference_identity(
             method,
         ),
     })
@@ -1758,9 +1756,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,
-        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
-            terminal,
-        ),
+        compares_reference_identity: false,
     })
 }
 

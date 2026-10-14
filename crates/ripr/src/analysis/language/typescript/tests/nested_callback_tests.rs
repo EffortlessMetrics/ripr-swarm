@@ -302,6 +302,22 @@ fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String
     let finding = settings_finding("identity-copy-custom-literal", literal, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
+    // A refused custom matcher named `is` must not inherit AVA identity.
+    let colliding = "import { ready } from \"../src/settings\";\nexpect.extend({ is(r, e) { return { pass: r == e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).is(cfg);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), colliding);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "is")
+        .ok_or_else(|| "expected a custom is assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::Unknown);
+    assert!(
+        !assertion.compares_reference_identity,
+        "a refused Jest custom matcher named is must not inherit AVA identity, got {assertion:?}"
+    );
+    let finding = settings_finding("identity-copy-colliding-is", colliding, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
     // #7916 remains refused: a comment between `expect` and `.extend` is not
     // credited, so this PR must not loosen that guard to pass identity.
     let commented = "import { ready } from \"../src/settings\";\nexpect /* token */ .extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";

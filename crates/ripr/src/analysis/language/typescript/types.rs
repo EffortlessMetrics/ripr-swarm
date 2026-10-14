@@ -486,10 +486,21 @@ pub(crate) struct TypeScriptAssertion {
 }
 
 impl TypeScriptAssertion {
-    /// Built-in matchers that compare objects by identity. `toEqual` shares
-    /// `exact_value` with `toBe` and is not included.
-    pub(crate) fn built_in_compares_reference_identity(matcher: &str) -> bool {
-        matches!(matcher, "toBe" | "strictEqual" | "is")
+    /// Jest/Vitest `expect(...).<name>` identity matcher. AVA `is` and
+    /// `node:assert` `strictEqual` are not included: `expect.extend` can
+    /// register those names with a non-identity body.
+    pub(crate) fn jest_expect_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "toBe"
+    }
+
+    /// AVA `t.is` compares objects by identity (`Object.is`).
+    pub(crate) fn ava_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "is"
+    }
+
+    /// `node:assert` `strictEqual` compares with `===`.
+    pub(crate) fn node_assert_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "strictEqual"
     }
 }
 
