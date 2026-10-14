@@ -112,6 +112,10 @@ testing, enable CI blocking policy, or unlock basic CLI usefulness.
 ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 ```
 
+After writing, `init` prints `doctor` and `check` commands with the selected
+root bound explicitly. Copy those commands to inspect the same repository
+from another directory, including when `init` used a relative `--root`.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
