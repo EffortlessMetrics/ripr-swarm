@@ -97,6 +97,7 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod spread_override_guard;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
@@ -138,6 +139,7 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;

@@ -217,11 +217,97 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{pin}");
     }
 
-    // A change that is not copy-only keeps the ladder verdict.
+    // A change that is not copy-only is outside rule 1. A dropped override
+    // the tested input cannot see is rule 3's (example 3); with an input
+    // that lacks the key or holds another value the ladder verdict stands.
     let finding = settings_finding(
         "identity-copy-other-change",
         STRUCTURAL_TEST,
         "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("only sets or drops `ok: true` after spreading `cfg`")),
+        "{:?}",
+        finding.missing
+    );
+    let other_value = STRUCTURAL_TEST.replace("{ ok: true }", "{ ok: false }");
+    let finding = settings_finding(
+        "identity-copy-other-change-false",
+        &other_value,
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// RIPR-SPEC-0246 rule 3: a dropped or added literal field after a spread
+/// keeps `exposed` only when an observed call's input is shown to lack the
+/// field or hold another value there.
+#[test]
+fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
+    let test = |body: &str| {
+        format!(
+            "import {{ ready }} from \"../src/settings\";\ntest(\"ready\", () => {{\n  {body}\n}});\n"
+        )
+    };
+    for (label, body, expected) in [
+        (
+            "spread-inline-carries",
+            "expect(ready({ ok: true })).toEqual({ ok: true });",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-inline-lacks",
+            "expect(ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-local-lacks",
+            "const cfg = { name: \"bo\" };\n  expect(ready(cfg)).toEqual({ ...cfg, ok: true });",
+            ExposureClass::Exposed,
+        ),
+        // One input that differs is enough.
+        (
+            "spread-mixed",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ ok: false })).toEqual({ ok: true });",
+            ExposureClass::Exposed,
+        ),
+        // An unreadable input is not shown to lack the field.
+        (
+            "spread-unknown-input",
+            "const cfg = load();\n  expect(ready(cfg)).toEqual(cfg);",
+            ExposureClass::WeaklyExposed,
+        ),
+        // With no observed whole-result call the ladder stands (decision 6),
+        // and so it does when the only whole-result assertion is weak.
+        (
+            "spread-member-only",
+            "expect(ready({ ok: true }).ok).toBe(true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-weak-matcher",
+            "expect(ready({ ok: true })).toBeTruthy();\n  expect(ready({ ok: true }).ok).toBe(true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-input-spread",
+            "const cfg = { ...base };\n  expect(ready(cfg)).toEqual(cfg);",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let finding = settings_finding(label, &test(body), "  return { ...cfg, ok: true };")?;
+        assert_eq!(finding.class, expected, "{label}");
+    }
+    // Dropping two fields is not rule 3: the ladder verdict stands.
+    let finding = settings_finding(
+        "spread-added",
+        &test("expect(ready({ ok: true })).toEqual({ ok: true });"),
+        "  return { ...cfg, ok: true, extra: 1 };",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())

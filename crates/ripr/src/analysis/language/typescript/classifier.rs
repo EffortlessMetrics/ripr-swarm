@@ -4774,6 +4774,10 @@ struct TsPostLadderContext<'a> {
 /// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
 ///   mock a module the changed line calls reads `static_unknown`, because the
 ///   mock can replace the changed value before any assertion sees it.
+/// - RIPR-SPEC-0246 rule 3: an `exposed` value-seam result whose change
+///   only sets or drops one literal field after spreading a parameter reads
+///   `weakly_exposed` when observed owner calls exist and none passes an
+///   input shown to lack the field or hold another value there.
 /// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
 ///   only adds or drops one additive term reads `weakly_exposed` unless an
 ///   observed owner call folds the term to a non-zero number.
@@ -4830,6 +4834,30 @@ fn ts_apply_post_ladder_rules(
     ) {
         return;
     }
+    if let Some(change) = context
+        .old_line_text
+        .and_then(|old| SpreadOverride::read(old, context.line_text))
+        && let Some(reason) = ts_spread_override_unseen(
+            &change,
+            context.owner,
+            context.candidates,
+            context.alias_map,
+            context.workspace_root,
+        )
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` only sets or drops `{}: {}` after spreading `{}`, and {reason}, so both versions return the same value. Add a case whose `{}` lacks `{}` or holds another value there.",
+            context.owner.name,
+            change.key,
+            change.literal,
+            change.subject,
+            change.subject,
+            change.key
+        )];
+        return;
+    }
     let Some(term) = context
         .old_line_text
         .and_then(|old| ts_dropped_additive_term(old, context.line_text))
@@ -4857,6 +4885,76 @@ fn ts_apply_post_ladder_rules(
         "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
         context.owner.name
     )];
+}
+
+/// RIPR-SPEC-0246 rule 3: why no observed owner call can see the spread
+/// override, or `None` when one can, or when no call is observed at all (the
+/// ladder's reading stands). A call can see it when its argument for the
+/// spread parameter is an object literal, inline or bound once by `const`
+/// in the test, that lacks the key or holds another literal there.
+pub(crate) fn ts_spread_override_unseen(
+    change: &SpreadOverride,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<&'static str> {
+    let index = owner.params.iter().position(|p| p == &change.subject)?;
+    if !owner
+        .source_text
+        .as_deref()
+        .is_some_and(|source| ts_parameter_is_stable(source, &change.subject))
+    {
+        return None;
+    }
+    let (mut carries, mut unknown) = (false, false);
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
+        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        for assertion in &candidate.test.assertions {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(
+                    assertion.oracle_kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+                )
+            {
+                continue;
+            }
+            let Some(arguments) = ts_observed_owner_call_arguments(
+                candidate.test,
+                assertion,
+                &names,
+                owner,
+                &receivers,
+            ) else {
+                continue;
+            };
+            let object = arguments.get(index).and_then(|argument| {
+                let argument = argument.trim();
+                if argument.starts_with('{') {
+                    Some(argument.to_string())
+                } else {
+                    ts_test_local_object(&candidate.test.body_text, argument)
+                }
+            });
+            match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {
+                OverrideInput::Differs => return None,
+                OverrideInput::Carries => carries = true,
+                OverrideInput::Unknown => unknown = true,
+            }
+        }
+    }
+    match (carries, unknown) {
+        (true, false) => Some("every tested input already carries it"),
+        (_, true) => Some("no tested input is shown to lack it"),
+        (false, false) => None,
+    }
 }
 
 /// What the observed owner calls show about the RIPR-SPEC-0248 rule 1 term.
