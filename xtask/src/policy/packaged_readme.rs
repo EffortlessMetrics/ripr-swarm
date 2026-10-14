@@ -171,9 +171,14 @@ fn looks_like_version(value: &str) -> bool {
 fn names_version(text: &str, version: &str) -> bool {
     text.match_indices(version).any(|(idx, _)| {
         let before = text[..idx].chars().next_back();
-        let after = text[idx + version.len()..].chars().next();
-        !before.is_some_and(|c| c.is_ascii_digit() || c == '.')
-            && !after.is_some_and(|c| c.is_ascii_digit() || c == '.' || c == '-')
+        let after_rest = &text[idx + version.len()..];
+        let mut after_chars = after_rest.chars();
+        let after_ok = match after_chars.next() {
+            None => true,
+            Some('.') => !after_chars.next().is_some_and(|c| c.is_ascii_digit()),
+            Some(c) => !(c.is_ascii_digit() || c == '-'),
+        };
+        !before.is_some_and(|c| c.is_ascii_digit() || c == '.') && after_ok
     })
 }
 
@@ -714,6 +719,22 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("does not name workspace version `0.11.0`")),
             "10.11.0 must not count as 0.11.0; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn sentence_ending_period_still_names_workspace_version() {
+        let readme = CURRENT_LIKE.replace(
+            "This source package is **0.11.0 development, pending publication**.",
+            "The current release is 0.11.0.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("does not name workspace version")),
+            "a sentence-ending period after the version must still count; got {violations:?}"
         );
     }
 
