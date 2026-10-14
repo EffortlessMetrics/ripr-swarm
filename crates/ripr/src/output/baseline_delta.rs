@@ -3166,8 +3166,9 @@ mod tests {
     fn baseline_delta_discloses_version_crossing_when_both_sides_recorded() -> Result<(), String> {
         // Issue #7421: once baselines persist their producing build, a
         // recorded version mismatch is disclosed with both versions — and a
-        // canonical identity that survived the upgrade still joins normally,
-        // so the disclosure never over-reaches into successful matches.
+        // canonical identity that persisted across the upgrade still joins
+        // normally, so the disclosure never over-reaches into successful
+        // matches.
         let baseline = r#"{
           "schema_version": "0.1",
           "subject": {

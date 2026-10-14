@@ -227,8 +227,8 @@ side predates build identity) — is a stale identity-discontinuity item
 carrying both versions and a refresh route, never `resolved`. Both sides
 unversioned (the old-vs-old case) or both sides recording the same build
 keep the legacy `resolved` classification. Canonical identities that
-survived the upgrade still join normally: the disclosure never reclassifies
-a successful match.
+persist across the upgrade still join normally: the disclosure never
+reclassifies a successful match.
 
 Compatibility window: the baseline schema version stays `0.1` and every change
 is additive. Ledgers written before root preservation (no `root`), before
