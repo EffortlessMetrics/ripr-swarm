@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The TypeScript verdict corpus gains 37 runtime-labeled cases for the
   acceptance examples it did not yet cover: copy and nested-callback rules
   (RIPR-SPEC-0246), mock grades (RIPR-SPEC-0247), dropped additive terms

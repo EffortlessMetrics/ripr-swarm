@@ -5,6 +5,424 @@ use super::classify_change_with_old;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
+// #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
+// Lib/unittest/case.py::assertListEqual and test_unittest/test_case.py::testEquality.
+#[test]
+fn unittest_list_equal_observes_whole_return_including_short_elements() -> Result<(), String> {
+    for (before, after, expected) in [
+        ("    return [1, 1]", "    return [1, 2]", "[1, 2]"),
+        (
+            "    return [0, 'pending']",
+            "    return [0, 'ready']",
+            "[0, 'ready']",
+        ),
+    ] {
+        let source = format!("def labels():\n{after}\n");
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), {expected})\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(extracted.len(), 1);
+        let finding = classify_case(&source, &tests, 2, before, after)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{expected}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_preserves_ast_call_identity() -> Result<(), String> {
+    for (imports, call) in [
+        ("from src.subject import labels", "labels ()"),
+        ("from src.subject import labels", "labels\t()"),
+        ("from src.subject import labels", "(labels) ()"),
+        ("from src.subject import labels as values", "(values) ()"),
+        ("import src.subject as subject", "subject . labels ()"),
+        ("import src.subject as subject", "(subject . labels) ()"),
+        ("from src import subject", "(subject . labels) ()"),
+    ] {
+        let tests = format!(
+            "import unittest\n{imports}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.related_tests.len(), 1, "{tests}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong,
+            "{tests}"
+        );
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    for (imports, call) in [
+        ("from other import labels", "labels ()"),
+        (
+            "from src.subject import labels\nlabels = other",
+            "labels ()",
+        ),
+        (
+            "import src.subject as subject\nsubject = other",
+            "subject . labels ()",
+        ),
+        (
+            "import src.subject as subject\nsubject.labels = other",
+            "subject . labels ()",
+        ),
+        ("from src.subject import labels", "labels () ()"),
+        (
+            "from src.subject import labels",
+            "labels () . fixed_list ()",
+        ),
+        ("from src.subject import labels", "[labels][0] ()"),
+    ] {
+        let tests = format!(
+            "import unittest\n{imports}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_unresolved_or_nonobserving_calls() -> Result<(), String> {
+    let before = "    return [10, 21]";
+    let after = "    return [10, 22]";
+    for (declaration, members, body) in [
+        ("class Checks(unittest.TestCase):", "", "labels()"),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "labels()\n        self.assertListEqual([10, 22], [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(ignore(labels()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(ignore()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(value=ignore()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "fake.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self().assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(fake.TestCase):",
+            "",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class TestChecks:",
+            "",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def assertListEqual(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def assertSequenceEqual(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def fail(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self = fake\n        self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual = ignore\n        self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(), labels())",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels()[:1], [10])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(), [10, 22], msg='unsupported message form')",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    @unittest.skip('disabled')\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+    ] {
+        let tests = format!(
+            "import unittest\nimport fake\nfrom src.subject import labels, ignore\n{declaration}\n{members}    def test_labels(self):\n        {body}\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(extracted.len(), 1, "{tests}");
+        let finding = classify_case(
+            "def labels():\n    return [10, 22]\n",
+            &tests,
+            2,
+            before,
+            after,
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_ne!(
+            finding.ripr.reveal.discriminate.state,
+            StageState::Yes,
+            "{tests}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_module_binding_and_framework_writes() -> Result<(), String> {
+    for mutation in [
+        "unittest = fake",
+        "unittest.TestCase = fake.TestCase",
+        "unittest.TestCase.assertListEqual = ignore",
+        "unittest.TestCase.assertSequenceEqual = ignore",
+        "unittest.TestCase.fail = ignore",
+        "labels = ignore",
+        "setattr(unittest.TestCase, 'assertListEqual', ignore)",
+    ] {
+        let tests = format!(
+            "import unittest\nimport fake\nfrom src.subject import labels, ignore\n{mutation}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), [1, 2])\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{mutation}");
+        assert_ne!(
+            finding.ripr.reveal.discriminate.state,
+            StageState::Yes,
+            "{mutation}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_nested_unittest_registration() -> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import labels\nclass Outer(unittest.TestCase):\n    class Inner(unittest.TestCase):\n        def test_labels(self):\n            self.assertListEqual(labels(), [1, 2])\n";
+    assert_eq!(
+        extract_tests(Path::new("tests/test_subject.py"), tests).len(),
+        1
+    );
+    let finding = classify_case(
+        "def labels():\n    return [1, 2]\n",
+        tests,
+        2,
+        "    return [1, 1]",
+        "    return [1, 2]",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_keeps_duplicate_method_declarations_distinct() -> Result<(), String> {
+    let source = "def alpha():\n    return [3, 4]\n\ndef beta():\n    return [1, 2]\n";
+    for (first, second) in [("alpha", "beta"), ("beta", "alpha")] {
+        let expected = |name| if name == "alpha" { "[3, 4]" } else { "[1, 2]" };
+        let tests = format!(
+            "import unittest\nfrom src.subject import alpha, beta\nclass A(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({first}(), {})\nclass B(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({second}(), {})\n",
+            expected(first),
+            expected(second)
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            2
+        );
+        let finding = classify_case(source, &tests, 5, "    return [1, 1]", "    return [1, 2]")?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_derived_owner_results() -> Result<(), String> {
+    let source = "class Answer:\n    def __init__(self, flag):\n        self.flag = flag\n    def fixed_list(self):\n        return [1, 2]\n    def __call__(self):\n        return [1, 2]\n    def __getitem__(self, index):\n        return self.fixed_list\n\ndef labels():\n    return Answer(1)\n";
+    for call in ["labels().fixed_list()", "labels()()", "labels()[0]()"] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            source,
+            &tests,
+            12,
+            "    return Answer(0)",
+            "    return Answer(1)",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{call}");
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Unknown
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_requires_changed_python_literal_value() -> Result<(), String> {
+    for (before, after, expected_class, expected_discrimination) in [
+        (
+            "[1, 1]",
+            "[1, True]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1, False]",
+            "[1, 0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1]",
+            "[1.0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1_0]",
+            "[10]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "['a']",
+            "[\"a\"]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[1.0]",
+            "[1e0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[16]",
+            "[0x10]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        (
+            "[9007199254740993]",
+            "[9007199254740992.0]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        // Mixed scalar types stay conservative, even when Python distinguishes them.
+        (
+            "[2]",
+            "[True]",
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+        ),
+        ("[1, 1]", "[1, 2]", ExposureClass::Exposed, StageState::Yes),
+        ("[False]", "[True]", ExposureClass::Exposed, StageState::Yes),
+        ("[1.0]", "[2.0]", ExposureClass::Exposed, StageState::Yes),
+        ("[1]", "[]", ExposureClass::Exposed, StageState::Yes),
+        ("[]", "[1]", ExposureClass::Exposed, StageState::Yes),
+    ] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), {after})\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            &format!("def labels():\n    return {after}\n"),
+            &tests,
+            2,
+            &format!("    return {before}"),
+            &format!("    return {after}"),
+        )?;
+        assert_eq!(finding.class, expected_class, "{before} -> {after}");
+        if expected_class == ExposureClass::WeaklyExposed {
+            assert!(finding.activation.missing_discriminators.is_empty());
+            assert!(finding.recommended_next_step.is_none());
+            assert!(
+                !finding
+                    .evidence
+                    .iter()
+                    .any(|item| item.starts_with("suggested_repair_action:"))
+            );
+            assert_eq!(
+                finding.missing[0],
+                "A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence."
+            );
+        }
+        assert_eq!(
+            finding.ripr.reveal.discriminate.state,
+            expected_discrimination
+        );
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    Ok(())
+}
+
 /// Exercise the existing source-fact producer and final classifier together.
 fn classify_case(
     source: &str,

@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The Rust verdict corpus gains five authored cases from `ripr pilot` picks
   that real cargo-mutants runs refuted: a boundary on a pure query call or a
   counted local (#6693), an `ok_or` error returned through `?` (#6695), a

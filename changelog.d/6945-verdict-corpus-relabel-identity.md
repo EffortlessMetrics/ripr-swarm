@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - Verdict corpus: `verdict-corpus relabel` receipts (`relabel.json`) now
   record `git_head` and a `sha256` digest of `cases/` and `subjects/`, so a
   replay names the corpus state it ran. Schema version is

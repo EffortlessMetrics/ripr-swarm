@@ -53,6 +53,12 @@ pub(in crate::analysis) fn build_finding(
         Some(format!(
             "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
         ))
+    } else if evidence
+        .discriminate
+        .summary
+        .contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
+        Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
     } else if class == ExposureClass::WeaklyExposed
@@ -136,7 +142,9 @@ pub(in crate::analysis) fn build_finding(
     // `reveal` names these downgrades in the stage summary; the same tokens
     // are how `ClassifiedProbeEvidence` recognizes them.
     let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
-    let unconfirmed = if discriminate_summary.contains("(observation_unverified)") {
+    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
         Unconfirmed::AllRows
     } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
         && evidence.related_tests.len() >= evidence.related_tests_matched_total

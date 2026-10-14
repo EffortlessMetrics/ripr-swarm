@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: oracle-strength accuracy is now measured apart from the
   line verdict. A case may label the related-test oracle kind and strength
   a spec adopts (`expected_oracle`); the report's new `oracle_accuracy`
