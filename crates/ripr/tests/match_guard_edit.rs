@@ -337,6 +337,14 @@ fn a_rebinding_line_that_mentions_fn_is_not_the_signature() -> Result<(), String
     for prelude in [
         "    let points = { fn h(x: i64) -> i64 { x - 50 } h(points) };\n",
         "    let points = points - 50; let _s = \"fn \";\n",
+        // A comment or a string opener before the rebinding on its line,
+        // or a `*`-led continuation line, must not hide it (review on
+        // #7811).
+        "    /* shift */ let points = points - 50;\n",
+        "    let _s = \"//\"; let points = points - 50;\n",
+        "    let _s = \"/*\"; let points = points - 50;\n",
+        "    let _k = 2\n        * 3; let points = points - 50;\n",
+        "    /* x */ let points = match points { 0 => 0, q => q - 50 };\n",
     ] {
         let lib = tier(prelude).replace("p if 100 <= p", "p if 100 < p");
         let findings = findings_on_changed_line(
@@ -403,6 +411,75 @@ fn a_guard_pattern_naming_a_constant_is_not_the_parameter() -> Result<(), String
     )?;
     assert!(!findings.is_empty());
     assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+fn body_predicate_owner(arm_body: &str) -> String {
+    format!(
+        "/// The tier of `points`.\npub fn tier(points: i64) -> u8 {{\n    match points {{\n        p if p > 100 => {arm_body},\n        _ => 0,\n    }}\n}}\n"
+    )
+}
+
+const AT_TWO_HUNDRED: &str =
+    "use guard_edit::tier;\n\n#[test]\nfn two_hundred() {\n    assert_eq!(tier(200), 0);\n}\n";
+
+#[test]
+fn an_arm_body_binding_on_the_guard_line_is_not_the_guard_binding() -> Result<(), String> {
+    // Control (review on #7811, #7875): a local or closure parameter `p`
+    // in the arm body on the guard's line is another binding, so
+    // `tier(200)` is no evidence for the body predicate `p >= 200`.
+    for (after, before) in [
+        (
+            "{ let p = 10; if p >= 200 { 1 } else { 0 } }",
+            "{ let p = 10; if p > 200 { 1 } else { 0 } }",
+        ),
+        (
+            "{ let f = |p: i64| if p >= 200 { 1 } else { 0 }; f(10) }",
+            "{ let f = |p: i64| if p > 200 { 1 } else { 0 }; f(10) }",
+        ),
+    ] {
+        let lib = body_predicate_owner(after);
+        let findings = findings_on_changed_line(
+            &lib,
+            &format!("        p if p > 100 => {after},"),
+            &format!("        p if p > 100 => {before},"),
+            AT_TWO_HUNDRED,
+        )?;
+        assert!(!findings.is_empty(), "{after}");
+        assert!(
+            missing_values(&findings).is_empty(),
+            "{after}: {findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.class != ExposureClass::Exposed),
+            "{after}: {findings:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_closure_in_the_guard_is_not_the_guard_binding() -> Result<(), String> {
+    // Control: a closure parameter named like the binding inside the guard
+    // shadows it there, so the guard's boundary reads no test input.
+    let lib = tier("").replace(
+        "p if 100 <= p => Tier::Gold,",
+        "p if (|p: i64| 100 < p)(p - 50) => Tier::Gold,",
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if (|p: i64| 100 < p)(p - 50) => Tier::Gold,",
+        "        p if (|p: i64| 100 <= p)(p - 50) => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
     assert!(
         findings
             .iter()

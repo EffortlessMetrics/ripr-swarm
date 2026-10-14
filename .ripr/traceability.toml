@@ -14266,6 +14266,8 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::a_rebinding_line_that_mentions_fn_is_not_the_signature",
   "crates/ripr/tests/match_guard_edit.rs::a_rebinding_on_the_signature_line_is_not_the_scrutinee",
   "crates/ripr/tests/match_guard_edit.rs::a_guard_pattern_naming_a_constant_is_not_the_parameter",
+  "crates/ripr/tests/match_guard_edit.rs::an_arm_body_binding_on_the_guard_line_is_not_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_closure_in_the_guard_is_not_the_guard_binding",
 ]
 fixtures = [
   "fixtures/match_arm_blind",

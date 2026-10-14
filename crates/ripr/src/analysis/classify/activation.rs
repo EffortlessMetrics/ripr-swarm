@@ -341,10 +341,10 @@ fn observed_discriminator_values(
     let owner_source = index
         .files()
         .get(&owner.file)
-        .map(|facts| facts.source.clone());
+        .map(|facts| &*facts.data().source);
     let Some((left, right)) = oriented_comparison_operands(
         owner,
-        owner_source.as_deref(),
+        owner_source,
         &parameters,
         &probe.expression,
         probe.location.line,
@@ -352,10 +352,8 @@ fn observed_discriminator_values(
         return Vec::new();
     };
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
-    let left_parameter =
-        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left);
-    let right_parameter =
-        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right);
+    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
+    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
     let left_resolved = resolve_boundary_operand(
@@ -868,10 +866,10 @@ fn missing_boundary_discriminator(
     let owner_source = index
         .files()
         .get(&owner.file)
-        .map(|facts| facts.source.clone());
+        .map(|facts| &*facts.data().source);
     let (left, right) = oriented_comparison_operands(
         owner,
-        owner_source.as_deref(),
+        owner_source,
         &parameters,
         &probe.expression,
         probe.location.line,
@@ -884,8 +882,8 @@ fn missing_boundary_discriminator(
         // Only a compared parameter is in scope; an unrelated computed
         // argument (an output buffer `&mut [0; 4]`) says nothing here.
         let compared = [
-            boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left),
-            boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right),
+            boundary_operand_parameter(owner, owner_source, &parameters, &left),
+            boundary_operand_parameter(owner, owner_source, &parameters, &right),
         ];
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
@@ -900,13 +898,8 @@ fn missing_boundary_discriminator(
                 let unknown_operands = [&left, &right]
                     .into_iter()
                     .filter(|operand| {
-                        boundary_operand_parameter(
-                            owner,
-                            owner_source.as_deref(),
-                            &parameters,
-                            operand,
-                        )
-                        .is_none()
+                        boundary_operand_parameter(owner, owner_source, &parameters, operand)
+                            .is_none()
                             && literal_operand_value(operand).is_none()
                             && crate::analysis::value_resolution::constant_operand_name(operand)
                                 .is_none()
@@ -935,10 +928,8 @@ fn missing_boundary_discriminator(
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
-    let left_parameter =
-        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left);
-    let right_parameter =
-        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right);
+    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
+    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
 
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
@@ -2822,10 +2813,15 @@ fn starts_with_identifier_token(text: &str, token: &str) -> bool {
 /// or shadowing), or a binding that is not a bare identifier leaves the
 /// operand unread.
 fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str) -> bool {
-    let code = body
+    // Comments and string contents are masked to spaces rather than cut
+    // per line: a line-level cut at `//` or `/*` (even inside a string)
+    // or a skipped `*`-led continuation line would hide a rebinding
+    // written after it (`/* shift */ let points = points - 50;`).
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let code = masked
         .lines()
-        .map(code_line_before_comment)
-        .filter(|line| !is_comment_line(line))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     let matches = code
         .iter()
@@ -2833,7 +2829,7 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         .sum::<usize>();
     let guard = format!("{operand} if ");
     matches == 1
-        && body_contains_match_parameter(body, parameter)
+        && body_contains_match_parameter(&masked, parameter)
         && code.iter().any(|line| {
             line.find("match ")
                 .map(|index| line[index + "match ".len()..].trim_start())
@@ -2845,11 +2841,14 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         && code.iter().any(|line| line.starts_with(&guard))
         // Every other mention binds or reads some other `operand` (a loop
         // variable, a closure parameter, a `let`), so the name is read as
-        // the arm binding only when it appears on guard lines alone.
+        // the arm binding only inside a guard, between `if` and `=>`. An
+        // arm body on the same line may rebind it (`=> { let p = 10; ...`),
+        // and a closure in the guard (`|p: i64|`) may shadow it, so either
+        // leaves it unread.
         && code
             .iter()
             .filter(|line| mentions_identifier(line, operand))
-            .all(|line| line.starts_with(&guard))
+            .all(|line| guard_reads_only_the_binding(line, &guard, operand))
         // The parameter itself must reach the `match` unchanged: any other
         // mention (`let points = points - 50;`, a closure `|points|`) may
         // rebind or shadow it, so the test argument is not the scrutinee.
@@ -2858,19 +2857,31 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         // parameter on later lines, and a statement after the `{` on the
         // signature line (`{ let points = points - 50; match points {`)
         // is body code.
-        && body
+        && masked
             .split_once('{')
             .map_or("", |(_signature, rest)| rest)
             .lines()
-            .map(code_line_before_comment)
-            .filter(|line| !is_comment_line(line))
+            .map(str::trim)
             .filter(|line| mentions_identifier(line, parameter))
             .all(|line| {
                 line.strip_prefix("match ").is_some_and(|rest| {
-                        rest.strip_prefix(parameter)
-                            .is_some_and(|tail| tail.trim() == "{")
-                    })
+                    rest.strip_prefix(parameter)
+                        .is_some_and(|tail| tail.trim() == "{")
+                })
             })
+}
+
+/// `line` is a one-line guarded arm (`p if 100 <= p => ...`) whose
+/// binding `operand` appears only in the guard: never after the `=>` and
+/// never beside a closure parameter list in the guard.
+fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool {
+    let Some(rest) = line.strip_prefix(guard) else {
+        return false;
+    };
+    let Some((condition, body)) = rest.split_once("=>") else {
+        return false;
+    };
+    !mentions_identifier(body, operand) && !condition.replace("||", "").contains('|')
 }
 
 fn mentions_identifier(line: &str, name: &str) -> bool {
