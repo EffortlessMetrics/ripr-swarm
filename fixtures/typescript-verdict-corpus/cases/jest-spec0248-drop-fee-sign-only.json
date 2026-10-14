@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0248-drop-fee-sign-only",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0248-drop-fee-sign-only.diff",
+  "anchor": {
+    "file": "src/priceFeeSign.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_dropped_term_zero_input_sign_of_nonzero_input",
+  "hard_case": "the non-zero input 7 reaches the owner only through `Math.sign(...)`, which reads 1 on both versions, so only the fee-0 exact pin observes the whole result",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return subtotal + FLAT;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent in general (any non-zero fee changes the result), but the exact pin calls the owner with fee 0, and `Math.sign` of 6506 or 6499 is 1 either way"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`return subtotal + fee + FLAT` drops `+ fee`. The test pins `expect(priceFeeSign(6000, 0)).toBe(6499)` and adds `expect(Math.sign(priceFeeSign(6000, 7))).toBe(1)`; with fee 0 both versions return 6499, and the sign of 6506 and of 6499 is 1, so the test passes. RIPR-SPEC-0248 example 7: `weakly_exposed`, because the second assertion does not observe the returned value. ripr reports `weakly_exposed` and its missing line says `fee` is 0 for every tested input, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0248#7"
+  ]
+}
