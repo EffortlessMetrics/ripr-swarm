@@ -1282,7 +1282,7 @@ jobs:
                 echo "- ${label}: FAIL (exit $(cat "$status_file"))"
               fi
             done
-          } | tee target/windows-subset-verdict.md >> "$GITHUB_STEP_SUMMARY"
+          } | tee target/windows-subset-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Evidence generation is not advisory (lane contract above): a command
       # that never wrote its status file or its log fails the job instead of
