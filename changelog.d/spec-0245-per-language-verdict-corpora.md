@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: `cargo xtask verdict-corpus validate|check|report|bless|split`
   take `--language <language>` and act on
   `fixtures/<language>-verdict-corpus`, so each language's corpus can be

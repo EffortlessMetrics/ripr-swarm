@@ -132,7 +132,7 @@ finding may read `exposed`, subject to every other stage.
 
 RIPR-SPEC-0197 rule 6 (clone field pins, #6692) consumes rules 3 and 4 for a
 field of a hand-written `Clone::clone` literal compared with its own receiver.
-The "No credit" list below, including its separate-binding bullet, governs
+The "No credit" list below, including its bounded separate-binding rule, governs
 this spec's literal comparisons; it does not govern rule 6's receiver, whose
 independence rule 6 gates itself.
 
@@ -141,9 +141,9 @@ independence rule 6 gates itself.
 The finding does not read `exposed` from whole-value equality when:
 
 - the literal omits `f` through `..base` or `..Default::default()`;
-- the expected value comes from a separate binding or a helper
-  (`let e = Config { .. }; assert_eq!(c, e)`, `assert_eq!(build(3), expected())`);
-  it stays `observation_unverified`;
+- the expected value comes from a helper, an alias, or a separate binding
+  outside decision 5's adjacent immutable literal admission; it stays
+  `observation_unverified`;
 - the compared call is not the owner;
 - the assertion is `assert_ne!`: it keeps the `whole_object_equality` kind
   but gives no field credit, because inequality with one wrong value does
@@ -206,13 +206,28 @@ rejected alternative. Any can be reversed later without touching the rest.
    this step: field credit parses the expected literal itself, so a brace
    elsewhere cannot earn it.
 
+5. **Adjacent expected literal binding (2026-10-14).** Example 5 admits
+   `let e [: T] = T { .. }; assert_eq!(c, e)` when the immutable plain
+   identifier is named exactly twice in the test body (its declaration and
+   this complete operand), the declaration is the immediately preceding
+   statement in the test's own block, and this exact assertion is established
+   as executed. The declaration has no attributes, `ref`, subpattern or
+   `let ... else`. The initializer must pass the same independent-field,
+   wrapper, type and derived-equality gates as an inline literal. Both
+   operand orders are admitted. Expected bindings in helper-loaned assertions,
+   aliases, mutable/overwritten/shadowed bindings, intervening statements and
+   unresolved flow remain refused. This is separate from #7105's refusal of
+   an actual-side field read inside braces, which remains unchanged.
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
 - The manual-`PartialEq` control (equality ignores `retries`) does not read
   `exposed`.
-- The `..Default::default()` control, the separate-binding control and the
+- The `..Default::default()` control, dependent/overwritten expected bindings and the
   non-owner control do not read `exposed`.
+- The adjacent independent expected literal binding reads `exposed`; unchanged
+  literal `4` rejects both `retries: n + 2` and `retries: n` runtime controls.
 - A brace inside a format string in an `assert_eq!` message does not produce
   `whole_object_equality`.
 - Golden drift: every finding that gains `exposed` names a literal with the
@@ -238,7 +253,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
    `parse` the owner: `exposed`.
 4. `let c = build(3); assert_eq!(c, Config { retries: 4, name: "x".into() })`: `exposed`.
 5. `let c = build(3); let e = Config { retries: 4, name: "x".into() }; assert_eq!(c, e)`:
-   `weakly_exposed`, `observation_unverified`.
+   `exposed` under decision 5's adjacent immutable binding gates.
 6. `assert_eq!(build(3), expected())`: `weakly_exposed`.
 7. `assert_eq!(build(3), Config { name: "x".into(), ..Config::default() })`: not `exposed`.
 8. `assert_eq!(other(), Config { retries: 4, name: "x".into() })`, `other` not the owner: not `exposed`.
@@ -268,6 +283,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 
 ## Test Mapping
 
+- Public API/runtime: `crates/ripr/tests/whole_value_expected_binding.rs`
+  checks exact field/owner identity, independent literal controls, compiling
+  field mutations and dependent/shadowed/overwritten expectations.
+
 - Existing: `fixtures/observation_verified_field_construction`,
   `fixtures/observation_unverified_field_construction`,
   `fixtures/rust_field_construction_token_coincidence`.
@@ -288,6 +307,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   parser-backed `whole_object_equality`.
 - `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
   named field in an admitted whole-value literal.
+- `crates/ripr/src/analysis/classify/owner_pin/expected_binding.rs`: bounded
+  adjacent expected binding admission before the existing literal gates.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
   execution admission (`establish_whole_value_field`, `whole_value_tail`,
   `WholeValueField::admits`, `bound_owner_call`).

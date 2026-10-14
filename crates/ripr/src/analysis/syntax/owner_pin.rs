@@ -16,7 +16,9 @@ pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 
 use super::parse_clean_source_file;
-use super::ra::{LineIndex, slice_macro_call_text, slice_text};
+use super::ra::{
+    LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
+};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
@@ -359,6 +361,9 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
+    // expect-test's `expect!` builds a value and cannot return; only its
+    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    "expect",
     "file",
     "format",
     "format_args",
@@ -804,10 +809,18 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
+/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
+/// value; importing it under its own name is the one binding that makes a
+/// bare `expect!` expect-test's.
+const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
+
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    if !matches!(name, "assert_eq" | "assert_ne" | "json") {
-        return false;
-    }
+    let crates = match name {
+        "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
+        "expect" => EXPECT_TEST_CRATES,
+        "json" => &["serde_json"],
+        _ => return false,
+    };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -829,9 +842,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
-        [root, imported] if *imported == name
-            && (DROP_IN_ASSERTION_CRATES.contains(root) && name != "json"
-                || *root == "serde_json" && name == "json")
+        [root, imported] if crates.contains(root) && *imported == name
     )
 }
 
@@ -1206,6 +1217,33 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     "assert_eq" | "assert"
                 )
             }) {
+                continue;
+            }
+            let range = call.syntax().text_range();
+            let assertion = (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            );
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // #6578: an inline expect-test comparison
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
+        // a method call on the bare `expect!` value; the classify side
+        // decides which spelling pins.
+        for call in function
+            .syntax()
+            .descendants()
+            .filter_map(ast::MethodCallExpr::cast)
+        {
+            if !is_expect_test_comparison(&call)
+                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || call
+                    .name_ref()
+                    .is_none_or(|name| name.text() != "assert_eq")
+            {
                 continue;
             }
             let range = call.syntax().text_range();

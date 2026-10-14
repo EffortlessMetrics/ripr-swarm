@@ -37,7 +37,23 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    let recommended_next_step = if evidence
+    // RIPR-SPEC-0263: no related test call enters the guard around the
+    // changed line, so the repair is an input, not a stronger assertion.
+    let unentered_guard = (class == ExposureClass::WeaklyExposed)
+        .then(|| {
+            input_boundary_fact(
+                &evidence.activation.missing_discriminators,
+                &context.probe.family,
+            )
+        })
+        .flatten()
+        .filter(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+        .map(|fact| fact.value.clone());
+    let recommended_next_step = if let Some(guard) = unentered_guard {
+        Some(format!(
+            "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
+        ))
+    } else if evidence
         .discriminate
         .summary
         .contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)

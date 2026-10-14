@@ -5723,7 +5723,7 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
-/// RIPR-SPEC-0225 acceptance examples 1, 3 and 4: a whole-value literal
+/// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
 /// that names the changed field with an independent value pins it,
 /// directly, through `Ok(..)` and through a once-used `let` of the owner
 /// call. (Examples 9, 11, 14 and 16 are verdict-corpus rows.)
@@ -5735,6 +5735,7 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
         format!("assert_eq!({literal}, build(3));"),
         format!("let c = build(3);\nassert_eq!(c, {literal});"),
         format!("let c: Config = build(3);\nassert_eq!({literal}, c);"),
+        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
         r#"assert_eq!(build(3), Config { retries: (4), name: String::from("x"), count: Count(3) });"#
             .to_string(),
     ] {
@@ -5747,8 +5748,8 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
     ));
 }
 
-/// RIPR-SPEC-0225 "No credit" and acceptance examples 5-8, 10, 12, 13 and
-/// 15: a separate binding or helper, a functional update, another call,
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 6-8, 10, 12, 13 and
+/// 15: a dependent binding or helper, a functional update, another call,
 /// `assert_ne!`, a value copied from the result, a `let mut` or a second use
 /// of the binding, a mismatched wrapper, and a dependent expected value give
 /// no credit.
@@ -5756,7 +5757,7 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
 fn a_whole_value_literal_without_an_independent_field_value_does_not_pin() {
     let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
     for body in [
-        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
+        format!("let c = build(3);\nlet e = {literal};\nlet _ = &e;\nassert_eq!(c, e);"),
         "assert_eq!(build(3), expected());".to_string(),
         r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#.to_string(),
         r#"assert_eq!(build(3), Config { retries: 4, ..base() });"#.to_string(),
@@ -6910,6 +6911,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod expect_test_pins;
 mod helper_pins;
 
 /// One `#[test]` over `weight`, with `body` as its statements.
