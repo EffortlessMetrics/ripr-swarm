@@ -7299,6 +7299,9 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::field_projected_collection_repo_seam_retains_indexed_target",
+  "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_public_check_pins_exact_observation",
+  "crates/ripr/tests/owner_pin_execution/field_projected_collection.rs::field_projected_collection_compiling_behavioral_mutants",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_family_match_only_without_token_downgrades_discriminate_to_weak",
@@ -7370,6 +7373,7 @@ fixtures = [
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_argument.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",

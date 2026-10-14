@@ -13,6 +13,7 @@ Linked issues:
 - #4486
 - #6297
 - #7063
+- #7966
 
 Linked PRs:
 
@@ -246,6 +247,34 @@ and other effect families keep the existing Part C path. This does not absorb
 oracle-pooling (#4404) or rewrite the shared witness type (#3160). The first
 admitted method is `push` only; `insert` is a later sibling because it collides
 with delivered CallDeletion goldens.
+
+### Exact mutable field arguments (#7966)
+
+The same observer binds a bare push receiver parameter to an exact field
+projection passed by `&mut` in a direct owner call, for example
+`add(&mut b.0, 11)` followed by `assert_eq!(b.0, vec![11])`. Named fields
+(`b.items`) use the same rule. This credit requires:
+
+- the owner body contains only the unconditional parameter `push`;
+- the shared free-call binding authority admits that exact called owner;
+- the test constructs the root value, then calls the owner and compares the
+  same projection in an admitted top-level `assert_eq!`;
+- the expected vector contains independent unsuffixed decimal integer literals and `vec!` has
+  no competing macro binding;
+- no other statement between construction and assertion uses that root, and
+  no other owner-call argument uses it.
+
+A different field or receiver, an unrelated or self-computed assertion,
+aliases, rebinding, intervening mutation, indexed/dynamic projections,
+conditional/attributed pushes and deferred owners grant no new credit. This
+bounded rule does not extend guarded-input inference (#7964) or iterator
+closure projection (#7858). Plain-local observation keeps its existing rule.
+
+Proof: the public check and compiling behavioral controls in
+`owner_pin_execution::field_projected_collection`, the collection argument
+fixtures, and their independent evidence-promotion-honesty assertions. The
+wrong-value and deleted-push controls are runtime evidence, separate from
+static verdicts.
 
 Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `asserting_affected_collection_retains_confirmation_in_either_order`,

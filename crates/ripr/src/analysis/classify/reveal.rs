@@ -56,6 +56,9 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// field (`builder_override::setter_plainly_writes`). Only a verified
     /// setter defeats a changed default.
     pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// Exact projected mutable argument read through the shared collection observer.
+    pub(in crate::analysis) collection_argument_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0228 getter credit: whether the owner type's method
     /// `(type, getter, field)` returns that field path itself
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
@@ -84,6 +87,7 @@ fn reveal_evidence(
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
+            collection_argument_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
         },
         None,
@@ -1176,7 +1180,9 @@ fn analyze_related_assertions(
                     return_admission.getter_reads_field,
                 )
             });
-            let matched = matched || field_collection_read;
+            let collection_argument_read =
+                (return_admission.collection_argument_observed)(test, assertion);
+            let matched = matched || field_collection_read || collection_argument_read;
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.
@@ -1254,6 +1260,7 @@ fn analyze_related_assertions(
                         || (confirms_observation
                             && (collection_observer_confirms(&probe.expression, assertion)
                                 || field_collection_read
+                                || collection_argument_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -4277,6 +4284,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
                 None,
@@ -4373,6 +4381,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
                 None,
@@ -4726,6 +4735,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -4798,6 +4808,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6442,6 +6453,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6499,6 +6511,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6527,6 +6540,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6574,6 +6588,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6623,6 +6638,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6797,6 +6813,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -6828,6 +6845,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -7218,6 +7236,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
                 None,
@@ -7495,6 +7514,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -7587,6 +7607,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
+                    collection_argument_observed: &|_, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
                 None,
@@ -7622,6 +7643,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -7975,6 +7997,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,
@@ -8275,6 +8298,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
                 getter_reads_field: &|_, _, _| false,
             },
             None,

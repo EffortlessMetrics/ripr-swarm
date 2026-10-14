@@ -7754,6 +7754,570 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
       ]
+    },
+    {
+      "id": "rust_collection_argument_tuple_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_tuple",
+      "vector": "exact_mutable_projection_identity_tuple",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_tuple_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_tuple",
+      "vector": "exact_mutable_projection_identity_tuple",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_named_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_named",
+      "vector": "exact_mutable_projection_identity_named",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_named_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_named",
+      "vector": "exact_mutable_projection_identity_named",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_plain_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_plain",
+      "vector": "exact_mutable_projection_identity_plain",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_plain_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_plain",
+      "vector": "exact_mutable_projection_identity_plain",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_collection_argument_wrong_field_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_wrong_field",
+      "vector": "exact_mutable_projection_identity_wrong_field",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_wrong_field_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_wrong_field",
+      "vector": "exact_mutable_projection_identity_wrong_field",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_wrong_receiver_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_wrong_receiver",
+      "vector": "exact_mutable_projection_identity_wrong_receiver",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_wrong_receiver_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_wrong_receiver",
+      "vector": "exact_mutable_projection_identity_wrong_receiver",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_unrelated_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_unrelated",
+      "vector": "exact_mutable_projection_identity_unrelated",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_unrelated_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_unrelated",
+      "vector": "exact_mutable_projection_identity_unrelated",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_rebound_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_rebound",
+      "vector": "exact_mutable_projection_identity_rebound",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_rebound_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_rebound",
+      "vector": "exact_mutable_projection_identity_rebound",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_mutated_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_mutated",
+      "vector": "exact_mutable_projection_identity_mutated",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_mutated_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_mutated",
+      "vector": "exact_mutable_projection_identity_mutated",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_alias_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_alias",
+      "vector": "exact_mutable_projection_identity_alias",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_alias_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_alias",
+      "vector": "exact_mutable_projection_identity_alias",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_ambiguous_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_ambiguous",
+      "vector": "exact_mutable_projection_identity_ambiguous",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_ambiguous_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_ambiguous",
+      "vector": "exact_mutable_projection_identity_ambiguous",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_guarded_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_guarded",
+      "vector": "exact_mutable_projection_identity_guarded",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_guarded_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_guarded",
+      "vector": "exact_mutable_projection_identity_guarded",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_computed_expected_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_computed_expected",
+      "vector": "exact_mutable_projection_identity_computed_expected",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_collection_argument_computed_expected_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/collection_argument_computed_expected",
+      "vector": "exact_mutable_projection_identity_computed_expected",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

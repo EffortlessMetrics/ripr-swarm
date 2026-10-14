@@ -666,7 +666,8 @@ pub(super) fn related_test_rank_key(
     owner: Option<&SeamOwnerActivation<'_>>,
     owner_fn: Option<&FunctionSummary>,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(indexed.test, seam, owner_fn);
+    let (_oracle_kind, oracle_strength, _contradiction) =
+        best_oracle(indexed.test, seam, owner_fn, context.index);
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),
