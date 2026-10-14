@@ -218,11 +218,25 @@ evidence. Root spellings compare after normalization (separators unify,
 a single leading `./` folds away, trailing slashes drop); genuinely different
 forms of one checkout stay distinct and fail safe toward stale visibility.
 
+Analyzer-build identity (issue #7421): `baseline create` copies the source
+gate decision's `subject.analyzer_version` (issue #5474) into the ledger and
+warns when the source predates it. `baseline diff` joins the two sides'
+builds: a `MatchResult::None` entry across a provable build boundary — both
+sides recorded and differing, or exactly one side recorded (the unrecorded
+side predates build identity) — is a stale identity-discontinuity item
+carrying both versions and a refresh route, never `resolved`. Both sides
+unversioned (the old-vs-old case) or both sides recording the same build
+keep the legacy `resolved` classification. Canonical identities that
+persist across the upgrade still join normally: the disclosure never
+reclassifies a successful match.
+
 Compatibility window: the baseline schema version stays `0.1` and every change
-is additive. Ledgers written before root preservation (no `root`) or before
-canonical identities (no `canonical_gap_id`) remain parseable; entries without
-a root skip the cross-root refusal and stay comparable. Canonical-match items
-render byte-identical to before the disclosure existed.
+is additive. Ledgers written before root preservation (no `root`), before
+canonical identities (no `canonical_gap_id`), or before build identity
+(no `subject`) remain parseable; entries without a root skip the cross-root
+refusal and stay comparable. Baselines without a recorded build fail safe
+toward stale disclosure against a versioned current side. Canonical-match
+items render byte-identical to before the disclosure existed.
 
 ## Delta Buckets
 
@@ -230,8 +244,9 @@ Every parsed baseline or current decision should land in exactly one primary
 bucket:
 
 - `still_present` - the baseline identity is present in current evidence.
-- `resolved` - the baseline identity is absent from current evidence and no
-  replacement identity was matched.
+- `resolved` - the baseline identity is absent from current evidence, no
+  replacement identity was matched, and the two sides' producing analyzer
+  builds do not disclose an identity discontinuity.
 - `new_policy_eligible` - a current policy-eligible decision is not in the
   baseline.
 - `acknowledged` - a current decision is visible and acknowledged by label or
@@ -239,7 +254,8 @@ bucket:
 - `suppressed` - a current decision is suppressed or configured off and remains
   visible in the report.
 - `stale_baseline_entry` - a baseline record can be parsed but no longer joins
-  cleanly because its identity is ambiguous, obsolete, or incompatible.
+  cleanly because its identity is ambiguous, obsolete, or incompatible,
+  including analyzer-version identity discontinuity across an upgrade.
 - `invalid_baseline_entry` - a baseline record is malformed or missing required
   identity fields.
 - `missing_current_input` - the report cannot classify current movement because

@@ -1,0 +1,54 @@
+{
+  "case_id": "rust-guarded-push-unentered-branch",
+  "subject_id": "authored-guarded-push-unentered",
+  "diff": "cases/rust-guarded-push-unentered-branch.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_branch_not_entered",
+  "hard_case": "RIPR-SPEC-0263 example 1. Measured defect (#7132): the direct-collection observer credits `assert_eq!(v, Vec::<u32>::new())` as revealing the push, so call_deletion and side_effect read exposed, although the only related test calls add(&mut v, 4) and 4 never enters `x > 10`. No mutant of the push executes under the test.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(x + 1);",
+        "mutated_line": "v.push(x + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records 12"
+      },
+      {
+        "replacement": "let _ = x;",
+        "mutated_line": "let _ = x;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: add(&mut v, 11) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "adds_nothing_for_small_values calls add(&mut v, 4); 4 > 10 is false, so the push never runs and every mutant of it passes. The empty-vector equality would notice a wrong push only if some test input entered the guard.",
+  "labeling_observation": {
+    "ripr_commit": "0e5bccd66",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#1"
+  ]
+}

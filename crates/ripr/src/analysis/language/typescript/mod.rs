@@ -104,6 +104,7 @@ mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
 pub(crate) mod tsconfig;
+mod typed_loose_equality_guard;
 mod types;
 mod workspace_packages;
 
@@ -143,6 +144,7 @@ pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
     TsAliasMap, TsAliasMapLoadGap, TsAliasUnresolveCause, load_alias_map_with_read_error,
 };
+pub(crate) use typed_loose_equality_guard::*;
 pub(crate) use types::*;
 
 /// TypeScript / JavaScript preview adapter.

@@ -68,6 +68,16 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         "Entries: {}",
         output::baseline::baseline_entry_count(&report)
     );
+    // Creation-time disclosure (issue #7421 review): a source report that
+    // predates producing-build identity must warn the operator here, not
+    // only inside the written ledger.
+    let warnings = output::baseline::baseline_warnings(&report);
+    if !warnings.is_empty() {
+        println!("Warnings: {}", warnings.len());
+        for warning in warnings {
+            println!("Warning: {warning}");
+        }
+    }
     Ok(())
 }
 
