@@ -277,6 +277,7 @@ jobs:
   # covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
+  #   - Cargo-home configuration identity: the #7748 Windows spelling class;
   #   - the #4918 cache-warning smoke, which runs the real `ripr` binary with
   #     RIPR_CACHE_DIR at a regular file and asserts the once-per-build
   #     warning. The #4920 unit pins are errno-independent by design, so this
@@ -781,6 +782,11 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
 
+      - name: Run Cargo-home identity subset (advisory, #7748)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0
+
       - name: Run cache-warning smoke subset (advisory, #4918)
         shell: bash
         run: |
@@ -1265,7 +1271,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-cache-warning subset-clippy subset-selector-literal; do
+            for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1276,7 +1282,7 @@ jobs:
                 echo "- ${label}: FAIL (exit $(cat "$status_file"))"
               fi
             done
-          } | tee target/windows-subset-verdict.md >> "$GITHUB_STEP_SUMMARY"
+          } | tee target/windows-subset-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Evidence generation is not advisory (lane contract above): a command
       # that never wrote its status file or its log fails the job instead of
@@ -1287,11 +1293,11 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-cache-warning subset-clippy; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
-          for label in subset-gap-artifacts subset-cache-warning; do
+          for label in subset-gap-artifacts subset-cargo-home subset-cache-warning; do
             if [ "$(cat "target/${label}.status")" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
@@ -1353,6 +1359,8 @@ jobs:
           path: |
             target/subset-gap-artifacts.log
             target/subset-gap-artifacts.status
+            target/subset-cargo-home.log
+            target/subset-cargo-home.status
             target/subset-cache-warning.log
             target/subset-cache-warning.status
             target/subset-clippy.log
