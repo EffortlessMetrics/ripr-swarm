@@ -98,6 +98,7 @@ pub(super) fn owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
     if root.syntax().descendants().any(|node| {
         ast::MacroRules::can_cast(node.kind())
             || ast::MacroDef::can_cast(node.kind())
+            || ast::ExternCrate::can_cast(node.kind())
             || ast::Fn::cast(node.clone()).is_some_and(|function| {
                 function
                     .name()
@@ -108,7 +109,7 @@ pub(super) fn owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
                     .syntax()
                     .descendants_with_tokens()
                     .filter_map(|node| node.into_token())
-                    .any(|token| matches!(token.text(), "format" | "Ok" | "Some"))
+                    .any(|token| matches!(token.text(), "format" | "Ok" | "Some" | "*"))
             })
     }) {
         return None;

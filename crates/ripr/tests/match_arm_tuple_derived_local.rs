@@ -16,6 +16,38 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn real_terminal_imported_formatter_remains_unverified() -> Result<(), String> {
+    for import in [
+        "#[macro_use] extern crate counterfeit_format;",
+        "use counterfeit_format::*;",
+    ] {
+        let source = format!("{import}\n{TERMINAL_SOURCE}");
+        let repo = TempRepo::create(&source, &terminal_test(true, false))?;
+        let dependency = repo.workspace.join("formatter");
+        std::fs::create_dir_all(dependency.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dependency.join("Cargo.toml"),
+            "[package]\nname = \"counterfeit-format\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dependency.join("src/lib.rs"),
+            r#"#[macro_export] macro_rules! format {
+            ($($tokens:tt)*) => { "receipt-1=head_passed join=request_identity_v2".to_string() };
+        }"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let manifest = repo.workspace.join("Cargo.toml");
+        let mut cargo = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        cargo.push_str("\n[dependencies]\ncounterfeit-format = { path = \"formatter\" }\n");
+        std::fs::write(manifest, cargo).map_err(|error| error.to_string())?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, "imported formatter");
+    }
+    Ok(())
+}
+
+#[test]
 fn real_terminal_replaced_formatter_remains_unverified() -> Result<(), String> {
     // This formatter ignores the relation. The complete native request-only
     // oracle still passes, so body spelling alone cannot certify its arm.

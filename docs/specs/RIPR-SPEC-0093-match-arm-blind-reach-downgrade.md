@@ -181,7 +181,11 @@ shadowed and post-return observations cannot refine the changed arm.
 This extends static discrimination only for that grammar. Indirect serialized
 caller projections, multiple-receipt oracle evaluation and arbitrary result
 flow remain unsupported. The stage combiner retains ownership of the final
-classification. No consumer rewrite, pin, suppression, threshold, release or
+classification. Local or imported replacement macros, extern crates and
+wildcard imports leave formatter provenance unresolved and refuse this
+terminal extension. Resolving the actual consumer's crate wildcard and
+indirect serialized oracle is separate retained acceptance under #1728.
+No consumer rewrite, pin, suppression, threshold, release or
 adoption follows. Roll back the terminal grammar while retaining its public
 positive/negative regressions; the previously admitted precursor stays intact.
 
