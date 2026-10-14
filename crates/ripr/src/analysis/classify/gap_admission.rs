@@ -139,15 +139,27 @@ pub(in crate::analysis) fn withhold_log_capture_gap(
     {
         return false;
     }
+    // The asserted text must carry every static fragment of the changed
+    // record's format template, so an assertion on another record of the
+    // same owner keeps this record's gap. A template with no static text
+    // cannot be bound to an assertion and keeps its gap.
+    let fragments = log_template_fragments(&finding.probe.expression);
+    if fragments.is_empty() {
+        return false;
+    }
     let capturing: Vec<String> = finding
         .related_tests
         .iter()
         .filter(|related| {
-            index.tests().iter().any(|test| {
-                test.name == related.name
-                    && test.file == related.file
-                    && test_asserts_captured_log(test, owner, index)
-            })
+            // A name-only or file-only relation does not show that the
+            // test's bare `owner(` call reaches the changed owner (an
+            // imported same-name function would also match).
+            related.relation_reason == Some(RelationReason::DirectOwnerCall)
+                && index.tests().iter().any(|test| {
+                    test.name == related.name
+                        && test.file == related.file
+                        && test_asserts_captured_log(test, owner, index, &fragments)
+                })
         })
         .map(|related| {
             format!(
@@ -200,7 +212,12 @@ fn is_qualified_log_macro(expression: &str) -> bool {
 /// re-call after a late capture still counts. The assertion must carry a
 /// string literal and no count or status projection: `lines.len()` or
 /// `installed.is_ok()` does not compare the record's text.
-fn test_asserts_captured_log(test: &TestFact, owner: &str, index: &RustIndex) -> bool {
+fn test_asserts_captured_log(
+    test: &TestFact,
+    owner: &str,
+    index: &RustIndex,
+    fragments: &[String],
+) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let same_file = || {
         index
@@ -223,7 +240,7 @@ fn test_asserts_captured_log(test: &TestFact, owner: &str, index: &RustIndex) ->
         .collect();
     free_call_offsets(&masked, owner)
         .into_iter()
-        .any(|call_at| captured_and_asserted_around(test, &masked, call_at, &helpers))
+        .any(|call_at| captured_and_asserted_around(test, &masked, call_at, &helpers, fragments))
 }
 
 fn captured_and_asserted_around(
@@ -231,6 +248,7 @@ fn captured_and_asserted_around(
     masked: &str,
     call_at: usize,
     helpers: &[&str],
+    fragments: &[String],
 ) -> bool {
     let call_line = test.start_line + masked[..call_at].matches('\n').count();
     let before = &masked[..call_at];
@@ -261,9 +279,18 @@ fn captured_and_asserted_around(
     }
     stores.extend(read_from_store);
     test.assertions.iter().any(|assertion| {
+        // Only the compared operands count: a quoted diagnostic message
+        // (`assert_eq!(lines, Vec::new(), "empty")`) is not a record.
+        let Some(operands) = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+        else {
+            return false;
+        };
         let (masked_assertion, string_quotes) =
-            crate::analysis::extract::mask_with_string_delimiter_quotes(&assertion.text);
+            crate::analysis::extract::mask_with_string_delimiter_quotes(&operands);
         assertion.line > call_line
+            && fragments
+                .iter()
+                .all(|fragment| operands.contains(fragment.as_str()))
             && matches!(
                 assertion.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
@@ -296,6 +323,58 @@ fn has_count_or_status_projection(masked: &str) -> bool {
         .any(|projection| masked.contains(projection))
 }
 
+/// The static text fragments of a `log::` record's format template
+/// (`"audited {}"` gives `["audited "]`). Empty when the template cannot be
+/// read or has no static text.
+fn log_template_fragments(expression: &str) -> Vec<String> {
+    let Some(open) = expression.find('"') else {
+        return Vec::new();
+    };
+    let mut fragments = Vec::new();
+    let mut current = String::new();
+    let mut chars = expression[open + 1..].chars().peekable();
+    let mut closed = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                // An escape ends the fragment: its decoded text is not
+                // spelled the same way in the test's literal.
+                chars.next();
+                fragments.push(std::mem::take(&mut current));
+            }
+            '"' => {
+                closed = true;
+                break;
+            }
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                current.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                current.push('}');
+            }
+            '{' => {
+                fragments.push(std::mem::take(&mut current));
+                for inner in chars.by_ref() {
+                    if inner == '}' {
+                        break;
+                    }
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !closed {
+        return Vec::new();
+    }
+    fragments.push(current);
+    fragments
+        .into_iter()
+        .filter(|fragment| !fragment.trim().is_empty())
+        .collect()
+}
+
 /// Plain-binding arguments of `log::set_logger(..)` /
 /// `log::set_boxed_logger(..)` calls in masked `code` (`&LOGGER` names
 /// `LOGGER`). The call's own result is never a store.
@@ -318,20 +397,28 @@ fn install_arguments(code: &str) -> Vec<String> {
     arguments
 }
 
-/// Whether a helper's body installs a logger through `log::` and its
-/// return type names one of `logger_types` (a same-file type with an
-/// `impl log::Log`), so a `let` of its result is the capture store. A helper
-/// that installs a logger but returns some other value is not a store.
+/// Whether a helper's body installs a logger through `log::`, returns that
+/// binding, and has a return type naming one of `logger_types` (a same-file
+/// type with an `impl log::Log`), so a `let` of its result is the capture
+/// store. A helper that installs one logger but returns another value, even
+/// of the same type, is not a store.
 fn returns_installed_logger(body: &str, logger_types: &[&str]) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let installs = ["log::set_logger(", "log::set_boxed_logger("]
-        .iter()
-        .any(|install| masked.contains(install));
+    let installed = install_arguments(&masked);
+    // The installed binding must be a block's tail expression (the body's,
+    // or a `get_or_init(|| { .. })` closure's), so the helper hands back the
+    // logger it installed rather than some other value of the same type.
+    let returns_installed = masked.match_indices('}').any(|(close, _)| {
+        let inner = &masked[..close];
+        let tail_start = inner.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+        let tail = inner[tail_start..].trim().trim_start_matches('&').trim();
+        installed.iter().any(|argument| argument == tail)
+    });
     let signature = masked.split('{').next().unwrap_or_default();
     let Some((_, return_type)) = signature.split_once("->") else {
         return false;
     };
-    installs
+    returns_installed
         && logger_types.iter().any(|logger| {
             let name = logger.rsplit("::").next().unwrap_or(logger);
             names(return_type, name)
@@ -738,7 +825,7 @@ mod tests {
         let logger = capture();
         audit(6);
         let lines = logger.0.lock().unwrap().clone();
-        assert_eq!(lines.len(), 1, "one line");
+        assert_eq!(lines.len(), "audited 42".len());
     }
 
     #[test]
@@ -759,6 +846,22 @@ mod tests {
     fn silence() -> &'static str {
         log::set_logger(&LOGGER).ok();
         "six"
+    }
+
+    struct Plain(std::sync::Mutex<Vec<String>>);
+
+    static RAW: Plain = Plain(std::sync::Mutex::new(Vec::new()));
+
+    fn install_plain() -> &'static Plain {
+        log::set_logger(&RAW).ok();
+        &RAW
+    }
+
+    #[test]
+    fn audit_with_plain_store() {
+        let store = install_plain();
+        audit(6);
+        assert_eq!(*store.0.lock().unwrap(), vec!["audited 42".to_string()]);
     }
 
     #[test]
@@ -783,7 +886,7 @@ mod tests {
     #[test]
     fn audit_asserts_before_call() {
         let logger = capture();
-        assert_eq!(*logger.0.lock().unwrap(), Vec::<String>::new(), "empty");
+        assert_eq!(*logger.0.lock().unwrap(), vec!["audited 42".to_string()]);
         audit(6);
     }
 
@@ -792,7 +895,7 @@ mod tests {
         let logger = capture();
         audit(6);
         let n = logger.0.lock().unwrap().len();
-        assert_eq!(n, 1, "one line");
+        assert_eq!(n.to_string(), "audited 1");
     }
 
     #[test]
@@ -800,7 +903,7 @@ mod tests {
         let logger = capture();
         audit(6);
         let lines = logger.0.lock().unwrap().clone();
-        assert_eq!(lines[0].starts_with("audited"), true);
+        assert_eq!(lines[0].starts_with("audited "), true);
     }
 
     #[test]
@@ -808,7 +911,7 @@ mod tests {
         let logger = capture();
         audit(6);
         let logger = 5;
-        assert_eq!(logger, 5, "unrelated");
+        assert_eq!(logger.to_string(), "audited 5");
     }
 
     #[test]
@@ -816,7 +919,7 @@ mod tests {
         let logger = capture();
         audit(6);
         let lines = logger.0.lock().unwrap().clone();
-        assert_eq!(lines, Vec::<String>::new() /* " */);
+        assert_eq!(lines, expected_lines() /* "audited " */);
     }
 
     #[test]
@@ -833,6 +936,29 @@ mod tests {
         audit(6);
         let lines = logger.0.lock().unwrap().clone();
         assert_ne!(lines, vec!["audited 0".to_string()]);
+    }
+
+    static UNRELATED: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+
+    fn capture_other() -> &'static Capture {
+        log::set_logger(&LOGGER).ok();
+        &UNRELATED
+    }
+
+    #[test]
+    fn audit_with_other_logger() {
+        let logger = capture_other();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, vec!["audited 42".to_string()]);
+    }
+
+    #[test]
+    fn audit_diagnostic_only() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, Vec::<String>::new(), "audited ");
     }
 
     #[test]
@@ -935,6 +1061,9 @@ mod tests {
             "audit_shadows_the_store",
             "audit_quote_in_comment",
             "audit_not_equal",
+            "audit_with_other_logger",
+            "audit_with_plain_store",
+            "audit_diagnostic_only",
         ] {
             let mut finding = log_finding(test, AUDIT_LOG);
             assert!(
@@ -980,6 +1109,25 @@ mod tests {
         limited.static_limit_kind = Some(StaticLimitKind::Metaprogramming);
         assert!(!withhold_log_capture_gap(
             &mut limited,
+            &index,
+            Some("audit")
+        ));
+        let mut other_record = log_finding(test, "log::info!(\"finished {}\", amount);");
+        assert!(!withhold_log_capture_gap(
+            &mut other_record,
+            &index,
+            Some("audit")
+        ));
+        let mut no_static_text = log_finding(test, "log::info!(\"{}\", amount * 7);");
+        assert!(!withhold_log_capture_gap(
+            &mut no_static_text,
+            &index,
+            Some("audit")
+        ));
+        let mut name_only = log_finding(test, AUDIT_LOG);
+        name_only.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+        assert!(!withhold_log_capture_gap(
+            &mut name_only,
             &index,
             Some("audit")
         ));
