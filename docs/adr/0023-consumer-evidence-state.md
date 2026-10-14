@@ -25,7 +25,19 @@ Only `Actionable` grants the consumer an actionable state; `Unknown` does not
 mean a clean result. Producer `AnalysisOutcome`, language-specific limitations,
 receipt lifecycle, and transport currentness keep their own authorities.
 
-## Migration and consequences
+## Alternatives Considered
+
+The recorded context and compatibility boundary distinguish these alternatives:
+
+- Keep inline string decisions: the typed state gives one shared decision owner
+  and rejects unrecognized values while retaining the existing wire vocabulary.
+- Reuse `AnalysisOutcome` or recast unrelated `status` fields: these describe
+  producer and per-surface concerns, not the consumer's gap state.
+- Rename the public field now or emit both names: the first slice preserves its
+  field and version; a rename requires the separate schema and consumer migration
+  described below, and duplicate fields would create competing authorities.
+
+## Consequences
 
 This first slice does not rename a public field or change its version. Follow-up
 consumer migrations replace string comparisons with the typed state at their

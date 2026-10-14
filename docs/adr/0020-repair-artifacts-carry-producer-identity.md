@@ -61,3 +61,14 @@ Costs and limits:
   can still emit a self-consistent artifact.
 - `receipt` provenance and verification-command execution are intentionally not
   claimed by this decision.
+
+## Alternatives Considered
+
+The Context and Consequences distinguish the envelope from these alternatives:
+
+- Accept a path and plausible JSON shape as sufficient evidence: neither binds
+  the producer, repository, revision, or unchanged bytes, so fabricated snapshots
+  could reach movement consumers.
+- Use signing as the assurance supplied by this slice: the envelope supplies
+  integrity and currentness checks, while signatures remain a separate contract.
+  A self-consistent marker and digest do not authenticate a compromised producer.

@@ -36,6 +36,22 @@ exactly what was and was not inspected.
 This contract defines how RIPR may return partial analysis. It is the design
 authority for #1999 (implementation) and for any future partition continuation.
 
+## Success criteria
+
+These criteria summarize the required decisions below; they do not claim that
+the proposed behavior has been implemented.
+
+- Select whole changed files in the declared deterministic priority order;
+  context-only files do not consume the partial budget.
+- Preserve the hard analysis-cost guards, budget validation, disclosed clamping,
+  and stop precedence, including the first-file line-overshoot exception.
+- Report the selected scope, lower bounds for uninspected scope, and stop reason
+  without implying that excluded files were analyzed or clean.
+- Keep every partial result ineligible for gates, baselines, badges, and RIPR
+  Zero; explicit budget overrides remain the first revision's continuation route.
+- Keep partition identity stable for the same declared inputs and distinct when
+  those inputs change, so incompatible partial runs cannot be compared as peers.
+
 ## Required decisions
 
 ### 1. Selection unit
@@ -167,6 +183,33 @@ a different budget, diff, or selection or language-tier version has a
 different identity and may not be diffed, baselined, or compared against it.
 `partial-diff-v1` bumps only on a contract revision of the selection
 algorithm; `lang-tier-v1` bumps if language tiers are added or reordered.
+
+## Alternatives considered
+
+The existing problem, decisions, and non-goals distinguish these alternatives:
+
+- Retain only all-or-nothing rejection: the hard guards remain necessary, but
+  rejection alone offers no useful bounded result within their safe scope.
+- Select arbitrary first-N files: input or filesystem ordering would control
+  the partition instead of the declared deterministic priority.
+- Split files into line-, hunk-, or owner-level units: this breaks the whole-file
+  identity accounting described in decision 1.
+- Add named partition continuation now: the first revision explicitly defers
+  that contract and uses budget overrides instead.
+
+## Risks
+
+The required decisions bound the following risks:
+
+- Partial results can be mistaken for complete evidence. Scope disclosure and
+  gate ineligibility must travel with the result to every downstream consumer.
+- Nondeterministic selection or incompatible identities can make comparisons
+  misleading. Selection order and the versioned canonical partition identity
+  must describe the same declared inputs.
+- Invalid budgets or hidden overshoot can defeat cost limits. Preserve parsing
+  refusal, disclosed clamping, the hard guards, and the specified stop precedence.
+- Estimated findings for excluded files would invent evidence. Uninspected
+  counts remain lower bounds; delivery limits remain separate from analysis costs.
 
 ## Safety posture (normative shape)
 

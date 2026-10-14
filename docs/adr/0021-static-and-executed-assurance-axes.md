@@ -48,3 +48,14 @@ Costs and limits:
 - the command runner and final receipt binding require separate implementation
   slices; and
 - this decision does not itself add gate authority or runtime mutation proof.
+
+## Alternatives Considered
+
+The recorded assurance boundary rules out these shortcuts:
+
+- Collapse static movement and executed verification into one status: this
+  hides disagreement and overloads the analyzer's static evidence model.
+- Infer execution from a command description or receipt presence: availability
+  and issuance do not establish that a governed runner executed the command.
+- Treat a successful process exit as runtime adequacy: runtime mutation remains
+  external, and no neighboring field independently grants that stronger claim.
