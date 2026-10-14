@@ -630,9 +630,9 @@ pub(super) fn strong_owner_call_rows(
 /// The strong owner-call rows, and whether some strong related test has an
 /// owner call that binds no row (a `*args` unpack, a comment inside the
 /// argument list) or no owner call this reader recognizes at all. A rule
-/// that needs every strong input (`term_activation.rs`) treats that as
-/// unresolved; the boundary rule reads the rows it has.
-fn strong_owner_call_rows_with_gaps(
+/// that needs every strong input (`term_activation.rs`, `guard_activation.rs`)
+/// treats that as unresolved; the boundary rule reads the rows it has.
+pub(super) fn strong_owner_call_rows_with_gaps(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     related_candidates: &[PythonRelatedCandidate<'_>],

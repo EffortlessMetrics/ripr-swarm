@@ -38,7 +38,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  The related test `invoice_adds_tax_to_the_subtotal` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
 Drill in:
   ripr explain --root <cwd>/fixtures/self_computed_expected_value/input --diff <cwd>/fixtures/self_computed_expected_value/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
   ripr context --root <cwd>/fixtures/self_computed_expected_value/input --diff <cwd>/fixtures/self_computed_expected_value/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a

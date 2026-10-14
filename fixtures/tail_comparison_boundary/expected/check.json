@@ -400,8 +400,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `five_items_earn_a_gift` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
-      "suggested_next_action": "The related test `five_items_earn_a_gift` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "recommended_next_step": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

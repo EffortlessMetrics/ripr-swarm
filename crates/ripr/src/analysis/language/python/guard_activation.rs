@@ -13,14 +13,17 @@
 //! The rule engages only when static evidence can read everything it needs:
 //! the enclosing `if` conditions, their comparison operands, and the literal
 //! arguments strong related tests bind. Anything unreadable (`elif`/`else`
-//! chains, computed operands, non-literal rows) fails open and keeps the
-//! existing verdict, like the boundary rule's `Unresolved` limitation.
+//! chains, `or`/`not` boolean syntax, a parameter the owner rebinds before
+//! the guard, computed operands, non-literal rows, a strong call no row
+//! binds) fails open and keeps the existing verdict, like the boundary
+//! rule's `Unresolved` limitation. Equality follows Python semantics
+//! (`True == 1`), since a wrong exclusion is a wrong actionable signal.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::{
     CallRow, canonical_decimal, literals_equal, resolve_operand, simple_comparison_operands,
-    strong_owner_call_rows, unrebound_constants,
+    strong_owner_call_rows_with_gaps, unrebound_constants,
 };
 use super::module_constants::PythonModuleConstant;
 use super::related_tests::PythonRelatedCandidate;
@@ -51,11 +54,20 @@ pub(super) fn python_guarded_arm_gap(
 ) -> Option<GuardedArmGap> {
     let conditions = guarding_conditions(owner, owner_source, changed_line)?;
     let constants = unrebound_constants(owner, related_candidates);
-    let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
     if rows.is_empty() {
         // No strong related test binds a readable literal input, so static
         // evidence cannot see reachability either way; the existing oracle
         // verdict stands (the boundary rule engages under the same rule).
+        return None;
+    }
+    if gaps {
+        // Some strong related test calls the owner in a way no row binds (a
+        // `*args` unpack, an unreadable argument list). The gate's premise is
+        // "EVERY strong call provably fails the guard", which the readable
+        // rows alone cannot establish, so the exclusion is refused and the
+        // existing verdict stands.
         return None;
     }
 
@@ -64,9 +76,16 @@ pub(super) fn python_guarded_arm_gap(
     // unevaluable guard is never excluded, so one unreadable input keeps
     // the verdict.
     let every_row_excluded = rows.iter().all(|row| {
-        conditions
-            .iter()
-            .any(|condition| condition_holds(condition, row, &constants) == Some(false))
+        conditions.iter().any(|(condition_line, condition)| {
+            condition_holds(
+                condition,
+                *condition_line,
+                row,
+                &constants,
+                owner_source,
+                owner.start_line,
+            ) == Some(false)
+        })
     });
     if !every_row_excluded {
         return None;
@@ -95,7 +114,7 @@ pub(super) fn python_guarded_arm_gap(
     observed_values.dedup();
 
     let mut parts = Vec::new();
-    for condition in &conditions {
+    for (_, condition) in &conditions {
         let observed = condition_observed_values(condition, &rows);
         parts.push(format!(
             "no strong related test input satisfies `{condition}`{}",
@@ -115,7 +134,11 @@ pub(super) fn python_guarded_arm_gap(
         parts.join(" and ")
     );
     Some(GuardedArmGap {
-        discriminator: conditions.join(" and "),
+        discriminator: conditions
+            .iter()
+            .map(|(_, condition)| condition.as_str())
+            .collect::<Vec<_>>()
+            .join(" and "),
         observed_values,
         reason,
     })
@@ -142,15 +165,17 @@ fn condition_observed_values(condition: &str, rows: &[CallRow]) -> Vec<String> {
 }
 
 /// The `if`/`while` conditions enclosing `changed_line` inside its owner,
-/// outermost first. Returns `None` when the enclosing structure cannot be
-/// read honestly: an `else` arm can never be excluded by evidence, an
-/// unrecognized dedented line means the source does not parse the way this
-/// reader expects, and the owner bounds keep the walk inside one body.
+/// outermost first, each with the 0-based index of its header line (the
+/// rebound-parameter check needs the line to bound the assignment scan).
+/// Returns `None` when the enclosing structure cannot be read honestly: an
+/// `else` arm can never be excluded by evidence, an unrecognized dedented
+/// line means the source does not parse the way this reader expects, and
+/// the owner bounds keep the walk inside one body.
 pub(super) fn guarding_conditions(
     owner: &PythonOwner,
     owner_source: &str,
     changed_line: usize,
-) -> Option<Vec<String>> {
+) -> Option<Vec<(usize, String)>> {
     let lines: Vec<&str> = owner_source.lines().collect();
     let changed_index = changed_line.checked_sub(1)?;
     if owner.start_line == 0 || changed_index >= lines.len() {
@@ -182,7 +207,7 @@ pub(super) fn guarding_conditions(
             // row an earlier arm caught is a fail-open over-approximation,
             // never a false exclusion), so it reads like an `if`.
             let condition = condition.trim_end().strip_suffix(':')?.trim();
-            conditions.push(condition.to_string());
+            conditions.push((index, condition.to_string()));
             threshold = indent;
             continue;
         }
@@ -193,7 +218,7 @@ pub(super) fn guarding_conditions(
         }
         if let Some(rest) = trimmed.strip_prefix("while ") {
             let condition = rest.trim_end().strip_suffix(':')?.trim();
-            conditions.push(condition.to_string());
+            conditions.push((index, condition.to_string()));
             threshold = indent;
             continue;
         }
@@ -240,11 +265,30 @@ fn is_block_opener(trimmed: &str) -> bool {
 /// the row.
 fn condition_holds(
     condition: &str,
+    condition_line: usize,
     row: &CallRow,
     constants: &[PythonModuleConstant],
+    owner_source: &str,
+    owner_start: usize,
 ) -> Option<bool> {
     for conjunct in condition.split(" and ") {
-        match eval_comparison(conjunct.trim(), row, constants) {
+        let conjunct = conjunct.trim();
+        // `or` and `not` change when the condition is true without changing
+        // the single comparison this reader extracts: `total > 1000 or force`
+        // is true through `force` alone, and `not total > 1000` reverses the
+        // comparison. Evaluating the comparison alone could exclude a row
+        // that entered the arm, so these guards are unreadable (fail open).
+        if has_boolean_operator(conjunct) {
+            return None;
+        }
+        match eval_comparison(
+            conjunct,
+            condition_line,
+            row,
+            constants,
+            owner_source,
+            owner_start,
+        ) {
             Some(true) => {}
             Some(false) => return Some(false),
             None => return None,
@@ -253,11 +297,116 @@ fn condition_holds(
     Some(true)
 }
 
+/// True when `text` applies `or` or `not` outside string literals.
+fn has_boolean_operator(text: &str) -> bool {
+    keyword_outside_quotes(text, "or") || keyword_outside_quotes(text, "not")
+}
+
+/// True when `keyword` appears in `text` outside quotes, bounded by
+/// non-identifier characters (so `notary` does not match `not`).
+fn keyword_outside_quotes(text: &str, keyword: &str) -> bool {
+    let bytes = text.as_bytes();
+    let keyword = keyword.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut index = 0;
+    while index + keyword.len() <= bytes.len() {
+        let byte = bytes[index];
+        if let Some(active) = quote {
+            if byte == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if bytes[index..].starts_with(keyword)
+            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
+            && (index + keyword.len() == bytes.len()
+                || !is_identifier_byte(bytes[index + keyword.len()]))
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// True when the owner body assigns the parameter a new value between the
+/// owner header and the guard line, so a call binding no longer predicts the
+/// value the guard reads. Deliberately conservative (clear assignment forms
+/// only: `name = ..`, augmented and annotated assignment, a `for` target);
+/// anything subtler keeps the existing limitation.
+fn parameter_rebound_before(
+    owner_source: &str,
+    owner_start: usize,
+    guard_line: usize,
+    name: &str,
+) -> bool {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    for raw in lines.get(owner_start..guard_line).unwrap_or(&[]) {
+        let trimmed = raw.trim();
+        if let Some(rest) = trimmed.strip_prefix(name).map(str::trim_start) {
+            let mut chars = rest.chars();
+            match chars.next() {
+                // `name = ..`; `name == ..` is a comparison, not a binding.
+                Some('=') if chars.next() != Some('=') => return true,
+                // Annotated assignment `name: T = ..`.
+                Some(':') => return true,
+                Some(op)
+                    if ['+', '-', '*', '/', '%'].contains(&op) && chars.next() == Some('=') =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        if let Some(targets) = trimmed
+            .strip_prefix("for ")
+            .and_then(|rest| rest.split(" in ").next())
+        {
+            // `for name in ..` / `for a, name in ..` rebinds the name.
+            if targets.split(',').any(|target| target.trim() == name) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// One `left <op> right` comparison under a row's literal bindings, or None
 /// when the comparison or an operand is not statically readable.
-fn eval_comparison(text: &str, row: &CallRow, constants: &[PythonModuleConstant]) -> Option<bool> {
+fn eval_comparison(
+    text: &str,
+    condition_line: usize,
+    row: &CallRow,
+    constants: &[PythonModuleConstant],
+    owner_source: &str,
+    owner_start: usize,
+) -> Option<bool> {
     let (start, len) = comparison_operator(text)?;
     let (left, right) = simple_comparison_operands(text, start, len)?;
+    for operand in [&left, &right] {
+        // A bare name the owner rebinds before the guard reads a different
+        // value from the one the call bound (`total = 2000` above
+        // `if total > 1000`), so the call binding cannot exclude the row.
+        if !operand.contains('.')
+            && operand
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && parameter_rebound_before(owner_source, owner_start, condition_line, operand)
+        {
+            return None;
+        }
+    }
     let left = resolve_operand(&left, row, constants)?;
     let right = resolve_operand(&right, row, constants)?;
     compare_literal_values(&left, &text[start..start + len], &right)
@@ -329,13 +478,13 @@ fn comparison_operator(text: &str) -> Option<(usize, usize)> {
 }
 
 /// Compare two resolved literal values with `op`. Equality uses Python
-/// scalar semantics (`literals_equal`); ordering parses the canonical
-/// decimals and never orders across kinds (a string against a number is
-/// unreadable, which fails open).
+/// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
+/// ordering parses the canonical decimals and never orders across kinds (a
+/// string against a number is unreadable, which fails open).
 fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
     match op {
-        "==" => Some(literals_equal(left, right)),
-        "!=" => Some(!literals_equal(left, right)),
+        "==" => Some(guard_literals_equal(left, right)),
+        "!=" => Some(!guard_literals_equal(left, right)),
         "<" | "<=" | ">" | ">=" => {
             let left: f64 = canonical_decimal(left)?.parse().ok()?;
             let right: f64 = canonical_decimal(right)?.parse().ok()?;
@@ -346,6 +495,35 @@ fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
                 _ => left >= right,
             })
         }
+        _ => None,
+    }
+}
+
+/// Equality as Python evaluates it for scalar literals. The shared
+/// [`literals_equal`] intentionally never equates mixed kinds ("fails closed
+/// toward not observed") because the boundary rule uses it to award credit;
+/// this gate uses the answer to EXCLUDE a call, which reverses the
+/// conservative direction, so bool/numeric pairs follow Python semantics:
+/// `True == 1` and `False == 0` hold, and `2 == True` does not.
+fn guard_literals_equal(left: &str, right: &str) -> bool {
+    match (bool_decimal(left), bool_decimal(right)) {
+        (Some(left), Some(right)) => return left == right,
+        (Some(bool_value), None) => {
+            return canonical_decimal(right).is_some_and(|num| num == bool_value);
+        }
+        (None, Some(bool_value)) => {
+            return canonical_decimal(left).is_some_and(|num| num == bool_value);
+        }
+        (None, None) => {}
+    }
+    literals_equal(left, right)
+}
+
+/// The decimal value Python equates a bool with, or None for anything else.
+fn bool_decimal(text: &str) -> Option<String> {
+    match text {
+        "True" => Some("1".to_string()),
+        "False" => Some("0".to_string()),
         _ => None,
     }
 }
@@ -362,13 +540,33 @@ mod tests {
             .ok_or_else(|| "quote owner must parse".to_string())
     }
 
+    fn test_row(bindings: &[(&str, &str)]) -> CallRow {
+        use super::super::boundary::Binding;
+        CallRow {
+            line: 1,
+            text: "quote(..)".to_string(),
+            bindings: bindings
+                .iter()
+                .map(|(parameter, value)| {
+                    (
+                        (*parameter).to_string(),
+                        Binding {
+                            value: (*value).to_string(),
+                            from_default: false,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn guarding_conditions_reads_enclosing_if_arm() -> Result<(), String> {
         let source = "def quote(total):\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n";
         let owner = quote_owner(source)?;
         let conditions = guarding_conditions(&owner, source, 3)
             .ok_or_else(|| "guarded line must yield conditions".to_string())?;
-        assert_eq!(conditions, vec!["total > 1000".to_string()]);
+        assert_eq!(conditions, vec![(1, "total > 1000".to_string())]);
         Ok(())
     }
 
@@ -380,7 +578,10 @@ mod tests {
             .ok_or_else(|| "nested guarded line must yield conditions".to_string())?;
         assert_eq!(
             conditions,
-            vec!["total > 0".to_string(), "total > 1000".to_string()]
+            vec![
+                (1, "total > 0".to_string()),
+                (2, "total > 1000".to_string())
+            ]
         );
         Ok(())
     }
@@ -394,7 +595,7 @@ mod tests {
         let owner = quote_owner(source)?;
         let conditions = guarding_conditions(&owner, source, 5)
             .ok_or_else(|| "elif arm line must yield conditions".to_string())?;
-        assert_eq!(conditions, vec!["total > 0".to_string()]);
+        assert_eq!(conditions, vec![(3, "total > 0".to_string())]);
         Ok(())
     }
 
@@ -423,5 +624,81 @@ mod tests {
         // A number against a string is unreadable, which fails open.
         assert_eq!(compare_literal_values("100", ">", "\"a\""), None);
         assert_eq!(compare_literal_values("\"a\"", "<", "\"b\""), None);
+    }
+
+    #[test]
+    fn compare_literal_values_equates_bool_like_python() {
+        // Python compares `True == 1` and `False == 0` as true; the shared
+        // literals_equal never mixes kinds, which is conservative for credit
+        // but wrong for the exclusion direction this gate evaluates.
+        assert_eq!(compare_literal_values("True", "==", "1"), Some(true));
+        assert_eq!(compare_literal_values("1", "==", "True"), Some(true));
+        assert_eq!(compare_literal_values("False", "==", "0"), Some(true));
+        assert_eq!(compare_literal_values("2", "==", "True"), Some(false));
+        assert_eq!(compare_literal_values("True", "!=", "1"), Some(false));
+        assert_eq!(compare_literal_values("True", "==", "False"), Some(false));
+    }
+
+    #[test]
+    fn keyword_outside_quotes_respects_word_boundaries() {
+        assert!(keyword_outside_quotes("total > 1000 or force", "or"));
+        assert!(keyword_outside_quotes("not total > 1000", "not"));
+        assert!(!keyword_outside_quotes("notary > 100", "not"));
+        assert!(!keyword_outside_quotes("total > \"or\"", "or"));
+        assert!(!keyword_outside_quotes("force_flag > 0", "or"));
+    }
+
+    #[test]
+    fn condition_holds_fails_open_on_or_guard() {
+        // `total > 1000 or force` is entered through `force` alone; reading
+        // only the comparison would exclude a row that entered the arm.
+        let source = "def quote(total, force):\n    if total > 1000 or force:\n        return 42\n";
+        let row = test_row(&[("total", "100.0"), ("force", "True")]);
+        assert_eq!(
+            condition_holds("total > 1000 or force", 1, &row, &[], source, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn condition_holds_fails_open_on_not_guard() {
+        // `not total > 1000` reverses the comparison; a row the comparison
+        // fails enters the arm, so the raw comparison must not exclude it.
+        let source = "def quote(total):\n    if not total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "2000.0")]);
+        assert_ne!(
+            condition_holds("not total > 1000", 1, &row, &[], source, 0),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn condition_holds_still_excludes_simple_false_comparison() {
+        let source = "def quote(total):\n    if total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "100.0")]);
+        assert_eq!(
+            condition_holds("total > 1000", 1, &row, &[], source, 0),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn eval_comparison_fails_open_on_rebound_parameter() {
+        // `total = 2000` between the header and the guard means the guard
+        // reads 2000 regardless of the call binding, so the binding cannot
+        // exclude the row.
+        let source =
+            "def quote(total):\n    total = 2000\n    if total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "100.0")]);
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], source, 0),
+            None
+        );
+        // Without the rebinding the same binding honestly excludes the row.
+        let plain = "def quote(total):\n    if total > 1000:\n        return 42\n";
+        assert_eq!(
+            eval_comparison("total > 1000", 1, &row, &[], plain, 0),
+            Some(false)
+        );
     }
 }

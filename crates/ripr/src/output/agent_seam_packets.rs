@@ -3561,10 +3561,39 @@ fn owned_string_literal_payload(payload: &str) -> Option<String> {
 }
 
 /// A conservative literal gate: the payload must be a single delimited
-/// string with no interior unescaped newline. Anything richer is a runtime
-/// expression the static layer cannot spell as a pattern.
+/// string with no interior unescaped quote and no unescaped newline, so a
+/// compound expression that merely starts and ends with a quote
+/// (`"a".to_owned() + "b"`) is rejected rather than advertised as a
+/// comparable literal.
 fn wellformed_string_literal(text: &str) -> bool {
-    text.len() >= 2 && text.starts_with('"') && text.ends_with('"') && !text.contains('\n')
+    let Some(inner) = text
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    else {
+        return false;
+    };
+    !inner.contains('\n') && !has_unescaped_quote(inner)
+}
+
+/// True when `text` contains a `"` preceded by an even backslash run (an
+/// unescaped quote), which means the text is not one string literal.
+fn has_unescaped_quote(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'"' {
+            continue;
+        }
+        let mut backslashes = 0;
+        let mut prev = index;
+        while prev > 0 && bytes[prev - 1] == b'\\' {
+            backslashes += 1;
+            prev -= 1;
+        }
+        if backslashes % 2 == 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn predicate_boundary_assertion_hint(
@@ -6443,6 +6472,20 @@ mod tests {
                 .unwrap_or_default()
                 .contains("/* trigger /*")
         );
+    }
+
+    #[test]
+    fn wellformed_string_literal_rejects_compound_expressions() {
+        // First and last character are quotes, but the payload is a runtime
+        // expression, not one literal: it must not be advertised as a
+        // comparable literal in a generated assertion.
+        assert!(!wellformed_string_literal("\"a\".to_owned() + \"b\""));
+        assert!(!wellformed_string_literal("\"a\" + \"b\""));
+        assert!(!wellformed_string_literal("\"\nx\""));
+        // Controls: plain and escaped-quote literals stay well-formed.
+        assert!(wellformed_string_literal("\"a\""));
+        assert!(wellformed_string_literal("\"\""));
+        assert!(wellformed_string_literal("\"a\\\"b\""));
     }
 
     #[test]

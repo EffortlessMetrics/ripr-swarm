@@ -46,6 +46,15 @@ alone:
   with the exact assertion kept. When the finding carries a missing
   discriminator fact, the step appends it the way the predicate probe's
   evidence does (`Missing discriminator: \`...\``).
+- Only credited rows are eligible: the oracle must belong to a row whose
+  oracle supports the finding's class, or whose only recorded gap is the
+  input (`missing_input`). A row ripr could not credit (no call path, no
+  observing assertion, an unconfirmed observation) never dictates the owner
+  finding's advice, and the oracle must be admitted as `strong`: a syntactic
+  `assert_eq!` the classifier downgraded (for example a self-computed
+  expected value) does not establish an independent exact discriminator, so
+  "keep the exact assertion" would be wrong advice for it and the family
+  template stands.
 - When the strongest related oracle is not exact (broad error check, smoke
   assertion, unreadable shape), or no related test row exists, the existing
   family template stands unchanged; that advice is honest for those shapes.
