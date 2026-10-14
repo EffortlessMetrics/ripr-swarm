@@ -59,15 +59,22 @@ fn packaged_readme_violations_at(root: &Path, package_list: &str) -> Result<Vec<
     let workspace = read_text(&root.join(WORKSPACE_MANIFEST))?;
     let workspace_version = workspace_package_version(&workspace)?;
     let crate_manifest = read_text(&root.join(CRATE_MANIFEST))?;
-    let readme_filename = crate_readme_filename(&crate_manifest);
-    let readme_path = root.join("crates").join("ripr").join(&readme_filename);
-    let readme = read_text(&readme_path)?;
-    Ok(packaged_readme_violations(&PackagedReadmeInputs {
-        workspace_version: &workspace_version,
-        package_list,
-        readme_filename: &readme_filename,
-        readme: &readme,
-    }))
+    match crate_readme_field(&crate_manifest) {
+        CrateReadme::Disabled => Ok(vec![
+            "crates/ripr/Cargo.toml sets `readme = false`; crates.io will not render a packaged README"
+                .to_string(),
+        ]),
+        CrateReadme::Filename(readme_filename) => {
+            let readme_path = root.join("crates").join("ripr").join(&readme_filename);
+            let readme = read_text(&readme_path)?;
+            Ok(packaged_readme_violations(&PackagedReadmeInputs {
+                workspace_version: &workspace_version,
+                package_list,
+                readme_filename: &readme_filename,
+                readme: &readme,
+            }))
+        }
+    }
 }
 
 pub(crate) fn packaged_readme_violations(inputs: &PackagedReadmeInputs<'_>) -> Vec<String> {
@@ -124,7 +131,7 @@ fn stale_current_line_violations(readme: &str, workspace_version: &str) -> Vec<S
                 line.trim()
             ));
         }
-        if let Some(claimed) = claimed_x_line(line)
+        if let Some(claimed) = claimed_current_x_line(line)
             && Some(claimed.as_str()) != workspace_line.as_deref()
         {
             violations.push(format!(
@@ -161,20 +168,45 @@ fn looks_like_version(value: &str) -> bool {
     }
 }
 
-fn claimed_x_line(line: &str) -> Option<String> {
-    let after_tick = line.split('`').nth(1)?;
-    let (major_minor, rest) = after_tick.split_once(".x")?;
-    if (rest.starts_with(" line") || rest.is_empty()) && looks_like_version(major_minor) {
-        return Some(major_minor.to_string());
+fn claimed_current_x_line(line: &str) -> Option<String> {
+    if !line.contains("current") || historical_line_marker(line) {
+        return None;
+    }
+    for chunk in line.split('`').skip(1).step_by(2) {
+        let (major_minor, rest) = match chunk.split_once(".x") {
+            Some(parts) => parts,
+            None => continue,
+        };
+        if (rest.starts_with(" line") || rest.is_empty()) && looks_like_version(major_minor) {
+            return Some(major_minor.to_string());
+        }
     }
     None
+}
+
+fn historical_line_marker(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    ["historical", "previous", "older", "prior", "former"]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn teaches_origin_main_default(readme: &str) -> bool {
     readme.lines().any(|line| {
         let trimmed = line.trim().trim_start_matches('$').trim();
-        command_text(trimmed) == TAUGHT_DEFAULT_BASE
+        ripr_check_teaches_origin_main(command_text(trimmed))
     })
+}
+
+fn ripr_check_teaches_origin_main(command: &str) -> bool {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    if tokens.first().copied() != Some("ripr") || tokens.get(1).copied() != Some("check") {
+        return false;
+    }
+    tokens
+        .windows(2)
+        .any(|pair| pair[0] == "--base" && pair[1] == "origin/main")
+        || tokens.contains(&"--base=origin/main")
 }
 
 fn command_text(line: &str) -> &str {
@@ -255,7 +287,21 @@ pub(crate) fn workspace_package_version(workspace_toml: &str) -> Result<String, 
     Err("Cargo.toml [workspace.package] version is missing".to_string())
 }
 
-pub(crate) fn crate_readme_filename(crate_toml: &str) -> String {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CrateReadme {
+    Disabled,
+    Filename(String),
+}
+
+#[cfg(test)]
+fn crate_readme_filename(crate_toml: &str) -> String {
+    match crate_readme_field(crate_toml) {
+        CrateReadme::Disabled => DEFAULT_README.to_string(),
+        CrateReadme::Filename(name) => name,
+    }
+}
+
+fn crate_readme_field(crate_toml: &str) -> CrateReadme {
     let mut in_package = false;
     for raw in crate_toml.lines() {
         let line = strip_toml_comment(raw).trim();
@@ -266,14 +312,27 @@ pub(crate) fn crate_readme_filename(crate_toml: &str) -> String {
             in_package = line == "[package]";
             continue;
         }
+        if in_package && toml_bool_false(line, "readme") {
+            return CrateReadme::Disabled;
+        }
         if in_package
             && let Some(readme) = toml_string_value(line, "readme")
             && !readme.is_empty()
         {
-            return readme;
+            return CrateReadme::Filename(readme);
         }
     }
-    DEFAULT_README.to_string()
+    CrateReadme::Filename(DEFAULT_README.to_string())
+}
+
+fn toml_bool_false(line: &str, key: &str) -> bool {
+    let Some(rest) = line.strip_prefix(key) else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    rest.trim_start() == "false"
 }
 
 fn toml_string_value(line: &str, key: &str) -> Option<String> {
@@ -493,10 +552,6 @@ ripr check --base origin/main
             "expected missing workspace version; got {violations:?}"
         );
         assert!(
-            joined.contains("`0.8.x` line as current"),
-            "expected stale 0.8.x current-line claim; got {violations:?}"
-        );
-        assert!(
             joined.contains("names `0.8.0` as the current public release line"),
             "expected stale current-public-release-line claim; got {violations:?}"
         );
@@ -532,6 +587,64 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
             "expected prompted command to count; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn extra_flags_do_not_hide_taught_origin_main() {
+        let readme = CURRENT_LIKE.replace("ripr check\n", "ripr check --base origin/main --json\n");
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
+            "expected extra flags not to hide the taught base; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn equals_form_base_still_counts_as_taught_default() {
+        let readme = CURRENT_LIKE.replace("ripr check\n", "ripr check --base=origin/main\n");
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
+            "expected --base=origin/main to count; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn current_x_line_claim_fails_when_stale() {
+        let readme = CURRENT_LIKE.replace(
+            "This source package is **0.11.0 development, pending publication**.",
+            "The `0.8.x` line is current.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("`0.8.x` line as current")),
+            "expected current 0.8.x claim to fail; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn historical_x_line_is_not_a_current_claim() {
+        let readme = CURRENT_LIKE.replace(
+            "This source package is **0.11.0 development, pending publication**.",
+            "The historical `0.10.x` line used the old settings.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("`0.10.x` line as current")),
+            "historical .x mention must not fail the cut; got {violations:?}"
         );
     }
 
@@ -625,6 +738,14 @@ ripr check --base origin/main
     fn crate_readme_filename_defaults_when_absent() {
         let name = crate_readme_filename("[package]\nname = \"ripr\"\n");
         assert_eq!(name, "README.md");
+    }
+
+    #[test]
+    fn crate_readme_field_refuses_explicit_false() {
+        assert_eq!(
+            crate_readme_field("[package]\nname = \"ripr\"\nreadme = false\n"),
+            CrateReadme::Disabled
+        );
     }
 
     #[test]
