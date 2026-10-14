@@ -53631,7 +53631,8 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
         XtaskCommand::parse(["ci-policy".to_string(), "--skip".to_string()]),
         XtaskCommand::Unknown(_)
     ));
-    let required = "jobs:\n  policy:\n    steps:\n      - run: cargo xtask ci-policy\n";
+    let required =
+        "jobs:\n  policy:\n    steps:\n      - name: Policy\n        run: cargo xtask ci-policy\n";
     let mut enforced = super::ci_enforced_xtask_invocations(required);
     super::expand_precommit_ci_invocations(&mut enforced);
     for gate in super::PRECOMMIT_GATE_COMMANDS {
@@ -53642,7 +53643,10 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
     }
     for advisory in [
         required.replace("ci-policy", "ci-policy || true"),
-        required.replace("- run:", "- continue-on-error: true\n        run:"),
+        required.replace(
+            "- name: Policy",
+            "- name: Policy\n        continue-on-error: true",
+        ),
     ] {
         let mut enforced = super::ci_enforced_xtask_invocations(&advisory);
         super::expand_precommit_ci_invocations(&mut enforced);
