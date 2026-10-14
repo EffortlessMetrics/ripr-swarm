@@ -6,7 +6,9 @@ use super::arguments::{
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
 use super::scan::balanced_group_end;
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::{
+    mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
+};
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -1204,6 +1206,17 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
 /// `expect_err()` is a mock's expectation for a method named `err`
 /// (mockall's `expect_<method>`), so it stays. A message left open at the
 /// end of the line is dropped with the rest of the line.
+/// Whether a call's argument text holds any token: a comment is not an
+/// argument, so `expect_err(/* setup */)` is still mockall's zero-argument
+/// expectation, while a string or character literal is one even though
+/// masking blanks it.
+pub(super) fn has_argument_tokens(arguments: &str) -> bool {
+    let (masked, string_quotes) = mask_with_string_delimiter_quotes(arguments);
+    string_quotes > 0
+        || !masked.trim().is_empty()
+        || !mask_with_char_literals(arguments).1.is_empty()
+}
+
 pub(super) fn without_expect_err(line: &str) -> String {
     const CALL: &str = ".expect_err(";
     // Masking keeps byte length, so offsets found on it index `line`.
@@ -1215,7 +1228,7 @@ pub(super) fn without_expect_err(line: &str) -> String {
         let start = search + found;
         let open = start + CALL.len() - 1;
         match balanced_group_end(&masked, open) {
-            Some(close) if line[open + 1..close].trim().is_empty() => search = open + 1,
+            Some(close) if !has_argument_tokens(&line[open + 1..close]) => search = open + 1,
             Some(close) => {
                 out.push_str(&line[copied..start]);
                 out.push_str(".()");
