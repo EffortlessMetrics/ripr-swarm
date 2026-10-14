@@ -74,6 +74,44 @@ fn http_class_table() {
 }
 "#;
 
+const SHADOWED_TABLE: &str = r#"use match_arm_table_selection::http_class;
+
+#[test]
+fn http_class_table() {
+    let http_class = |_status: u16| "redirect";
+    let cases = [(301, "redirect")];
+    for (status, want) in cases {
+        assert_eq!(http_class(status), want, "{status}");
+    }
+}
+"#;
+
+const BOUND_RESULT_TABLE: &str = r#"use match_arm_table_selection::http_class;
+
+#[test]
+fn http_class_table() {
+    let want = http_class(301);
+    let cases = [(301, ())];
+    for (status, _unit) in cases {
+        assert_eq!(http_class(status), want, "{status}");
+    }
+}
+"#;
+
+const HELPER_NAMED_LIKE_THE_COLUMN: &str = r#"use match_arm_table_selection::http_class;
+
+fn check(status: u16, want: &str) {
+    assert_eq!(http_class(status), want);
+}
+
+#[test]
+fn http_class_table() {
+    for status in [301u16, 302] {
+        check(status + 100, "client error");
+    }
+}
+"#;
+
 struct TempRepo {
     root: PathBuf,
 }
@@ -197,6 +235,29 @@ fn a_table_built_at_run_time_does_not_expose_the_arm() -> Result<(), String> {
             "a table a function returns is not a constant-row table: {:?}",
             finding.ripr.reveal.discriminate
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_table_test_that_shadows_binds_or_borrows_does_not_expose_the_arm() -> Result<(), String> {
+    for (label, test) in [
+        ("a closure shadowing the owner", SHADOWED_TABLE),
+        (
+            "an owner result bound on the expected side",
+            BOUND_RESULT_TABLE,
+        ),
+    ] {
+        let repo = TempRepo::create(test)?;
+        let output = repo.check()?;
+        for finding in changed_arms(&output)? {
+            assert_ne!(
+                finding.class,
+                ripr::ExposureClass::Exposed,
+                "{label} must not credit the arm: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
     }
     Ok(())
 }

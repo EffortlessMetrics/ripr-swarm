@@ -802,7 +802,7 @@ impl ArmSelector {
     ) -> Self {
         for test in tests {
             for assertion in &test.assertions {
-                if self.table_row_selects(test, &assertion.text) {
+                if self.table_row_selects(test, &assertion.text, assertion.line) {
                     self.lent_selections.insert((
                         test.file.clone(),
                         test.start_line,
@@ -816,7 +816,7 @@ impl ArmSelector {
         self
     }
 
-    fn table_row_selects(&self, test: &TestSummary, assertion_text: &str) -> bool {
+    fn table_row_selects(&self, test: &TestSummary, assertion_text: &str, line: usize) -> bool {
         let Some(operands) = self.exact_operands(assertion_text) else {
             return false;
         };
@@ -827,7 +827,7 @@ impl ArmSelector {
                 .filter(|call| call.span == (0, operand.len()))
                 .filter_map(|call| self.call_input(&call))
                 .map(str::trim)
-                .filter(|input| is_identifier(input))
+                .filter(|input| is_identifier(input) && runs_in_table_loop(test, line, input))
                 .filter_map(|input| {
                     crate::analysis::syntax::constant_table_column(&test.body, input)
                 })
@@ -2403,6 +2403,74 @@ fn integer_scrutinee(scrutinee: &str) -> Option<(&str, ScrutineeArithmetic)> {
     ))
 }
 
+/// Whether the test's own statement on `line` starts with an assertion and
+/// stands directly in the body of a `for` whose pattern binds `name`, with
+/// nothing before it in that body that may skip a row (`continue`, `break`,
+/// `return`, `?`) and no block, closure or call around it. An assertion a
+/// check helper lends (#6482) sits outside the test body and never reads
+/// the test's table (decision 7).
+fn runs_in_table_loop(test: &TestSummary, line: usize, name: &str) -> bool {
+    let Some(relative) = line.checked_sub(test.start_line) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&test.body);
+    let offset = masked
+        .split_inclusive('\n')
+        .take(relative)
+        .map(str::len)
+        .sum::<usize>();
+    if relative == 0 || offset >= masked.len() {
+        return false;
+    }
+    let statement = masked[offset..].trim_start();
+    if !(statement.starts_with("assert_eq!")
+        || statement.starts_with("std::assert_eq!")
+        || statement.starts_with("core::assert_eq!"))
+    {
+        return false;
+    }
+    let statement_start = masked.len() - statement.len();
+    whole_word_offsets(&masked[..statement_start], "for")
+        .into_iter()
+        .rev()
+        .any(|keyword| {
+            let after = &masked[keyword + "for".len()..statement_start];
+            let Some(in_at) = whole_word_offsets(after, "in").first().copied() else {
+                return false;
+            };
+            if whole_word_offsets(&after[..in_at], name).is_empty() {
+                return false;
+            }
+            let Some(open) = masked[keyword..statement_start]
+                .find('{')
+                .map(|at| keyword + at)
+            else {
+                return false;
+            };
+            let Some(close) = matching_close_brace(&masked, open) else {
+                return false;
+            };
+            if close < statement_start {
+                return false;
+            }
+            let before = &masked[open + 1..statement_start];
+            let mut depth = 0i32;
+            for byte in before.bytes() {
+                match byte {
+                    b'{' | b'(' | b'[' => depth += 1,
+                    b'}' | b')' | b']' => depth -= 1,
+                    _ => {}
+                }
+            }
+            depth == 0
+                && !before.contains('?')
+                && ["continue", "break", "return"]
+                    .iter()
+                    .all(|word| whole_word_offsets(before, word).is_empty())
+                && (before.trim().is_empty() || before.trim_end().ends_with([';', '}']))
+        })
+}
+
 /// The offset of the `}` that closes the `{` at `open`.
 fn matching_close_brace(masked: &str, open: usize) -> Option<usize> {
     let mut depth = 0usize;
@@ -3596,21 +3664,40 @@ mod tests {
         let selecting = test_with(
             "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
         );
-        assert!(selector.table_row_selects(&selecting, assertion));
+        assert!(selector.table_row_selects(&selecting, assertion, 4));
         let other_rows = test_with(
             "fn t() {\n    let cases = [(200, \"success\"), (404, \"other\")];\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
         );
-        assert!(!selector.table_row_selects(&other_rows, assertion));
+        assert!(!selector.table_row_selects(&other_rows, assertion, 4));
         // A table built at run time lends nothing.
         let computed = test_with(
             "fn t() {\n    let cases = statuses();\n    for (status, want) in cases {\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
         );
-        assert!(!selector.table_row_selects(&computed, assertion));
+        assert!(!selector.table_row_selects(&computed, assertion, 4));
         // `assert_ne!` passes for many arm results.
         assert!(!selector.table_row_selects(
             &selecting,
-            "assert_ne!(http_class(status), want, \"{status}\");"
+            "assert_ne!(http_class(status), want, \"{status}\");",
+            4
         ));
+        // Only the test's own statement directly in the loop body reads the
+        // table: a borrowed helper assertion on another line, a skipped
+        // row, a conditional or a closure never does.
+        assert!(!selector.table_row_selects(&selecting, assertion, 7));
+        for unrun in [
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        if status == 301 { continue; }\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        if status < 300 {\n        assert_eq!(http_class(status), want, \"{status}\");\n        }\n    }\n}\n",
+            "fn t() {\n    let cases = [(200, \"success\"), (301, \"redirect\")];\n    for (status, want) in cases {\n        let check = ||\n        assert_eq!(http_class(status), want, \"{status}\");\n    }\n}\n",
+        ] {
+            let line = unrun
+                .lines()
+                .position(|line| line.trim_start().starts_with("assert_eq!"))
+                .map_or(0, |at| at + 1);
+            assert!(
+                !selector.table_row_selects(&test_with(unrun), assertion, line),
+                "must not read the table: {unrun}"
+            );
+        }
         Ok(())
     }
 

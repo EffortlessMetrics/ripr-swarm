@@ -446,7 +446,7 @@ impl ClassifiedProbeEvidence {
                                 })
                         },
                     )
-                    // Decision 7: a constant-row table's cells (#5328).
+                    // RIPR-SPEC-0229 decision 7: a constant-row table's cells (#5328).
                     .with_table_rows(context.related_tests.iter().map(|(test, _)| *test))
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,

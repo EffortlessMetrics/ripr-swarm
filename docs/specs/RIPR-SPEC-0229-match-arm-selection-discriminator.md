@@ -84,8 +84,9 @@ Three wrong outcomes follow:
 ### Selection facts
 
 For a changed `match_arm` probe, activation collects every related test's
-owner calls whose scrutinee is a parameter of the owner, not shadowed or
-reassigned before the `match`. Each call is either resolved (its argument is
+owner calls whose scrutinee is a parameter of the owner (or, by decision 6,
+one integer `/` or `%` of it by a literal), not shadowed or reassigned
+before the `match`. Each call is either resolved (its argument is
 statically resolved, below) or unresolved; an unresolved call is kept as a
 blocker, never dropped. A resolved call **provably selects** an arm when, in
 source order,
@@ -115,7 +116,8 @@ in the same test whose initializer is one and which is not shadowed before
 the call. A `let mut` binding, or one passed as `&mut` before the call, is
 unresolved. Arguments from helpers, fixtures, loops,
 parameters or other calls are unresolved, except the helper-lent literals
-of decision 5, which only credit the selected arm.
+of decision 5 and the constant-row table cells of decision 7, which only
+credit the selected arm.
 
 ### Naming the unselected arm
 
@@ -305,7 +307,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    expression, another operator, a non-literal or zero divisor, or a
    non-integer parameter establishes nothing. Separately, a changed arm
    whose alternatives are all literals or literal-bounded integer ranges,
-   equal as sets of values to the original's (`3` to `0x3`), reads as an
+   each matching an alternative of the original by value and vice versa
+   (`3` to `0x3`; `1..=3` to `1 | 2 | 3` still reads as changed), reads as an
    unchanged pattern, like reordered alternatives. Rejected: keep every
    computed scrutinee a non-goal, which leaves the common
    status-class and weekday matches unproven.
@@ -314,8 +317,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    constant-row `for` table (#5328, read by `constant_table_column`) is a
    selecting call when some row's cell selects the arm, since the loop
    runs the assertion once per row. Like decision 5 this credits only;
-   table rows never name an arm as unselected. Rejected: keep loop
-   bindings unresolved.
+   table rows never name an arm as unselected. The assertion must be the
+   test's own `assert_eq!` statement standing directly in the body of the
+   `for` that binds the column, with no `continue`, `break`, `return` or
+   `?` before it in that body and no block, closure or call around it; an
+   assertion borrowed from a check helper never reads the test's table.
+   The test must still pass
+   the direct path's owner-identity gates: every owner mention a readable
+   call, no owner result bound with `let`, and no local shadow of the
+   owner. Rejected: keep loop bindings unresolved.
 
 ### Implementation Status
 
@@ -331,9 +341,10 @@ Implemented:
   established;
 - literal arguments a check helper lends to an owner call (decision 5,
   #7981), for credit only;
-- `param / N` and `param % N` integer scrutinees, value-equal literal
-  respellings, and constant-row table cells lent to the owner call, for
-  credit only (decisions 6 and 7, #7989);
+- `param / N` and `param % N` integer scrutinees and value-equal literal
+  respellings (decision 6, #7989), which both select and name arms;
+- constant-row table cells lent to the owner call, for credit only
+  (decision 7, #7989);
 - integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
   matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,

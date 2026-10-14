@@ -1151,8 +1151,10 @@ fn analyze_related_assertions(
                 arm_pattern_pinned: match_context
                     .arm_selector
                     .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
-                // A helper-lending test never names the owner, so the
-                // selector the mention filter dropped still reads its loan.
+                // A helper-lending test may never name the owner, so the
+                // selector the mention filter dropped still reads its loan;
+                // a table test names it and keeps the filtered selector's
+                // readability gate in `has_token_match`.
                 arm_lent_selected: unfiltered_arm_selector
                     .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
@@ -2533,7 +2535,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_pattern_pinned,
         arm_lent_selected,
         owner_scoped_tokens,
-        owner_shadowed: _,
+        owner_shadowed,
         sibling_excluded,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
@@ -2647,9 +2649,16 @@ fn assertion_matches_probe_detail_with_literals(
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
     let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
-        // RIPR-SPEC-0229 decision 5: the helper's owner call receives a
-        // literal that selects the arm, under the same owner defeats.
-        !import_defeats_owner && !cross_package_defeats_owner
+        // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
+        // input (a helper's literal or a table row's cell) that selects the
+        // arm, under the same owner defeats. A test that names the owner
+        // (every table test) must also read as the direct path requires:
+        // each mention a readable call, no owner result bound with `let`
+        // that may stand on the expected side, and no local shadow.
+        !import_defeats_owner
+            && !cross_package_defeats_owner
+            && !owner_shadowed
+            && (arm_selector.is_none() || arm_inputs_readable)
     } else if let Some(selector) = arm_selector
         && matches!(family, ProbeFamily::MatchArm)
     {
