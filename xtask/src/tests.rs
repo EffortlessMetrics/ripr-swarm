@@ -29729,7 +29729,7 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
     );
     assert_eq!(
         dispositions.get(&2).map(String::as_str),
-        Some("needs_rebase")
+        Some("needs_integration_review")
     );
     assert_eq!(
         dispositions.get(&3).map(String::as_str),
@@ -29744,6 +29744,110 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Result<(), String> {
+    let mut pr = triage_pr(2, "devex: behind", &["docs/CI.md"]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(prs, today);
+    let behind = findings
+        .iter()
+        .filter(|f| f.category == "behind main")
+        .collect::<Vec<_>>();
+    assert_eq!(behind.len(), 1, "setup must exercise the behind finding");
+    let expected = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+    assert_eq!(behind[0].recommended_action, expected);
+    let dispositions = pr_triage_queue_dispositions(prs, &findings);
+    assert_eq!(dispositions.len(), 1);
+    assert_eq!(dispositions[0].disposition, "needs_integration_review");
+    assert_eq!(dispositions[0].recommended_action, expected);
+    let markdown = pr_triage_markdown(prs, &findings, today);
+    assert!(markdown.contains("`needs_integration_review`"));
+    assert!(markdown.contains("BEHIND"));
+    assert!(markdown.contains(expected));
+    assert!(!markdown.contains("needs_rebase"));
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &findings, today, "fixture"))
+        .map_err(|err| format!("behind board packet should parse: {err}"))?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_integration_review"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    let encoded_findings = json["findings"]
+        .as_array()
+        .ok_or("board findings must be an array")?;
+    let encoded_behind = encoded_findings
+        .iter()
+        .find(|f| f["category"] == "behind main")
+        .ok_or("board must retain the behind observation")?;
+    assert_eq!(encoded_behind["recommended_action"], expected);
+    Ok(())
+}
+
+#[test]
+fn pr_triage_behind_keeps_review_validation_and_policy_routes() {
+    for (case, draft, review, status, conclusion, path, expected) in [
+        (
+            "draft",
+            true,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "pending",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "failed",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "policy",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            ".github/workflows/ci.yml",
+            "do_not_touch_wrong_lane",
+        ),
+    ] {
+        let mut pr = triage_pr(2, "devex: behind", &[path]);
+        pr.merge_state_status = "BEHIND".to_string();
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.checks = vec![gh_pr_status_check("rust", status, conclusion)];
+        let prs = std::slice::from_ref(&pr);
+        let findings = pr_triage_findings(prs, days_from_civil(2026, 5, 14));
+        let dispositions = pr_triage_queue_dispositions(prs, &findings);
+        assert_eq!(dispositions.len(), 1);
+        assert_eq!(dispositions[0].disposition, expected, "{case}");
+    }
 }
 
 #[test]

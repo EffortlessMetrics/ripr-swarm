@@ -1,3 +1,4 @@
 <!-- section: Fixed -->
-- `cargo xtask gh-pr-status` recommends integration inspection for a behind-only
-  PR after existing Draft and check waits, avoiding automatic rebase advice (#7775).
+- `cargo xtask gh-pr-status` and `pr-triage-report` recommend integration inspection
+  for a behind-only PR after existing review and check waits. The board disposition
+  is `needs_integration_review`, replacing automatic rebase advice (#7775).

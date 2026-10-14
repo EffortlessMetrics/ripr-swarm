@@ -444,10 +444,13 @@ through GitHub CLI and writes `target/ripr/reports/pr-triage.md` plus
 `target/ripr/reports/pr-triage.json`. It flags same-title families, identical
 changed-file sets, stale drafts, branches behind main, incomplete validation
 signals, and policy/gate/generated workflow surfaces. It also emits an
-advisory queue disposition for each PR — `merge_candidate`, `needs_rebase`,
+advisory queue disposition for each PR — `merge_candidate`, `needs_integration_review`,
 `needs_review`, `close_duplicate`, `superseded`, `needs_fresh_validation`,
 `needs_owner_decision`, or `do_not_touch_wrong_lane`. It is advisory and never
-updates, closes, merges, or comments on PRs.
+updates, closes, merges, or comments on PRs. The behind finding and disposition
+preserve the observation and unaffected proof; they request material integration
+judgment rather than a branch update. Existing duplicate, policy, validation and
+review routes precede that disposition.
 
 `branch-inventory` is the remote-branch ownership/age report (#2024). It
 regenerates the inventory from current GitHub/Git data and writes
