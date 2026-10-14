@@ -41,6 +41,15 @@ Use these headings when relevant:
 - `Fixed`
 - `Security`
 - `Docs`
+- `Internal / CI`
+
+`Internal / CI` is for contributor-only corpus case counts, xtask/CI plumbing,
+and fixture-registry bookkeeping. Do not file that class under `Added`,
+`Changed`, or `Fixed`. Analyzer behavior that a corpus case happens to exercise
+stays in the user-facing section that describes the behavior. Generated
+`ripr init --ci` workflow notes stay user-facing. At the release cut, fold
+`Internal / CI` fragments into a short rolled-up summary under that heading
+rather than one bullet per case batch.
 
 ## Static Language
 

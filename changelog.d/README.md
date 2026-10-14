@@ -23,15 +23,19 @@ same prose style `CHANGELOG.md` already uses, with the issue or PR reference
 ```
 
 Allowed sections are the ones in `docs/CHANGELOG_POLICY.md`: `Added`,
-`Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, `Docs`.
+`Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, `Docs`,
+`Internal / CI`. Verdict-corpus case counts, xtask/CI plumbing, and
+fixture-registry bookkeeping use `Internal / CI` so the fold can roll them
+into that Unreleased heading instead of crowding user-facing sections.
 
 ## What this is not
 
 - `cargo xtask check-changelog-fragments` (run by `precommit`) checks the
   format: the section line (the only HTML comment allowed), every entry a
   `- ` bullet at column 0 with indented continuation lines, an issue or PR
-  reference in each entry, and a lowercase kebab-case name that is more than
-  a number. Nothing checks that
+  reference in each entry, a lowercase kebab-case name that is more than
+  a number, and that verdict-corpus case-count or `Repo ops:` bookkeeping
+  uses `Internal / CI` rather than a user-facing section. Nothing checks that
   a PR which needs an entry carries one; reviewers do. The fold step below is
   manual.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.

@@ -21,6 +21,9 @@ use std::path::{Path, PathBuf};
 mod side_flip;
 mod tuple_match;
 
+pub(super) const PROPAGATION_BOUNDARY_UNVERIFIED: &str =
+    "propagation_boundary_activation_unestablished";
+
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
     pub(in crate::analysis) evidence: Vec<String>,
@@ -698,6 +701,24 @@ impl ClassifiedProbeEvidence {
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
+
+        // #1715: a complete expression identifies the changed `?`, but an
+        // equality for another error exit cannot certify that propagation path.
+        // Retain the closing-line origin and refuse new token-only promotion
+        // until same-test activation of this exact boundary is established.
+        let discriminate = if context.propagation_origin.is_some()
+            && discriminate.state == StageState::Yes
+        {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Low,
+                format!(
+                    "Complete propagation subject located; activation of the changed `?` exit is unestablished ({PROPAGATION_BOUNDARY_UNVERIFIED})"
+                ),
+            )
+        } else {
+            discriminate
+        };
 
         let ripr = RiprEvidence {
             reach: reach.clone(),

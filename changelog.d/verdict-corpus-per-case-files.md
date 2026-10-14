@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - Verdict corpus: the required Rust gate now runs `cargo xtask verdict-corpus
   check-all` at Draft -> Ready and on main pushes, checking every
   `fixtures/<language>-verdict-corpus`, so a PR that moves a labeled verdict

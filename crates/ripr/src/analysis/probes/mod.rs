@@ -5,6 +5,7 @@ mod expectations;
 mod family;
 mod ids;
 mod lexical;
+mod propagation_boundary;
 mod repo;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
@@ -32,6 +33,8 @@ pub(crate) struct SeededProbe {
     pub probe: Probe,
     pub binding_relation: Option<ChangedBindingPredicateUse>,
     pub parser_span: Option<ParserByteSpan>,
+    /// Original changed closing line; canonical identity alone cannot confirm activation.
+    pub propagation_origin: Option<crate::analysis::diff::ChangedLine>,
 }
 
 impl SeededProbe {
@@ -39,6 +42,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            propagation_origin: None,
             parser_span: None,
         }
     }
@@ -47,6 +51,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            propagation_origin: None,
             parser_span: Some(parser_span),
         }
     }
@@ -62,6 +67,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: Some(binding_relation),
+            propagation_origin: None,
             parser_span: None,
         }
     }
@@ -81,3 +87,6 @@ mod parameter_boundary_tests;
 mod record_field_boundary_tests;
 #[cfg(test)]
 mod where_bound_boundary_tests;
+
+#[cfg(test)]
+mod propagation_boundary_tests;
