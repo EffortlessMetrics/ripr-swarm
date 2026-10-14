@@ -78,10 +78,13 @@ counterpart for side effects.
    over-refusal, never a false reading. An owner, or a function it
    reaches, that invokes a macro other than the standard assertion and
    formatting macros is refused too, since the expansion may call the owner
-   back. Any indexed file that renames the owner (`use crate::add as
-   push_big;`, or a cast `add as fn(..)`) is refused, since calls under the
-   new name run it; the scan is textual, so a comment spelling `add as` also
-   refuses.
+   back. Any indexed file that names the owner as a value, rather than in a
+   direct call, its `fn` header or a plain `use` path, is refused, since
+   calls through that value run it under another name. Examples are a
+   renamed import (`use crate::add as push_big;`), a stored pointer
+   (`static BIG: fn(..) = add;`, `[add]`) and an argument (`apply(v, add)`).
+   Comments and strings are masked. A local or field that shares the
+   owner's name also refuses, which is a known over-refusal.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -141,8 +144,9 @@ counterpart for side effects.
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
    calls a helper that calls it back: no guard named (recursion). The same
    holds when a macro the owner, a helper it calls or a test helper invokes
-   calls it back, and when a test calls the owner under a renamed import
-   (`use crate::add as push_big;` then `push_big(&mut v, 20)`).
+   calls it back, and when a test calls the owner through a value: a
+   renamed import (`use crate::add as push_big;` then
+   `push_big(&mut v, 20)`), a `static` pointer or a `const` table.
 
 ## Test Mapping
 

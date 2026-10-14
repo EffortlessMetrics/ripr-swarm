@@ -1455,14 +1455,15 @@ fn missing_guard_entry_discriminator(
     // enters the guard (mutual recursion), which no test input shows.
     // A macro the owner invokes may expand to a call back into the owner
     // (`bump!(v)` → `add(v, 20)`), which neither check above can read.
-    // A renamed import (`use crate::add as push_big;`) calls the owner under
-    // a name no body scan for the owner finds.
+    // A function value (`use crate::add as push_big;`, `static BIG: fn(..)
+    // = add;`, `[add]`, `apply(v, add)`) calls the owner under a name no
+    // body scan for the owner finds.
     if owner_may_reenter(owner, &functions_by_name)
         || invokes_unread_macro(&owner.body)
         || index
             .files()
             .values()
-            .any(|file| renames_function(&file.source, &owner.name))
+            .any(|file| names_function_as_value(&file.source, &owner.name))
     {
         return None;
     }
@@ -1573,24 +1574,57 @@ fn may_reach_owner_unread(
     invokes_unread_macro(&test.body)
 }
 
-/// Whether `source` renames `function` (`use crate::add as push_big;`, or a
-/// cast such as `add as fn(u32)`), so calls under the new name run it. Read
-/// on raw text, so a comment or string spelling `add as` also counts; that
-/// only withholds the guard reading.
-fn renames_function(source: &str, function: &str) -> bool {
+/// Whether `source` names `function` other than in a direct call
+/// (`add(`), a `fn add` header or a plain `use` path: a renamed import
+/// (`use crate::add as push_big;`), a stored pointer (`static BIG: fn(..) =
+/// add;`, `[add]`) or an argument (`apply(v, add)`). Calls through that value
+/// run the function under a name a scan for it cannot find. Comments and
+/// strings are masked; a local or field that shares the name also counts,
+/// which only withholds the guard reading.
+fn names_function_as_value(source: &str, function: &str) -> bool {
+    if function.is_empty() || !source.contains(function) {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    source.match_indices(function).any(|(offset, _)| {
-        let before = source[..offset].chars().next_back();
-        let rest = &source[offset + function.len()..];
-        if before.is_some_and(is_word) || rest.chars().next().is_some_and(is_word) {
+    masked.match_indices(function).any(|(offset, _)| {
+        let before = &masked[..offset];
+        let rest = &masked[offset + function.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || rest.chars().next().is_some_and(is_word)
+        {
             return false;
         }
-        let trimmed = rest.trim_start();
-        trimmed.len() < rest.len()
-            && trimmed
-                .strip_prefix("as")
-                .is_some_and(|tail| !tail.chars().next().is_some_and(is_word))
+        let after = rest.trim_start();
+        if after.starts_with('(') {
+            return false;
+        }
+        let preceding = before.trim_end();
+        if preceding
+            .strip_suffix("fn")
+            .is_some_and(|head| !head.chars().next_back().is_some_and(is_word))
+        {
+            return false;
+        }
+        let renamed = after
+            .strip_prefix("as")
+            .is_some_and(|tail| !tail.chars().next().is_some_and(is_word));
+        renamed || !in_use_item(before)
     })
+}
+
+/// Whether the text ending at `before` is inside a `use` item: the last
+/// whole-word `use` has no `;` after it.
+fn in_use_item(before: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    before
+        .match_indices("use")
+        .filter(|(offset, _)| {
+            !before[..*offset].chars().next_back().is_some_and(is_word)
+                && !before[offset + 3..].chars().next().is_some_and(is_word)
+        })
+        .last()
+        .is_some_and(|(offset, _)| !before[offset..].contains(';'))
 }
 
 /// The standard assertion and formatting macros whose expansion cannot
@@ -6644,5 +6678,31 @@ assert_eq!(input.amount, 100);"#
             gathered.unresolved_boundary.as_deref(),
         );
         assert_ne!(infection.state, StageState::Yes, "{}", infection.summary);
+    }
+
+    #[test]
+    fn a_function_named_as_a_value_is_seen_and_a_call_or_use_path_is_not() {
+        for source in [
+            "use crate::add as push_big;",
+            "use crate::{add as push_big, other};",
+            "pub static BIG: fn(&mut Vec<u32>, u32) = add;",
+            "pub const OPS: [fn(&mut Vec<u32>, u32); 1] = [add];",
+            "fn t() { apply(&mut v, add); }",
+            "fn t() { let f = add; }",
+            "fn t() { xs.iter().map(Self::add); }",
+        ] {
+            assert!(names_function_as_value(source, "add"), "{source}");
+        }
+        for source in [
+            "use crate::add;",
+            "use crate::{add, other};\nuse std::fmt;",
+            "pub fn add(v: &mut Vec<u32>, x: u32) {}",
+            "fn t() { add(&mut v, 4); crate::add (&mut v, 5); s.add(1); }",
+            "fn t() { adder(1); add_all(); } // add as push_big",
+            "fn t() { let s = \"add as x\"; }",
+            "#[test]\nfn add() {}",
+        ] {
+            assert!(!names_function_as_value(source, "add"), "{source}");
+        }
     }
 }

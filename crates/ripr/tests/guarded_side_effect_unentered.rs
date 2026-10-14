@@ -115,8 +115,17 @@ fn push_findings(guard: &str, test_source: &str) -> Result<Vec<ripr::Finding>, S
     Ok(findings)
 }
 
+/// Whether the finding names an unentered guard anywhere: the structured
+/// missing discriminator, the infection summary or an evidence line. The
+/// negative rows assert all three are absent, so a renderer moving the text
+/// cannot let them pass silently.
 fn names_unentered_guard(finding: &ripr::Finding) -> bool {
-    finding.ripr.infect.summary.contains(UNENTERED_PREFIX)
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX))
+        || finding.ripr.infect.summary.contains(UNENTERED_PREFIX)
         || finding
             .evidence
             .iter()
@@ -139,8 +148,17 @@ fn a_literal_that_misses_the_guard_names_it_and_is_not_exposed() -> Result<(), S
                 "{guard}: {finding:?}"
             );
             assert!(
-                names_unentered_guard(&finding),
-                "{guard}: the guard must be named: {:?}",
+                finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX)),
+                "{guard}: the guard must be a missing discriminator: {:?}",
+                finding.activation.missing_discriminators
+            );
+            assert!(
+                finding.ripr.infect.summary.starts_with(UNENTERED_PREFIX),
+                "{guard}: the infection must name the guard: {:?}",
                 finding.ripr.infect
             );
             // The repair is an input that enters the guard, not an assertion.
@@ -357,7 +375,41 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
     let test_helper_macro = "use guarded_side_effect::add;\n\nmacro_rules! bump {\n    ($v:expr) => {\n        add($v, 20)\n    };\n}\n\nfn setup(v: &mut Vec<u32>) {\n    bump!(v);\n}\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    setup(&mut v);\n    assert_eq!(v, vec![20]);\n}\n";
     // A renamed import calls the owner with 20 under another name.
     let renamed_test = "use guarded_side_effect::add;\nuse guarded_side_effect::add as push_big;\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    push_big(&mut v, 20);\n    assert_eq!(v, vec![20]);\n}\n";
+    // A stored function pointer calls the owner with 20 under another name.
+    let stored = |push: &str, item: &str| format!("{}\n{item}\n", source("x > 10", push));
+    let static_test =
+        test_calling("    add(&mut v, 4);\n    guarded_side_effect::BIG(&mut v, 20);");
+    let table_test =
+        test_calling("    add(&mut v, 4);\n    guarded_side_effect::OPS[0](&mut v, 20);");
+    let static_item = "pub static BIG: fn(&mut Vec<u32>, u32) = add;";
+    let table_item = "pub const OPS: [fn(&mut Vec<u32>, u32); 1] = [add];";
+    // The changed push follows a guard closed on its own line, so input 4
+    // runs it.
+    let after_closed_if = |push: &str| {
+        format!("pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{}}\n    {push}\n}}\n")
+    };
     let cases = [
+        (
+            "after a closed if",
+            after_closed_if("v.push(x);"),
+            after_closed_if("v.push(x * 1);"),
+            3,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "static pointer",
+            stored("v.push(x);", static_item),
+            stored("v.push(x * 1);", static_item),
+            3,
+            static_test,
+        ),
+        (
+            "pointer table",
+            stored("v.push(x);", table_item),
+            stored("v.push(x * 1);", table_item),
+            3,
+            table_test,
+        ),
         (
             "helper macro",
             helper_macro("v.push(x);"),
