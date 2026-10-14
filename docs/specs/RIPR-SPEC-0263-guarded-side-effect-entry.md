@@ -6,7 +6,8 @@ Owner: product-analysis
 
 Created: 2026-10-13
 
-Linked issues: [#7132](https://github.com/EffortlessMetrics/ripr-swarm/issues/7132).
+Linked issues: [#7132](https://github.com/EffortlessMetrics/ripr-swarm/issues/7132),
+[#7964](https://github.com/EffortlessMetrics/ripr-swarm/issues/7964).
 
 Support-tier impact: None
 
@@ -57,10 +58,22 @@ counterpart for side effects.
    `if y { v.push(x) }`) is unreadable.
 2. **Readable guard.** The condition must be exactly one comparison
    (`<`, `<=`, `>`, `>=`, `==`, `!=`) between a named owner parameter and an
-   integer literal, in either order. Redundant outer parentheses are
-   allowed. The following shapes are unreadable:
+   integer bound, in either order. Redundant outer parentheses are
+   allowed. The bound is an integer literal, or an upper-case name
+   (`x > LIMIT`, #7964) that reads only when all of these hold:
+   - the indexed files declare exactly one `const` or `static` of that name;
+   - it is a file-level `const LIMIT: <integer type> = <integer literal>;`
+     in the owner's own file;
+   - that file has no import binding the name and no macro that may declare
+     items the owner sees;
+   - the owner sits outside any inline `mod`;
+   - the guard is the owner's only mention of the name, so no parameter,
+     `let` or nested item shadows it.
+
+   The following shapes are unreadable:
    - a second operator (`&&`, `||`, `!`, a shift, arithmetic);
-   - a named constant bound (`x > LIMIT`);
+   - a named bound outside the rule above (a `static`, a computed
+     `const`, two definitions, an imported name);
    - a method call or field (`x.len() > 10`);
    - `if let`.
 3. **Unchanged parameter.** The parameter must be immutable (no `mut`
@@ -102,8 +115,21 @@ counterpart for side effects.
    - the test names the owner;
    - every mention of the owner is a readable direct call (the
      RIPR-SPEC-0229 owner-call reading);
-   - every call passes an integer literal at the parameter's position;
-   - that literal leaves the comparison false.
+   - every call passes an integer input at the parameter's position;
+   - that input leaves the comparison false.
+
+   An integer input is a literal, or a test-local name (#7964) that reads
+   only when all of these hold:
+   - it is bound by an immutable `let n = <integer literal>;` (a plain type
+     annotation allowed);
+   - that `let` is a statement of the test's own body block and the name's
+     first mention;
+   - its only other mentions are owner-call arguments at the parameter's
+     position;
+   - the test declares no nested `fn`.
+
+   A mutable, shadowed or computed binding (`let n = make();`, `let n = 2 +
+   2;`), or a name used anywhere else, stays unread.
 
    The same refusals as RIPR-SPEC-0229 apply. A partial workspace index, a
    same-named function elsewhere, a test that may reach the owner through a
@@ -113,7 +139,8 @@ counterpart for side effects.
    unnamed.
 5. **Reading.** When rule 4 holds, the probe gets a missing discriminator
    whose reason opens with `No related test call enters guard` and names the
-   guard (`if x > 10`) and the observed inputs. Infection reads `Weak`, so
+   guard (`if x > 10`) and the observed inputs (`n = 4` for a let-bound
+   name). Infection reads `Weak`, so
    the finding reads `weakly_exposed` instead of `exposed`, and the
    recommended next step asks for a related test input that enters the
    guard rather than a stronger assertion. Related tests
@@ -126,19 +153,24 @@ counterpart for side effects.
 
 - An end-to-end check names the guard and reads `weakly_exposed` for
   `x > 10`, `10 < x` and `(x >= 11)` with input 4.
+- The same check names the guard for `let n = 4; add(&mut v, n);` and for
+  `x > LIMIT` with `const LIMIT: u32 = 10;` and input 4.
 - The same check keeps `exposed` for input 11, and names no guard when one
-  call enters, when the input is a variable, when the input is computed
-  (`2 + 2`), or when the guard is unreadable (`&&`, arithmetic, a named
-  constant), when the owner recurses, when the changed line closes the
-  `if` block on the same line, or when a test reaches the owner through a
+  call enters, when the input is computed (`2 + 2`), when a let-bound input
+  enters, is mutable, is shadowed or is rebound by a closure parameter,
+  when the guard is unreadable (`&&`, arithmetic), when a named bound is
+  entered, computed, a `static`, defined twice, imported or declared by a
+  macro, when the owner recurses, when the changed line closes the `if`
+  block on the same line, or when a test reaches the owner through a
   helper.
 - A labeled corpus case with runtime truth (both push mutants pass) reads
   the ideal `gap` instead of `false_exposed`.
 
 ## Non-Goals
 
-- Evaluating compound conditions, named constants, computed inputs or
-  helper-chain arguments.
+- Evaluating compound conditions, computed constants, `static` bounds,
+  imported or associated constants, computed inputs or helper-chain
+  arguments.
 - Applying the rule to return-value, predicate or field-construction probes.
 - Reading `else` branches, `match` guards, loops or early returns.
 - Changing the direct-collection observers themselves: they still say what
@@ -151,8 +183,14 @@ counterpart for side effects.
 2. The same with `add(&mut v, 11)` and `assert_eq!(v, vec![11])`: `exposed`
    (unchanged).
 3. Calls `add(&mut v, 4)` and `add(&mut v, 11)` in one test: no guard named.
-4. `let n = 4; add(&mut v, n);`: no guard named (fail closed).
-5. `if x > LIMIT`: no guard named (named bound).
+4. `let n = 4; add(&mut v, n);` with an empty-vector equality:
+   `weakly_exposed`, missing input `if x > 10`, observed `n = 4` (#7964).
+   `let mut n = 4;`, a shadowing `let n`, or `let n = 2 + 2;`: no guard
+   named.
+5. `if x > LIMIT` with `const LIMIT: u32 = 10;` in the owner's file and input
+   4: `weakly_exposed`, missing input `if x > LIMIT` (#7964). A `static
+   LIMIT`, a computed `const`, two definitions or an imported `LIMIT`: no
+   guard named.
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
    calls a helper that calls it back: no guard named (recursion). The same
    holds when a macro the owner, a helper it calls or a test helper invokes
@@ -168,17 +206,21 @@ counterpart for side effects.
   - `a_literal_that_misses_the_guard_names_it_and_is_not_exposed`
   - `an_input_that_enters_the_guard_keeps_the_exposed_reading`
   - `one_entering_call_or_one_unread_input_names_no_guard`
+  - `a_let_bound_literal_that_misses_the_guard_names_it`
+  - `a_named_const_bound_that_the_input_misses_names_the_guard`
   - `an_unreadable_guard_names_nothing`
   - `recursion_a_same_line_else_or_a_helper_names_no_guard`
 - `analysis::classify::arm_selection::guard_entry::tests` covers the guard
   parser, the comparison semantics and the rebinding refusals.
 - The corpus case `rust-guarded-push-unentered-branch` is the labeled
-  runtime witness.
+  runtime witness; `spec0263-let-bound-input` and
+  `spec0263-named-bound-guard` witness examples 4 and 5.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::GuardEntry`
-  reads the guard and judges each test's owner calls.
+  reads the guard and judges each test's owner calls, including let-bound
+  inputs; `named_integer_bound` resolves a named bound.
 - `crates/ripr/src/analysis/classify/activation.rs::missing_guard_entry_discriminator`
   applies the RIPR-SPEC-0229 refusals and emits the fact.
 - `crates/ripr/src/domain/probe.rs::GUARD_UNENTERED_REASON_PREFIX` and
@@ -191,4 +233,6 @@ counterpart for side effects.
 
 The Rust verdict corpus false-verdict count drops by one
 (`rust-guarded-push-unentered-branch` moves from `false_exposed` to the ideal
-`gap`), with no other row moved.
+`gap`), with no other row moved. The #7964 amendment moves
+`spec0263-let-bound-input` and `spec0263-named-bound-guard` from
+`false_exposed` to `gap` in the same way.

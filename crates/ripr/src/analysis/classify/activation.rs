@@ -1722,7 +1722,9 @@ fn missing_guard_entry_discriminator(
     }
     // The cheap text read first: most side effects sit under no readable
     // guard, and those need no workspace lookups.
-    let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    let guard = super::arm_selection::GuardEntry::establish(probe, owner, |name| {
+        super::arm_selection::named_integer_bound(index, owner, name)
+    })?;
     if !super::helper_transfer::callee_is_unique(&owner.name, index) {
         return None;
     }

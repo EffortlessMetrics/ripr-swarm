@@ -195,10 +195,20 @@ fn one_entering_call_or_one_unread_input_names_no_guard() -> Result<(), String> 
     for calls in [
         // One call enters the guard, so the tests do run the push.
         "    add(&mut v, 4);\n    add(&mut v, 11);",
+        // A let-bound literal that enters the guard.
+        "    let n = 11;\n    add(&mut v, n);",
         // A computed input is not evaluated.
-        "    let n = 4;\n    add(&mut v, n);",
+        "    let n = 2 + 2;\n    add(&mut v, n);",
         // A non-literal expression is not evaluated either.
         "    add(&mut v, 2 + 2);",
+        // A mutable binding may change before the call.
+        "    let mut n = 4;\n    n += 7;\n    add(&mut v, n);",
+        // A shadowing `let` gives the call another value.
+        "    let n = 4;\n    let n = n + 7;\n    add(&mut v, n);",
+        // An inner block's binding shadows the one the reading would take.
+        "    let n = 4;\n    {\n        let n = 11;\n        add(&mut v, n);\n    }",
+        // A closure parameter of the same name shadows the binding.
+        "    let n = 4;\n    let call = |n: u32| add(&mut v, n);\n    call(11);",
     ] {
         for finding in push_findings("x > 10", &test_calling(calls))? {
             assert!(
@@ -212,21 +222,82 @@ fn one_entering_call_or_one_unread_input_names_no_guard() -> Result<(), String> 
 }
 
 #[test]
+fn a_let_bound_literal_that_misses_the_guard_names_it() -> Result<(), String> {
+    for calls in [
+        "    let n = 4;\n    add(&mut v, n);",
+        "    let n: u32 = 4;\n    add(&mut v, n);\n    add(&mut v, n);",
+    ] {
+        for finding in push_findings("x > 10", &test_calling(calls))? {
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{calls}");
+            assert!(
+                finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX)
+                        && fact.reason.contains("`n = 4`")),
+                "{calls}: {:?}",
+                finding.activation.missing_discriminators
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_named_const_bound_that_the_input_misses_names_the_guard() -> Result<(), String> {
+    let test = test_calling("    add(&mut v, 4);");
+    for prelude in [
+        "pub const LIMIT: u32 = 10;\n",
+        "/// The smallest value kept.\nconst LIMIT: u32 = 1_0;\n",
+    ] {
+        for finding in push_findings_with_prelude("x > LIMIT", &test, prelude)? {
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{prelude}");
+            assert!(
+                finding
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX)
+                        && fact.reason.contains("`if x > LIMIT`")),
+                "{prelude}: {:?}",
+                finding.activation.missing_discriminators
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn an_unreadable_guard_names_nothing() -> Result<(), String> {
-    for guard in ["x > 10 && x < 100", "x + 1 > 10", "x > LIMIT"] {
-        let test = test_calling("    add(&mut v, 4);");
-        let repo_guard = guard.to_string();
-        let findings = if guard.contains("LIMIT") {
-            // `LIMIT` must exist for the owner to read as Rust; the reading
-            // still refuses a named bound.
-            push_findings_with_prelude(&repo_guard, &test, "pub const LIMIT: u32 = 10;\n")?
-        } else {
-            push_findings(&repo_guard, &test)?
-        };
-        for finding in findings {
+    let test = test_calling("    add(&mut v, 4);");
+    for guard in ["x > 10 && x < 100", "x + 1 > 10"] {
+        for finding in push_findings(guard, &test)? {
             assert!(
                 !names_unentered_guard(&finding),
                 "{guard}: an unread guard names nothing: {:?}",
+                finding.ripr.infect
+            );
+        }
+    }
+    for prelude in [
+        // The input enters the named bound.
+        "pub const LIMIT: u32 = 3;\n",
+        // A computed or non-integer constant is not evaluated.
+        "pub const LIMIT: u32 = 5 * 2;\n",
+        // A `static` may be read through interior paths; only `const` reads.
+        "pub static LIMIT: u32 = 10;\n",
+        // Two definitions: which one the guard sees is not read.
+        "pub const LIMIT: u32 = 10;\npub mod other {\n    pub const LIMIT: u32 = 3;\n}\n",
+        // An import binds the name instead of a local item.
+        "mod limits {\n    pub const SMALL: u32 = 10;\n}\nuse limits::SMALL as LIMIT;\n",
+        // A macro may declare items the owner sees.
+        "macro_rules! limit {\n    () => {\n        pub const LIMIT: u32 = 10;\n    };\n}\nlimit!();\n",
+    ] {
+        for finding in push_findings_with_prelude("x > LIMIT", &test, prelude)? {
+            assert!(
+                !names_unentered_guard(&finding),
+                "{prelude}: an unread bound names nothing: {:?}",
                 finding.ripr.infect
             );
         }
