@@ -32,6 +32,46 @@ fn literal_foreach_reads_one_case_per_element() {
     );
 }
 
+/// An element naming a top-level primitive `const` declared before the call
+/// reads as that literal; any other binding of the name collects nothing.
+#[test]
+fn foreach_element_bound_to_a_literal_const_reads_as_the_literal() {
+    let wrap = |body: &str| {
+        format!(
+            "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let source =
+        wrap("  const n = 200;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });");
+    assert_eq!(
+        observed("tests/price.test.ts", &source),
+        vec![some("price(150)", "140", 4), some("price(200)", "140", 4)]
+    );
+    let source = wrap(
+        "  const label = \"vip\";\n  [label].forEach((v) => { expect(price(v)).toBe(140); });",
+    );
+    assert_eq!(
+        observed("tests/price.test.ts", &source),
+        vec![some("price(\"vip\")", "140", 4)]
+    );
+    for body in [
+        "  let n = 200;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  var n = 200;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  [150, n].forEach((v) => { expect(price(v)).toBe(140); });\n  const n = 200;",
+        "  const n = 200;\n  {\n    const n = 300;\n    [150, n].forEach((v) => { expect(price(v)).toBe(140); });\n  }",
+        "  const n = { amount: 200 };\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = load();\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = `2\n00`;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = 200;\n  function n() {}\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+    ] {
+        assert_eq!(
+            observed("tests/price.test.ts", &wrap(body)),
+            vec![],
+            "{body}"
+        );
+    }
+}
+
 /// A non-literal array, a callback with two parameters or a parameter read
 /// outside parentheses collects nothing (fail closed).
 #[test]
