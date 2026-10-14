@@ -1001,6 +1001,140 @@ fn gate(body: &str, changed: &str) -> Option<ReturnPathGate> {
     return_path_gate(body, changed, body[..at].matches('\n').count())
 }
 
+/// #6578: with the changed line's old text, only the part that differs
+/// must run on every input. An unchanged closure elsewhere in the tail does
+/// not make the change conditional.
+#[test]
+fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
+    let body = |tail: &str| format!("fn total(lines: &[Line]) -> u64 {{\n    {tail}\n}}");
+    let gate_from =
+        |after: &str, before: Option<&str>| return_path_gate_from(&body(after), after, before, 1);
+    let tail = |fee: &str| format!("lines.iter().map(|l| l.cents).sum::<u64>() + {fee}");
+    assert!(matches!(
+        gate_from(&tail("25 * 2"), Some(&tail("50"))),
+        Some(ReturnPathGate::Any)
+    ));
+    // Every enclosing operator, parenthesis and cast evaluates the change.
+    for (after, before) in [
+        (
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 51) as u64",
+            "(lines.iter().map(|l| l.cents).sum::<u64>() * 2 + 50) as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(51))",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + u64::from(fee(50))",
+        ),
+    ] {
+        assert!(
+            matches!(gate_from(after, Some(before)), Some(ReturnPathGate::Any)),
+            "{after}"
+        );
+    }
+    // Without the old text the whole tail is read, closure included.
+    assert!(gate_from(&tail("25 * 2"), None).is_none());
+    for (after, before) in [
+        // The change is inside the closure.
+        (
+            "lines.iter().map(|l| l.cents + 1).sum::<u64>()",
+            "lines.iter().map(|l| l.cents + 2).sum::<u64>()",
+        ),
+        // The changed part is an argument a combinator may skip, sits in a
+        // branch, or behind `&&`/`||`.
+        ("x.map_or(51, |v| v)", "x.map_or(50, |v| v)"),
+        (
+            "if ready() { 51 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+            "if ready() { 50 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+        ),
+        (
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(51))",
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(50))",
+        ),
+        (
+            "Option::map(x, |v| v).unwrap_or(51)",
+            "Option::map(x, |v| v).unwrap_or(50)",
+        ),
+        (
+            "Option::map_or(x, 51, |v| v) + 1",
+            "Option::map_or(x, 50, |v| v) + 1",
+        ),
+        (
+            "(Option::map_or)(x, 51, |v| v)",
+            "(Option::map_or)(x, 50, |v| v)",
+        ),
+        (
+            "x.unwrap_or(51) + lines.iter().map(|l| l.cents).sum::<u64>()",
+            "x.unwrap_or(50) + lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
+        // A name bound outside the closure carries the change into it.
+        (
+            "{ let k = 3; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+            "{ let k = 2; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+        ),
+        (
+            "{ const K: u64 = 3; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+            "{ const K: u64 = 2; lines.iter().map(|l| l.cents * K).sum::<u64>() }",
+        ),
+        // The changed value flows through a closure beside it in a call.
+        (
+            "items.iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines[..1].iter().map(|l| l.cents).sum::<u64>() + 50",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+        ),
+        (
+            "lines.iter().fold(51, |acc, l| acc + l.cents)",
+            "lines.iter().fold(50, |acc, l| acc + l.cents)",
+        ),
+        // The changed method name, turbofish, or a deletion beside the
+        // closure.
+        (
+            "lines.iter().map(|l| l.cents).product::<u64>()",
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u32>() as u64",
+            "lines.iter().map(|l| l.cents).sum::<u64>() as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+            "lines.iter().skip(1).map(|l| l.cents).sum::<u64>()",
+        ),
+        // The change removed a closure, macro or block that may have given
+        // the same value.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + m!(51)",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + { 51 }",
+        ),
+        // String whitespace changed alongside the operand.
+        (
+            "\"a  b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 1",
+            "\"a b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 2",
+        ),
+        // A changed comment beside the change.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51 /* fee v2 */",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50 /* fee v1 */",
+        ),
+        // A block around the change may skip it.
+        (
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 51 }",
+            "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 50 }",
+        ),
+    ] {
+        assert!(gate_from(after, Some(before)).is_none(), "{after}");
+    }
+}
+
 #[test]
 fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
     // bytesize's `as_whole_units`: the one `return None` is the only `None`.
