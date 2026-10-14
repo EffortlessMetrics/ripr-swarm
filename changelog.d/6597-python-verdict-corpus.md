@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Python verdict corpus: `fixtures/python-verdict-corpus` holds 61 authored
   cases across pytest, pytest fixtures, unittest and Hypothesis, including
   one case for each runnable RIPR-SPEC-0238 acceptance example, each labeled

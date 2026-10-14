@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-ts-jest-snapshot-update",
+  "origin": "authored",
+  "version_label": "authored@2026-10-14",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "8034255851c976f948c58d7e1788a57b67163e31c1114154be36d173bf3a9900"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/priceSnapUpdated.ts",
+      "sha256": "595d5c659fc8684e340d73a5536b5ad1787550a90299238b77c4dd26b4133a26"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapUpdated.test.ts.snap",
+      "sha256": "30fd069a34ea653f725ff7a2f774b569217129a069bc06f72fb28e6b0536d27b"
+    },
+    {
+      "path": "test/priceSnapUpdated.test.ts",
+      "sha256": "8b605b9ee7a7ebd57afa8eaa0d61e616c1e7eacc4d9b13c030edbf6f143f9015"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

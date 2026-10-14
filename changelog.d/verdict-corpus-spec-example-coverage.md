@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: spec-example coverage is now a measured number. A case
   cites the numbered spec acceptance examples it labels in `spec_examples`
   (`RIPR-SPEC-NNNN#K`), and `fixtures/rust-verdict-corpus/spec-coverage.toml`

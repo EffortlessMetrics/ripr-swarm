@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 25 authored cases for test shapes RIPR specs below 0225
   define, each labeled by real mutant runs: error-seam oracles (exact-value
   only, boxed `Into` wrapper, downcast type pin, local `assert_matches!`),
