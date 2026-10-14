@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0236-seam-private-tier-src-test-chain",
+  "subject_id": "authored-spec0236-24",
+  "diff": "cases/spec0236-seam-private-tier-src-test-chain.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "src_cfg_test_module_public_chain",
+  "hard_case": "Seam class matches example 24: `tier` reach opaque, summary names rust_transitive_reach_unresolved (`checks_out` (src/checkout_tests.rs:4) calls `checkout`), class opaque. The test module lives in its own src file; inside src/lib.rs ripr relates it by same_test_file instead. The diff finding reads weakly_exposed with checks_out related (exact_value/strong), so check and the seam inventory disagree on reach.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if total > 100 { 20 } else { 0 }",
+        "mutated_line": "if total > 100 { 20 } else { 0 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total == 100 now gives 0; 150 still gives 20"
+      },
+      {
+        "replacement": "if total >= 200 { 20 } else { 0 }",
+        "mutated_line": "if total >= 200 { 20 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "checkout_tests::checks_out",
+        "equivalence_review": "not equivalent: totals 100..=199 give 0, so 150 gives 0"
+      },
+      {
+        "replacement": "if total >= 100 { 30 } else { 0 }",
+        "mutated_line": "if total >= 100 { 30 } else { 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "checkout_tests::checks_out",
+        "equivalence_review": "not equivalent: the discount for large totals becomes 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A #[cfg(test)] mod checkout_tests in src/checkout_tests.rs asserts checkout(150) == 20 through route and tier; 150 does not sit on the 100 boundary. Spec cells: RIPR-SPEC-0236 example 24.",
+  "labeling_observation": {
+    "ripr_commit": "b0428d112",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

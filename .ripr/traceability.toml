@@ -12580,6 +12580,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_scalar_result_read_by_other_assertions_still_pins",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_shadowed_primitive_return_is_not_a_scalar",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_scalar_rendering_compared_with_exact_text_pins",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_integer_projection_that_keeps_the_value_pins",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_one_element_vec_indexed_at_zero_pins_the_owner",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::review_holes_in_path_and_let_bound_pins_stay_closed",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_crate_binding_of_the_library_name_shadows_the_dependency",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path",
@@ -14721,6 +14723,49 @@ outputs = [
 ]
 metrics = [
   "typescript_mock_object_argument_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0265"
+name = "Rust closures in iterator adaptors"
+spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_each_adaptor_over_a_slice_parameter",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::refuses_shapes_outside_the_spec",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::literal_sequences_read_only_literal_elements",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::short_circuit_runs_reach_the_boundary_only_when_it_decides",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_tail_pins_only_a_non_empty_literal_sequence",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_tail_pins_a_table_with_a_non_empty_row",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::helper_parameter_runs_are_read_at_each_helper_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_tails_outside_the_rule",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_element_at_the_boundary_is_an_observed_input",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_elements_off_the_boundary_keep_the_missing_discriminator",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_boundary_with_an_unreadable_call_stays_unresolved",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_short_circuit_counts_a_boundary_element_only_when_it_decides",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_only_consumers_that_keep_every_closure_value",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::adaptor_element_boundary_pairs_only_a_run_that_reaches_it",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::admitted_adaptor_tail_propagates_to_the_owner_return",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::map_count_tail_keeps_the_pre_0265_reading",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0265_reading",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs",
+  "crates/ripr/src/analysis/classify/flow.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md",
+]
+metrics = [
+  "rust_iterator_adaptor_mismatch",
 ]
 
 [[behavior]]

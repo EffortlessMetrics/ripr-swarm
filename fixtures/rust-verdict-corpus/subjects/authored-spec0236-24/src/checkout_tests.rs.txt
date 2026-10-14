@@ -1,0 +1,6 @@
+use super::checkout;
+
+#[test]
+fn checks_out() {
+    assert_eq!(checkout(150), 20);
+}
