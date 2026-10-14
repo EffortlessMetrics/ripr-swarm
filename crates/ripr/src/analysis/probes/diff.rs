@@ -976,26 +976,100 @@ fn has_matching_added_line(
         // #7807: `extract_identifier_tokens` drops names shorter than three
         // characters, so `if x > 0 {` never paired with `if x >= 0 {` and
         // the old line was probed again as deleted behavior. Fall back to
-        // those short names only when both sides have no long name, and
-        // only when the short-name sets match, so a renamed binding or a
-        // changed constructor keeps its removed probe.
+        // those short names only when both sides have no long name, the
+        // short-name sets match, and no other removed line would claim the
+        // same added counterpart.
         if !added_tokens.is_empty() {
             return false;
         }
-        let removed_short = short_pairing_tokens(&removed_line.text);
-        let added_short = short_pairing_tokens(&line.text);
-        !removed_short.is_empty() && removed_short == added_short
+        short_name_pairs_uniquely(removed_line, removed_family, index, changed, added_bounds)
     })
+}
+
+fn short_name_pairs_uniquely(
+    removed_line: &ChangedLine,
+    removed_family: &ProbeFamily,
+    added_index: usize,
+    changed: &ChangedFile,
+    added_bounds: &[bool],
+) -> bool {
+    if !short_name_matches_added(
+        removed_line,
+        removed_family,
+        added_index,
+        changed,
+        added_bounds,
+    ) {
+        return false;
+    }
+    !changed.removed_lines.iter().any(|other| {
+        !std::ptr::eq(other, removed_line)
+            && short_name_matches_added(other, removed_family, added_index, changed, added_bounds)
+    })
+}
+
+fn short_name_matches_added(
+    removed_line: &ChangedLine,
+    removed_family: &ProbeFamily,
+    added_index: usize,
+    changed: &ChangedFile,
+    added_bounds: &[bool],
+) -> bool {
+    let Some(added) = changed.added_lines.get(added_index) else {
+        return false;
+    };
+    if !extract_identifier_tokens(&removed_line.text).is_empty()
+        || !extract_identifier_tokens(&added.text).is_empty()
+    {
+        return false;
+    }
+    let run_start = added_run_start(added.new_side_line, changed);
+    if !lines_are_adjacent(removed_line.new_side_line, added.new_side_line)
+        && !lines_are_adjacent(removed_line.new_side_line, run_start)
+    {
+        return false;
+    }
+    let added_families = if added_bounds.get(added_index).copied().unwrap_or(false) {
+        vec![ProbeFamily::StaticUnknown]
+    } else {
+        classify_changed_line(added.text.trim())
+    };
+    if !added_families.iter().any(|family| family == removed_family) {
+        return false;
+    }
+    if !classify_changed_line(removed_line.text.trim())
+        .iter()
+        .any(|family| family == removed_family)
+    {
+        return false;
+    }
+    let removed_short = short_pairing_tokens(&removed_line.text);
+    let added_short = short_pairing_tokens(&added.text);
+    !removed_short.is_empty() && removed_short == added_short
+}
+
+fn short_pairing_code(text: &str) -> &str {
+    let cut = match (text.find("//"), text.find("/*")) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return text,
+    };
+    match text.get(..cut) {
+        Some(code) => code,
+        None => text,
+    }
 }
 
 /// Identifier-like tokens of one or two characters used only when a line
 /// has no long pairing name. Keywords (`if`, `fn`, `as`, `in`) and pure
 /// digits or underscores are not names, so they cannot pair unrelated
-/// lines that merely share punctuation or literals.
+/// lines that merely share punctuation or literals. Comment text is not
+/// a pairing name.
 fn short_pairing_tokens(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
-    for ch in text.chars() {
+    for ch in short_pairing_code(text).chars() {
         if ch.is_alphanumeric() || ch == '_' {
             current.push(ch);
         } else if !current.is_empty() {
@@ -3128,6 +3202,73 @@ mod tests {
                 .iter()
                 .all(|probe| probe.expression.trim() != "Ok(p) => Ok(p),"),
             "the replaced Ok(p) arm must not be re-probed as deleted: {probes:?}"
+        );
+    }
+
+    /// One added short-name predicate cannot stand in for two deleted ones.
+    /// `{x}` matches all three lines, but the added probe can carry only one
+    /// `before`; the other deletion must stay historical.
+    #[test]
+    fn two_short_name_deletions_do_not_share_one_added_predicate() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 6,
+                new_side_line: 6,
+                text: "    if x == 0 {".to_string(),
+            }],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 6,
+                    new_side_line: 6,
+                    text: "    if x > 0 {".to_string(),
+                },
+                ChangedLine {
+                    line: 7,
+                    new_side_line: 6,
+                    text: "    if x < 0 {".to_string(),
+                },
+            ],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == "if x == 0 {"),
+            "the added predicate must still be probed: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression == "if x > 0 {" && probe.after.is_none() }),
+            "collapsing two short-name predicates must keep the first deletion: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression == "if x < 0 {" && probe.after.is_none() }),
+            "collapsing two short-name predicates must keep the second deletion: {probes:?}"
+        );
+    }
+
+    /// Comment text is not a pairing name. Swapping `x` and `y` between the
+    /// predicate and a trailing comment is a renamed binding.
+    #[test]
+    fn short_name_pairing_ignores_comment_tokens() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x > 0 { // y", "    if y >= 0 { // x", 6),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.starts_with("if x > 0 {") && probe.after.is_none()),
+            "a renamed short binding in a commented line must keep the removed probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.starts_with("if y >= 0 {")),
+            "the added predicate must still be probed: {probes:?}"
         );
     }
 
