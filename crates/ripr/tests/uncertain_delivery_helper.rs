@@ -131,6 +131,10 @@ fn direct_oracle_is_credited_but_fallible_helpers_retain_their_two_refusal_edges
         "check(10, true)",
     )?;
     assert!(
+        plain.related_tests.iter().any(|t| t.name == "boundary"),
+        "plain caller is retained"
+    );
+    assert!(
         plain
             .related_tests
             .iter()
@@ -145,10 +149,19 @@ fn direct_oracle_is_credited_but_fallible_helpers_retain_their_two_refusal_edges
             .any(|e| e.contains("could not identify the test function uniquely")),
         "plain helper assertion was copied, then refused downstream: {plain:?}"
     );
+    assert!(
+        plain.related_tests.iter().any(|t| t.name == "boundary"
+            && format!("{:?}", t.relation_reason) == "Some(DirectOwnerCall)"),
+        "plain helper's owner call was copied: {plain:?}"
+    );
     let factory = boundary(
         "fn check() -> Result<(), ()> {\n    let make_input = || 10;\n    assert_eq!(gate(make_input()), true);\n    Ok(())\n}",
         "check()",
     )?;
+    assert!(
+        factory.related_tests.iter().any(|t| t.name == "boundary"),
+        "factory caller is retained"
+    );
     assert!(
         factory
             .related_tests
@@ -156,6 +169,21 @@ fn direct_oracle_is_credited_but_fallible_helpers_retain_their_two_refusal_edges
             .filter(|t| t.name == "boundary")
             .all(|t| t.oracle.is_none()),
         "invoked closure is still outside helper admission: {factory:?}"
+    );
+    assert!(
+        factory
+            .related_tests
+            .iter()
+            .filter(|t| t.name == "boundary")
+            .all(|t| format!("{:?}", t.relation_reason) != "Some(DirectOwnerCall)"),
+        "factory helper owner call was not copied: {factory:?}"
+    );
+    assert!(
+        factory
+            .evidence
+            .iter()
+            .all(|e| !e.contains("assertion not credited:")),
+        "factory assertion never reached downstream admission: {factory:?}"
     );
     Ok(())
 }
@@ -171,9 +199,11 @@ fn sibling_uninvoked_and_wrong_binding_do_not_gain_helper_observation() -> Resul
             "fn check(input: u32, want: bool) -> Result<(), ()> {\n    assert_eq!(gate(input), want);\n    Ok(())\n}",
             "let _later = || check(10, true);\nOk(())",
         ),
+        // Keep this assertion in the test itself: helper-line context refusal
+        // must not mask wrong-binding observation.
         (
-            "fn check() -> Result<(), ()> {\n    let actual = gate(10);\n    let actual = true;\n    assert_eq!(actual, true);\n    Ok(())\n}",
-            "check()",
+            "",
+            "let actual = gate(10);\nlet other = true;\nassert_eq!(other, true);\nOk(())",
         ),
     ] {
         let finding = boundary(helper, caller)?;
