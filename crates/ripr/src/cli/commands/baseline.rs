@@ -256,19 +256,19 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
         match args[i].as_str() {
             "--baseline" => {
                 i += 1;
-                baseline = Some(non_empty_path_arg(args, i, "--baseline", "baseline diff")?);
+                baseline = Some(baseline_diff_path_arg(args, i, "--baseline")?);
             }
             "--current" => {
                 i += 1;
-                current = Some(non_empty_path_arg(args, i, "--current", "baseline diff")?);
+                current = Some(baseline_diff_path_arg(args, i, "--current")?);
             }
             "--out" => {
                 i += 1;
-                out = non_empty_path_arg(args, i, "--out", "baseline diff")?;
+                out = baseline_diff_path_arg(args, i, "--out")?;
             }
             "--out-md" => {
                 i += 1;
-                out_md = non_empty_path_arg(args, i, "--out-md", "baseline diff")?;
+                out_md = baseline_diff_path_arg(args, i, "--out-md")?;
             }
             other => return Err(unknown_argument("baseline diff", other)),
         }
@@ -281,6 +281,15 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
         out,
         out_md,
     })
+}
+
+// A following option is a missing value, not an advisory input filename.
+// Literal option-shaped filenames remain available as `./--name`.
+fn baseline_diff_path_arg(args: &[String], index: usize, flag: &str) -> Result<PathBuf, String> {
+    if args.get(index).is_some_and(|value| value.starts_with("--")) {
+        return Err(format!("missing value for {flag}"));
+    }
+    non_empty_path_arg(args, index, flag, "baseline diff")
 }
 
 fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOptions, String> {
