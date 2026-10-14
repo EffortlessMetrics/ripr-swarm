@@ -4848,7 +4848,7 @@ fn ts_apply_post_ladder_rules(
         verdict.class = ExposureClass::WeaklyExposed;
         verdict.discriminate_state = StageState::Weak;
         verdict.missing = vec![format!(
-            "The change to `{}` only sets or drops `{}: {}` after spreading `{}`, and {reason}, so both versions return the same value. Add a case whose `{}` lacks `{}` or holds another value there.",
+            "The change to `{}` only sets or drops `{}: {}` after spreading `{}`, and {reason}. Add a case whose `{}` lacks `{}` or holds another value there.",
             context.owner.name,
             change.key,
             change.literal,
@@ -4982,8 +4982,12 @@ pub(crate) fn ts_spread_override_unseen(
         }
     }
     match (carries, unknown) {
-        (true, false) => Some("every tested input already carries it"),
-        (_, true) => Some("no tested input is shown to lack it"),
+        (true, false) => {
+            Some("every tested input already carries it, so both versions return the same value")
+        }
+        (_, true) => Some(
+            "no tested input is shown to lack it, so no test is shown to tell the versions apart",
+        ),
         (false, false) => None,
     }
 }

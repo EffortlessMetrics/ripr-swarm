@@ -68,6 +68,11 @@ impl SpreadOverride {
         let extra = (1..longer.len())
             .find(|&at| longer[..at] == shorter[..at] && longer[at + 1..] == shorter[at..])?;
         let (key, literal) = key_value(&longer[extra])?;
+        // `__proto__: v` (quoted or not) sets the prototype rather than a
+        // field, so no input entry can carry it.
+        if key == "__proto__" {
+            return None;
+        }
         let value = literal_value(&literal)?;
         // A second spread could carry the key, and a second entry with the
         // key would override it.
@@ -107,7 +112,8 @@ impl SpreadOverride {
             match key_value(entry) {
                 Some((key, literal)) if key == self.key => found = Some(literal),
                 // A function value could set the key when the test calls it.
-                Some((_, value)) if value.starts_with("function") || value.contains("=>") => {
+                // A literal (a string holding `=>`, say) is never one.
+                Some((_, value)) if literal_value(&value).is_none() && function_like(&value) => {
                     return OverrideInput::Unknown;
                 }
                 Some(_) => {}
@@ -126,6 +132,16 @@ impl SpreadOverride {
             },
         }
     }
+}
+
+/// `true` when the entry value `value` could be a function: it starts with
+/// the word `function` or `async`, or holds an arrow.
+fn function_like(value: &str) -> bool {
+    ["function", "async"].iter().any(|word| {
+        value
+            .strip_prefix(word)
+            .is_some_and(|tail| !tail.starts_with(super::mock_payload_guard::is_identifier_part))
+    }) || value.contains("=>")
 }
 
 /// The object literal a test binds once to `name` with `const name = { ... }`,
@@ -483,6 +499,12 @@ mod tests {
             // an escape or quote inside the string is not read
             (r#"return { ...cfg, ok: "a\"b" };"#, "return { ...cfg };"),
             ("return { ...cfg, ok: 'it\\'s' };", "return { ...cfg };"),
+            // `__proto__` sets the prototype, not a field
+            ("return { ...cfg, __proto__: null };", "return { ...cfg };"),
+            (
+                "return { ...cfg, \"__proto__\": null };",
+                "return { ...cfg };",
+            ),
         ] {
             assert_eq!(SpreadOverride::read(old, new), None, "{old} -> {new}");
         }
@@ -513,6 +535,16 @@ mod tests {
                 OverrideInput::Unknown,
             ),
             (r#"{ name: "bo", arm: () => 1 }"#, OverrideInput::Unknown),
+            (
+                r#"{ name: "bo", arm: async function () { this.ok = true; } }"#,
+                OverrideInput::Unknown,
+            ),
+            (
+                r#"{ name: "bo", arm: async () => 1 }"#,
+                OverrideInput::Unknown,
+            ),
+            (r#"{ name: "a=>b" }"#, OverrideInput::Differs),
+            (r#"{ name: functional }"#, OverrideInput::Differs),
             (
                 r#"{ name: "bo", arm() { this.ok = true; } }"#,
                 OverrideInput::Unknown,
@@ -549,6 +581,8 @@ mod tests {
             "cfg.normalize();",
             "cfg.items.push(1);",
             "cfg.reset?.();",
+            "[cfg.ok] = [false];",
+            "for (cfg.key in source) {}",
         ] {
             assert!(written(text, false), "{text}");
         }
@@ -606,6 +640,9 @@ mod tests {
             "const cfg = { ok: true }; cfg.arm?.();",
             "const cfg = { ok: true }; cfg.tag`x`;",
             "const cfg = { ok: true }; foo. expect(x).toEqual(cfg);",
+            "const cfg = { ok: true }; [cfg.ok] = [false];",
+            "const cfg = { ok: true }; ({ a: cfg.ok } = src);",
+            "const cfg = { ok: true }; for (cfg.ok of flags) {}",
             "const cfg = { ok: true }; Object.assign(cfg, { ok: false });",
             // a callback parameter of the same name shadows the binding
             "const cfg = { ok: true }; [{}].forEach((cfg) => check(ready(cfg)));",

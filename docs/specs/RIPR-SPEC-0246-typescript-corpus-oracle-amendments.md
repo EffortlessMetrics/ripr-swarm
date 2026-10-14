@@ -143,7 +143,8 @@ name is also refused.
 same spread `...x` of an owner parameter `x`, and one side has exactly one
 more entry `k: L`, a plain or quoted key with a literal value (a number,
 a string with no escape and no quote character inside, `true`, `false`
-or `null`; numbers compare by value and sign, so `-0` is not `0`), the change only sets
+or `null`; numbers compare by value and sign, so `-0` is not `0`), and
+`k` is not `__proto__` (which sets the prototype), the change only sets
 or drops that field. Other entries must be `key: value` pairs (a
 shorthand entry stops the rule), match in order, and hold no second
 spread and no second `k`; the object may hold no comment outside a
@@ -162,7 +163,8 @@ object literal, inline or a name the test binds once by
 must otherwise appear only after it, as a member read, or as a whole
 argument of `expect`, of a matcher on `expect(...)` (`.toEqual(cfg)`,
 `.not.toBe(cfg)`) or of the owner call (bare, renamed or through its
-module). Any other use (a member write or `delete`, a cast, an alias, a
+module). Any other use (a member write, including a destructuring or
+`for` loop target, or a `delete`, a cast, an alias, a
 helper or method call, including a call of one of its members such as
 `cfg.arm()`, an array or object entry, a callback or `catch`
 parameter of the same name) makes the input unreadable, and so does an

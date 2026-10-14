@@ -415,7 +415,38 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
         finding
             .missing
             .iter()
-            .any(|line| line.contains("no tested input is shown to lack it")),
+            .any(|line| line.contains("no tested input is shown to lack it")
+                && !line.contains("same value")),
+        "{:?}",
+        finding.missing
+    );
+    // Only a known-carrying input claims both versions return one value.
+    let finding = settings_finding(
+        "spread-carries-message",
+        &test("expect(ready({ ok: true })).toEqual({ ok: true });"),
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("already carries it, so both versions return the same value")),
+        "{:?}",
+        finding.missing
+    );
+    // A destructuring write before the call changes the input.
+    let finding = settings_finding(
+        "spread-local-destructured",
+        &test(
+            "const cfg = { ok: true };\n  [cfg.ok] = [false];\n  expect(ready(cfg)).toEqual({ ok: true });",
+        ),
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert!(
+        finding
+            .missing
+            .iter()
+            .all(|line| !line.contains("same value")),
         "{:?}",
         finding.missing
     );

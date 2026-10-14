@@ -251,8 +251,9 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
 
 /// RIPR-SPEC-0246 rule 3: `true` when the masked text `masked` changes a
 /// member of `name` in place: it writes one (`name.k = v`, `name[k] += v`,
-/// `name.k++`), deletes one (`delete name.k`), calls one (`name.k()`, which
-/// hands `name` to the callee as `this`), or hands `name` to
+/// `name.k++`, `[name.k] = xs`, `for (name.k of xs)`), deletes one
+/// (`delete name.k`), calls one (`name.k()`, which hands `name` to the
+/// callee as `this`), or hands `name` to
 /// `Object.assign` / `Object.defineProperty`. With `any_call`, passing `name`
 /// whole to any call counts too, since the callee could write a member.
 pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bool {
@@ -272,7 +273,9 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
             return rest.starts_with("++")
                 || rest.starts_with("--")
                 || assigns_after(rest)
-                || calls_after(rest);
+                || calls_after(rest)
+                || loop_target(rest)
+                || inside_destructuring_target(masked, at);
         }
         call_argument_callee(masked, at).is_some_and(|callee| {
             any_call || callee == "Object.assign" || callee == "Object.defineProperty"
@@ -283,8 +286,8 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
 /// RIPR-SPEC-0246 rule 3: `true` when the masked test body declares the
 /// test local `name` once with `const` and every other mention, all after
 /// that declaration and inside its block, only reads it: a member read
-/// (`name.k`, `name?.k`, `name[k]`, never written, incremented, deleted or
-/// called),
+/// (`name.k`, `name?.k`, `name[k]`, never written, destructured into,
+/// looped into, incremented, deleted or called),
 /// or a whole argument of `expect`, of a matcher on `expect(...)`
 /// (`.toEqual(name)`, `.not.toBe(name)`) or of a call named exactly in
 /// `callees` (the owner, its renames and its module-qualified forms). Any
@@ -325,7 +328,9 @@ pub(crate) fn ts_local_only_read(masked: &str, name: &str, callees: &[&str]) -> 
             return !(rest.starts_with("++")
                 || rest.starts_with("--")
                 || assigns_after(rest)
-                || calls_after(rest));
+                || calls_after(rest)
+                || loop_target(rest)
+                || inside_destructuring_target(masked, at));
         }
         let whole = (before.ends_with('(') || before.ends_with(','))
             && after.trim_start().starts_with([',', ')']);
@@ -411,6 +416,16 @@ fn expect_matcher(masked: &str, callee: &str) -> bool {
 /// as `this`, so the callee can write any member of it.
 fn calls_after(rest: &str) -> bool {
     rest.starts_with('(') || rest.starts_with("?.(") || rest.starts_with('`')
+}
+
+/// `true` when the text after a member path makes it the target of a
+/// `for (name.k of xs)` or `for (name.k in o)` loop, which writes it. A
+/// plain `name.k in o` test reads the same, so it fails a read too.
+fn loop_target(rest: &str) -> bool {
+    ["of", "in"].iter().any(|keyword| {
+        rest.strip_prefix(keyword)
+            .is_some_and(|tail| !tail.starts_with(is_identifier_part))
+    })
 }
 
 /// The text after a non-empty member path (`.k`, `?.k`, `[e]`, `!`, in any
