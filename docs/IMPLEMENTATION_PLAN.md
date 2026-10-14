@@ -165,10 +165,10 @@ landed in #341, and generated CI, VS Code, and agent packet convergence landed
 in #344. The
 focused Lane 2 policy readiness tracker lives in
 [Policy readiness](policy/POLICY_READINESS.md); the historical
-`.ripr/goals/lane2-policy-readiness.toml` was deleted in #2056 (#1701). It is a GitHub issue/PR board,
+`.ripr/goals/lane2-policy-readiness.toml` was deleted in #2056 (#1701). The Policy Readiness tracker is a GitHub issue/PR board,
 not the active execution manifest. The next focused Lane 2 tracker lives in
 [Policy operations](policy/POLICY_OPERATIONS.md); the historical
-`.ripr/goals/lane2-policy-operations.toml` was deleted in #2056 (#1701). It is also not the active
+`.ripr/goals/lane2-policy-operations.toml` was deleted in #2056 (#1701). The Policy Operations tracker is also not the active
 execution manifest. Campaigns 1 through 8 are complete.
 Campaign 6 closed after the internal module SRP chain
 landed through #405 while preserving the saved-workspace LSP cockpit contract,
