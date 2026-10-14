@@ -743,22 +743,24 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     };
     let body = owner.body.as_str();
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let panics_at_or_after_change = masked.lines().enumerate().any(|(offset, line)| {
-        owner.start_line + offset >= changed_line
-            && PANIC_MACROS.iter().any(|name| invokes_macro(line, name))
-    });
-    if !panics_at_or_after_change {
-        return false;
-    }
-    // An `expected` message counts only when the owner can raise it on or
-    // after the changed line: a message raised before the change does not
-    // depend on it.
     let tail_start: usize = body
         .split_inclusive('\n')
         .take(changed_line - owner.start_line)
         .map(str::len)
         .sum();
-    let owner_literals = string_literal_contents(body.get(tail_start..).unwrap_or_default());
+    let invocations = panic_macro_arguments(&masked, tail_start);
+    if invocations.is_empty() {
+        return false;
+    }
+    // An `expected` message counts only when it is a literal argument of a
+    // panicking macro invoked on or after the changed line: a message raised
+    // before the change, or a literal the owner never panics with, does not
+    // depend on it.
+    let owner_literals: Vec<String> = invocations
+        .into_iter()
+        .filter_map(|arguments| body.get(arguments))
+        .flat_map(string_literal_contents)
+        .collect();
     let panicking: Vec<String> = finding
         .related_tests
         .iter()
@@ -769,6 +771,7 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
                         && test.file == related.file
                         && test.start_line == related.line
                         && test.assertions.is_empty()
+                        && !is_ignored(test)
                         && expects_owner_panic(test, &owner_literals)
                 })
         })
@@ -798,24 +801,58 @@ pub(in crate::analysis) fn withhold_should_panic_gap(
     true
 }
 
-/// Whether the masked `line` invokes the macro `name!(..)` (`std::panic!`
-/// and `core::panic!` included; `debug_assert!` is not `assert!`, and
-/// `todo != 0` is a comparison).
-fn invokes_macro(line: &str, name: &str) -> bool {
-    line.match_indices(name).any(|(at, _)| {
-        let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
-        line[..at].chars().next_back().is_none_or(boundary)
-            && line[at + name.len()..]
-                .trim_start()
-                .strip_prefix('!')
-                .is_some_and(|args| args.trim_start().starts_with(['(', '[', '{']))
+/// The byte ranges of the bracketed arguments of every panicking macro
+/// invoked at or after byte `from` of the masked body: `name!(..)`,
+/// `name![..]` or `name!{..}` (`std::panic!` and `core::panic!` included;
+/// `debug_assert!` is not `assert!`, and `todo != 0` is a comparison). An
+/// invocation whose brackets do not close in the body is left out.
+fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize>> {
+    let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
+    let mut arguments = Vec::new();
+    for name in PANIC_MACROS {
+        for (at, _) in masked.match_indices(name).filter(|(at, _)| *at >= from) {
+            if !masked[..at].chars().next_back().is_none_or(boundary) {
+                continue;
+            }
+            let after_name = &masked[at + name.len()..];
+            let Some(after_bang) = after_name.trim_start().strip_prefix('!') else {
+                continue;
+            };
+            let open = masked.len() - after_bang.trim_start().len();
+            if !masked[open..].starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let mut depth = 0usize;
+            for (offset, ch) in masked[open..].char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            arguments.push(open..open + offset + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    arguments
+}
+
+/// Whether `test` carries `#[ignore]`, so a default run never executes it.
+fn is_ignored(test: &TestFact) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact == "#[ignore]" || compact.starts_with("#[ignore=")
     })
 }
 
 /// Whether `test` is a `#[should_panic]` test whose expected panic the
-/// owner can raise: a bare attribute, or `expected = ".."` whose text is in
-/// one of the owner's string literals. An attribute ripr cannot read keeps
-/// the gap.
+/// owner can raise: a bare attribute, `expected = ""` (which matches any
+/// message), or `expected = ".."` whose text is in one of the owner's panic
+/// message literals. An attribute ripr cannot read keeps the gap.
 fn expects_owner_panic(test: &TestFact, owner_literals: &[String]) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
@@ -834,10 +871,10 @@ fn expects_owner_panic(test: &TestFact, owner_literals: &[String]) -> bool {
         }
         match string_literal_contents(attr).as_slice() {
             [expected] => {
-                !expected.is_empty()
-                    && owner_literals
-                        .iter()
-                        .any(|literal| literal.contains(expected.as_str()))
+                owner_literals
+                    .iter()
+                    .any(|literal| literal.contains(expected.as_str()))
+                    || expected.is_empty()
             }
             _ => false,
         }
@@ -1756,14 +1793,27 @@ mod tests {
 
     #[test]
     fn a_panic_macro_is_read_by_its_own_name() {
-        assert!(invokes_macro("panic!(\"x\");", "panic"));
-        assert!(invokes_macro("std::panic! (\"x\");", "panic"));
-        assert!(invokes_macro("assert!(cols > 0);", "assert"));
-        assert!(!invokes_macro("debug_assert!(cols > 0);", "assert"));
-        assert!(!invokes_macro("let panic = 1;", "panic"));
-        assert!(!invokes_macro("my_panic!(x);", "panic"));
-        assert!(!invokes_macro("if todo != 0 {", "todo"));
-        assert!(!invokes_macro("let ok = !panic;", "panic"));
+        let spans = |code: &str| {
+            panic_macro_arguments(code, 0)
+                .into_iter()
+                .map(|range| code[range].to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(spans("panic!(f(1));"), ["(f(1))"]);
+        assert_eq!(spans("std::panic! [x];"), ["[x]"]);
+        assert_eq!(spans("assert!(cols > 0);"), ["(cols > 0)"]);
+        assert_eq!(spans("debug_assert!(cols > 0);"), ["(cols > 0)"]);
+        for code in [
+            "let panic = 1;",
+            "my_panic!(x);",
+            "if todo != 0 {",
+            "let ok = !panic;",
+            "panic!(unclosed",
+        ] {
+            assert!(spans(code).is_empty(), "{code}");
+        }
+        // Only invocations at or after the start offset count.
+        assert!(panic_macro_arguments("panic!(a); x", 3).is_empty());
     }
 
     const PANIC_SOURCE: &str = r#"pub fn row(index: usize) -> usize {
@@ -1810,7 +1860,7 @@ fn plain() { row(100); }
         assert_eq!(expects("bare"), Some(true));
         assert_eq!(expects("owned_message"), Some(true));
         assert_eq!(expects("foreign_message"), Some(false));
-        assert_eq!(expects("empty_message"), Some(false));
+        assert_eq!(expects("empty_message"), Some(true));
         assert_eq!(expects("plain"), Some(false));
     }
 }

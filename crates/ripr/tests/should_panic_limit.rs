@@ -4,8 +4,8 @@
 //! `static_unknown` when the owner can panic at or after the changed line:
 //! the panic outcome is an oracle ripr does not resolve. A change after the
 //! owner's last panic, an `expected` message the owner raises only before
-//! the change or never, a test without `#[should_panic]`, and a
-//! `#[should_panic]` test that carries an assertion keep the gap.
+//! the change or never, a test without `#[should_panic]`, an ignored test,
+//! and a `#[should_panic]` test that carries an assertion keep the gap.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -134,6 +134,8 @@ fn a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown() -> Res
         "#[should_panic]",
         "#[should_panic(expected = \"index past the end\")]",
         "#[should_panic(expected = \"past the\")]",
+        // An empty message matches any panic.
+        "#[should_panic(expected = \"\")]",
     ] {
         let finding = finding_on(&source(attrs, "row(100);"), GUARD_DIFF, 2)?;
         assert_eq!(finding.class, ExposureClass::StaticUnknown, "{attrs}");
@@ -170,6 +172,26 @@ fn a_panic_outcome_the_rule_does_not_cover_keeps_the_gap() -> Result<(), String>
     ] {
         keeps_gap(&source(attrs, "row(100);"), diff, line, attrs)?;
     }
+    // An ignored test never runs by default.
+    keeps_gap(
+        &source("#[ignore]\n    #[should_panic]", "row(100);"),
+        GUARD_DIFF,
+        2,
+        "ignored should_panic",
+    )?;
+    // The expected text is a literal after the change, but not one the
+    // owner panics with.
+    keeps_gap(
+        &with_owner(
+            "pub fn row(index: usize) -> usize {
+    if index >= 100 { let _label = \"target\";",
+            "#[should_panic(expected = \"target\")]",
+            "row(100);",
+        ),
+        GUARD_DIFF,
+        2,
+        "expected text outside the panic",
+    )?;
     // The test carries an assertion, which other rules judge.
     keeps_gap(
         &source(
