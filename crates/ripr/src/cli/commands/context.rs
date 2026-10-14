@@ -224,6 +224,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             &config,
             artifact_path,
             asserted_base.as_deref(),
+            explicit.mode,
         )
         .map_err(&refuse)?,
         None => {
