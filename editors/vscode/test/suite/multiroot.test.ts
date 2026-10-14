@@ -323,8 +323,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       // reconciliation restart can transiently project a status without the
       // effective root (the restart settles within the window).
       const boundStatus = async () => {
-        const sampled = await sampleStatus() as { analysis_status?: { effective_root?: string; root_state?: string } };
-        return sampled.analysis_status ?? {};
+        const sampled = await sampleStatus() as { effective_root?: string; root_state?: string };
+        return sampled ?? {};
       };
       await waitFor(async () => {
         const s = await boundStatus();
