@@ -1946,7 +1946,9 @@ impl OwnerReturnPin {
         if declaring_file_rebinds(owner_source, &type_name, true, index)
             || tail
                 .wrapper
-                .is_some_and(|wrapper| wrapper_may_be_rebound(wrapper, index))
+                .into_iter()
+                .chain(tail.early_exit)
+                .any(|constructor| wrapper_may_be_rebound(constructor, index))
         {
             return None;
         }
@@ -2036,6 +2038,14 @@ impl OwnerReturnPin {
         } else {
             equality_condition_operands(&assertion.text)
         };
+        // RIPR-SPEC-0225 decision 6: beside an `Ok(..)`/`Some(..)` tail, the
+        // test may compare `owner(..).unwrap()` (or `.expect("..")`) with the
+        // bare literal; that reads as comparing the call with the wrapped one.
+        let unwrap_wrapper = match &self.path {
+            ReturnPathGate::WholeValueField(gate) => gate.wrapper,
+            _ => None,
+        };
+        let mut unwrapped = false;
         let (call, expected) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
@@ -2054,6 +2064,17 @@ impl OwnerReturnPin {
                     })
                 })
                 .flatten();
+            let unwrapped_direct = unwrap_wrapper.and_then(|_| {
+                let shape = |at: usize| {
+                    unwrapped_call(operands[at])
+                        .and_then(|call| self.awaited_call_shape(call, &self.name))
+                };
+                match (shape(0), shape(1)) {
+                    (Some(call), None) => Some((call, operands[1])),
+                    (None, Some(call)) => Some((call, operands[0])),
+                    _ => None,
+                }
+            });
             match (
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
@@ -2064,6 +2085,13 @@ impl OwnerReturnPin {
                 (Some(call), None, _) => (call, operands[1]),
                 (None, Some(call), _) => (call, operands[0]),
                 (None, None, Some(pin)) => pin,
+                (None, None, _) if unwrapped_direct.is_some() => {
+                    let Some(pair) = unwrapped_direct else {
+                        return false;
+                    };
+                    unwrapped = true;
+                    pair
+                }
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
                 // Only a test that names the owner outside this assertion
                 // can bind its result, and only in the test's own body: a
@@ -2089,12 +2117,27 @@ impl OwnerReturnPin {
                         // RIPR-SPEC-0225 rule 1: `let c = owner(..);` named
                         // only by its `let` and this comparison.
                         (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
-                            match (
-                                bound_owner_call(test, operands[0], &self.name),
-                                bound_owner_call(test, operands[1], &self.name),
-                            ) {
-                                (Some(call), None) => (call, operands[1]),
-                                (None, Some(call)) => (call, operands[0]),
+                            let bound_whole = |at: usize| {
+                                let initializer =
+                                    bound_owner_initializer(test, operands[at], &self.name)?;
+                                owner_call_shape(initializer, &self.name)
+                                    .map(|call| (call, false))
+                                    .or_else(|| {
+                                        unwrap_wrapper
+                                            .and(unwrapped_call(initializer))
+                                            .and_then(|call| owner_call_shape(call, &self.name))
+                                            .map(|call| (call, true))
+                                    })
+                            };
+                            match (bound_whole(0), bound_whole(1)) {
+                                (Some((call, unwraps)), None) => {
+                                    unwrapped = unwraps;
+                                    (call, operands[1])
+                                }
+                                (None, Some((call, unwraps))) => {
+                                    unwrapped = unwraps;
+                                    (call, operands[0])
+                                }
                                 _ => return false,
                             }
                         }
@@ -2216,6 +2259,15 @@ impl OwnerReturnPin {
         let expected = match &expected_literal {
             Some(literal) => literal.as_str(),
             None => expected,
+        };
+        let wrapped_expected;
+        let expected = match (unwrapped, unwrap_wrapper) {
+            (true, Some(wrapper)) => {
+                wrapped_expected = format!("{wrapper}({expected})");
+                wrapped_expected.as_str()
+            }
+            (true, None) => return false,
+            (false, _) => expected,
         };
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
@@ -3260,17 +3312,18 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     })
 }
 
-/// RIPR-SPEC-0225 rule 1: the owner call an operand names through a local
-/// binding. The operand is a plain name that the test binds once, with
-/// `let name = <owner call>;` (an optional type annotation, never `mut`),
+/// RIPR-SPEC-0225 rule 1: the initializer of the local binding an operand
+/// names, which the caller then reads as the owner call (or, under decision
+/// 6, its `.unwrap()`). The operand is a plain name that the test binds
+/// once, with `let name = <init>;` (an optional type annotation, never `mut`),
 /// and mentions nowhere else: any other use could borrow it mutably,
 /// shadow it, write through it or copy a field of it into the expected
 /// value. A macro that may bind the name refuses it too.
-fn bound_owner_call<'a>(
+fn bound_owner_initializer<'a>(
     test: &'a TestSummary,
     operand: &str,
     owner: &str,
-) -> Option<CallShape<'a>> {
+) -> Option<&'a str> {
     let name = operand.trim();
     if !is_plain_identifier(name) || name == owner {
         return None;
@@ -3323,8 +3376,26 @@ fn bound_owner_call<'a>(
     let (Some((equals, end)), None) = (bindings.next(), bindings.next()) else {
         return None;
     };
-    let initializer = test.body.get(equals + 1..end)?;
-    owner_call_shape(initializer, owner)
+    test.body.get(equals + 1..end)
+}
+
+/// RIPR-SPEC-0225 decision 6: the call `operand` unwraps, when it is
+/// `<call>.unwrap()` or `<call>.expect("..")` with one plain string literal
+/// message. Both panic on `Err`/`None`, so a passing comparison of the
+/// unwrapped value reads the call's `Ok`/`Some` payload. `Result::unwrap`
+/// and `Option::unwrap` are inherent, so no trait method can stand in.
+fn unwrapped_call(operand: &str) -> Option<&str> {
+    let operand = operand.trim();
+    if let Some(call) = operand.strip_suffix(".unwrap()") {
+        return Some(call.trim_end());
+    }
+    let (call, message) = operand.strip_suffix(')')?.rsplit_once(".expect(")?;
+    let message = message.trim();
+    let literal = message
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .is_some_and(|inner| !inner.contains(['"', '\\']));
+    literal.then(|| call.trim_end())
 }
 
 /// #6974: whether `test`'s crate (or the workspace) may bind `root` before
@@ -4078,6 +4149,9 @@ struct WholeValueTail {
     type_name: String,
     /// `Ok` or `Some` when the tail wraps the literal in that constructor.
     wrapper: Option<&'static str>,
+    /// `Err` or `None` when the owner also exits early through that
+    /// constructor; it must be the prelude's, like the wrapper.
+    early_exit: Option<&'static str>,
 }
 
 /// RIPR-SPEC-0225: the literal whose field `field` the changed line
@@ -4095,9 +4169,10 @@ fn whole_value_tail(
     expression: &str,
 ) -> Option<WholeValueTail> {
     let masked = mask_comments_and_strings(body);
-    if has_unbounded_macro(&masked) || !whole_word_offsets(&masked, "return").is_empty() {
+    if has_unbounded_macro(&masked) {
         return None;
     }
+    let returns = !whole_word_offsets(&masked, "return").is_empty();
     let parse = parse_clean_source_file(body)?;
     let function = parse
         .tree()
@@ -4126,6 +4201,25 @@ fn whole_value_tail(
         }
         _ => return None,
     };
+    // RIPR-SPEC-0225 decision 6: beside an `Ok(..)`/`Some(..)` tail, an
+    // early `return Err(..)`/`return None` exits with the other variant, as
+    // `?` does, so every `Ok`/`Some` the owner returns is the tail literal.
+    // Any other `return` may hand back another value of the wrapped type.
+    if returns
+        && !wrapper.is_some_and(|wrapper| {
+            let returned = function
+                .syntax()
+                .descendants()
+                .filter_map(ast::ReturnExpr::cast)
+                .collect::<Vec<_>>();
+            returned.len() == whole_word_offsets(&masked, "return").len()
+                && returned
+                    .iter()
+                    .all(|exit| returns_other_variant(exit, wrapper))
+        })
+    {
+        return None;
+    }
     if wrapper.is_none()
         && block
             .syntax()
@@ -4171,7 +4265,25 @@ fn whole_value_tail(
         && !evaluates_conditionally(&mask_comments_and_strings(
             &value.syntax().text().to_string(),
         )))
-    .then_some(WholeValueTail { type_name, wrapper })
+    .then_some(WholeValueTail {
+        type_name,
+        wrapper,
+        early_exit: wrapper
+            .filter(|_| returns)
+            .map(|wrapper| if wrapper == "Ok" { "Err" } else { "None" }),
+    })
+}
+
+/// Whether `exit` is `return Err(..)` beside an `Ok` tail, or `return None`
+/// beside a `Some` tail: an exit with the variant the tail does not build.
+fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
+    match (wrapper, exit.expr()) {
+        ("Ok", Some(ast::Expr::CallExpr(call))) => call
+            .expr()
+            .is_some_and(|callee| callee.syntax().text() == "Err"),
+        ("Some", Some(ast::Expr::PathExpr(path))) => path.syntax().text() == "None",
+        _ => false,
+    }
 }
 
 impl WholeValueField {
