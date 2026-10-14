@@ -141,9 +141,12 @@ reading: a `let` or `var`, a destructured, call-bound, object or array
 `const`, a `const` declared after the assertion or in an enclosing
 scope, and an assertion nested in a block, branch, loop, `try` or
 callback, where a nested declaration could shadow the name. A
-`.then((value) => ...)` callback, which the reader takes as its own
-body, reads its own top-level `const`s the same way, and never its
-parent's.
+callback with a parameter that the reader takes as its own body (a
+returned or awaited `.then((value) => ...)`, or an inline
+`[...].forEach((value) => ...)`) reads its own top-level `const`s the
+same way, and never its parent's. A zero-parameter `.then(() => ...)`
+callback is walked as a nested block and reads no `const`, even its own;
+that is a known under-credit, not false credit.
 
 Amended 2026-10-14 (#6654, typed owner): `==` between two numbers
 answers as `===` does, so a finite number literal the list above refuses (`0`, `1`,
@@ -348,8 +351,11 @@ and the rejected alternative. Recorded on #6654.
     inside a block, or the assertion inside an `if`, a `try`, a returned
     `.then` callback or a subtest that does not declare `want` itself:
     `relational_check` / weak. A `.then((result) => { const want = 30;
-    assert.equal(result, want); })` callback declares `want` itself:
-    `exact_value` / strong.
+    assert.equal(result, want); })` or `[10].forEach((input) => { const
+    want = 30; assert.equal(tier(input), want); })` callback declares
+    `want` itself: `exact_value` / strong. The same own `const` in a
+    zero-parameter `.then(() => ...)` callback: `relational_check` / weak
+    (known under-credit).
 11. `export function lineCount(items: string[]): number` and
     `assert.equal(lineCount(["a"]), 1)`, `assert.equal(lineCount([]), 0)`,
     `assert.deepEqual(lineCount(["a"]), 1)` or
