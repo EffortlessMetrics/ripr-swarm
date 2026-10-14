@@ -1,0 +1,79 @@
+{
+  "name": "composition-default-check-fast",
+  "command": [
+    "/workspace/scratch/2e70149a8e59/toolchains/rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+    "run",
+    "--locked",
+    "--offline",
+    "-p",
+    "xtask",
+    "--",
+    "check-fast"
+  ],
+  "source": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8 2ad0071df8e57d254ee7b52145f6135a45a74d6a 0e8d006e9845339a58902bb2baa28dbc4fd23c18 f6aab7639b88be1a21c757be74baef833e636f17",
+  "driver_sha256": "89988cc12e77bed1fec2944a66e3976cd414a21233de2707a3b984cd6347142a",
+  "exit_code": 0,
+  "elapsed_seconds": 741.116,
+  "log_sha256": "cb7eee74d34b25cd9ed5ab6138174c7a03f3fa7971e95080c9a54524fcfe1e23",
+  "features": [
+    "default",
+    "lang-rust",
+    "lang-typescript",
+    "lang-python"
+  ],
+  "selector_verification": {
+    "base_before": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "base_after": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "stable": true,
+    "file_count": 9,
+    "files": [
+      ".ripr/traceability.toml",
+      "changelog.d/7415-inherent-receiver-admission.md",
+      "crates/ripr/src/analysis/classify/mod.rs",
+      "crates/ripr/src/analysis/classify/related_tests.rs",
+      "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+      "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+      "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+      "crates/ripr/tests/private_inherent_receiver.rs",
+      "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
+    ],
+    "selector_before_sha256": "01b35c869ac72d3c756d352090029bdd55051a8a9f64e3c9d5223a6ab5f5e62e",
+    "selector_after_sha256": "01b35c869ac72d3c756d352090029bdd55051a8a9f64e3c9d5223a6ab5f5e62e"
+  },
+  "child_clippy": {
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "native_exit_code": 0,
+    "elapsed_ms": 412115
+  },
+  "check_fast": {
+    "native_exit_code": 0,
+    "gates_passed": 14,
+    "skipped": [
+      "check-fixture-contracts (not applicable)"
+    ]
+  },
+  "report_sha256": {
+    "composition-check-fast-reports/allow-attributes.md": "2b6cefb92607c5d8c350d43d51cd72260cdaa6fcbca024ac606e14924af9eba3",
+    "composition-check-fast-reports/check-fast-selector.md": "4fb3ee013f18be5ce87c35bd00a44f3718c37a3e085af5c8196612f68118ffdb",
+    "composition-check-fast-reports/check-fast.md": "dd7dc7ef29665635dd89fb05c94d7036c7922c9cd29ef04e0cae42bd5005b122",
+    "composition-check-fast-reports/command-catalog.md": "29b33a8319e6d475bf341ca11f6fa38b385e8b3d75845d4e87db1def6a3541b2",
+    "composition-check-fast-reports/covered-by.md": "c4a17c630f10458bf07db9cf76a6ae8191cda40220ac68b32273c1be0dbb3814",
+    "composition-check-fast-reports/file-policy.md": "cd715c7d1ba64d1b5ddbc6a9fcee6ab15bd66673ee60abba4c0c138208eeaba0",
+    "composition-check-fast-reports/generated-clean.md": "68d44f33fbefd2091348aa6330c1cd906e05f1ebd3527ca3b25d7e6f191edd65",
+    "composition-check-fast-reports/generated.md": "cfda4155cd7c282bb4289fc8bb7483fd5397d685d57ec51e844c2e7ee215bdd2",
+    "composition-check-fast-reports/lint-policy.md": "8e08f70560e50d13292318a0c2090ef6de6d3dde56c117f018c00d3ab8b4702d",
+    "composition-check-fast-reports/network-policy.md": "4917e42c45e0c4cf9fceabbe2a7bfca294af7d3e877c8c774e1da2f73fee2907",
+    "composition-check-fast-reports/no-panic-family.md": "2caaa3613188860267e9137c9dcc8cf58da6cae956f69cf730bd41b25edbb140",
+    "composition-check-fast-reports/process-policy.md": "5c21ce4aa1901629528e0c7014e9449a66841f564bc6640c3e8ff67d5a9ed2fc",
+    "composition-check-fast-reports/static-language.md": "7f42e385d2acb9d086082a6ed6b948689155a5bd4cc0485db9338b9cb2898136",
+    "composition-check-fast-reports/support-tiers.md": "cd012752d2abb7a04d6e2559d96de1a8b6ede67a11328826cff0636fb731f3f5"
+  }
+}

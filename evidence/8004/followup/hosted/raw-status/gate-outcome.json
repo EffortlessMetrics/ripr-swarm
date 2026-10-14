@@ -1,0 +1,43 @@
+{
+  "schema": "ub-review.gate_outcome.v1",
+  "conclusion": "pass",
+  "terminal_status": "needs-reviewer-attention",
+  "analysis_result": "findings",
+  "publication_result": "posted",
+  "gate_result": "pass",
+  "reasons": [],
+  "required_proof": {
+    "matched": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "tool_gates": {
+    "evaluated": 0,
+    "passed": 0,
+    "failed": 0
+  },
+  "evidence_gaps_blocking": 0,
+  "evidence_gaps_advisory": 2,
+  "sensor_coverage": {
+    "required_total": 0,
+    "required_completed": 0,
+    "optional_total": 5,
+    "optional_completed": 3,
+    "failed": 2,
+    "timed_out": 0,
+    "skipped": 0
+  },
+  "model_coverage": {
+    "lanes_total": 11,
+    "lanes_usable": 10,
+    "budget_exhausted_lanes": 0,
+    "budget_exhausted": false
+  },
+  "not_proven_reasons": [],
+  "revision": {
+    "digest": "a42b8b8ffd657e0e99f61c1e9b156879fd54403bbf668721d7e48acc765751ed",
+    "semantics": "merge_result",
+    "reviewed_commit": "7ab1edc51a1139390b5d819b2ba387018919b143"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "composition-default-lib-test",
+  "command": [
+    "/workspace/scratch/2e70149a8e59/toolchains/rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+    "test",
+    "-p",
+    "ripr",
+    "--lib",
+    "--locked",
+    "--offline",
+    "inherent_receiver",
+    "--",
+    "--nocapture"
+  ],
+  "source": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8 2ad0071df8e57d254ee7b52145f6135a45a74d6a 0e8d006e9845339a58902bb2baa28dbc4fd23c18 f6aab7639b88be1a21c757be74baef833e636f17",
+  "driver_sha256": "89988cc12e77bed1fec2944a66e3976cd414a21233de2707a3b984cd6347142a",
+  "exit_code": 0,
+  "elapsed_seconds": 216.072,
+  "log_sha256": "0d4c919acc1db4afcc5054e653fb8a8e68c1de1cf06a7a889303e39eeebc0698",
+  "unit_harness": {
+    "file": "/workspace/scratch/2e70149a8e59/receiver-gap-8004-evidence/ripr-unit-ba04f2af-composition-default",
+    "size": 242840424,
+    "sha256": "49fc04ffb9c99a72203c8e24e1919a1300c617e955d3db2e3be614b05cce3261"
+  },
+  "terminal_report": {
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 10836,
+    "elapsed_test_seconds": 0.4
+  },
+  "features": [
+    "default",
+    "lang-rust",
+    "lang-typescript",
+    "lang-python"
+  ],
+  "scope": "Targeted two new receiver relation assertions; full default lib harness compiled but all other unit tests filtered, not a full/default workspace-suite pass."
+}

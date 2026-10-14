@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "source_artifact": {
+    "name": "ripr-8004-f6aab763-ub-review.zip",
+    "bytes": 1170527,
+    "sha256": "2937e1bd32f553156d656ad86f8534db588a93b8bd15bcffa2fc317e26e990d9",
+    "embedded": false,
+    "artifact_manifest_sha256": "27eb253f3caa2ba36ae678717319b86df071f9739e995f7feb6c038ba128ac41"
+  },
+  "run": {
+    "quality_receipt_run_id": "38652694456",
+    "action_id": "55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8",
+    "profile": "gh-runner"
+  },
+  "revision": {
+    "semantics": "merge_result",
+    "identity_digest": "a42b8b8ffd657e0e99f61c1e9b156879fd54403bbf668721d7e48acc765751ed",
+    "base": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "base_tree": "f4e5aa3ec8c7c0363942dada556d43ecf6cd0988",
+    "head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "head_tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "merge_commit": "7ab1edc51a1139390b5d819b2ba387018919b143",
+    "merge_tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a"
+  },
+  "gate_outcome": {
+    "conclusion": "pass",
+    "gate_result": "pass",
+    "terminal_status": "needs-reviewer-attention",
+    "analysis_result": "findings",
+    "required_proof": {
+      "matched": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tool_gates": {
+      "evaluated": 0,
+      "passed": 0,
+      "failed": 0
+    },
+    "evidence_gaps_blocking": 0,
+    "evidence_gaps_advisory": 2,
+    "sensor_coverage": {
+      "required_total": 0,
+      "required_completed": 0,
+      "optional_total": 5,
+      "optional_completed": 3,
+      "failed": 2,
+      "timed_out": 0,
+      "skipped": 0
+    },
+    "model_coverage": {
+      "lanes_total": 11,
+      "lanes_usable": 10,
+      "budget_exhausted_lanes": 0,
+      "budget_exhausted": false
+    },
+    "revision_digest": "a42b8b8ffd657e0e99f61c1e9b156879fd54403bbf668721d7e48acc765751ed"
+  },
+  "optional_sensors": {
+    "cargo-test": {
+      "required": false,
+      "status": "failed",
+      "command": "cargo test --workspace --all-targets --locked",
+      "exit_code": 101,
+      "timed_out": false,
+      "duration_ms": 510558,
+      "reported_counts": {
+        "passed": 10836,
+        "failed": 1,
+        "ignored": 1
+      },
+      "failure_excerpt_file": "cargo-test-failure-excerpt.txt",
+      "source_member_sha256": "b11da84612639fe6b5cdc4fd5252447b840d5cafe474599cd6a52ef00772ca10",
+      "source_status_sha256": "50482fb87206155e93fa1c2f65d39d20fb7dbef295b8bc15cf150006eb87bfd1"
+    },
+    "ripr": {
+      "required": false,
+      "status": "failed",
+      "command": "ripr check --root . --diff target/ub-review/input/diff.patch --mode ready --format badge-json",
+      "exit_code": 2,
+      "timed_out": false,
+      "duration_ms": 12,
+      "analysis_ran": false,
+      "failure_excerpt_file": "ripr-failure-excerpt.txt",
+      "source_member_sha256": "a9a590fa6939341a4ce77316afe83b49ac612d3c531b3d66d48c85963c8ff224",
+      "source_status_sha256": "6d3f8e3fb5596d40a473b39b1d30c850974eb8fbc42dcdb5f4048d04c3bf3ad9"
+    }
+  },
+  "diagnosis_boundary": "This projection preserves observed status, command and failure excerpts only. It assigns no root cause and makes no inherited-failure claim."
+}

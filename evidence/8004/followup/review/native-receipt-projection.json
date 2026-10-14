@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "source_receipt": {
+    "bytes": 2696,
+    "sha256": "ebcf5c5191e6f53b64bf1a9d47ed475fe5196321f84ed6a7ed7c79c160f09b76"
+  },
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "runs": [
+    {
+      "source_file": "native-item-shadow.rs",
+      "source_sha256": "e403636e4c5a22939d7a6368ebc36423dda06bf7a63e3bb111d6cebc1f487f03",
+      "command": "rustc --edition=2024 --test <source> -o <local executable>",
+      "compile_exit": 0,
+      "test_exit": 0,
+      "binary_sha256": "abf057eb1a1968c36d13b68a678b86c9fd2a9c9ea4afb71751d68c2f43d341fe",
+      "test_output": "\nrunning 3 tests\ntest actual_private_controls::actual_private_null ... ok\ntest actual_private_controls::actual_private_object ... ok\ntest tests::same_target_wrong_json_type ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "source_file": "native-item-shadow-owner-wrong.rs",
+      "source_sha256": "06fb1e9b8af871eefbab6e3889916814e118ddf78467985f3baf321779f09d7e",
+      "command": "rustc --edition=2024 --test <source> -o <local executable>",
+      "compile_exit": 0,
+      "test_exit": 101,
+      "binary_sha256": "8bfc59aa0475dc42a2bdddc235b5f9bf1a77c5568e54555e271d9886ad42e5d3",
+      "test_output": "\nrunning 3 tests\ntest actual_private_controls::actual_private_null ... ok\ntest actual_private_controls::actual_private_object ... FAILED\ntest tests::same_target_wrong_json_type ... ok\n\nfailures:\n\nfailures:\n    actual_private_controls::actual_private_object\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nthread 'actual_private_controls::actual_private_object' (54) panicked at /workspace/scratch/2e70149a8e59/reconcile-receiver-review-8004-evidence/native-item-shadow-owner-wrong.rs:40:33:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    }
+  ],
+  "scope_note": "Standalone native dispatch control, not a repaired-candidate run or a full Rust type-resolution claim. Executables omitted; hashes retained."
+}

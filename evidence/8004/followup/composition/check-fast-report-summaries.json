@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0",
+  "local_composition_commit": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8",
+  "tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+  "base": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+  "aggregate": {
+    "command": "cargo run --locked --offline -p xtask -- check-fast",
+    "exit_code": 0,
+    "gates_passed": 14,
+    "skipped": [
+      "check-fixture-contracts (not applicable)"
+    ],
+    "log_sha256": "cb7eee74d34b25cd9ed5ab6138174c7a03f3fa7971e95080c9a54524fcfe1e23",
+    "receipt_sha256": "df5e74f3eda4d6462b59808894cba0b53cdf472dd1a5ab7486cf6401f3769fd5"
+  },
+  "fourteen_gate_report_file_summaries": [
+    {
+      "name": "allow-attributes.md",
+      "status": "pass",
+      "bytes": 373,
+      "sha256": "2b6cefb92607c5d8c350d43d51cd72260cdaa6fcbca024ac606e14924af9eba3"
+    },
+    {
+      "name": "check-fast-selector.md",
+      "status": "pass",
+      "bytes": 144,
+      "sha256": "4fb3ee013f18be5ce87c35bd00a44f3718c37a3e085af5c8196612f68118ffdb"
+    },
+    {
+      "name": "check-fast.md",
+      "status": "pass",
+      "bytes": 1473,
+      "sha256": "dd7dc7ef29665635dd89fb05c94d7036c7922c9cd29ef04e0cae42bd5005b122"
+    },
+    {
+      "name": "command-catalog.md",
+      "status": "pass",
+      "bytes": 386,
+      "sha256": "29b33a8319e6d475bf341ca11f6fa38b385e8b3d75845d4e87db1def6a3541b2"
+    },
+    {
+      "name": "covered-by.md",
+      "status": "pass",
+      "bytes": 401,
+      "sha256": "c4a17c630f10458bf07db9cf76a6ae8191cda40220ac68b32273c1be0dbb3814"
+    },
+    {
+      "name": "file-policy.md",
+      "status": "pass",
+      "bytes": 59054,
+      "sha256": "cd715c7d1ba64d1b5ddbc6a9fcee6ab15bd66673ee60abba4c0c138208eeaba0"
+    },
+    {
+      "name": "generated-clean.md",
+      "status": "pass",
+      "bytes": 326,
+      "sha256": "68d44f33fbefd2091348aa6330c1cd906e05f1ebd3527ca3b25d7e6f191edd65"
+    },
+    {
+      "name": "generated.md",
+      "status": "pass",
+      "bytes": 269,
+      "sha256": "cfda4155cd7c282bb4289fc8bb7483fd5397d685d57ec51e844c2e7ee215bdd2"
+    },
+    {
+      "name": "lint-policy.md",
+      "status": "pass",
+      "bytes": 810,
+      "sha256": "8e08f70560e50d13292318a0c2090ef6de6d3dde56c117f018c00d3ab8b4702d"
+    },
+    {
+      "name": "network-policy.md",
+      "status": "pass",
+      "bytes": 266,
+      "sha256": "4917e42c45e0c4cf9fceabbe2a7bfca294af7d3e877c8c774e1da2f73fee2907"
+    },
+    {
+      "name": "no-panic-family.md",
+      "status": "pass",
+      "bytes": 251,
+      "sha256": "2caaa3613188860267e9137c9dcc8cf58da6cae956f69cf730bd41b25edbb140"
+    },
+    {
+      "name": "process-policy.md",
+      "status": "pass",
+      "bytes": 266,
+      "sha256": "5c21ce4aa1901629528e0c7014e9449a66841f564bc6640c3e8ff67d5a9ed2fc"
+    },
+    {
+      "name": "static-language.md",
+      "status": "pass",
+      "bytes": 248,
+      "sha256": "7f42e385d2acb9d086082a6ed6b948689155a5bd4cc0485db9338b9cb2898136"
+    },
+    {
+      "name": "support-tiers.md",
+      "status": "pass",
+      "bytes": 309,
+      "sha256": "cd012752d2abb7a04d6e2559d96de1a8b6ede67a11328826cff0636fb731f3f5"
+    }
+  ],
+  "scope_caution": "The report files summarize check-fast diagnostics; their status does not upgrade targeted unit/integration runs into a full workspace test pass."
+}

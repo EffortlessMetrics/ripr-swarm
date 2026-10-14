@@ -1,0 +1,10 @@
+   Compiling ripr v0.11.0 (/workspace/scratch/2e70149a8e59/qualify-receiver-composition-0e8d006/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 35s
+     Running unittests src/lib.rs (/workspace/scratch/2e70149a8e59/receiver-gap-8004-default-target/debug/deps/ripr-67c20de708634f70)
+
+running 2 tests
+test analysis::test_grip_evidence::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence ... ok
+test analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 10836 filtered out; finished in 0.40s
+

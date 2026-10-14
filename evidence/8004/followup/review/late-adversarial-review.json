@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "status_as_of_utc": "2026-10-14T23:46:57.531199+00:00",
+  "finding": "Operand-local unit-struct value shadowing in the method-call operand is still credited as a direct/high receiver relation to the outer inherent method.",
+  "analyzer_red_evidence": "The adversarial fixture output contains the call assert_eq!({ struct value; value.as_object() }, None);; compact receipt shows direct_owner_call/high in diff and repo modes. The raw reports and hashes are in this directory.",
+  "native_control": "The same pattern compiles under Rust 1.95 and runtime atomic counter confirms blanket ForeignView dispatch. The standalone control passes 3/3. Mutating the actual private Object match arm to return None leaves the shadow-dispatch and null controls passing while failing the actual private Object control (2 pass, 1 fail).",
+  "repair_and_clearance": "Repair is a separate active follow-up. Semantic clearance is withdrawn pending repair and independent review. This is not a Ready decision or eligibility assertion.",
+  "source_digests": {
+    "native_receipt_sha256": "ebcf5c5191e6f53b64bf1a9d47ed475fe5196321f84ed6a7ed7c79c160f09b76",
+    "controls_receipt_sha256": "1c73fdfb0fadd5fe98cf8063d5f3590de081b548d825d1307dffbbc5bfd07858",
+    "native_source_sha256": "e403636e4c5a22939d7a6368ebc36423dda06bf7a63e3bb111d6cebc1f487f03",
+    "mutated_native_source_sha256": "06fb1e9b8af871eefbab6e3889916814e118ddf78467985f3baf321779f09d7e",
+    "red_diff_report_sha256": "99607ca0772abba4683533562ad70abd6e4d053b615208fd0a797d206b0e5e0f",
+    "red_repo_report_sha256": "e6468af44f92343c8c8cbd3f03e14e544420ba769e66cfd14a30eafc80f73817"
+  },
+  "limits": "The native witness is a focused standalone dispatch control, not a full type resolver, production-candidate rerun, or full-suite result."
+}

@@ -1,0 +1,17 @@
+
+running 3 tests
+test actual_private_controls::actual_private_null ... ok
+test actual_private_controls::actual_private_object ... FAILED
+test tests::same_target_wrong_json_type ... ok
+
+failures:
+
+failures:
+    actual_private_controls::actual_private_object
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+thread 'actual_private_controls::actual_private_object' (54) panicked at /workspace/scratch/2e70149a8e59/reconcile-receiver-review-8004-evidence/native-item-shadow-owner-wrong.rs:40:33:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

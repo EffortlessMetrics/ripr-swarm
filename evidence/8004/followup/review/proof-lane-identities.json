@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "published_candidate": {
+    "head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "parent": "89ac47a603092ba7f9f55cf74999b88649621abf"
+  },
+  "source_review": {
+    "reviewed_local_commit": "6b382125783a05e9b3353131837ed215fce70247",
+    "same_tree_as_published": true,
+    "same_parent_as_published": true,
+    "bridge_scope": "identical tracked source tree and parent; no fresh CLI binary executed at published SHA and no current-base/hosted qualification established by the bridge"
+  },
+  "author_default_feature": {
+    "producer_sha256": "9707ca93255f5b2c02753ddcfafa9c0a74d7ab58db24b1bdea36ebea1a70074a",
+    "features": "default",
+    "toolchain": "Rust/Cargo 1.95.0",
+    "jobs": 2,
+    "incremental": false,
+    "nine_fixture_pairs": "completed; 5 seams each; full relation invariants and compact metric parity passed",
+    "cli_rerun": {
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 503,
+      "exit": 0
+    },
+    "aggregate_check_fast": {
+      "exit": 1,
+      "reason": "all-target Clippy lib-test metadata process SIGKILL; policy phases passed"
+    },
+    "prior_default_lib_test": {
+      "exit": 101,
+      "reason": "SIGKILL during lib-test compilation before full harness completion"
+    },
+    "focused_unit_recovery_at_published_sha": {
+      "producer_binary_sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6",
+      "features": [
+        "default",
+        "lang-rust",
+        "lang-typescript",
+        "lang-python"
+      ],
+      "jobs": 1,
+      "incremental": false,
+      "debug": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 10814,
+      "elapsed_seconds": 339.061,
+      "exit": 0,
+      "scope": "two named full/compact receiver unit tests only; not the complete lib-test suite"
+    },
+    "goldens": {
+      "fixtures": 425,
+      "fixture_errors": 0,
+      "exit": 1,
+      "inherited_fixture": "owner_return_pin_fallible_literal",
+      "surface_drift_count": 3,
+      "baseline_candidate_normalized_json_equal": true,
+      "candidate_new_drift": "none observed",
+      "blessed": false
+    }
+  },
+  "independent_reviewer_rust_only": {
+    "producer_sha256": "814c6373c78aad5acbb57a6c70084eb0b18a43fe3acadf5ee0207218f10172aa",
+    "features": "--no-default-features --features lang-rust",
+    "toolchain": "Rust/Cargo 1.95.0; Linux x86_64",
+    "jobs": 1,
+    "incremental": false,
+    "debug": 0,
+    "private_inherent_receiver_integration": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "native_path_roots_linux": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "native_windows_established": false
+    },
+    "independent_native_control_subjects": 15,
+    "isolated_control_cases": 10,
+    "isolated_cli_reports": 30,
+    "source_mutation_by_reviewer": false,
+    "hosted_checks_reviewed": false
+  },
+  "separation_note": "Author default-feature receipts, independent reviewer Rust-only receipts, exact published-head targeted unit recovery, frozen composition checks, and the hosted artifact are distinct evidence lanes. Feature sets and executable source identities must not be merged into one claim."
+}

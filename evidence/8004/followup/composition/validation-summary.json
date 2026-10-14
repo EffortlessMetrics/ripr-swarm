@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "source_artifact": {
+    "file": "validation-summary.json",
+    "sha256": "813e6e3a8f4c141c11e24b38ff00f325c56800613898a5f60a96d7656687cd74",
+    "bytes": 6504
+  },
+  "completed_at_utc": "2026-10-14T23:39:49.753564+00:00",
+  "disposition": "PASS: bounded default receiver unit parity and frozen current-main integration plus all-target Clippy/check-fast",
+  "current_review_status": "Later adversarial review identified an unresolved operand-local unit-struct shadowing counterexample at this frozen composition; semantic clearance is withdrawn pending repair and independent review.",
+  "candidate": {
+    "published_head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "reviewed_local_same_tree_parent": "6b382125783a05e9b3353131837ed215fce70247"
+  },
+  "frozen_composition": {
+    "base": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "commit": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8",
+    "tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+    "parents": [
+      "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+      "f6aab7639b88be1a21c757be74baef833e636f17"
+    ],
+    "identity_source": "composition-inspection.json"
+  },
+  "environment": {
+    "platform": "Linux x86_64",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+    "features": [
+      "default",
+      "lang-rust",
+      "lang-typescript",
+      "lang-python"
+    ],
+    "profile": {
+      "jobs": 1,
+      "incremental": false,
+      "dev_debug": 0,
+      "test_debug": 0,
+      "optimization": "unoptimized"
+    },
+    "offline": true
+  },
+  "recovery_note": "Fresh isolated target, serial/debug0 recovery. Earlier jobs2/line-tables-only SIGKILL outcomes remain unchanged; these new terminal passes do not erase them. No Rust-only fallback needed.",
+  "stages": {
+    "published-default-lib-test": {
+      "receipt_sha256": "ef42c004ac509ea237d2611bfa3a8bfdffacf9db699528deb6af79649dab2902",
+      "log_sha256": "1648d4aa45bf211c7fd218af2d83be3a23461e217699d3671e07ce1ca7cbeaa9",
+      "native_exit_code": 0,
+      "elapsed_seconds": 339.061,
+      "peak_child_rss_kib": 7575128,
+      "minimum_sampled_disk_free_bytes": 8671350784,
+      "stopped_for_disk_floor": false,
+      "worktree_clean_after": true,
+      "terminal_report": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 10814,
+        "elapsed_test_seconds": 0.38
+      }
+    },
+    "composition-default-lib-test": {
+      "receipt_sha256": "5e49675b7abfdff496a1f363e7f33d40825e14ce57de38dbb712eac3a40bd39d",
+      "log_sha256": "0d4c919acc1db4afcc5054e653fb8a8e68c1de1cf06a7a889303e39eeebc0698",
+      "native_exit_code": 0,
+      "elapsed_seconds": 216.072,
+      "peak_child_rss_kib": 7589976,
+      "minimum_sampled_disk_free_bytes": 8186056704,
+      "stopped_for_disk_floor": false,
+      "worktree_clean_after": true,
+      "terminal_report": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 10836,
+        "elapsed_test_seconds": 0.4
+      }
+    },
+    "composition-default-receiver-integration": {
+      "receipt_sha256": "b9930394319e26bc4ccdec961bb01ba3b60843a6e2de04beffc7ce87e846dddf",
+      "log_sha256": "4128d2d631007efc84988f3ff2a5a08ca235111bb959f8ebefb1e0c132690f89",
+      "native_exit_code": 0,
+      "elapsed_seconds": 99.04,
+      "peak_child_rss_kib": 3846032,
+      "minimum_sampled_disk_free_bytes": 8080027648,
+      "stopped_for_disk_floor": false,
+      "worktree_clean_after": true,
+      "terminal_report": {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0,
+        "elapsed_test_seconds": 0.5
+      }
+    },
+    "composition-default-check-fast": {
+      "receipt_sha256": "df5e74f3eda4d6462b59808894cba0b53cdf472dd1a5ab7486cf6401f3769fd5",
+      "log_sha256": "cb7eee74d34b25cd9ed5ab6138174c7a03f3fa7971e95080c9a54524fcfe1e23",
+      "native_exit_code": 0,
+      "elapsed_seconds": 741.116,
+      "peak_child_rss_kib": 6034980,
+      "minimum_sampled_disk_free_bytes": 6590140416,
+      "stopped_for_disk_floor": false,
+      "worktree_clean_after": true,
+      "terminal_report": null,
+      "gates_passed": 14,
+      "skipped": [
+        "check-fixture-contracts (not applicable)"
+      ]
+    }
+  },
+  "prior_failures_preserved": {
+    "note": "Earlier SIGKILL/failed-run receipts remain distinct; the new bounded passes do not erase them.",
+    "artifact_digests": {
+      "frozen_candidate_manifest.json": "8576309be40138a743a9d6c0103ac6addb0e1a7008fc2a68a87a5a0a7b7ea82b",
+      "post_freeze_validation.json": "0a199d0e1728506fa329cc0534809cb73c142e09490964f06673a38f0bad2b50",
+      "repo_regression_resumed_green.log": "4021b95fc3f1f9ba5149714b5ef40122e8a46a97a957e1690f1ccb5fc2adb670",
+      "exact_head_check_fast.log": "2db4c8999d6c3bcccfee31692a13d8b34e3de76783eb874e9a0c448aa3c0acad",
+      "exact_head_check_fast_report.md": "e6b9affa834a935f228785173746edd37ac264f69c8673650a45e26a53a0363d"
+    }
+  },
+  "composition_inspection_summary": {
+    "intersection": [
+      ".ripr/traceability.toml",
+      "crates/ripr/src/analysis/classify/mod.rs"
+    ],
+    "candidate_path_count": 9,
+    "frozen_main_delta_path_count": 147,
+    "merge_tree_clean": true
+  },
+  "source_state": {
+    "published_clean": true,
+    "composition_clean": true,
+    "candidate_checkout_clean": true,
+    "source_edits": false,
+    "branch_update": false,
+    "rebase": false,
+    "publication_or_remote_mutation": false
+  },
+  "limits": [
+    "Two selected default unit tests executed; other10814/10836 tests filtered, so no full-default lib/workspace suite claim.",
+    "Current-base qualification is the frozen0e8d006 composition, not an automatically advancing main.",
+    "Local checks are separate from hosted required jobs and do not themselves establish Ready/merge permission or all-required-check success.",
+    "Native Windows, separate #7817/#7973 branches, general Rust type/Cargo-target resolution and global #7415 closure are not qualified.",
+    "No goldens rerun/bless; prior425-fixture result and exact inherited drift comparison are retained."
+  ]
+}

@@ -1,0 +1,1 @@
+ripr: diff_scope_oversized: 1229 indexed Rust files exceed the RIPR_MAX_DIFF_INDEX_FILES limit (800); analysis was not run to protect runner memory. Repair route: reduce the diff scope, run a narrower mode, or raise the limit via RIPR_MAX_DIFF_INDEX_FILES=<number>.

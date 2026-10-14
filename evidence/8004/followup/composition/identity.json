@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "candidate": {
+    "head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "parent": "89ac47a603092ba7f9f55cf74999b88649621abf"
+  },
+  "frozen_main": {
+    "commit": "0e8d006e9845339a58902bb2baa28dbc4fd23c18"
+  },
+  "local_composition": {
+    "commit": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8",
+    "tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+    "parents": [
+      "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+      "f6aab7639b88be1a21c757be74baef833e636f17"
+    ],
+    "merge_tree_clean": true,
+    "overlapping_paths": [
+      ".ripr/traceability.toml",
+      "crates/ripr/src/analysis/classify/mod.rs"
+    ],
+    "candidate_path_count": 9,
+    "frozen_main_delta_path_count": 147
+  },
+  "hosted_merge_subject": {
+    "commit": "7ab1edc51a1139390b5d819b2ba387018919b143",
+    "tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+    "pr_head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "base": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "identity_digest": "a42b8b8ffd657e0e99f61c1e9b156879fd54403bbf668721d7e48acc765751ed",
+    "action_id": "55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8"
+  },
+  "scope_note": "Local composition checks bind to frozen base 0e8d006... and the candidate; hosted artifact is separately bound to GitHub merge subject 7ab1edc... . This is not an automatically advancing main-branch claim."
+}

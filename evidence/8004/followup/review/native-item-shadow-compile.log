@@ -1,0 +1,18 @@
+warning: type `value` should have an upper camel case name
+  --> /workspace/scratch/2e70149a8e59/reconcile-receiver-review-8004-evidence/native-item-shadow.rs:31:29
+   |
+31 |         assert_eq!({ struct value; value.as_object() }, None);
+   |                             ^^^^^ help: convert the identifier to upper camel case (notice the capitalization): `Value`
+   |
+   = note: `#[warn(non_camel_case_types)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: unused variable: `value`
+  --> /workspace/scratch/2e70149a8e59/reconcile-receiver-review-8004-evidence/native-item-shadow.rs:30:6
+   |
+30 |  let value = JsonValue::Null;
+   |      ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 2 warnings emitted
+

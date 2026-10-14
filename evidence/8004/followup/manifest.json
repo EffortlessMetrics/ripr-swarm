@@ -1,0 +1,593 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Bounded additive follow-up proof bundle for EffortlessMetrics/ripr-swarm #8004.",
+  "action_scope": "Evidence packaging only; no source edits, Ready transition, merge, or remote writes.",
+  "source_artifacts": {
+    "terminal_validation_summary": {
+      "source": "receiver-gap-8004-evidence/validation-summary.json",
+      "bytes": 6504,
+      "sha256": "813e6e3a8f4c141c11e24b38ff00f325c56800613898a5f60a96d7656687cd74"
+    },
+    "composition_inspection": {
+      "source": "receiver-gap-8004-evidence/composition-inspection.json",
+      "bytes": 13344,
+      "sha256": "a7b151101772ebc7e4a6f4e15f99a71a4e1850f3ed1e8bc28e641649fb163cfe"
+    },
+    "hosted_ub_review_archive": {
+      "source": "ripr-8004-f6aab763-ub-review.zip",
+      "bytes": 1170527,
+      "sha256": "2937e1bd32f553156d656ad86f8534db588a93b8bd15bcffa2fc317e26e990d9",
+      "embedded": false
+    },
+    "separate_rust_only_projection": {
+      "source": "ci-8004-f6aab763/rust-only-hosted-projection.json",
+      "bytes": 12122,
+      "sha256": "95f2e280928388a9ae5500791c97edef6b77c0da0503f4c17de8f4ac75336794"
+    }
+  },
+  "identities": {
+    "candidate_head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "candidate_tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "candidate_parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "frozen_main": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "local_composition_commit": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8",
+    "local_composition_tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+    "hosted_merge_commit": "7ab1edc51a1139390b5d819b2ba387018919b143",
+    "hosted_merge_tree": "2ad0071df8e57d254ee7b52145f6135a45a74d6a",
+    "hosted_action_id": "55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8"
+  },
+  "included_files": [
+    {
+      "path": "README.md",
+      "bytes": 4878,
+      "sha256": "33292a32151fdeeefc22553597bdf43809cf4c97a314f1bafdcce1285fc519e2",
+      "source": "assembled from terminal validation summary, composition receipts, hosted artifact projection",
+      "transformation": "developer-facing explanatory summary; no diagnosis inference"
+    },
+    {
+      "path": "composition/check-fast-report-summaries.json",
+      "bytes": 3254,
+      "sha256": "7929cd49a5f70ce88786639158e3ffa892b84149bdf88e29a8760093f3966d8b",
+      "source": "receiver-gap-8004-evidence/composition-check-fast-reports/*.md + composition-default-check-fast.receipt.json",
+      "transformation": "per-report status and source SHA-256/size projection"
+    },
+    {
+      "path": "composition/check-fast.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "receiver-gap-8004-evidence/composition-default-check-fast.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/check-fast.log",
+      "bytes": 46573,
+      "sha256": "cb7eee74d34b25cd9ed5ab6138174c7a03f3fa7971e95080c9a54524fcfe1e23",
+      "source": "receiver-gap-8004-evidence/composition-default-check-fast.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/check-fast.receipt.json",
+      "bytes": 3817,
+      "sha256": "70261b597101704fa2b43b39f4bc2e27dd82be4ee1731cf175fc4f9cef5d9fba",
+      "source": "receiver-gap-8004-evidence/composition-default-check-fast.receipt.json",
+      "transformation": "compact public receipt projection; dropped local cwd/target paths and resource samples"
+    },
+    {
+      "path": "composition/focused-unit.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "receiver-gap-8004-evidence/composition-default-lib-test.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/focused-unit.log",
+      "bytes": 669,
+      "sha256": "0d4c919acc1db4afcc5054e653fb8a8e68c1de1cf06a7a889303e39eeebc0698",
+      "source": "receiver-gap-8004-evidence/composition-default-lib-test.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/focused-unit.receipt.json",
+      "bytes": 1371,
+      "sha256": "99d752b760abbb2f255347d3f659110515dbd79e0d51617c8f1bef94e074e2c1",
+      "source": "receiver-gap-8004-evidence/composition-default-lib-test.receipt.json",
+      "transformation": "compact public receipt projection; dropped local cwd/target paths and resource samples"
+    },
+    {
+      "path": "composition/identity.json",
+      "bytes": 1424,
+      "sha256": "426830a21539f000cd9e37fa49d1f288824919d32dfc14bb84396a5830721f07",
+      "source": "receiver-gap-8004-evidence/composition-inspection.json + composition receipts + hosted revision-admission",
+      "transformation": "sanitized identity projection; no changed-source bodies or local filesystem paths"
+    },
+    {
+      "path": "composition/receiver-integration.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "receiver-gap-8004-evidence/composition-default-receiver-integration.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/receiver-integration.log",
+      "bytes": 910,
+      "sha256": "4128d2d631007efc84988f3ff2a5a08ca235111bb959f8ebefb1e0c132690f89",
+      "source": "receiver-gap-8004-evidence/composition-default-receiver-integration.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "composition/receiver-integration.receipt.json",
+      "bytes": 1204,
+      "sha256": "64cfad7df3d328287208216df029d2ebe62620a75382353284a3e89340ca78a5",
+      "source": "receiver-gap-8004-evidence/composition-default-receiver-integration.receipt.json",
+      "transformation": "compact public receipt projection; dropped local cwd/target paths and resource samples"
+    },
+    {
+      "path": "composition/validation-summary.json",
+      "bytes": 6306,
+      "sha256": "592f60d3382389c84a363720ab09933714eed9f4dc70ce8fd48023dc664e81be",
+      "source": "receiver-gap-8004-evidence/validation-summary.json",
+      "transformation": "sanitized terminal projection: preserved original digest/results; removed executor paths and non-behavioral inspection setup note"
+    },
+    {
+      "path": "hosted/cargo-test-failure-excerpt.txt",
+      "bytes": 609,
+      "sha256": "8c50f6882525395604dd438dc25143bb3120e6fd2583a6d05453bc796bf561db",
+      "source": "hosted ZIP member sensors/cargo-test/stdout.txt",
+      "transformation": "bounded excerpt; omitted process/thread identifier and surrounding unrelated output"
+    },
+    {
+      "path": "hosted/raw-status/cargo-test-status.json",
+      "bytes": 377,
+      "sha256": "50482fb87206155e93fa1c2f65d39d20fb7dbef295b8bc15cf150006eb87bfd1",
+      "source": "ripr-8004-f6aab763-ub-review.zip:sensors/cargo-test/ub-review-sensor-status.json",
+      "transformation": "byte-for-byte ZIP member copy"
+    },
+    {
+      "path": "hosted/raw-status/gate-outcome.json",
+      "bytes": 1016,
+      "sha256": "a85e0bb147b180f5587b28f1922b329a0fdb09e2ee05592dc99b9ad34fd8a7ca",
+      "source": "ripr-8004-f6aab763-ub-review.zip:review/gate_outcome.json",
+      "transformation": "byte-for-byte ZIP member copy"
+    },
+    {
+      "path": "hosted/raw-status/revision-admission.json",
+      "bytes": 921,
+      "sha256": "5a1a34ba69d7ef7c9f420b41f874b62f686a25694eb3ecf84c9e501ff1bb43dd",
+      "source": "ripr-8004-f6aab763-ub-review.zip:input/revision-admission.json",
+      "transformation": "byte-for-byte ZIP member copy"
+    },
+    {
+      "path": "hosted/raw-status/ripr-status.json",
+      "bytes": 465,
+      "sha256": "6d3f8e3fb5596d40a473b39b1d30c850974eb8fbc42dcdb5f4048d04c3bf3ad9",
+      "source": "ripr-8004-f6aab763-ub-review.zip:sensors/ripr/ub-review-sensor-status.json",
+      "transformation": "byte-for-byte ZIP member copy"
+    },
+    {
+      "path": "hosted/ripr-failure-excerpt.txt",
+      "bytes": 266,
+      "sha256": "a9a590fa6939341a4ce77316afe83b49ac612d3c531b3d66d48c85963c8ff224",
+      "source": "hosted ZIP member sensors/ripr/stderr.txt",
+      "transformation": "exact one-line failure excerpt"
+    },
+    {
+      "path": "hosted/rust-only-hosted-projection.json",
+      "bytes": 12122,
+      "sha256": "95f2e280928388a9ae5500791c97edef6b77c0da0503f4c17de8f4ac75336794",
+      "source": "ci-8004-f6aab763/rust-only-hosted-projection.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "hosted/ub-review-projection.json",
+      "bytes": 3178,
+      "sha256": "ad93cebe1cd3bb7e10b82f53c62144b7d4dbb995985cfad8c47a9845395fda3d",
+      "source": "ripr-8004-f6aab763-ub-review.zip members: review/gate_outcome.json, input/revision-admission.json, sensors/*/ub-review-sensor-status.json, review/quality-receipt.json, sensor logs",
+      "transformation": "curated projection of exact hosted artifact identity; no full artifact or unrelated review data"
+    },
+    {
+      "path": "review/late-adversarial-review.json",
+      "bytes": 1819,
+      "sha256": "f4e8f33f0771144e6b602491433efc83a16301cfa9d93c7982dda93a88284b3a",
+      "source": "parent-provided reviewer status + reconcile-receiver-review-8004-evidence/native-receipt.json + controls/reports",
+      "transformation": "bounded status projection; facts cross-linked to included source hashes"
+    },
+    {
+      "path": "review/native-item-shadow-compile.log",
+      "bytes": 845,
+      "sha256": "a3d47a5923050059c3d57975449dc940211033a07853ac07f533e534d0260382",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow-compile.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-item-shadow-owner-wrong-compile.log",
+      "bytes": 1419,
+      "sha256": "62a03ad9403aaf7ec217a0a116ad8a16a48dfb5efcfac2d1eee7d30ab64465e2",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow-owner-wrong-compile.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-item-shadow-owner-wrong-run.log",
+      "bytes": 666,
+      "sha256": "79a911e3d6dc7772645c2b4e0c71df70b04b28a87f453c9b4a930efc49a268ae",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow-owner-wrong-run.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-item-shadow-owner-wrong.rs",
+      "bytes": 1211,
+      "sha256": "06fb1e9b8af871eefbab6e3889916814e118ddf78467985f3baf321779f09d7e",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow-owner-wrong.rs",
+      "transformation": "byte-for-byte mutation control source"
+    },
+    {
+      "path": "review/native-item-shadow-run.log",
+      "bytes": 276,
+      "sha256": "35515118c6d5ffdda0d551d1b9085f7861a7184f04e661e4b761add17f71606c",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow-run.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-item-shadow.rs",
+      "bytes": 1222,
+      "sha256": "e403636e4c5a22939d7a6368ebc36423dda06bf7a63e3bb111d6cebc1f487f03",
+      "source": "reconcile-receiver-review-8004-evidence/native-item-shadow.rs",
+      "transformation": "byte-for-byte minimal native Rust counterexample source"
+    },
+    {
+      "path": "review/native-receipt-projection.json",
+      "bytes": 2146,
+      "sha256": "0893a862f2220e15dc80c3ea6137736b49c8f403f3b5475b09db0ac62227af24",
+      "source": "reconcile-receiver-review-8004-evidence/native-receipt.json",
+      "transformation": "sanitized receipt projection; stripped absolute compiler/source/output paths, retained source/binary digests and test outputs"
+    },
+    {
+      "path": "review/proof-lane-identities.json",
+      "bytes": 3268,
+      "sha256": "bb84647d5650dab6e75e33230e5fa1f905f575f6dd7a342c1f76737d4154f158",
+      "source": "evidence-8004-receiver/manifest.json",
+      "transformation": "curated author/reviewer lane identities and claim boundaries; lane data kept distinct"
+    },
+    {
+      "path": "review/red-controls-summary.json",
+      "bytes": 3554,
+      "sha256": "7cfb8c92a1ad8ce07c905d065897c2c2af1c19888d0ebce7da01bb0fc86c5723",
+      "source": "reconcile-receiver-review-8004-evidence/controls-receipt.json + nested_struct_blanket_trait reports",
+      "transformation": "curated relation projection with original receipt/report hashes; no executable paths"
+    },
+    {
+      "path": "review/red-nested-struct-blanket-trait-diff.json",
+      "bytes": 17673,
+      "sha256": "99607ca0772abba4683533562ad70abd6e4d053b615208fd0a797d206b0e5e0f",
+      "source": "reconcile-receiver-review-8004-evidence/nested_struct_blanket_trait-diff.json",
+      "transformation": "byte-for-byte analyzer output; bounded 17 KB report, contains raw cwd provenance"
+    },
+    {
+      "path": "review/red-nested-struct-blanket-trait-repo.json",
+      "bytes": 31513,
+      "sha256": "e6468af44f92343c8c8cbd3f03e14e544420ba769e66cfd14a30eafc80f73817",
+      "source": "reconcile-receiver-review-8004-evidence/nested_struct_blanket_trait-repo.json",
+      "transformation": "byte-for-byte analyzer output; bounded 31 KB report, contains raw cwd provenance"
+    }
+  ],
+  "source_local_artifact_manifest": {
+    "source": "receiver-gap-8004-evidence/artifact-manifest.json",
+    "bytes": 6083,
+    "sha256": "27eb253f3caa2ba36ae678717319b86df071f9739e995f7feb6c038ba128ac41"
+  },
+  "omitted_locally_retained_raw_outputs": [
+    {
+      "artifact": "AGENTS-published.txt",
+      "bytes": 28250,
+      "sha256": "ca118ab7479f80f23a684dca2368a6f919ed384c130cc7c4059905114e9be16c",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "check-fast-base-after.txt",
+      "bytes": 41,
+      "sha256": "eeb28870ed41d805598096875a086c979a152a8b23b9439904ce9f07047bd573",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "check-fast-base-before.txt",
+      "bytes": 41,
+      "sha256": "eeb28870ed41d805598096875a086c979a152a8b23b9439904ce9f07047bd573",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "check-fast-selector-after.nul",
+      "bytes": 443,
+      "sha256": "01b35c869ac72d3c756d352090029bdd55051a8a9f64e3c9d5223a6ab5f5e62e",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "check-fast-selector-before.nul",
+      "bytes": 443,
+      "sha256": "01b35c869ac72d3c756d352090029bdd55051a8a9f64e3c9d5223a6ab5f5e62e",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "composition-check-fast-reports/allow-attributes.md",
+      "bytes": 373,
+      "sha256": "2b6cefb92607c5d8c350d43d51cd72260cdaa6fcbca024ac606e14924af9eba3",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/check-fast-selector.md",
+      "bytes": 144,
+      "sha256": "4fb3ee013f18be5ce87c35bd00a44f3718c37a3e085af5c8196612f68118ffdb",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/check-fast.md",
+      "bytes": 1473,
+      "sha256": "dd7dc7ef29665635dd89fb05c94d7036c7922c9cd29ef04e0cae42bd5005b122",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/command-catalog.md",
+      "bytes": 386,
+      "sha256": "29b33a8319e6d475bf341ca11f6fa38b385e8b3d75845d4e87db1def6a3541b2",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/covered-by.md",
+      "bytes": 401,
+      "sha256": "c4a17c630f10458bf07db9cf76a6ae8191cda40220ac68b32273c1be0dbb3814",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/file-policy.md",
+      "bytes": 59054,
+      "sha256": "cd715c7d1ba64d1b5ddbc6a9fcee6ab15bd66673ee60abba4c0c138208eeaba0",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/generated-clean.md",
+      "bytes": 326,
+      "sha256": "68d44f33fbefd2091348aa6330c1cd906e05f1ebd3527ca3b25d7e6f191edd65",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/generated.md",
+      "bytes": 269,
+      "sha256": "cfda4155cd7c282bb4289fc8bb7483fd5397d685d57ec51e844c2e7ee215bdd2",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/lint-policy.md",
+      "bytes": 810,
+      "sha256": "8e08f70560e50d13292318a0c2090ef6de6d3dde56c117f018c00d3ab8b4702d",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/network-policy.md",
+      "bytes": 266,
+      "sha256": "4917e42c45e0c4cf9fceabbe2a7bfca294af7d3e877c8c774e1da2f73fee2907",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/no-panic-family.md",
+      "bytes": 251,
+      "sha256": "2caaa3613188860267e9137c9dcc8cf58da6cae956f69cf730bd41b25edbb140",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/process-policy.md",
+      "bytes": 266,
+      "sha256": "5c21ce4aa1901629528e0c7014e9449a66841f564bc6640c3e8ff67d5a9ed2fc",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/static-language.md",
+      "bytes": 248,
+      "sha256": "7f42e385d2acb9d086082a6ed6b948689155a5bd4cc0485db9338b9cb2898136",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-check-fast-reports/support-tiers.md",
+      "bytes": 309,
+      "sha256": "cd012752d2abb7a04d6e2559d96de1a8b6ede67a11328826cff0636fb731f3f5",
+      "reason": "full check-fast report omitted; status and digest retained in report summary"
+    },
+    {
+      "artifact": "composition-commit.txt",
+      "bytes": 41,
+      "sha256": "f5b23514deaaede98256e30c7fd81a4fc3698331d2b29416ec7f2beb69d897fd",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "composition-default-check-fast.receipt.json",
+      "bytes": 34211,
+      "sha256": "df5e74f3eda4d6462b59808894cba0b53cdf472dd1a5ab7486cf6401f3769fd5",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "composition-default-lib-test.receipt.json",
+      "bytes": 11257,
+      "sha256": "5e49675b7abfdff496a1f363e7f33d40825e14ce57de38dbb712eac3a40bd39d",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "composition-default-receiver-integration.receipt.json",
+      "bytes": 7028,
+      "sha256": "b9930394319e26bc4ccdec961bb01ba3b60843a6e2de04beffc7ce87e846dddf",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "composition-inspection.json",
+      "bytes": 13344,
+      "sha256": "a7b151101772ebc7e4a6f4e15f99a71a4e1850f3ed1e8bc28e641649fb163cfe",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "default-lib-test.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "default-lib-test.log",
+      "bytes": 7973,
+      "sha256": "1648d4aa45bf211c7fd218af2d83be3a23461e217699d3671e07ce1ca7cbeaa9",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "default-lib-test.receipt.json",
+      "bytes": 16113,
+      "sha256": "ef42c004ac509ea237d2611bfa3a8bfdffacf9db699528deb6af79649dab2902",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "main-classification-delta.diff",
+      "bytes": 33576,
+      "sha256": "c3fc58f90c39bf32f11cc0c87ebd7541e060a25952bfc214b3d01441aaa47a18",
+      "reason": "large source diff omitted"
+    },
+    {
+      "artifact": "private-inherent-receiver-ba04f2af-default",
+      "bytes": 59400592,
+      "sha256": "23ceb13766a95c8534d0d312ff6487e70703f11920b023161adb1284afe0fb16",
+      "reason": "frozen executable omitted"
+    },
+    {
+      "artifact": "ripr-ba04f2af-default",
+      "bytes": 120172224,
+      "sha256": "1a522b8f2202333fdcf961b56546dcec0feb7d05f18ae1568040bba065b18617",
+      "reason": "frozen executable omitted"
+    },
+    {
+      "artifact": "ripr-unit-ba04f2af-composition-default",
+      "bytes": 242840424,
+      "sha256": "49fc04ffb9c99a72203c8e24e1919a1300c617e955d3db2e3be614b05cce3261",
+      "reason": "frozen executable omitted"
+    },
+    {
+      "artifact": "ripr-unit-f6aab763-default",
+      "bytes": 242222488,
+      "sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6",
+      "reason": "frozen executable omitted"
+    },
+    {
+      "artifact": "run-bounded-cargo.py",
+      "bytes": 2612,
+      "sha256": "89988cc12e77bed1fec2944a66e3976cd414a21233de2707a3b984cd6347142a",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "run-resource-bounded.py",
+      "bytes": 2886,
+      "sha256": "34daa5dd56ba765ac47f4771a37356df86861a6c07cb649e2e29135f08bc6108",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    },
+    {
+      "artifact": "validation-summary.json",
+      "bytes": 6504,
+      "sha256": "813e6e3a8f4c141c11e24b38ff00f325c56800613898a5f60a96d7656687cd74",
+      "reason": "raw setup, runner, receipt, or metadata output omitted; claim-relevant status and hashes are preserved in projections"
+    }
+  ],
+  "omitted_frozen_executables_and_large_member_data": [
+    {
+      "artifact_member": "composition-check-fast-reports/file-policy.md",
+      "bytes": 59054,
+      "sha256": "cd715c7d1ba64d1b5ddbc6a9fcee6ab15bd66673ee60abba4c0c138208eeaba0",
+      "reason": "full 59 KB gate report omitted; status, size and digest retained in 14-report summary"
+    },
+    {
+      "artifact_member": "main-classification-delta.diff",
+      "bytes": 33576,
+      "sha256": "c3fc58f90c39bf32f11cc0c87ebd7541e060a25952bfc214b3d01441aaa47a18",
+      "reason": "source diff omitted; source is already tracked by candidate/main identities"
+    },
+    {
+      "artifact_member": "private-inherent-receiver-ba04f2af-default",
+      "bytes": 59400592,
+      "sha256": "23ceb13766a95c8534d0d312ff6487e70703f11920b023161adb1284afe0fb16",
+      "reason": "frozen integration executable omitted"
+    },
+    {
+      "artifact_member": "ripr-ba04f2af-default",
+      "bytes": 120172224,
+      "sha256": "1a522b8f2202333fdcf961b56546dcec0feb7d05f18ae1568040bba065b18617",
+      "reason": "frozen CLI executable omitted"
+    },
+    {
+      "artifact_member": "ripr-unit-ba04f2af-composition-default",
+      "bytes": 242840424,
+      "sha256": "49fc04ffb9c99a72203c8e24e1919a1300c617e955d3db2e3be614b05cce3261",
+      "reason": "frozen composition unit-test binary omitted"
+    },
+    {
+      "artifact_member": "ripr-unit-f6aab763-default",
+      "bytes": 242222488,
+      "sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6",
+      "reason": "frozen published-head unit-test binary omitted"
+    }
+  ],
+  "omitted_hosted_archive": {
+    "name": "ripr-8004-f6aab763-ub-review.zip",
+    "bytes": 1170527,
+    "sha256": "2937e1bd32f553156d656ad86f8534db588a93b8bd15bcffa2fc317e26e990d9"
+  },
+  "adversarial_review_sources": {
+    "controls_receipt": {
+      "source": "reconcile-receiver-review-8004-evidence/controls-receipt.json",
+      "bytes": 9886,
+      "sha256": "1c73fdfb0fadd5fe98cf8063d5f3590de081b548d825d1307dffbbc5bfd07858"
+    },
+    "native_receipt": {
+      "source": "reconcile-receiver-review-8004-evidence/native-receipt.json",
+      "bytes": 2696,
+      "sha256": "ebcf5c5191e6f53b64bf1a9d47ed475fe5196321f84ed6a7ed7c79c160f09b76"
+    },
+    "red_diff_report": {
+      "source": "reconcile-receiver-review-8004-evidence/nested_struct_blanket_trait-diff.json",
+      "bytes": 17673,
+      "sha256": "99607ca0772abba4683533562ad70abd6e4d053b615208fd0a797d206b0e5e0f"
+    },
+    "red_repo_report": {
+      "source": "reconcile-receiver-review-8004-evidence/nested_struct_blanket_trait-repo.json",
+      "bytes": 31513,
+      "sha256": "e6468af44f92343c8c8cbd3f03e14e544420ba769e66cfd14a30eafc80f73817"
+    }
+  },
+  "omitted_native_executables": [
+    {
+      "name": "native-item-shadow",
+      "bytes": 6982112,
+      "sha256": "abf057eb1a1968c36d13b68a678b86c9fd2a9c9ea4afb71751d68c2f43d341fe"
+    },
+    {
+      "name": "native-item-shadow-owner-wrong",
+      "bytes": 6982312,
+      "sha256": "8bfc59aa0475dc42a2bdddc235b5f9bf1a77c5568e54555e271d9886ad42e5d3"
+    }
+  ],
+  "omitted_full_hosted_logs": [
+    {
+      "member": "sensors/cargo-test/stdout.txt",
+      "bytes": 1192952,
+      "sha256": "b11da84612639fe6b5cdc4fd5252447b840d5cafe474599cd6a52ef00772ca10",
+      "reason": "full test log omitted; bounded failure excerpt and exact member digest retained"
+    },
+    {
+      "member": "sensors/cargo-test/stderr.txt",
+      "bytes": 14469,
+      "sha256": "2a1bd05894a433ba33576571c57990573afba54bdd073bf501040d276d6c7789",
+      "reason": "full dependency/build log omitted; exact digest retained"
+    },
+    {
+      "member": "sensors/ripr/stdout.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reason": "raw output omitted; status, command, stderr excerpt and archive digest retained"
+    },
+    {
+      "member": "sensors/ripr/stderr.txt",
+      "bytes": 266,
+      "sha256": "a9a590fa6939341a4ce77316afe83b49ac612d3c531b3d66d48c85963c8ff224",
+      "reason": "full error output omitted; exact one-line failure excerpt included"
+    }
+  ],
+  "diagnosis_boundary": "Hosted optional sensor failures are reported as observed. No root cause or inherited-failure classification is asserted."
+}

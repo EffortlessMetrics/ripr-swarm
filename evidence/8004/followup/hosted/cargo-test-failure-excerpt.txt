@@ -1,0 +1,9 @@
+test analysis::seam_inventory::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs ... FAILED
+
+---- analysis::seam_inventory::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs stdout ----
+prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)
+
+failures:
+    analysis::seam_inventory::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs
+
+test result: FAILED. 10836 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out

@@ -1,0 +1,8 @@
+
+running 3 tests
+test actual_private_controls::actual_private_null ... ok
+test actual_private_controls::actual_private_object ... ok
+test tests::same_target_wrong_json_type ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,36 @@
+{
+  "name": "composition-default-receiver-integration",
+  "command": [
+    "/workspace/scratch/2e70149a8e59/toolchains/rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+    "test",
+    "-p",
+    "ripr",
+    "--test",
+    "private_inherent_receiver",
+    "--locked",
+    "--offline",
+    "--",
+    "--nocapture"
+  ],
+  "source": "ba04f2af1a92caf404e0686f53caf2a7b4d85ac8 2ad0071df8e57d254ee7b52145f6135a45a74d6a 0e8d006e9845339a58902bb2baa28dbc4fd23c18 f6aab7639b88be1a21c757be74baef833e636f17",
+  "driver_sha256": "89988cc12e77bed1fec2944a66e3976cd414a21233de2707a3b984cd6347142a",
+  "exit_code": 0,
+  "elapsed_seconds": 99.04,
+  "log_sha256": "4128d2d631007efc84988f3ff2a5a08ca235111bb959f8ebefb1e0c132690f89",
+  "terminal_report": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 0,
+    "elapsed_test_seconds": 0.5
+  },
+  "features": [
+    "default",
+    "lang-rust",
+    "lang-typescript",
+    "lang-python"
+  ],
+  "scope": "Exact frozen composition public receiver integration suite; Linux default-feature proof, not native Windows or complete workspace suite.",
+  "producer_version": "ripr 0.11.0 (ba04f2af1a92caf404e0686f53caf2a7b4d85ac8)"
+}
