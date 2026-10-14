@@ -2447,6 +2447,20 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
     discarded.then(|| value.to_string())
 }
 
+/// Whether `callee` names a called path such as `check`, `svc.check`,
+/// `api::check` or `check::<u8>`, not an operator, reference or grouping.
+fn is_call_path(callee: &str) -> bool {
+    let callee = callee.trim();
+    callee.bytes().next().is_some_and(is_ident_byte)
+        && callee
+            .bytes()
+            .last()
+            .is_some_and(|b| is_ident_byte(b) || b == b'>')
+        && callee
+            .bytes()
+            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'<' | b'>' | b',' | b' '))
+}
+
 /// Whether `.unwrap_err()` reads the error side of the statement's first
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
@@ -2469,6 +2483,12 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
     let Some(open) = receiver.find('(') else {
         return false;
     };
+    // The first group must be a call: a leading `(..)` is a grouping
+    // expression that would hide `(check(x).and(Err(..))).unwrap_err()`'s
+    // adapter from the whitelist below.
+    if !is_call_path(&receiver[..open]) {
+        return false;
+    }
     let Some(mut rest) = balanced_group_end(receiver, open).map(|close| &receiver[close + 1..])
     else {
         return false;

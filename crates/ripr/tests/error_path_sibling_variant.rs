@@ -661,3 +661,33 @@ fn spec_0231_sibling_inequality_off_the_owner_call_stays_refused() -> Result<(),
     }
     Ok(())
 }
+
+// RIPR-SPEC-0227 decision 2 end to end: an uncompared `unwrap_err()` read
+// directly off the owner call observes the error side as `broad_error` /
+// weak. An adapter that replaces the call's result, written plainly or
+// inside a grouping, passes whatever the owner returns and reads no
+// error-side oracle (#7872).
+
+#[test]
+fn spec_0227_uncompared_unwrap_err_reads_broad_error_only_off_the_owner_call() -> Result<(), String>
+{
+    let (class, oracles) = sibling_exclusion_reading("withdraw(10, 20).unwrap_err()")?;
+    assert_eq!(class, ExposureClass::WeaklyExposed, "{oracles:?}");
+    assert_eq!(oracles, vec!["broad_error/weak"]);
+    for assertion in [
+        "withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient)).unwrap_err()",
+        "(withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient))).unwrap_err()",
+        "((withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient)))).unwrap_err()",
+        "(withdraw(10, 20).or(Err::<u64, PayError>(PayError::Insufficient))).unwrap_err()",
+    ] {
+        let (class, oracles) = sibling_exclusion_reading(assertion)?;
+        assert_ne!(
+            class,
+            ExposureClass::WeaklyExposed,
+            "{assertion}: {oracles:?}"
+        );
+        assert_eq!(oracles.len(), 1, "{assertion}: {oracles:?}");
+        assert_ne!(oracles, vec!["broad_error/weak"], "{assertion}");
+    }
+    Ok(())
+}

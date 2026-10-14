@@ -12,3 +12,7 @@
   every labeled Rust corpus oracle row matches (37/37) and the gates hold
   `match_floor` at 37 and `overclaim_ceiling` at 0
   ([#6640](https://github.com/EffortlessMetrics/ripr-swarm/issues/6640)).
+  The `unwrap_err()` reading requires the statement to start with the call,
+  so a parenthesized receiver such as
+  `(check(x).and(Err(E::Other))).unwrap_err()` no longer reads `broad_error`
+  ([#7872](https://github.com/EffortlessMetrics/ripr-swarm/issues/7872)).

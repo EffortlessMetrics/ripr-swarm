@@ -1612,6 +1612,34 @@ fn ok_literal() {
                 "let _e = find(3).ok_or(E::Missing).unwrap_err();",
                 vec![],
             ),
+            // A grouping is not the call: the adapter inside it still
+            // replaces the call's result (#7872).
+            (
+                "grouped_fallback_error",
+                "(check(300).and(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "nested_grouped_fallback_error",
+                "let _e = ((check(300).and(Err(E::Other)))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_or_else",
+                "(check(300).or(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_option_converted",
+                "(find(3).ok_or(E::Missing)).unwrap_err();",
+                vec![],
+            ),
+            ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
+            (
+                "turbofish_call",
+                "check::<u8>(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
             (
                 "error_mapped",
                 "check(300).map_err(Wrap).unwrap_err();",
