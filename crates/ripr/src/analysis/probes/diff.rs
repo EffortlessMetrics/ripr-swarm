@@ -1052,8 +1052,9 @@ fn short_name_matches_added(
 /// has no long pairing name. Keywords (`if`, `fn`, `as`, `in`) and pure
 /// digits or underscores are not names, so they cannot pair unrelated
 /// lines that merely share punctuation or literals. Comments and the
-/// contents of character or string literals are not pairing names; code
-/// after a block comment still is.
+/// contents of character, string, or raw-string literals are not pairing
+/// names; nested block comments, lifetimes, and code after a comment or
+/// literal still are.
 fn short_pairing_tokens(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut tokens = Vec::new();
@@ -1062,33 +1063,30 @@ fn short_pairing_tokens(text: &str) -> Vec<String> {
     while index < chars.len() {
         let ch = chars[index];
         let next = chars.get(index + 1).copied();
+        // Literal and raw-string starts are recognized before comments so a
+        // `//` or `/*` inside quotes does not hide later code names.
+        if current.is_empty() {
+            if let Some(end) = skip_raw_string(&chars, index) {
+                index = end;
+                continue;
+            }
+        }
+        if ch == '\'' && is_lifetime_quote(&chars, index) {
+            take_short_pairing_token(&mut current, &mut tokens);
+            index += 1;
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            take_short_pairing_token(&mut current, &mut tokens);
+            index = skip_quoted_literal(&chars, index);
+            continue;
+        }
         if ch == '/' && next == Some('/') {
             break;
         }
         if ch == '/' && next == Some('*') {
             take_short_pairing_token(&mut current, &mut tokens);
-            index += 2;
-            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
-                index += 1;
-            }
-            index = index.saturating_add(2);
-            continue;
-        }
-        if ch == '\'' || ch == '"' {
-            take_short_pairing_token(&mut current, &mut tokens);
-            let quote = ch;
-            index += 1;
-            while index < chars.len() {
-                if chars[index] == '\\' {
-                    index = index.saturating_add(2);
-                    continue;
-                }
-                if chars[index] == quote {
-                    index += 1;
-                    break;
-                }
-                index += 1;
-            }
+            index = skip_nested_block_comment(&chars, index);
             continue;
         }
         if ch.is_alphanumeric() || ch == '_' {
@@ -1102,6 +1100,111 @@ fn short_pairing_tokens(text: &str) -> Vec<String> {
     tokens.sort();
     tokens.dedup();
     tokens
+}
+
+/// A Rust lifetime (`'a`, `'static`) starts with `'` but has no closing
+/// quote. Treating it as a character literal would consume the rest of
+/// the line and hide later pairing names.
+fn is_lifetime_quote(chars: &[char], start: usize) -> bool {
+    if chars.get(start).copied() != Some('\'') {
+        return false;
+    }
+    let Some(&next) = chars.get(start + 1) else {
+        return false;
+    };
+    if next == '\\' || next == '\'' {
+        return false;
+    }
+    if !(next.is_alphabetic() || next == '_') {
+        return false;
+    }
+    chars.get(start + 2).copied() != Some('\'')
+}
+
+fn skip_quoted_literal(chars: &[char], start: usize) -> usize {
+    let Some(&quote) = chars.get(start) else {
+        return start;
+    };
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index = index.saturating_add(2);
+            continue;
+        }
+        if chars[index] == quote {
+            return index + 1;
+        }
+        index += 1;
+    }
+    chars.len()
+}
+
+/// Raw strings (`r#"..."#`, `br#"..."#`, `cr"..."`, `r"..."`) may embed
+/// quotes and comment markers. The closer is `"` plus the same number of
+/// hashes as the opener.
+fn skip_raw_string(chars: &[char], start: usize) -> Option<usize> {
+    let mut index = start;
+    let Some(&first) = chars.get(index) else {
+        return None;
+    };
+    if first == 'b' || first == 'c' {
+        index += 1;
+        if chars.get(index).copied() != Some('r') {
+            return None;
+        }
+        index += 1;
+    } else if first == 'r' {
+        index += 1;
+    } else {
+        return None;
+    }
+    let mut hashes = 0;
+    while chars.get(index).copied() == Some('#') {
+        hashes += 1;
+        index += 1;
+    }
+    if chars.get(index).copied() != Some('"') {
+        return None;
+    }
+    index += 1;
+    Some(close_raw_string(chars, index, hashes))
+}
+
+fn close_raw_string(chars: &[char], mut index: usize, hashes: usize) -> usize {
+    while index < chars.len() {
+        if chars[index] == '"' {
+            let mut count = 0;
+            let mut cursor = index + 1;
+            while count < hashes && chars.get(cursor).copied() == Some('#') {
+                count += 1;
+                cursor += 1;
+            }
+            if count == hashes {
+                return cursor;
+            }
+        }
+        index += 1;
+    }
+    chars.len()
+}
+
+fn skip_nested_block_comment(chars: &[char], start: usize) -> usize {
+    let mut index = start.saturating_add(2);
+    let mut depth = 1;
+    while index + 1 < chars.len() && depth > 0 {
+        if chars[index] == '/' && chars[index + 1] == '*' {
+            depth += 1;
+            index += 2;
+            continue;
+        }
+        if chars[index] == '*' && chars[index + 1] == '/' {
+            depth -= 1;
+            index += 2;
+            continue;
+        }
+        index += 1;
+    }
+    if depth > 0 { chars.len() } else { index }
 }
 
 fn take_short_pairing_token(current: &mut String, tokens: &mut Vec<String>) {
@@ -3329,6 +3432,105 @@ mod tests {
                 .iter()
                 .any(|probe| { probe.expression.contains("&& y") && probe.after.is_none() }),
             "code after a block comment must keep a renamed binding: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("&& z")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// Nested `/* /* */ */` must not treat the inner closer as the end of
+    /// the comment, or a `//` that is still inside the outer comment can
+    /// hide a later renamed binding.
+    #[test]
+    fn short_name_pairing_tracks_nested_block_comment_depth() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(
+                "    if x /* a /* b */ // c */ && y {",
+                "    if x /* a /* b */ // c */ && z {",
+                6,
+            ),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("&& y") && probe.after.is_none() }),
+            "a nested block comment must not hide a renamed binding: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("&& z")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// A lifetime `'a` has no closing quote. Scanning it as a character
+    /// literal would skip `y`/`z` and falsely pair the replacement.
+    #[test]
+    fn short_name_lifetime_replacement_does_not_repeat_the_removed_predicate() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(
+                "    if x == f::<&'a u8>(y) {",
+                "    if x == f::<&'a u8>(z) {",
+                6,
+            ),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("(y)") && probe.after.is_none() }),
+            "a lifetime must not consume later code names: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("(z)")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// Quotes and `//` inside a raw string must not hide later code names.
+    #[test]
+    fn short_name_raw_string_replacement_does_not_repeat_the_removed_predicate() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(
+                r##"    if x == r#"a" // b"# && y {"##,
+                r##"    if x == r#"a" // b"# && z {"##,
+                6,
+            ),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("&& y") && probe.after.is_none() }),
+            "raw-string contents must not hide a renamed binding: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("&& z")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// `//` inside a quoted string must not be treated as a line comment.
+    #[test]
+    fn short_name_pairing_does_not_treat_quoted_comment_marker_as_comment() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(
+                r#"    if x == "a//b" && y {"#,
+                r#"    if x == "a//b" && z {"#,
+                6,
+            ),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("&& y") && probe.after.is_none() }),
+            "a quoted comment marker must not hide a renamed binding: {probes:?}"
         );
         assert!(
             probes.iter().any(|probe| probe.expression.contains("&& z")),
