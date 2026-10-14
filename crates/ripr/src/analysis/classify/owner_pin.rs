@@ -103,6 +103,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// ...). An immutable `let` of its result is `Copy` with no interior
     /// mutability, so no later statement can change it (cell-0094).
     returns_scalar: bool,
+    /// A [`Self::returns_scalar`] owner whose return type is a built-in
+    /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
+    /// meaning on it (trap-ceiling-wide-min-control).
+    returns_integer: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -1816,6 +1820,9 @@ impl OwnerReturnPin {
             path,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
+            returns_integer: returns_primitive_scalar(owner, index)
+                && declared_return_type(&owner.body)
+                    .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1900,6 +1907,7 @@ impl OwnerReturnPin {
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1999,6 +2007,7 @@ impl OwnerReturnPin {
             }),
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -2049,10 +2058,13 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
-        // A nested `format!` is read only as a rendered scalar pin.
-        let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
-        let reads_assert_eq =
-            renders || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
+        // A nested `format!` is read only as a rendered scalar pin, and a
+        // nested `vec!` only as a single-element index.
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let reads_assert_eq = renders
+            || indexes
+            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -2085,7 +2097,35 @@ impl OwnerReturnPin {
                             .map(|call| (call, operands[other], None))
                     })
                 })
-                .flatten();
+                .flatten()
+                // trap-ceiling-wide-min-control / trap-muffle-times-one-control:
+                // a projection that keeps every value of an integer owner the
+                // literal expected value can name.
+                .or_else(|| {
+                    (self.returns_integer && matches!(self.path, ReturnPathGate::Any) && !renders)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                exact_integer_projection(operands[at], operands[other])
+                                    .filter(|_| !ord_method_rebindable(operands[at], test, index))
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other]))
+                            })
+                        })
+                        .flatten()
+                })
+                // trap-pile-first-element-control: `vec![call][0]` is the
+                // call's own value.
+                .or_else(|| {
+                    (self.returns_scalar && matches!(self.path, ReturnPathGate::Any) && indexes)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                single_element_index(operands[at])
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other]))
+                            })
+                        })
+                        .flatten()
+                });
             let unwrapped_direct = unwrap_wrapper.and_then(|_| {
                 let shape = |at: usize| {
                     unwrapped_call(operands[at])
@@ -2102,7 +2142,9 @@ impl OwnerReturnPin {
                 self.awaited_call_shape(operands[1], &self.name),
                 rendered,
             ) {
-                (_, _, Some(pin)) if renders => pin,
+                (_, _, Some(pin)) if renders || indexes => pin,
+                // A `vec!` elsewhere (the expected value, the message) leaves
+                // the direct readings below.
                 _ if renders => return false,
                 (Some(call), None, _) => (call, operands[1], Some(operands[0])),
                 (None, Some(call), _) => (call, operands[0], Some(operands[1])),
@@ -5598,9 +5640,10 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
         .then(|| format!("{root}{macro_name}"))
 }
 
-/// `assert_eq!` whose only nested macros are `format!`, which
-/// [`rendered_scalar_operand`] reads.
-fn is_assert_eq_of_render(text: &str) -> bool {
+/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
+/// [`rendered_scalar_operand`] reads, or `vec!`, which
+/// [`single_element_index`] reads).
+fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
@@ -5608,7 +5651,7 @@ fn is_assert_eq_of_render(text: &str) -> bool {
     };
     *first == "assert_eq"
         && !nested.is_empty()
-        && nested.iter().all(|(name, _)| *name == "format")
+        && nested.iter().all(|(name, _)| *name == expansion)
         && masked
             .find("assert_eq")
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
@@ -7170,6 +7213,140 @@ fn rendered_scalar_operand(operand: &str) -> Option<&str> {
         .strip_suffix(')')?;
     match split_top_level_arguments(inner)?.as_slice() {
         [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
+        _ => None,
+    }
+}
+
+const INTEGER_TYPES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
+
+/// trap-ceiling-wide-min-control: the call inside `operand` when the
+/// projection still pins it against the literal `expected` value `e`:
+/// `call.min(k)` with `e < k` (a result of `e` below the bound means the
+/// call returned `e`), `call.max(k)` with `e > k`, and `call * 1`,
+/// `1 * call`, `call + 0` or `0 + call`, which keep every value. Both
+/// numbers are plain decimal literals; anything else refuses.
+fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a str> {
+    let decimal = |text: &str| -> Option<u128> {
+        let text = text.trim();
+        // `_12` is an identifier, not a literal: the first byte is a digit.
+        (text.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+        .then(|| text.replace('_', "").parse().ok())
+        .flatten()
+    };
+    let expected = decimal(expected)?;
+    let operand = operand.trim();
+    for (method, keeps) in [
+        (
+            ".min(",
+            (|e: u128, k: u128| e < k) as fn(u128, u128) -> bool,
+        ),
+        (".max(", |e, k| e > k),
+    ] {
+        if let Some(at) = operand.rfind(method)
+            && let Some(bound) = operand[at + method.len()..].strip_suffix(')')
+            && let Some(bound) = decimal(bound)
+        {
+            return keeps(expected, bound).then_some(operand[..at].trim_end());
+        }
+    }
+    let after = |text: &'a str, operator: char, identity: char| {
+        text.strip_suffix(identity)?
+            .trim_end()
+            .strip_suffix(operator)
+            .map(str::trim_end)
+    };
+    let before = |text: &'a str, operator: char, identity: char| {
+        text.strip_prefix(identity)?
+            .trim_start()
+            .strip_prefix(operator)
+            .map(str::trim_start)
+    };
+    after(operand, '*', '1')
+        .or_else(|| after(operand, '+', '0'))
+        .or_else(|| before(operand, '*', '1'))
+        .or_else(|| before(operand, '+', '0'))
+        .filter(|call| !call.is_empty())
+}
+
+/// `.min(k)` and `.max(k)` on an integer resolve to the prelude's `Ord`
+/// only while nothing rebinds that name: a local `trait Ord` (or an import
+/// of one, including through a foreign glob) shadows it, and
+/// `no_implicit_prelude` drops it. A workspace that declares its own
+/// `fn min`/`fn max`, names `Ord` in a `use` or a `trait` item, drops the
+/// prelude, or whose test file globs a foreign module refuses the
+/// projection rather than crediting a method it may not bind (#7932
+/// review). `* 1` and `+ 0` keep std's operator impls, which coherence
+/// forbids redefining for a primitive.
+fn ord_method_rebindable(operand: &str, test: &TestSummary, index: &RustIndex) -> bool {
+    let method = match (operand.contains(".min("), operand.contains(".max(")) {
+        (false, false) => return false,
+        (true, false) => "min",
+        (false, true) => "max",
+        (true, true) => return true,
+    };
+    let Some(test_source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.clone())
+    else {
+        return true;
+    };
+    if may_saturate_macro_ambiguity(&test_source) {
+        return true;
+    }
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    // `keyword` as a whole word, followed by whitespace and `then`, which
+    // `then` matches by its whole leading word or (for `use`) its item text.
+    let declares = |masked: &str, keyword: &str, then: &dyn Fn(&str) -> bool| {
+        masked.match_indices(keyword).any(|(offset, _)| {
+            let rest = &masked[offset + keyword.len()..];
+            let item = rest.trim_start();
+            masked[..offset]
+                .bytes()
+                .next_back()
+                .is_none_or(|byte| !ident(byte))
+                && item.len() < rest.len()
+                && then(item)
+        })
+    };
+    let leading = |word: &'static str| {
+        move |item: &str| {
+            item.strip_prefix(word)
+                .is_some_and(|tail| !tail.bytes().next().is_some_and(ident))
+        }
+    };
+    let names_ord =
+        |item: &str| contains_as_whole_word(item.split(';').next().unwrap_or(item), "Ord");
+    index.files().iter().any(|(_, facts)| {
+        let masked = mask_comments_and_strings(&facts.data().source);
+        masked.contains("no_implicit_prelude")
+            || declares(&masked, "fn", &leading(method))
+            || declares(&masked, "trait", &leading("Ord"))
+            || declares(&masked, "use", &names_ord)
+    })
+}
+
+/// trap-pile-first-element-control: the call inside `vec![call][0]`, a
+/// one-element vector indexed at zero, which is the call's own value. A
+/// repeat form (`vec![call; n]`), a second element or any other index
+/// refuses.
+fn single_element_index(operand: &str) -> Option<&str> {
+    let inner = operand
+        .trim()
+        .strip_suffix("[0]")?
+        .trim_end()
+        .strip_prefix("vec![")?
+        .strip_suffix(']')?;
+    // A `;` in a string or comment is not the repeat separator.
+    if mask_comments_and_strings(inner).contains(';') {
+        return None;
+    }
+    match split_top_level_arguments(inner)?.as_slice() {
+        [call] => Some(call.trim()),
+        [call, rest] if rest.trim().is_empty() => Some(call.trim()),
         _ => None,
     }
 }
