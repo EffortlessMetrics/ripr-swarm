@@ -1167,6 +1167,12 @@ expression and finds the smallest node covering the differing text.
    expression, or when the tail binds a name outside every closure (a
    `let`, `if let`, `match` arm or `for`, which can carry the change into a
    closure that may not run), both read the whole expression as before.
+   When the whole changed tail is one of RIPR-SPEC-0265's admitted adaptor
+   tails, that spec's rule 2 establishes the pin's adaptor gate instead:
+   its keeping-pair registry tells a closure-carried change apart there,
+   so this section's closure refusal does not override it (a change inside
+   a `map` + `sum` closure body reads through 0265, not as a refusal
+   here).
 
 The removed old text between the same prefix and suffix must be as plain
 as its replacement: a closure, block, macro, `?`, `return`, `break`,

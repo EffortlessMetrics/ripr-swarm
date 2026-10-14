@@ -1834,6 +1834,10 @@ impl OwnerReturnPin {
             Some(path) => path,
             // RIPR-SPEC-0265 rule 2: only a changed return value that is the
             // whole admitted adaptor tail; the test side reads the input.
+            // This fallback implements that spec's amendment of the pin's
+            // closure refusal ("a closure in the tail no longer refuses it
+            // on this shape") and must stay unguarded: 0265's keeping-pair
+            // registry is what tells a closure-carried change apart there.
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                     .filter(|tail| tail.tail_is(&probe.expression))

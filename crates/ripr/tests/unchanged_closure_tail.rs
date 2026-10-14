@@ -92,11 +92,6 @@ fn a_changed_operand_beside_an_unchanged_closure_is_exposed() -> Result<(), Stri
 #[test]
 fn a_change_the_closure_decides_or_carries_stays_unrevealed() -> Result<(), String> {
     for (old, new) in [
-        // The change is inside the closure.
-        (
-            "lines.iter().map(|l| l.cents + 50).sum::<u64>()",
-            "lines.iter().map(|l| l.cents + 51).sum::<u64>()",
-        ),
         // A closure captures the changed value.
         (
             "{ let k = 50; lines.iter().map(|l| l.cents + k).sum::<u64>() }",
@@ -132,5 +127,22 @@ fn a_change_the_closure_decides_or_carries_stays_unrevealed() -> Result<(), Stri
         let finding = total_finding(old, new, PINS)?;
         assert_ne!(finding["classification"], "exposed", "{new}: {finding}");
     }
+    Ok(())
+}
+
+/// A change inside the closure body of one admitted RIPR-SPEC-0265 adaptor
+/// tail (`map` + `sum` over an arithmetic closure body keeps every closure
+/// value in the owner's result) is no longer a refusal control: #7914's
+/// closure-boundary reading witnesses it, and the pinned assertion
+/// discriminates it. This control was written before #7914 landed; on the
+/// tree without it the same shape reads `reachable_unrevealed`.
+#[test]
+fn a_change_inside_an_admitted_adaptor_closure_reads_exposed() -> Result<(), String> {
+    let finding = total_finding(
+        "lines.iter().map(|l| l.cents + 50).sum::<u64>()",
+        "lines.iter().map(|l| l.cents + 51).sum::<u64>()",
+        PINS,
+    )?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
