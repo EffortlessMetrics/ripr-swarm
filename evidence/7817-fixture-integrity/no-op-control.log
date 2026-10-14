@@ -1,0 +1,16 @@
+   Compiling ripr v0.11.0 (<candidate-worktree>/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 16s
+     Running tests/sibling_effect_oracle.rs (target/debug/deps/sibling_effect_oracle-16b233f8b8d58a58)
+
+running 1 test
+
+thread 'fixture_replacement_rejects_missing_pattern' (8460) panicked at crates/ripr/tests/sibling_effect_oracle.rs:16:9:
+assertion `left != right` failed: fixture replacement `missing pattern` matched no source text
+  left: "fixture source"
+ right: "fixture source"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test fixture_replacement_rejects_missing_pattern - should panic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+exit=0
