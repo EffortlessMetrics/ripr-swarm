@@ -155,6 +155,11 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .filter_map(current_record_from_value)
         .collect::<Vec<_>>();
     let current_root = string_field(current.get("root"));
+    // Classification authority is `baseline_delta::analyzer_version_discontinuity`
+    // (issue #7421). Update must preserve unmatched entries that delta would
+    // bucket as stale identity discontinuity rather than resolved debt (#7941).
+    let baseline_analyzer_version = string_field(baseline.pointer("/subject/analyzer_version"));
+    let current_analyzer_version = string_field(current.pointer("/subject/analyzer_version"));
     let indexes = build_current_indexes(&current_records);
     let mut matched_current = BTreeSet::new();
     let mut kept_entries = Vec::new();
@@ -257,8 +262,25 @@ pub(crate) fn build_baseline_update_remove_resolved(
                 // HONEST SHRINK (issue #1964, review): removal happens only
                 // with --remove-resolved. A migration-only run preserves
                 // unmatched entries instead of silently shrinking the
-                // reviewed baseline.
-                if input.remove_resolved {
+                // reviewed baseline. BUILD DISCONTINUITY (issue #7941): when
+                // delta would classify the absence as analyzer-build
+                // discontinuity, keep the reviewed row instead of treating
+                // the missing identity as resolved debt.
+                if input.remove_resolved
+                    && unmatched_absence_is_build_discontinuity(
+                        baseline_analyzer_version.as_deref(),
+                        current_analyzer_version.as_deref(),
+                    )
+                {
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence but the producing analyzer build changed (baseline `{}` -> current `{}`); treated as stale identity discontinuity, not resolved debt",
+                        identity.sort_key(),
+                        disclosed_analyzer_version(baseline_analyzer_version.as_deref()),
+                        disclosed_analyzer_version(current_analyzer_version.as_deref()),
+                    ));
+                    kept_entries.push(entry.clone());
+                } else if input.remove_resolved {
                     removed_resolved += 1;
                 } else {
                     warnings.push(format!(
@@ -338,6 +360,32 @@ pub(crate) fn baseline_update_migrated_count(report: &BaselineUpdateReport) -> u
 
 pub(crate) fn baseline_update_warning_count(report: &BaselineUpdateReport) -> usize {
     report.warnings.len()
+}
+
+#[cfg(test)]
+pub(crate) fn baseline_update_preserved_stale_count(report: &BaselineUpdateReport) -> usize {
+    report.preserved_stale
+}
+
+/// Whether unmatched absence is an analyzer-build discontinuity.
+///
+/// Must stay aligned with `baseline_delta::analyzer_version_discontinuity`
+/// (issue #7421): both sides the same recorded build, or both sides
+/// unrecorded, are continuity and may shrink as resolved; a differing pair
+/// or exactly one recorded stamp is discontinuity and must stay stale.
+fn unmatched_absence_is_build_discontinuity(
+    baseline_analyzer_version: Option<&str>,
+    current_analyzer_version: Option<&str>,
+) -> bool {
+    match (baseline_analyzer_version, current_analyzer_version) {
+        (Some(baseline), Some(current)) if baseline == current => false,
+        (None, None) => false,
+        _ => true,
+    }
+}
+
+fn disclosed_analyzer_version(version: Option<&str>) -> String {
+    version.map_or_else(|| "none recorded".to_string(), ToOwned::to_owned)
 }
 
 pub(crate) use crate::output::path::display_path;
@@ -689,8 +737,9 @@ mod tests {
     use super::{
         BaselineUpdateInput, baseline_update_after_entry_count, baseline_update_before_entry_count,
         baseline_update_ignored_new_current_count, baseline_update_migrated_count,
-        baseline_update_removed_resolved_count, baseline_update_warning_count,
-        build_baseline_update_remove_resolved, render_baseline_update_json,
+        baseline_update_preserved_stale_count, baseline_update_removed_resolved_count,
+        baseline_update_warning_count, build_baseline_update_remove_resolved,
+        render_baseline_update_json, unmatched_absence_is_build_discontinuity,
     };
 
     #[test]
@@ -1286,6 +1335,344 @@ mod tests {
             rendered.contains("canonical identity diverged"),
             "{rendered}"
         );
+        Ok(())
+    }
+
+    const BUILD_A: &str = "0.11.0+a079b4d61983f4f199cd1895af581a3495847093";
+    const BUILD_B: &str = "0.11.0+c60acdff5a8e3d95ef19f7fcc73b5e6896aa5a8f";
+
+    fn reviewed_unmatched_baseline(analyzer_version: Option<&str>) -> String {
+        let version = analyzer_version.map_or("null".to_string(), |value| format!("\"{value}\""));
+        format!(
+            r#"{{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "subject": {{ "analyzer_version": {version} }},
+          "entries": [
+            {{
+              "identity": {{
+                "canonical_gap_id": "gap:dedf923a13a00573",
+                "seam_id": "8f7fa8644fd12280"
+              }},
+              "path": "src/pricing.rs",
+              "line": 88,
+              "static_class": "weakly_gripped",
+              "review": {{
+                "reviewed": true,
+                "owner": "test-platform",
+                "reason": "known baseline debt",
+                "created_at": "2026-10-14T00:00:00Z",
+                "review_after": "2026-12-01T00:00:00Z",
+                "source": "target/ripr/reports/gate-decision.json"
+              }}
+            }}
+          ]
+        }}"#
+        )
+    }
+
+    fn empty_current(analyzer_version: Option<&str>) -> String {
+        let version = analyzer_version.map_or("null".to_string(), |value| format!("\"{value}\""));
+        format!(
+            r#"{{
+          "schema_version": "0.1",
+          "subject": {{ "analyzer_version": {version} }},
+          "decisions": []
+        }}"#
+        )
+    }
+
+    fn update_unmatched(
+        baseline_version: Option<&str>,
+        current_version: Option<&str>,
+        remove_resolved: bool,
+    ) -> Result<super::BaselineUpdateReport, String> {
+        build_baseline_update_remove_resolved(BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: reviewed_unmatched_baseline(baseline_version),
+            current_gate_decision_json: empty_current(current_version),
+            remove_resolved,
+            migrate_legacy_identities: false,
+        })
+    }
+
+    /// Pre-#7941 `MatchResult::None` arm: drop unmatched entries whenever
+    /// `--remove-resolved` is set, ignoring analyzer-build discontinuity.
+    /// This compiled control must keep failing the new regression.
+    fn reverted_guard_remove_unmatched_on_remove_resolved(
+        remove_resolved: bool,
+        _is_build_discontinuity: bool,
+    ) -> bool {
+        remove_resolved
+    }
+
+    #[test]
+    fn unmatched_absence_classification_matches_delta_discontinuity_table() {
+        assert!(!unmatched_absence_is_build_discontinuity(
+            Some(BUILD_A),
+            Some(BUILD_A)
+        ));
+        assert!(!unmatched_absence_is_build_discontinuity(None, None));
+        assert!(unmatched_absence_is_build_discontinuity(
+            Some(BUILD_A),
+            Some(BUILD_B)
+        ));
+        assert!(unmatched_absence_is_build_discontinuity(
+            None,
+            Some(BUILD_B)
+        ));
+        assert!(unmatched_absence_is_build_discontinuity(
+            Some(BUILD_A),
+            None
+        ));
+    }
+
+    #[test]
+    fn baseline_update_preserves_different_build_absence_with_reviewed_metadata()
+    -> Result<(), String> {
+        let report = update_unmatched(Some(BUILD_A), Some(BUILD_B), true)?;
+        let rendered = render_baseline_update_json(&report)?;
+        assert_eq!(baseline_update_before_entry_count(&report), 1);
+        assert_eq!(baseline_update_after_entry_count(&report), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 1);
+        assert_eq!(baseline_update_ignored_new_current_count(&report), 0);
+        assert!(
+            rendered.contains("\"canonical_gap_id\": \"gap:dedf923a13a00573\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"owner\": \"test-platform\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"review_after\": \"2026-12-01T00:00:00Z\""),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\"reviewed\": true"), "{rendered}");
+        assert!(
+            rendered.contains("stale identity discontinuity, not resolved debt"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("baseline `{BUILD_A}` -> current `{BUILD_B}`")),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_preserves_one_missing_stamp_absence() -> Result<(), String> {
+        let missing_baseline = update_unmatched(None, Some(BUILD_B), true)?;
+        assert_eq!(baseline_update_after_entry_count(&missing_baseline), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&missing_baseline), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&missing_baseline), 1);
+        let rendered = render_baseline_update_json(&missing_baseline)?;
+        assert!(
+            rendered.contains("baseline `none recorded` -> current"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"owner\": \"test-platform\""),
+            "{rendered}"
+        );
+
+        let missing_current = update_unmatched(Some(BUILD_A), None, true)?;
+        assert_eq!(baseline_update_after_entry_count(&missing_current), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&missing_current), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&missing_current), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_still_shrinks_same_build_genuine_absence() -> Result<(), String> {
+        let report = update_unmatched(Some(BUILD_A), Some(BUILD_A), true)?;
+        let rendered = render_baseline_update_json(&report)?;
+        assert_eq!(baseline_update_after_entry_count(&report), 0);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 1);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 0);
+        assert!(!rendered.contains("gap:dedf923a13a00573"), "{rendered}");
+        assert!(!rendered.contains("test-platform"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_still_shrinks_unversioned_old_vs_old_absence() -> Result<(), String> {
+        let report = update_unmatched(None, None, true)?;
+        assert_eq!(baseline_update_after_entry_count(&report), 0);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 1);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_migrate_only_still_preserves_build_crossing_absence() -> Result<(), String> {
+        let report = update_unmatched(Some(BUILD_A), Some(BUILD_B), false)?;
+        let rendered = render_baseline_update_json(&report)?;
+        assert_eq!(baseline_update_after_entry_count(&report), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 0);
+        assert!(rendered.contains("without --remove-resolved"), "{rendered}");
+        assert!(
+            rendered.contains("\"owner\": \"test-platform\""),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_keeps_stable_canonical_join_across_different_builds() -> Result<(), String> {
+        let baseline = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "subject": {{ "analyzer_version": "{BUILD_A}" }},
+          "entries": [
+            {{
+              "identity": {{
+                "canonical_gap_id": "gap:surviving",
+                "seam_id": "old-seam"
+              }},
+              "path": "src/kept.rs",
+              "line": 2,
+              "static_class": "weakly_gripped",
+              "review": {{ "reviewed": true, "owner": "test-platform", "reason": "kept" }}
+            }}
+          ]
+        }}"#
+        );
+        let current = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "subject": {{ "analyzer_version": "{BUILD_B}" }},
+          "decisions": [
+            {{
+              "decision": "advisory",
+              "canonical_gap_id": "gap:surviving",
+              "seam_id": "new-seam",
+              "static_class": "weakly_gripped",
+              "placement": {{ "path": "src/kept.rs", "line": 88 }},
+              "evidence": {{}}
+            }}
+          ]
+        }}"#
+        );
+        let report = build_baseline_update_remove_resolved(BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: baseline,
+            current_gate_decision_json: current,
+            remove_resolved: true,
+            migrate_legacy_identities: false,
+        })?;
+        let rendered = render_baseline_update_json(&report)?;
+        assert_eq!(baseline_update_after_entry_count(&report), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 0);
+        assert_eq!(baseline_update_ignored_new_current_count(&report), 0);
+        assert!(
+            rendered.contains("\"canonical_gap_id\": \"gap:surviving\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\"owner\": \"test-platform\""),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("stale identity discontinuity"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_preserves_renamed_build_crossing_debt_without_adopting_current()
+    -> Result<(), String> {
+        let baseline = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "subject": {{ "analyzer_version": "{BUILD_A}" }},
+          "entries": [
+            {{
+              "identity": {{
+                "canonical_gap_id": "gap:old",
+                "seam_id": "old-seam"
+              }},
+              "path": "src/old.rs",
+              "line": 10,
+              "static_class": "activation_unknown",
+              "review": {{ "reviewed": true, "owner": "test-platform", "reason": "known debt" }}
+            }}
+          ]
+        }}"#
+        );
+        let current = format!(
+            r#"{{
+          "schema_version": "0.1",
+          "subject": {{ "analyzer_version": "{BUILD_B}" }},
+          "decisions": [
+            {{
+              "decision": "advisory",
+              "canonical_gap_id": "gap:renamed",
+              "seam_id": "new-seam",
+              "static_class": "activation_unknown",
+              "placement": {{ "path": "src/old.rs", "line": 10 }},
+              "evidence": {{}}
+            }}
+          ]
+        }}"#
+        );
+        let report = build_baseline_update_remove_resolved(BaselineUpdateInput {
+            baseline_path: "baseline.json".to_string(),
+            current_gate_decision_path: "current.json".to_string(),
+            baseline_json: baseline,
+            current_gate_decision_json: current,
+            remove_resolved: true,
+            migrate_legacy_identities: false,
+        })?;
+        let rendered = render_baseline_update_json(&report)?;
+        assert_eq!(baseline_update_after_entry_count(&report), 1);
+        assert_eq!(baseline_update_removed_resolved_count(&report), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 1);
+        assert_eq!(baseline_update_ignored_new_current_count(&report), 1);
+        assert!(
+            rendered.contains("\"canonical_gap_id\": \"gap:old\""),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("gap:renamed"), "{rendered}");
+        assert!(
+            rendered.contains("\"owner\": \"test-platform\""),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reverted_guard_unconditional_remove_resolved_still_drops_build_crossing_debt()
+    -> Result<(), String> {
+        // Compiled control for the pre-repair MatchResult::None arm. If
+        // production is reverted to this arm, the assertions below fail the
+        // new regression (entries stay 1 today; the old arm would drop them).
+        assert!(
+            reverted_guard_remove_unmatched_on_remove_resolved(true, true),
+            "pre-repair arm still treats build-crossing absence as resolved"
+        );
+        assert!(!reverted_guard_remove_unmatched_on_remove_resolved(
+            false, true
+        ));
+        let report = update_unmatched(Some(BUILD_A), Some(BUILD_B), true)?;
+        assert_eq!(
+            baseline_update_after_entry_count(&report),
+            1,
+            "production must keep the entry the reverted guard would drop"
+        );
+        assert_eq!(baseline_update_removed_resolved_count(&report), 0);
+        assert_eq!(baseline_update_preserved_stale_count(&report), 1);
+        assert!(unmatched_absence_is_build_discontinuity(
+            Some(BUILD_A),
+            Some(BUILD_B)
+        ));
         Ok(())
     }
 }
