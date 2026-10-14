@@ -9,6 +9,10 @@ use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
+use ra_ap_syntax::{
+    AstNode, SyntaxNode,
+    ast::{self, HasArgList, HasName},
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -3026,6 +3030,272 @@ fn method_call_resolves_to_impl_in(
     })
 }
 
+/// An indexed name is not the receiver authority for an inherent method:
+/// dependency methods are absent from the workspace's same-name count (#7415).
+pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionSummary) -> bool {
+    owner.item.has_self_param && matches!(owner.item.container, FunctionContainer::Inherent { .. })
+}
+
+/// Deny-only refinement of the existing nominal receiver matcher for inherent
+/// methods. Read real call syntax and the nearest visible local declaration,
+/// never a raw captured-line comment or a binding in an expired inner block.
+/// Aliases, receiver value flow and unsupported binding scopes stay unresolved.
+/// This does not establish general type or Cargo-target identity.
+pub(in crate::analysis) fn inherent_receiver_call_resolves(
+    test: &TestSummary,
+    method: &str,
+    impl_type: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    if !text_resolves_method_to_type(&masked, method, impl_type, None, &masked, true) {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&test.body) else {
+        return false;
+    };
+    let syntax = parse.tree().syntax().clone();
+    syntax
+        .descendants()
+        .any(|node| inherent_call_node_resolves(node, None, method, impl_type))
+        || syntax
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .any(|call| inherent_assertion_arguments_resolve(&call, method, impl_type))
+}
+
+fn inherent_call_node_resolves(
+    node: SyntaxNode,
+    original_scope: Option<&SyntaxNode>,
+    method: &str,
+    impl_type: &str,
+) -> bool {
+    if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
+        return call.name_ref().is_some_and(|name| name.text() == method)
+            && call.receiver().is_some_and(|receiver| {
+                scoped_receiver_names_type(
+                    receiver,
+                    original_scope.unwrap_or_else(|| call.syntax()),
+                    impl_type,
+                )
+            });
+    }
+    // UFCS still needs the actual first argument's receiver type.
+    let Some(call) = ast::CallExpr::cast(node) else {
+        return false;
+    };
+    let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+        return false;
+    };
+    let text = callee.syntax().text().to_string();
+    let segments: Vec<_> = text.split("::").map(str::trim).collect();
+    matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && *name == method)
+        && call
+            .arg_list()
+            .and_then(|arguments| arguments.args().next())
+            .is_some_and(|receiver| {
+                scoped_receiver_names_type(
+                    receiver,
+                    original_scope.unwrap_or_else(|| call.syntax()),
+                    impl_type,
+                )
+            })
+}
+
+/// Assertion token trees are not expression descendants of the source AST.
+/// Parse only their evaluated operands, preserving the original invocation as
+/// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
+fn inherent_assertion_arguments_resolve(
+    call: &ast::MacroCall,
+    method: &str,
+    impl_type: &str,
+) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let name = path.syntax().text().to_string();
+    let operands = match name.trim() {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return false,
+    };
+    if call.syntax().ancestors().any(|scope| {
+        ast::StmtList::cast(scope).is_some_and(|list| {
+            list.syntax().children().any(|node| {
+                ast::MacroRules::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
+                    .is_some_and(|bound| bound.text() == name.trim())
+            })
+        })
+    }) {
+        return false;
+    }
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(arguments) = text.get(1..text.len().saturating_sub(1)) else {
+        return false;
+    };
+    let Some(arguments) = super::reveal::split_top_level_arguments(arguments) else {
+        return false;
+    };
+    arguments.into_iter().take(operands).any(|argument| {
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
+            "fn ripr_receiver_operand() {{ let _ = {argument}; }}"
+        )) else {
+            return false;
+        };
+        let syntax = parse.tree().syntax().clone();
+        // Locals and pattern scopes inside an operand require separate value
+        // flow. Do not resolve their calls using the invocation's outer scope.
+        if syntax.descendants().any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::ForExpr::can_cast(node.kind())
+                || ast::MatchArm::can_cast(node.kind())
+                || ast::LetExpr::can_cast(node.kind())
+                || ast::Const::can_cast(node.kind())
+                || ast::Static::can_cast(node.kind())
+                || ast::Use::can_cast(node.kind())
+                || ast::MacroRules::can_cast(node.kind())
+                || ast::MacroDef::can_cast(node.kind())
+                || ast::Fn::cast(node.clone()).is_some_and(|function| {
+                    function
+                        .name()
+                        .is_none_or(|name| name.text() != "ripr_receiver_operand")
+                })
+                || ast::LetStmt::cast(node)
+                    .is_some_and(|binding| !matches!(binding.pat(), Some(ast::Pat::WildcardPat(_))))
+        }) {
+            return false;
+        }
+        syntax
+            .descendants()
+            .any(|node| inherent_call_node_resolves(node, Some(call.syntax()), method, impl_type))
+    })
+}
+
+fn scoped_receiver_names_type(mut receiver: ast::Expr, call: &SyntaxNode, impl_type: &str) -> bool {
+    // Parentheses and borrows preserve this bounded receiver identity.
+    for _ in 0..32 {
+        let inner = match &receiver {
+            ast::Expr::ParenExpr(expression) => expression.expr(),
+            ast::Expr::RefExpr(expression) => expression.expr(),
+            _ => break,
+        };
+        let Some(inner) = inner else {
+            return false;
+        };
+        receiver = inner;
+    }
+    match &receiver {
+        ast::Expr::PathExpr(_) => {
+            let name = receiver.syntax().text().to_string();
+            let name = name.trim();
+            if !name.is_empty() && name.bytes().all(is_ident_byte) {
+                return visible_receiver_binding_names_type(name, call, impl_type);
+            }
+        }
+        ast::Expr::CallExpr(_) | ast::Expr::RecordExpr(_) => {}
+        _ => return false,
+    }
+    let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
+    initializer_is_one_head_expr(&text) && initializer_type_head(&text) == Some(impl_type)
+}
+
+fn visible_receiver_binding_names_type(name: &str, call: &SyntaxNode, impl_type: &str) -> bool {
+    for ancestor in call.ancestors().skip(1) {
+        // These patterns may bind the receiver. This small admission does not
+        // infer their types, and never borrows an outer same-spelled binding.
+        if ast::ClosureExpr::can_cast(ancestor.kind())
+            || ast::ForExpr::can_cast(ancestor.kind())
+            || ast::MatchArm::can_cast(ancestor.kind())
+        {
+            return false;
+        }
+        if let Some(condition) = ast::IfExpr::cast(ancestor.clone())
+            .and_then(|node| node.condition())
+            .or_else(|| ast::WhileExpr::cast(ancestor.clone()).and_then(|node| node.condition()))
+            && condition
+                .syntax()
+                .descendants()
+                .filter_map(ast::LetExpr::cast)
+                .any(|binding| {
+                    binding.pat().is_some_and(|pattern| {
+                        pattern
+                            .syntax()
+                            .descendants()
+                            .filter_map(ast::IdentPat::cast)
+                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                    })
+                })
+        {
+            return false;
+        }
+        if let Some(list) = ast::StmtList::cast(ancestor.clone()) {
+            // Scope-wide items can shadow an outer value even when their
+            // declaration follows the call. Imports/globs remain unresolved.
+            if list.syntax().children().any(|node| {
+                ast::Item::can_cast(node.kind())
+                    && ast::AnyHasName::cast(node.clone())
+                        .and_then(|item| item.name())
+                        .is_some_and(|bound| bound.text().trim_start_matches("r#") == name)
+                    || ast::Use::cast(node).is_some_and(|item| {
+                        item.syntax().descendants().any(|node| {
+                            ast::UseTree::cast(node.clone())
+                                .is_some_and(|tree| tree.star_token().is_some())
+                                || ast::NameRef::cast(node.clone()).is_some_and(|bound| {
+                                    bound.text().trim_start_matches("r#") == name
+                                })
+                                || ast::Name::cast(node).is_some_and(|bound| {
+                                    bound.text().trim_start_matches("r#") == name
+                                })
+                        })
+                    })
+            }) {
+                return false;
+            }
+            let binding = list
+                .syntax()
+                .children()
+                .filter_map(ast::LetStmt::cast)
+                .filter(|binding| binding.syntax().text_range().end() <= call.text_range().start())
+                .filter(|binding| {
+                    binding.pat().is_some_and(|pattern| {
+                        pattern
+                            .syntax()
+                            .descendants()
+                            .filter_map(ast::IdentPat::cast)
+                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                    })
+                })
+                .last();
+            if let Some(binding) = binding {
+                let Some(ast::Pat::IdentPat(pattern)) = binding.pat() else {
+                    return false;
+                };
+                if pattern.at_token().is_some() || binding.let_else().is_some() {
+                    return false;
+                }
+                if let Some(annotation) = binding.ty() {
+                    return compact_impl_type_name(&annotation.syntax().text().to_string())
+                        .as_deref()
+                        == Some(impl_type);
+                }
+                return binding.initializer().is_some_and(|initializer| {
+                    let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
+                    initializer_is_one_head_expr(&text)
+                        && initializer_type_head(&text) == Some(impl_type)
+                });
+            }
+        }
+        if ast::Fn::can_cast(ancestor.kind()) {
+            return false;
+        }
+    }
+    false
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -3168,6 +3438,11 @@ fn owner_call_relation_reason(
     }) || owner_trait.as_deref().is_some_and(|trait_name| {
         super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
     }) {
+        return RelationReason::WeakTokenSubstring;
+    }
+    if requires_inherent_receiver_identity(owner)
+        && !inherent_receiver_call_resolves(test, owner_name, &impl_type)
+    {
         return RelationReason::WeakTokenSubstring;
     }
     if indexed_same_name_count <= 1 {

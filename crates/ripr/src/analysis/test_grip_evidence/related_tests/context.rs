@@ -1557,14 +1557,18 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             .calls
             .iter()
             .filter(|call| {
-                (helper_name_carries_owner_token(&helper_name_lower, &call.name)
-                    || helper_directly_delegates_to_specific_owner(
-                        function,
-                        call,
-                        local_function_names,
-                        external_owner_names,
-                        allow_fanout_wrappers,
-                    ))
+                // Function call facts include the declaration's own spelling.
+                // A same-name self edge is not a separate helper route and
+                // must not restore a refused direct receiver relation (#7415).
+                call.name != function.name
+                    && (helper_name_carries_owner_token(&helper_name_lower, &call.name)
+                        || helper_directly_delegates_to_specific_owner(
+                            function,
+                            call,
+                            local_function_names,
+                            external_owner_names,
+                            allow_fanout_wrappers,
+                        ))
                     && call_text_contains_named_call(&call.text, &call.name)
             })
             .map(|call| call.name.clone())

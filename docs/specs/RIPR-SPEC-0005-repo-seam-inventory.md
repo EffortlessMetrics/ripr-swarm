@@ -225,6 +225,22 @@ name, and line. Relation confidence and reason decide whether a test is likely
 related; oracle strength and activation overlap only choose the best imitation
 target inside otherwise equivalent relationships.
 
+For parser-established inherent methods with a `self` parameter, a unique
+workspace-indexed method name alone is not direct owner-call evidence: a
+dependency type can have the same method. Diff and repository/compact consumers
+require the bounded nominal receiver matcher plus a real call expression and
+the nearest still-visible simple local declaration. Comments on captured call
+lines and declarations in expired inner blocks cannot supply that evidence.
+Standard assertion macro operands are parsed as expressions using the original
+invocation's scope; diagnostic arguments do not supply receiver evidence.
+Unsupported binding/pattern scopes and unresolved receiver value flow withhold
+direct credit. Actual enum-variant receivers and public-library integration
+calls remain admissible. This is an admission narrowing, not exact Rust type or
+Cargo-target resolution: qualified types sharing a terminal name, constructor
+return-type conventions, aliases and general factory/value flow remain bounded
+limitations tracked by #7415. Trait dispatch and associated functions without
+`self` retain their existing rules.
+
 Related-test oracle semantics must explain what the oracle observes, what
 discriminator remains missing, and which assertion upgrade would improve the
 seam when the current shape is broad, smoke-only, or unknown. These semantics
