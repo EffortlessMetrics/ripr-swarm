@@ -1371,7 +1371,7 @@ fn assert_call_assertion(
         .get(1)
         .filter(|_| loose_equality)
         .and_then(|expected| {
-            resolve_loose_literal_const(literal_consts, expected, call.span.start, deep)
+            resolve_loose_literal_const(literal_consts, expected, call.span.start)
         });
     if loose_equality
         && (resolved_const.is_some()

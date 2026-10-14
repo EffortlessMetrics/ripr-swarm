@@ -132,12 +132,15 @@ it is bound to when it names a `const` declared with a plain identifier
 at the top level of the test body (or of an awaited `t.test` subtest
 body), before the assertion, by the only top-level declaration of that
 name, and the assertion itself is a top-level statement of that body.
-The literal must meet the rule above (for `equal`, not an object or
-array). Any other variable keeps the weak reading: a `let` or `var`, a
-destructured or call-bound `const`, a `const` declared after the
-assertion or in an enclosing scope, and an assertion nested in a block,
-branch, loop, `try` or callback, where a nested declaration could
-shadow the name.
+The literal must be a string, template or number literal the rule above
+accepts, optionally parenthesized or under `as`. Object and array
+literals do not qualify even under `deepEqual`: `const` stops
+reassignment, not mutation, so `want.push(...)` or `want.total = ...`
+changes what the assertion compares. Any other variable keeps the weak
+reading: a `let` or `var`, a destructured, call-bound, object or array
+`const`, a `const` declared after the assertion or in an enclosing
+scope, and an assertion nested in a block, branch, loop, `try` or
+callback, where a nested declaration could shadow the name.
 
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
@@ -207,15 +210,19 @@ and the rejected alternative. Recorded on #6654.
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
-   `jest-spec0234-ex03`.
+   `jest-spec0234-ex03`, and for `t.assert.*` by RIPR-SPEC-0252, which
+   credits `nodetest-latefee-t-assert`.
 6. **Test-local literal `const` (rule 2, amended 2026-10-14).** Adopted:
-   a `const` bound once to a literal at the top level of the test body
-   reads as that literal, because the runtime comparison is the same and
-   `const` cannot be reassigned. Rejected: keep every variable weak,
-   which leaves `nodetest-t-assert-equal-variable` (a discriminated test)
-   a false gap. Rejected: resolve any reachable binding (enclosing
-   `describe`, module scope, nested blocks), which needs scope analysis
-   ripr does not do and could read a shadowing declaration's value.
+   a `const` bound once to a primitive literal at the top level of the
+   test body reads as that literal, because a primitive `const` can be
+   neither reassigned nor mutated, so the runtime comparison is the
+   inline literal's. Rejected after review: object and array `const`s,
+   which a test can fill in before the assertion (`want.push(...)`).
+   Rejected: keep every variable weak, which leaves
+   `nodetest-t-assert-equal-variable` (a discriminated test) a false gap.
+   Rejected: resolve any reachable binding (enclosing `describe`, module
+   scope, nested blocks), which needs scope analysis ripr does not do and
+   could read a shadowing declaration's value.
 
 ## Required Evidence
 
@@ -224,6 +231,9 @@ and the rejected alternative. Recorded on #6654.
 - On the TypeScript verdict corpus, false verdicts fall from 17/101 to
   10/101, seven Problem rows move to `credited` (all but
   `ts-vitest-checkout-notify`), and no other row moves.
+- Amended 2026-10-14: `nodetest-t-assert-equal-variable` moves from `gap`
+  to `credited` (false verdicts 7/127 to 5/127 together with the
+  RIPR-SPEC-0252 amendment), and no other row moves.
 
 ## Non-Goals
 
@@ -234,7 +244,8 @@ and the rejected alternative. Recorded on #6654.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
   `toHaveBeenCalledTimes`.
 - No change to committed snapshot strength.
-- No change to `t.assert.*`, which still yields no assertion.
+- No change to `t.assert.*` here (superseded by RIPR-SPEC-0252, which
+  reads it as legacy `node:assert`).
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples
@@ -273,8 +284,9 @@ and the rejected alternative. Recorded on #6654.
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
    computed key, with a `__proto__` key, or against a variable other than
-   the test-local `const` of example 10: `relational_check` / weak. chai `assert.equal(x, "silver")` reads
-   strong and `assert.equal(x, 1)` weak, as legacy `node:assert` does.
+   the test-local `const` of example 10: `relational_check` / weak.
+   chai `assert.equal(x, "silver")` reads strong and
+   `assert.equal(x, 1)` weak, as legacy `node:assert` does.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
    multi-line template holding an object's text: `snapshot` / strong,
    no `typescript_snapshot_discriminator_unresolved`.
@@ -282,14 +294,16 @@ and the rejected alternative. Recorded on #6654.
    snapshot with a property-matcher object, or `toMatchSnapshot()`:
    `snapshot` / medium. Amended by RIPR-SPEC-0258: `toMatchSnapshot()`
    whose committed entry the test file names reads `snapshot` / strong.
-10. `const want = 30;` at the top level of the test body, then
-    `assert.equal(graceFee(10), want)` or `t.assert.equal(graceFee(10),
-    want)`, and `const want = { total: 30 };` with
-    `assert.deepEqual(line(3), want)`: `exact_value` / strong, expected
-    value `30` or `{ total: 30 }`. The same with `const want = 1`, `let
-    want = 30`, `const want = price(30)`, `const want` declared after the
-    assertion or inside a block, the assertion inside an `if` block, or
-    an object `const` under `equal`: `relational_check` / weak.
+10. `const want = 30;` (or `"silver"`, or `(30 as number)`) at the top
+    level of the test body, then `assert.equal(graceFee(10), want)`,
+    `assert.deepEqual(graceFee(10), want)` or
+    `t.assert.equal(graceFee(10), want)`: `exact_value` / strong,
+    expected value `30`. The same with `const want = 1`, `let want = 30`,
+    `const want = price(30)`, `const want = { total: 30 }` or `[]` (even
+    under `deepEqual`), `const want` declared after the assertion or
+    inside a block, or the assertion inside an `if`, a `try`, a returned
+    `.then` callback or a subtest that does not declare `want` itself:
+    `relational_check` / weak.
 
 ## Test Mapping
 

@@ -147,6 +147,8 @@ documented decisions and proceed"). Recorded on #6654.
   an import renamed away from `test` / `it` / `specify`
   (`import { test as nt } from "node:test"; nt(...)`) is not recognised as
   a test registration at all, so its `t.assert` calls are not read.
+- `` t[`assert`] `` and `t[key]` name the same member at runtime but
+  are not read (under-credit): ripr reads only a string-literal key.
 - `const { assert } = t;`, `t.assert` passed to a helper, optional or
   parenthesized forms (`t.assert?.equal`, `(t).assert`), and `t.assert`
   inside a `forEach` or `.then` callback or on an outer `t` inside a
@@ -160,6 +162,9 @@ documented decisions and proceed"). Recorded on #6654.
 
 - On the TypeScript verdict corpus, `nodetest-latefee-t-assert` moves from
   `gap` to `credited` and no other row moves.
+- Amended 2026-10-14: `nodetest-t-bracket-assert` moves from `gap` to
+  `credited` (false verdicts 7/127 to 5/127 together with the
+  RIPR-SPEC-0247 amendment), and no other row moves.
 - `cargo xtask goldens check` reports no drift.
 
 ## Non-Goals

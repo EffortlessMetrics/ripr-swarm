@@ -130,16 +130,17 @@ pub(crate) fn inline_snapshot_is_literal(
     }
 }
 
-/// A test-local `const` whose literal initializer a loose equality may read
-/// in place of the name (RIPR-SPEC-0247 rule 2, amended for #6654): declared
-/// once at the top level of the test body, before the assertion.
+/// A test-local `const` whose primitive literal initializer a loose equality
+/// may read in place of the name (RIPR-SPEC-0247 rule 2, amended for #6654):
+/// declared once at the top level of the test body, before the assertion.
+/// Only primitives qualify: `const` stops reassignment, not mutation, so an
+/// object or array the test fills in later (`want.push(...)`) is not the
+/// literal it was declared with.
 #[derive(Clone, Debug)]
 pub(crate) struct LooseLiteralConst {
     name: String,
     text: String,
     declared_end: u32,
-    pins: bool,
-    pins_deep: bool,
 }
 
 /// The test body's top-level `const <name> = <literal>;` bindings whose name
@@ -172,21 +173,19 @@ pub(crate) fn loose_literal_consts(
                     let Some(init) = &declarator.init else {
                         continue;
                     };
-                    let span = init.span();
+                    // `deep: false` admits no object or array literal.
+                    if !expression_pins_loosely(init, false) {
+                        continue;
+                    }
+                    // The literal itself, without parentheses or `as`.
+                    let span = init.get_inner_expression().span();
                     let Some(text) = source.get(span.start as usize..span.end as usize) else {
                         continue;
                     };
-                    let pins = expression_pins_loosely(init, false);
-                    let pins_deep = expression_pins_loosely(init, true);
-                    if !pins_deep {
-                        continue;
-                    }
                     candidates.push(LooseLiteralConst {
                         name: id.name.to_string(),
                         text: text.to_string(),
                         declared_end: declaration.span.end,
-                        pins,
-                        pins_deep,
                     });
                 }
             }
@@ -199,6 +198,8 @@ pub(crate) fn loose_literal_consts(
             _ => {}
         }
     }
+    // Defensive: a valid program cannot declare a top-level name twice, but
+    // the parser recovers from that error and must not credit either one.
     candidates.retain(|candidate| {
         declared
             .iter()
@@ -210,13 +211,11 @@ pub(crate) fn loose_literal_consts(
 }
 
 /// The literal a loose equality's `expected` identifier stands for, when it
-/// names one of `consts` declared before the assertion at `call_start` and
-/// that literal pins the value under `==` (`deep` for `deepEqual`).
+/// names one of `consts` declared before the assertion at `call_start`.
 pub(crate) fn resolve_loose_literal_const<'c>(
     consts: &'c [LooseLiteralConst],
     expected: &Argument<'_>,
     call_start: u32,
-    deep: bool,
 ) -> Option<&'c str> {
     let Some(Expression::Identifier(ident)) = expected
         .as_expression()
@@ -228,12 +227,5 @@ pub(crate) fn resolve_loose_literal_const<'c>(
         .iter()
         .find(|candidate| candidate.name == ident.name.as_str())
         .filter(|candidate| candidate.declared_end <= call_start)
-        .filter(|candidate| {
-            if deep {
-                candidate.pins_deep
-            } else {
-                candidate.pins
-            }
-        })
         .map(|candidate| candidate.text.as_str())
 }

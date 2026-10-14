@@ -796,7 +796,7 @@ fn only_a_test_runner_expect_reads_jest_matchers() {
 /// literal coercion cannot reach (RIPR-SPEC-0247 rule 2).
 #[test]
 fn node_test_context_assert_reads_as_legacy_node_assert() {
-    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 9] = [
+    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 13] = [
         (
             "loose equal against a number",
             "t.assert.equal(lateFee(10), 20);",
@@ -838,6 +838,34 @@ fn node_test_context_assert_reads_as_legacy_node_assert() {
             OracleKind::ExactValue,
             OracleStrength::Strong,
             "t[\"assert\"].equal(...)",
+        ),
+        (
+            "single-quoted computed member",
+            "t['assert'].equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t[\"assert\"].equal(...)",
+        ),
+        (
+            "awaited subtest reads its own literal const",
+            "await t.test(\"sub\", (t2) => {\n    const want = 20;\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "awaited subtest does not read the parent's const",
+            "const want = 20;\n  await t.test(\"sub\", (t2) => {\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "assertion inside try does not read the body's const",
+            "const want = 20;\n  try {\n    t.assert.equal(lateFee(10), want);\n  } finally {}",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t.assert.equal(...)",
         ),
         (
             "anchored throws pins the error",
@@ -1024,6 +1052,11 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "t[key].equal(lateFee(10), 20);",
         ),
         (
+            "string-literal key naming another member",
+            "import test from \"node:test\";",
+            "t[\"check\"].equal(lateFee(10), 20);",
+        ),
+        (
             "computed member through a template key",
             "import test from \"node:test\";",
             "t[`assert`].equal(lateFee(10), 20);",
@@ -1062,10 +1095,28 @@ fn loose_equality_reads_a_test_local_literal_const() {
             Some("30"),
         ),
         (
-            "object const under deepEqual",
-            "const want = { total: 30 };\n  assert.deepEqual(tier(10), want);",
+            "string const under deepEqual",
+            "const want = \"silver\";\n  assert.deepEqual(tier(10), want);",
             true,
-            Some("{ total: 30 }"),
+            Some("\"silver\""),
+        ),
+        (
+            "parenthesized const with a type assertion",
+            "const want = (30 as number);\n  assert.equal(tier(10), want);",
+            true,
+            Some("30"),
+        ),
+        (
+            "object const under deepEqual can be mutated",
+            "const want = { total: 30 };\n  want.total = tier(10);\n  assert.deepEqual(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "array const filled by the test",
+            "const want = [];\n  want.push(tier(10));\n  assert.deepEqual(tiers([10]), want);",
+            false,
+            None,
         ),
         (
             "coercible number const",
@@ -1100,6 +1151,12 @@ fn loose_equality_reads_a_test_local_literal_const() {
         (
             "const declared in a nested block",
             "{\n    const want = 30;\n    assert.equal(tier(10), want);\n  }",
+            false,
+            None,
+        ),
+        (
+            "assertion in a returned then callback",
+            "const want = 30;\n  return load().then(() => {\n    assert.equal(tier(10), want);\n  });",
             false,
             None,
         ),
