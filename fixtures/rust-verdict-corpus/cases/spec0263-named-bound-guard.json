@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "side_effect_push",
   "test_shape": "direct_collection_equality_named_bound_guard",
-  "hard_case": "Known false verdict the spec accepts: example 5 refuses a named bound, so the direct-collection observer keeps exposed although 4 never enters `x > LIMIT`. Narrow fix proposed in #7964.",
+  "hard_case": "Named bound: the direct-collection observer credits the empty-vector equality, but 4 never enters `x > LIMIT`. Read since #7964 because LIMIT is the one file-level integer const in the owner's file. The const's doc comment was reworded in #7964 so it no longer names `add`: a doc comment naming the owner withholds the reading (doctest refusal), and this one held no code block, so runtime truth is unchanged.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "adds_nothing_for_small_values calls add(&mut v, 4); 4 never enters `x > LIMIT` with LIMIT = 10, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 5: a named bound is unreadable, so no guard is named.",
+  "reasoning": "adds_nothing_for_small_values calls add(&mut v, 4); 4 never enters `x > LIMIT` with LIMIT = 10, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 5 (amended by #7964): a single file-level integer const bound is read, so the guard `if x > LIMIT` is named.",
   "labeling_observation": {
     "ripr_commit": "46faff1e7",
     "full_checkout_verdict": "credited",

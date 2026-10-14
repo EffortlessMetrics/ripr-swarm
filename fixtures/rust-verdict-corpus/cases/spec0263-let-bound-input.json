@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "side_effect_push",
   "test_shape": "direct_collection_equality_let_bound_input",
-  "hard_case": "Known false verdict the spec accepts: example 4 fails closed on a non-literal input, so the direct-collection observer keeps exposed although 4 never enters the guard. Narrow fix proposed in #7964.",
+  "hard_case": "Let-bound input: the direct-collection observer credits the empty-vector equality, but n = 4 never enters the guard. Read since #7964 because n is bound once by an immutable let of an integer literal and used only as the owner-call argument.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "adds_nothing_for_a_bound_small_value binds n = 4 and calls add(&mut v, n); 4 never enters `x > 10`, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 4: the input is not a literal, so the rule fails closed and names no guard.",
+  "reasoning": "adds_nothing_for_a_bound_small_value binds n = 4 and calls add(&mut v, n); 4 never enters `x > 10`, so every mutant of the push passes. Spec cells: RIPR-SPEC-0263 example 4 (amended by #7964): an immutable let-bound integer literal is read, so the guard is named.",
   "labeling_observation": {
     "ripr_commit": "46faff1e7",
     "full_checkout_verdict": "credited",

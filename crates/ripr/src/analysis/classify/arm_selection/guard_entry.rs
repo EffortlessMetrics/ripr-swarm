@@ -12,8 +12,9 @@
 //! bound (`x > 10`, `10 <= x`), the `if` must be the innermost block
 //! around the changed line, and nothing before it in the owner may rebind
 //! or reassign the parameter or loop back to it. The bound is an integer
-//! literal, or an upper-case name the caller resolves to one crate-local
-//! `const` (#7964). Each call must pass an integer literal at the
+//! literal, or an upper-case name the caller resolves to the one
+//! file-level `const` of that name in the indexed files (#7964). Every
+//! value must fit the parameter's primitive integer type. Each call must pass an integer literal at the
 //! parameter's position, or a test-local name bound once by an immutable
 //! `let name = <integer literal>;` and used only as owner-call arguments.
 //! The owner must not name itself past its signature (recursion can enter
@@ -74,6 +75,7 @@ pub(in crate::analysis) struct GuardEntry {
     index: usize,
     comparison: Comparison,
     bound: i128,
+    range: (i128, i128),
     condition: String,
 }
 
@@ -132,6 +134,19 @@ impl GuardEntry {
         let index = parameters
             .iter()
             .position(|declared| parameter_name(declared) == parameter)?;
+        let declared = parameter_declaration(owner, &parameter)?;
+        let body_start = masked.find('\n')? + 1;
+        let prelude = masked.get(body_start..keyword)?;
+        if declared.mutable || may_rebind_before(prelude, &parameter) {
+            return None;
+        }
+        // Every value is judged in the parameter's own integer type: with
+        // `overflowing_literals` allowed, `260` passed as a `u8` wraps to 4
+        // at runtime, so a value outside the type's range is unread.
+        if declared.qualified {
+            return None;
+        }
+        let range = integer_range(declared.type_name.as_deref()?)?;
         let bound = match bound {
             Bound::Literal(value) => value,
             Bound::Named(name) => {
@@ -144,10 +159,7 @@ impl GuardEntry {
                 resolve_bound(&name)?
             }
         };
-        let declared = parameter_declaration(owner, &parameter)?;
-        let body_start = masked.find('\n')? + 1;
-        let prelude = masked.get(body_start..keyword)?;
-        if declared.mutable || may_rebind_before(prelude, &parameter) {
+        if !fits(bound, range) {
             return None;
         }
         let method = owner.item.has_self_param || super::owner_has_self_parameter(owner);
@@ -172,6 +184,7 @@ impl GuardEntry {
             index,
             comparison,
             bound,
+            range,
             condition: condition.split_whitespace().collect::<Vec<_>>().join(" "),
         })
     }
@@ -221,7 +234,7 @@ impl GuardEntry {
                         (value, format!("{input} = {value}"))
                     }
                 };
-                if self.comparison.holds(value, self.bound) {
+                if !fits(value, self.range) || self.comparison.holds(value, self.bound) {
                     return None;
                 }
                 inputs.push(shown);
@@ -278,6 +291,34 @@ fn let_bound_integer(test: &TestSummary, masked: &str, name: &str) -> Option<i12
         return None;
     }
     integer_value(value.trim())
+}
+
+/// The values a primitive integer type holds, or `None` for any other type
+/// name (an alias such as `type Small = u32` is not read).
+fn integer_range(type_name: &str) -> Option<(i128, i128)> {
+    Some(match type_name {
+        "u8" => (0, u8::MAX.into()),
+        "u16" => (0, u16::MAX.into()),
+        "u32" => (0, u32::MAX.into()),
+        "u64" => (0, u64::MAX.into()),
+        // `integer_value` reads at most `i128::MAX`.
+        "u128" => (0, i128::MAX),
+        "usize" => (0, u64::MAX.into()),
+        "i8" => (i8::MIN.into(), i8::MAX.into()),
+        "i16" => (i16::MIN.into(), i16::MAX.into()),
+        "i32" => (i32::MIN.into(), i32::MAX.into()),
+        "i64" => (i64::MIN.into(), i64::MAX.into()),
+        "i128" => (i128::MIN, i128::MAX),
+        "isize" => (i64::MIN.into(), i64::MAX.into()),
+        _ => return None,
+    })
+}
+
+/// Whether `value` is representable in `range` without wrapping. `usize`
+/// and `isize` use the 64-bit range: a value past a 32-bit target's range
+/// is a deny-by-default lint error there.
+fn fits(value: i128, (min, max): (i128, i128)) -> bool {
+    (min..=max).contains(&value)
 }
 
 /// The offset of the innermost `{` still open at the end of `before`, or
@@ -360,7 +401,7 @@ pub(in crate::analysis) fn named_integer_bound(
     owner: &FunctionSummary,
     name: &str,
 ) -> Option<i128> {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
     let mut declarations = 0usize;
     let mut owner_source = None;
     for (path, file) in index.files().iter() {
@@ -411,10 +452,14 @@ pub(in crate::analysis) fn named_integer_bound(
         {
             continue;
         }
+        // A `#[cfg(..)]` may remove the `const` under test, leaving a
+        // glob-imported item of the same name in its place, so any
+        // attribute on it leaves the value unread.
         if !constant
             .syntax()
             .parent()
             .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+            || constant.attrs().next().is_some()
         {
             return None;
         }

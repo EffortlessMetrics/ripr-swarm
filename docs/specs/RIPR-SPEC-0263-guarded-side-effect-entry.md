@@ -66,7 +66,8 @@ counterpart for side effects.
      in the owner's own file;
    - that file has no import binding the name and no macro that may declare
      items the owner sees;
-   - the owner sits outside any inline `mod`;
+   - no function of the owner's name in that file sits inside an inline
+     `mod`;
    - the guard is the owner's only mention of the name, so no parameter,
      `let` or nested item shadows it.
 
@@ -235,4 +236,7 @@ The Rust verdict corpus false-verdict count drops by one
 (`rust-guarded-push-unentered-branch` moves from `false_exposed` to the ideal
 `gap`), with no other row moved. The #7964 amendment moves
 `spec0263-let-bound-input` and `spec0263-named-bound-guard` from
-`false_exposed` to `gap` in the same way.
+`false_exposed` to `gap` in the same way. The named-bound subject's
+`LIMIT` doc comment was reworded so it no longer names the owner, since a
+doc comment naming the owner withholds the reading; it holds no code
+block, so its runtime labels are unchanged.
