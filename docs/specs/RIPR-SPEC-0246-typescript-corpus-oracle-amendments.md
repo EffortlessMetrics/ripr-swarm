@@ -106,11 +106,14 @@ assertions are collected as the test's own:
   and a callback that is neither `async` nor a generator, with exactly
   one plain parameter. Each element reads as one case, the body with `v`
   replaced by the element, exactly as a rule 11 table row. An element may
-  instead name a `const` that the test body declares once at its top level,
-  before the call, with a primitive literal from that set on one line
-  (the RIPR-SPEC-0247 rule 2 literal `const`s); it reads as that literal.
-  A `let` or `var`, an object or call value, a later declaration, or a
-  name redeclared in a nested block reads as a non-literal element.
+  instead name a `const` that the enclosing test or callback body declares
+  once at its own top level, before the call, as one of the RIPR-SPEC-0247
+  rule 2 literal `const`s whose literal is also a rule 11 cell on one line;
+  it reads as that literal. That excludes `0`, `1`, booleans, `null`,
+  `undefined`, bigints and numeric or empty strings, which rule 2 does not
+  pin, and templates, which are no cell. A `let` or `var`, an object or
+  call value, a later declaration, or a name redeclared in a nested block
+  reads as a non-literal element.
   (Added 2026-10-14.) A synchronous
   `return expect(...)` still runs and is collected, but a promise returned
   from the body does not reach the runner, because `forEach` discards it,

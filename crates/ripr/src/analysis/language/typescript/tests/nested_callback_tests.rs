@@ -63,6 +63,13 @@ fn foreach_element_bound_to_a_literal_const_reads_as_the_literal() {
         "  const n = load();\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
         "  const n = `2\n00`;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
         "  const n = 200;\n  function n() {}\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        // A template is no table cell, and a line continuation spans lines.
+        "  const n = `vip`;\n  [n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = `v${1}`;\n  [n].forEach((v) => { expect(price(v)).toBe(140); });",
+        // RIPR-SPEC-0247 rule 2 does not pin a boolean or `0`.
+        "  const n = true;\n  [n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = 0;\n  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  const n = \"v\\\nip\";\n  [n].forEach((v) => { expect(price(v)).toBe(140); });",
     ] {
         assert_eq!(
             observed("tests/price.test.ts", &wrap(body)),
