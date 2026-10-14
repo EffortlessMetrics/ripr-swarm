@@ -2655,14 +2655,166 @@ pub(crate) fn owner_namespace_receivers(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Vec<String> {
-    test.imports_in_file
+    let mut receivers: Vec<String> = test
+        .imports_in_file
         .iter()
         .filter(|import| {
             import.namespace
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         })
         .map(|import| import.local.clone())
-        .collect()
+        .collect();
+    // A dynamic import binds the same module namespace a static
+    // `import * as` would, but as a local declaration, so it never reaches
+    // `imports_in_file`. Without it the member-call gate below would
+    // silently no-op for `jest_dynamic_import_member_tobe` shapes
+    // (RIPR-SPEC-0243 import_path_affinity; verdict corpus
+    // `jest-spec0234-ex27`).
+    for name in dynamic_import_namespace_bindings(&test.body_text) {
+        let import = TypeScriptImport {
+            source: name.source,
+            imported: None,
+            local: name.binding,
+            namespace: true,
+        };
+        if !receivers.contains(&import.local)
+            && import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
+        {
+            receivers.push(import.local);
+        }
+    }
+    receivers
+}
+
+/// A test-body dynamic import binding: the local name and the imported
+/// module's literal source.
+struct DynamicImportBinding {
+    binding: String,
+    source: String,
+}
+
+/// `const|let|var <name> = [await] import("<module>")` bindings in a test
+/// body. Located on the string/comment-masked body so text inside literals
+/// cannot fabricate a binding; the module source is then read from the same
+/// character range of the original body (the masker preserves character
+/// offsets and keeps quote delimiters). Only a plain string-literal module
+/// resolves: a non-literal `import()` argument stays an honest miss.
+fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBinding> {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn skip_spaces(chars: &[char], mut at: usize) -> usize {
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        at
+    }
+    fn word_at(chars: &[char], at: usize, word: &str) -> bool {
+        let n = word.chars().count();
+        at + n <= chars.len()
+            && chars[at..at + n].iter().collect::<String>() == word
+            && chars.get(at + n).is_none_or(|c| !is_ident_char(*c))
+    }
+    let masked = ts_mask_literals_and_comments(body_text);
+    // The receiver extraction reads original characters at masked character
+    // offsets; a length divergence would mean an offset-mismatched masker,
+    // so refuse to guess.
+    if masked.chars().count() != body_text.chars().count() {
+        return Vec::new();
+    }
+    let original: Vec<char> = body_text.chars().collect();
+    let masked_chars: Vec<char> = masked.chars().collect();
+    let find_char = |haystack: &[char], needle: &str, from: usize| -> Option<usize> {
+        let needle_chars: Vec<char> = needle.chars().collect();
+        (from..=haystack.len().saturating_sub(needle_chars.len())).find(|&at| {
+            haystack[at..at + needle_chars.len()]
+                .iter()
+                .collect::<String>()
+                == needle
+        })
+    };
+    let mut bindings = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        let mut from = 0usize;
+        while let Some(at) = find_char(&masked_chars, keyword, from) {
+            from = at + keyword.len();
+            let before_ok = at == 0 || !is_ident_char(masked_chars[at - 1]);
+            if !before_ok {
+                continue;
+            }
+            // Binding name: the identifier run after the keyword.
+            let mut cursor = at + keyword.len();
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            let name_start = cursor;
+            while cursor < masked_chars.len() && is_ident_char(masked_chars[cursor]) {
+                cursor += 1;
+            }
+            if cursor == name_start {
+                continue;
+            }
+            let binding: String = masked_chars[name_start..cursor].iter().collect();
+            // `=` (not `==`), then an optional `await`, then `import(`.
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            if masked_chars.get(cursor) != Some(&'=') || masked_chars.get(cursor + 1) == Some(&'=')
+            {
+                continue;
+            }
+            cursor += 1;
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            // Optional `await`, then the `import` callee.
+            if word_at(&masked_chars, cursor, "await") {
+                cursor += "await".len();
+                cursor = skip_spaces(&masked_chars, cursor);
+            }
+            if !word_at(&masked_chars, cursor, "import") {
+                continue;
+            }
+            cursor += "import".len();
+            cursor = skip_spaces(&masked_chars, cursor);
+            if masked_chars.get(cursor) != Some(&'(') {
+                continue;
+            }
+            cursor += 1;
+            while cursor < masked_chars.len() && masked_chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            // The masked argument must be a complete quoted literal whose
+            // interior the masker blanked; anything else stays unresolved.
+            let Some(&open) = masked_chars.get(cursor) else {
+                continue;
+            };
+            if open != '"' && open != '\'' {
+                continue;
+            }
+            let mut module = String::new();
+            let mut closed = false;
+            cursor += 1;
+            while cursor < masked_chars.len() {
+                let c = masked_chars[cursor];
+                if c == open {
+                    closed = true;
+                    break;
+                }
+                // Interior is blanked by the masker; read the original.
+                module.push(original.get(cursor).copied().unwrap_or(' '));
+                cursor += 1;
+            }
+            if !closed {
+                continue;
+            }
+            bindings.push(DynamicImportBinding {
+                binding,
+                source: module,
+            });
+        }
+    }
+    bindings
 }
 
 /// The trailing identifier segment immediately before the final `.` of
