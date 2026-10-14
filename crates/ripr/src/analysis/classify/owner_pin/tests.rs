@@ -3169,6 +3169,14 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
             ),
             "core::assert_eq",
         ),
+        // The parser keeps the spacing of the path.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std :: assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
         (
             format!(
                 "use demo::weight;\nmod tests {{\n    use super::*;\n{}}}\n",
@@ -3242,6 +3250,29 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
             "{tests}"
         );
     }
+    // An unproved qualified call anywhere in the file may expand to an early
+    // return, so a later bare assertion is refused too (#7938 review).
+    let bare_after = |root: &Path| {
+        let tests = format!(
+            "use demo::weight;\n{}",
+            test("std::assert_eq!(1, 1);\n    assert_eq!(weight(4), 12);")
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| {
+            test.assertions
+                .iter()
+                .find(|assertion| assertion.text.starts_with("assert_eq!(weight"))
+        });
+        assert!(assertion.is_some(), "{tests}");
+        OwnerPinSyntax::default().refusal(test?, assertion?, &index)
+    };
+    assert_eq!(bare_after(&plain), None);
+    assert_eq!(bare_after(&aliased), opaque("std::assert_eq"));
     // A generated test is checked against its expansion, which shows
     // neither the file's glob nor the generating invocation; the real file
     // shows both. The bare form is the control: the same generated test is

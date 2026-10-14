@@ -2744,7 +2744,8 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
 /// is admitted only when [`has_escape`] finds its root unrebound, so a
 /// rebinding refuses the whole test with the path named.
 fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
-    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    let path: String = path.split_whitespace().collect();
+    let unrooted = path.strip_prefix("::").unwrap_or(&path);
     match unrooted.split_once("::") {
         Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
         Some(_) => false,
@@ -2757,9 +2758,11 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
 /// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
 /// the classify side adds the workspace root proof for the credited one.
 fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
+    // The parser keeps the spacing of `std :: assert_eq`.
+    let path: String = path.split_whitespace().collect();
     path.rsplit("::").next() == Some("assert_eq")
         && trusted.contains(&"assert_eq")
-        && std_macro_root_is_unrebound(path, call.syntax())
+        && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
 /// `Ok` when the invocation runs on every execution of the test body;
