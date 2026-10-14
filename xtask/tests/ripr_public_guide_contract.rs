@@ -80,6 +80,11 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
     ),
 ];
 
+/// The C2 `cmd:feedback.record` example in
+/// `crates/ripr/src/cli/command_metadata.rs`. Bare `ripr feedback record`
+/// always refuses without `--snapshot` and `--reason`.
+const FEEDBACK_RECORD_EXAMPLE: &str = "ripr feedback record --snapshot ID --reason CODE";
+
 /// Validate the command cell of each task row, not mentions elsewhere in the
 /// document. The result prose can change without changing the command's job.
 fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
@@ -91,7 +96,7 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
         ("Compose PR evidence", "ripr first-pr"),
         ("Add advisory CI", "ripr init --ci github"),
         ("Diagnose setup", "ripr doctor"),
-        ("Record result usefulness", "ripr feedback record"),
+        ("Record result usefulness", FEEDBACK_RECORD_EXAMPLE),
     ] {
         let mut matches = doc.lines().filter_map(|line| {
             let mut cells = line.trim().strip_prefix('|')?.split('|');
@@ -243,15 +248,35 @@ fn doc_routes_reject_missing_wrong_and_duplicate_tasks() -> Result<(), String> {
     );
     let duplicate =
         format!("{COMMAND_HIERARCHY_DOC}\n| Inspect one change | `ripr check` | Duplicate. |\n");
+    let bare_feedback = COMMAND_HIERARCHY_DOC.replace(
+        &format!("`{FEEDBACK_RECORD_EXAMPLE}`"),
+        "`ripr feedback record`",
+    );
     for (case, changed) in [
         ("missing", missing),
         ("wrong", wrong),
         ("duplicate", duplicate),
+        ("bare-feedback", bare_feedback),
     ] {
         if assert_doc_command_routes(&changed).is_ok() {
             return Err(format!("doc route guard accepted the {case} task mutation"));
         }
     }
+    Ok(())
+}
+
+/// Keep the hierarchy task row on the same spelling the typed catalog example
+/// already ships. A docs-only re-pin of the refusing bare command must fail.
+#[test]
+fn hierarchy_feedback_record_row_matches_the_c2_example() -> Result<(), String> {
+    const COMMAND_METADATA: &str = include_str!("../../crates/ripr/src/cli/command_metadata.rs");
+    let example_field = format!("example: \"{FEEDBACK_RECORD_EXAMPLE}\"");
+    if !COMMAND_METADATA.contains(&example_field) {
+        return Err(format!(
+            "command_metadata.rs lost the C2 example `{FEEDBACK_RECORD_EXAMPLE}`"
+        ));
+    }
+    assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
     Ok(())
 }
 

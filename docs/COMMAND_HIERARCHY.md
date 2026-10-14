@@ -14,7 +14,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
 | Add advisory CI | `ripr init --ci github` | A non-blocking GitHub workflow to review and commit. |
 | Diagnose setup | `ripr doctor` | Tooling and configuration checks with recovery guidance. Not required before every run. |
-| Record result usefulness | `ripr feedback record` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
+| Record result usefulness | `ripr feedback record --snapshot ID --reason CODE` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
 | Serve MCP status | `ripr mcp --stdio` | [Read-only workspace status](interop/mcp.md), not analysis or execution. |
