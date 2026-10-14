@@ -106,8 +106,9 @@ or `Err` (or `Some` or `None`):
   read directly off the call's result: only adapters that keep an `Ok` an
   `Ok` (`map_err`, `map`, `as_ref`, `.await`) may sit between them, so
   `check(x).and(Err(E::Other)).unwrap_err()` or `x.ok_or(E).unwrap_err()`
-  reads nothing. The statement must start with that call: a parenthesized
-  receiver such as `(check(x).and(Err(E::Other))).unwrap_err()` also reads
+  reads nothing. A parenthesized group is read through, not skipped:
+  `(check(x)).unwrap_err()` and `(check(x).map_err(f)).unwrap_err()` read
+  the call, while `(check(x).and(Err(E::Other))).unwrap_err()` reads
   nothing;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
 - `#[should_panic]` without `expected`, only when unwrapping the owner result

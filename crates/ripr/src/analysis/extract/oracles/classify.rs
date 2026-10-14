@@ -1634,6 +1634,33 @@ fn ok_literal() {
                 "(find(3).ok_or(E::Missing)).unwrap_err();",
                 vec![],
             ),
+            // A grouping is looked through: around the call itself, or
+            // around Ok-preserving adapters, it still reads the call.
+            (
+                "grouped_call",
+                "(check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_error_mapped",
+                "let _e = (check(300).map_err(Wrap)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_then_mapped",
+                "((check(300))).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "raw_identifier_call",
+                "r#check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_mapped_then_fallback",
+                "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
             ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
             (
                 "turbofish_call",
