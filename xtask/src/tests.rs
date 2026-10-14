@@ -53654,3 +53654,29 @@ fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Result<(), String> {
+    with_temp_cwd("ci-policy-local-report", |root| {
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|e| e.to_string())?;
+        let local = reports.join("precommit.md");
+        std::fs::write(&local, "local report witness").map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            "local report witness"
+        );
+        super::publish_precommit_policy_report(false)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            super::precommit_report_body()
+        );
+        std::fs::remove_file(&local).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&local).map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert!(local.is_dir());
+        assert!(super::publish_precommit_policy_report(false).is_err());
+        Ok(())
+    })
+}

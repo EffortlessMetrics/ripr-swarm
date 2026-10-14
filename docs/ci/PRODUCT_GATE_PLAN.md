@@ -185,7 +185,7 @@ Rust CI consumes its source/toolchain/input-bound workflow/agent-skill receipt;
 wrong, missing, stale or partial proof returns failure before file-policy work.
 The CI report explicitly identifies `ci_policy`, records that selected Clippy is
 outside its scope, and writes `ci-policy.{json,md}` without replacing the local
-`precommit-v2` receipt. Neither report grants authority to skip the later CI lint.
+`precommit-v2` receipt or legacy `precommit.md` report. Neither report grants authority to skip the later CI lint.
 
 | Predicate/result | Producer | Consumer |
 | --- | --- | --- |

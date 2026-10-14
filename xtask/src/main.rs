@@ -666,6 +666,13 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_network_policy()?;
         check_lint_policy()?;
     }
+    publish_precommit_policy_report(collect_all)
+}
+
+fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
+    if ci_policy {
+        return Ok(());
+    }
     let body = precommit_report_body();
     write_report("precommit.md", &body)
 }

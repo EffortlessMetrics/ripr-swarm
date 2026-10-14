@@ -164,3 +164,8 @@ file policy, preserving these nine predicates and attributable errors. The
 test retains two independent failures, later leaf output, stale-pass replacement
 and local-receipt isolation. This reuse changes no standalone command semantics;
 the complete hosted composition remains in the canonical product-gate plan.
+
+CI publication also preserves both legacy `precommit.md` and structured local
+precommit reports. `ci_policy_publication_preserves_local_report_and_local_io_failures`
+checks existing-report preservation, unchanged local content and local write-error
+propagation through the shared publication owner.

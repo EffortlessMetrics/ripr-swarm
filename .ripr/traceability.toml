@@ -15123,6 +15123,7 @@ id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
 spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
+  "xtask/src/tests.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
   "xtask/tests/policy_all.rs::ci_policy_collects_real_cheap_failures_before_expensive_work",
   "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
   "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
@@ -15132,6 +15133,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "xtask/src/main.rs::publish_precommit_policy_report",
   "xtask/src/policy/all.rs::check_policy_all",
   "xtask/src/policy/mod.rs",
   "xtask/src/command.rs",

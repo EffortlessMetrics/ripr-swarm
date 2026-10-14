@@ -321,7 +321,8 @@ change-set discovery, metadata validation, policy table and three whitespace
 checks as local precommit, with the existing nine-scan collect-all producer
 before compilation-bearing file-policy enumeration. It writes
 `target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
-identifies its composition, and leaves local `precommit-v2` receipts untouched.
+identifies its composition, and leaves legacy `precommit.md` and structured
+local `precommit-v2` receipts untouched.
 Its pass excludes selected Clippy; the required producer retains explicit
 `cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
 policy-preflight receipt is still verified. Formatting and the later dependency,
