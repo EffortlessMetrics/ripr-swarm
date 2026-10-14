@@ -617,6 +617,10 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("debug_assert_eq!(r == Err(E::Bad), false);", &weak),
         ("prop_assert_eq!(r == Err(E::Bad), false);", &weak),
         ("assert_ne!(r == Err(E::Bad), true);", &weak),
+        ("assert_ne!(true, r == Err(E::Bad));", &weak),
+        // `assert_ne!` stays an inequality even where its bool side pins
+        // the comparison; the cap only ever lowers.
+        ("assert_ne!(r == Err(E::Bad), false);", &weak),
         ("assert_eq!(!(r == Err(E::Bad)), true);", &weak),
         ("assert_eq!((r == Err(E::Bad)).not(), true);", &weak),
         ("ensure!((a == b) == false);", &weak),
