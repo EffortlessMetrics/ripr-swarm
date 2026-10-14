@@ -6740,6 +6740,9 @@ id = "RIPR-SPEC-0085"
 name = "TypeScript evidence adapter contract"
 spec = "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::capped_workspace_read_reports_every_budget_refusal",
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::workspace_budget_refusals_preserve_later_fitting_sources",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_bounds_workspace_budget_disclosure_with_true_total",
   "crates/ripr/src/analysis/language/typescript/package.rs::tests::ts_package_discovery_single_package_vitest_pnpm",
   "crates/ripr/src/analysis/language/typescript/package.rs::tests::ts_package_discovery_single_package_jest_npm",
   "crates/ripr/src/analysis/language/typescript/package.rs::tests::ts_package_discovery_monorepo_package_local_root",
@@ -6824,6 +6827,7 @@ fixtures = [
   "fixtures/typescript-preview-false-actionable-audit"
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs",
   "crates/ripr/src/analysis/language/typescript/package.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
