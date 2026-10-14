@@ -1,0 +1,172 @@
+//! Public-path source identity controls for #7805.
+//! These assertions intentionally fail before source-file provenance is retained.
+
+use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const OWNER: &str = r#"pub fn coverage_summary_receipt(present: bool) -> serde_json::Value {
+    let text: Option<String> = if present {
+        Some(String::new())
+    } else {
+        None
+    };
+    serde_json::json!({"status": if text.is_some() { "collected" } else { "not_collected" }})
+}
+#[test]
+fn json_indexed_receipt() {
+    let summary = coverage_summary_receipt(false);
+    assert_eq!(summary["status"], "not_collected");
+}
+#[cfg(test)]
+mod decoy;
+"#;
+
+const PATCH: &str = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,6 +2,6 @@
+     let text: Option<String> = if present {
+         Some(String::new())
+     } else {
+-        Some(String::new())
++        None
+     };
+     serde_json::json!({"status": if text.is_some() { "collected" } else { "not_collected" }})
+"#;
+
+struct Fixture {
+    root: PathBuf,
+}
+
+impl Fixture {
+    fn new(decoy_assertion: &str) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-7805-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let fixture = Self { root };
+        fixture.write(
+            "Cargo.toml",
+            "[package]\nname = \"source-provenance\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\nserde_json = \"1\"\n",
+        )?;
+        fixture.write("src/lib.rs", OWNER)?;
+        fixture.write("diff.patch", PATCH)?;
+        // Keep both real and unrelated assertions at exactly line 12.
+        let decoy = format!(
+            "#[test]\nfn unrelated_coverage_summary_receipt_text() {{\n    let text = \"## UB Ledger Context\";\n    let shared_context = text;\n\n\n\n\n\n\n\n    {decoy_assertion}\n}}\n"
+        );
+        assert_eq!(
+            decoy.lines().nth(11),
+            Some(format!("    {decoy_assertion}").as_str())
+        );
+        fixture.write("src/decoy.rs", &decoy)?;
+        Ok(fixture)
+    }
+
+    fn write(&self, path: &str, text: &str) -> Result<(), String> {
+        std::fs::write(self.root.join(path), text).map_err(|error| error.to_string())
+    }
+
+    fn finding(&self) -> Result<serde_json::Value, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Draft,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let selected = output
+            .findings
+            .iter()
+            .filter(|finding| finding.probe.expression == "None")
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1, "the changed None must be analyzed");
+        assert_eq!(selected[0].class, ExposureClass::WeaklyExposed);
+        let rendered = ripr::output::json::render(&output);
+        let report: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        report["findings"]
+            .as_array()
+            .and_then(|findings| {
+                findings
+                    .iter()
+                    .find(|finding| finding["probe"]["expression"] == "None")
+            })
+            .cloned()
+            .ok_or_else(|| "changed None is missing from rendered findings".to_owned())
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn sources_for_value(finding: &serde_json::Value, value: &str) -> Vec<serde_json::Value> {
+    finding["observed_values"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|fact| fact["line"] == 12 && fact["value"] == value)
+        .map(|fact| fact["source_file"].clone())
+        .collect()
+}
+
+#[test]
+fn a_same_line_decoy_cannot_replace_the_owner_values_source_file() -> Result<(), String> {
+    let fixture = Fixture::new("assert!(shared_context.contains(\"## UB Ledger Context\"));")?;
+    let finding = fixture.finding()?;
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    assert_eq!(
+        sources_for_value(&finding, "\"not_collected\""),
+        vec![serde_json::json!("src/lib.rs")]
+    );
+    assert_eq!(
+        sources_for_value(&finding, "\"## UB Ledger Context\""),
+        vec![serde_json::json!("src/decoy.rs")]
+    );
+    Ok(())
+}
+
+#[test]
+fn removing_only_the_decoy_assertion_preserves_owner_source_identity() -> Result<(), String> {
+    let fixture = Fixture::new("let _ = shared_context.contains(\"## UB Ledger Context\");")?;
+    let finding = fixture.finding()?;
+    assert_eq!(
+        sources_for_value(&finding, "\"not_collected\""),
+        vec![serde_json::json!("src/lib.rs")]
+    );
+    assert!(sources_for_value(&finding, "\"## UB Ledger Context\"").is_empty());
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    Ok(())
+}
+
+#[test]
+fn identical_assertion_text_in_two_files_keeps_two_source_identities() -> Result<(), String> {
+    let fixture = Fixture::new("assert_eq!(summary[\"status\"], \"not_collected\");")?;
+    let decoy = std::fs::read_to_string(fixture.root.join("src/decoy.rs"))
+        .map_err(|error| error.to_string())?
+        .replace(
+            "    let shared_context = text;",
+            "    let summary = serde_json::json!({\"status\": \"not_collected\"});",
+        );
+    fixture.write("src/decoy.rs", &decoy)?;
+    let finding = fixture.finding()?;
+    let mut sources = sources_for_value(&finding, "\"not_collected\"");
+    sources.sort_by_key(serde_json::Value::to_string);
+    assert_eq!(
+        sources,
+        vec![
+            serde_json::json!("src/decoy.rs"),
+            serde_json::json!("src/lib.rs")
+        ]
+    );
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "weak");
+    Ok(())
+}
