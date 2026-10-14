@@ -1,0 +1,33 @@
+name: Contabo Consumer Qualification
+
+# Reviewed, non-required #7164 rehearsal only. No PR/Ready/push allocation.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Reviewed full detached subject SHA (must equal dispatched ref SHA)
+        required: true
+        type: string
+      base_sha:
+        description: Reviewed actual integration base SHA for the product evidence
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: contabo-qualification-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    # Unknown policy is refusal, not permission to use hosted recovery.
+    if: github.event_name == 'workflow_dispatch' && vars.EM_CI_GITHUB_HOSTED_ENABLED == 'false'
+    uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@a3125de962a74e7ec2e127d41d7532f66c69334d
+    with:
+      profile: standard
+      force_hosted: false
+      fetch_depth: 0
+      script: .ci/contabo-product.sh

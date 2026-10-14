@@ -874,3 +874,12 @@ surface = "repo"
 classification = "fixture"
 reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
 covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = ".ci/contabo-product.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: pinned EM CI requires a Bash script path; four-line shim delegates command ownership to Rust and existing Rust Gates."
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
