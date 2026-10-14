@@ -12,7 +12,9 @@ pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 
 use super::parse_clean_source_file;
-use super::ra::{LineIndex, slice_macro_call_text, slice_text};
+use super::ra::{
+    LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
+};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
@@ -355,6 +357,9 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
+    // expect-test's `expect!` builds a value and cannot return; only its
+    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    "expect",
     "file",
     "format",
     "format_args",
@@ -785,10 +790,17 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
+/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
+/// value; importing it under its own name is the one binding that makes a
+/// bare `expect!` expect-test's.
+const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
+
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    if !matches!(name, "assert_eq" | "assert_ne") {
-        return false;
-    }
+    let crates = match name {
+        "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
+        "expect" => EXPECT_TEST_CRATES,
+        _ => return false,
+    };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -810,7 +822,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
-        [root, imported] if DROP_IN_ASSERTION_CRATES.contains(root) && *imported == name
+        [root, imported] if crates.contains(root) && *imported == name
     )
 }
 
@@ -1185,6 +1197,33 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     "assert_eq" | "assert"
                 )
             }) {
+                continue;
+            }
+            let range = call.syntax().text_range();
+            let assertion = (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            );
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // #6578: an inline expect-test comparison
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
+        // a method call on the bare `expect!` value; the classify side
+        // decides which spelling pins.
+        for call in function
+            .syntax()
+            .descendants()
+            .filter_map(ast::MethodCallExpr::cast)
+        {
+            if !is_expect_test_comparison(&call)
+                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || call
+                    .name_ref()
+                    .is_none_or(|name| name.text() != "assert_eq")
+            {
                 continue;
             }
             let range = call.syntax().text_range();
@@ -1983,10 +2022,10 @@ fn is_identifier(text: &str) -> bool {
 /// into one `#[test]` per row that binds the row's values to the parameters
 /// and runs the body. Admitted only when `rstest` is the crate in the test's
 /// module, `#[rstest]` takes no arguments and appears once, every parameter
-/// is a plain binding marked `#[case]` and nothing else, and every row
-/// follows `#[rstest]` and holds one scalar literal per parameter. Fixtures,
-/// `#[values]` matrices, `#[future]`, timeouts and computed case values
-/// (which could call the owner) refuse.
+/// is a plain binding marked `#[case]` or an unmarked fixture, and every row
+/// follows `#[rstest]` and holds one scalar literal per `#[case]` parameter.
+/// `#[values]` matrices, `#[future]`, other parameter attributes, timeouts
+/// and computed case values (which could call the owner) refuse.
 fn rstest_runs_body(
     attr: &ast::Attr,
     kind: RstestAttribute,
@@ -2035,30 +2074,54 @@ fn rstest_runs_body(
     }
 }
 
-/// The number of parameters when each is a plain `ident: Type` binding
-/// marked by exactly one `#[case]` attribute; `None` otherwise.
+/// The number of `#[case]` parameters when every parameter is a plain
+/// `ident: Type` binding that is either marked by exactly one `#[case]`
+/// attribute or carries no attribute at all; `None` otherwise. #6578: an
+/// unmarked parameter is a fixture, which rstest fills by calling the
+/// same-named `#[fixture]` function once before the body runs (a missing
+/// fixture does not compile). Any other parameter attribute (`#[values]`,
+/// `#[from]`, `#[with]`, `#[future]`, `#[files]`, `#[by_ref]`) changes how
+/// often or with what the body runs, so it refuses, as does a generic test.
 fn case_parameters(function: &ast::Fn) -> Option<usize> {
+    // A generic test lets rstest infer a type parameter from a fixture, so
+    // a parameter annotation may name a type parameter, not a type.
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
     let list = function.param_list()?;
     if list.self_param().is_some() {
         return None;
     }
     let mut count = 0;
     for param in list.params() {
-        let attrs: Vec<_> = param.attrs().collect();
-        let [case] = attrs.as_slice() else {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
             return None;
         };
-        if case.excl_token().is_some()
-            || !matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
-            || case.simple_name().as_deref() != Some("case")
-        {
+        if pat.ref_token().is_some() || pat.pat().is_some() {
             return None;
         }
-        match param.pat()? {
-            ast::Pat::IdentPat(pat) if pat.ref_token().is_none() && pat.pat().is_none() => {}
+        // An `impl Trait` parameter is an anonymous type parameter, which
+        // rstest may infer from a fixture as it does a named one.
+        if matches!(param.ty(), Some(ast::Type::ImplTraitType(_))) {
+            return None;
+        }
+        let attrs: Vec<_> = param.attrs().collect();
+        match attrs.as_slice() {
+            [] => {}
+            // A `mut` case value may be reassigned in the body
+            // (`expected = want;`), which no binding scan sees, so a case
+            // row's literal reaches the assertion only through an immutable
+            // parameter (#6578 review).
+            [case]
+                if case.excl_token().is_none()
+                    && pat.mut_token().is_none()
+                    && matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
+                    && case.simple_name().as_deref() == Some("case") =>
+            {
+                count += 1;
+            }
             _ => return None,
         }
-        count += 1;
     }
     Some(count)
 }

@@ -382,7 +382,7 @@ pub(crate) fn render_human_triage(
         let remaining = triage.omitted.len() - listed;
         if remaining > 0 {
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json.\n"
+                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ));
         }
     }

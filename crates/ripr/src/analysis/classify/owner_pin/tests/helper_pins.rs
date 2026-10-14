@@ -84,6 +84,33 @@ fn an_eagerly_called_local_check_helper_lends_its_assertion() -> Result<(), Stri
     Ok(())
 }
 
+/// #6578 review: rstest fills a fixture parameter from a `#[fixture]`
+/// outside the test, which may call the owner. Passed to the helper, it
+/// becomes the helper's expected value, which the test's own expected-value
+/// scan never reads, so a test with a fixture lends no helper assertion.
+#[test]
+fn an_rstest_test_with_a_fixture_lends_no_helper_assertion() -> Result<(), String> {
+    let rstest = |fixture: &str, parameters: &str, body: &str| {
+        format!(
+            "{TIP_LIB}#[cfg(test)]\nmod tests {{\n    use super::*;\n    use rstest::{{fixture, rstest}};\n\n{HELPER}\n{fixture}\n    #[rstest]\n    fn tip_is_added({parameters}) {{\n        {body}\n    }}\n}}\n"
+        )
+    };
+    // Named apart from the helper's `want`, which the test's own
+    // expected-value scan would otherwise read as the fixture.
+    let total = "    #[fixture]\n    fn total() -> u64 {\n        with_tip(40, 6)\n    }\n";
+    // The control: an rstest test with no fixture lends the helper's
+    // assertion as a `#[test]` does.
+    assert!(helper_assertion_admitted(&rstest("", "", CALLS))?.1);
+    // The fixture computes the owner's own value and the helper compares
+    // the owner with it.
+    assert!(
+        !helper_assertion_admitted(&rstest(total, "total: u64", "check_tip(40, 6, total);"))?.1
+    );
+    // Any fixture refuses the loan, passed to the helper or not.
+    assert!(!helper_assertion_admitted(&rstest(total, "total: u64", CALLS))?.1);
+    Ok(())
+}
+
 #[test]
 fn a_helper_call_off_the_eager_path_lends_nothing() -> Result<(), String> {
     assert_eq!(

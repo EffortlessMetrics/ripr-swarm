@@ -68,6 +68,30 @@ pub(crate) fn check_workspace_worktree_with_origins(
         .map_err(Into::into)
 }
 
+/// The disclosure-probe policy per consumer, as a named table so a future
+/// consumer cannot silently inherit the wrong half of the contract (#7716).
+///
+/// `Skip` is honest only for a consumer that renders NEITHER the
+/// untracked-routed-files naming (RIPR-SPEC-0116) NOR the analyzed-revisions
+/// naming (#5997) from the returned check output. Today that is exactly one
+/// consumer:
+///
+/// - LSP diagnostics refresh (`check_workspace_worktree_with_sources_open_
+///   rust_paths_and_progress`, the only caller of this table) — its
+///   `publishDiagnostics` reads findings only; the untracked boundary is
+///   disclosed by its static limits note, and revisions are never rendered.
+///   On a loaded host its probe worker loses the #7292 overlap race and the
+///   join extends every refresh by the probes' full wall time.
+///
+/// Every other consumer (CLI check output, JSON envelope, GitHub
+/// annotations, MCP workspace status) renders at least one of the fields and
+/// must keep [`crate::analysis::DisclosureProbes::Run`]. Adding a consumer
+/// here requires the same two-part proof: it renders neither field, and it
+/// sits on a latency-critical path.
+fn lsp_diagnostics_refresh_disclosure_probes() -> crate::analysis::DisclosureProbes {
+    crate::analysis::DisclosureProbes::Skip
+}
+
 /// Sink-bearing variant of the worktree+sources+open-paths check entry
 /// point. Projections (the LSP work-done bridge, #4811) observe the same
 /// producer-owned boundaries through this path without changing analysis
@@ -85,12 +109,17 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
     ),
     CoreError,
 > {
+    // #7716: the LSP refresh renders neither disclosure field, so it runs no
+    // probe worker (see the named policy table above).
+    let disclosure_probes = lsp_diagnostics_refresh_disclosure_probes();
     if open_rust_index_paths.is_empty() {
-        return check_with_progress_and_origins(
+        return check_with_progress_and_origins_with_open_rust_paths(
             input,
             config,
             AnalysisProgressScope::Worktree,
             sink,
+            open_rust_index_paths,
+            disclosure_probes,
         );
     }
     check_with_progress_and_origins_with_open_rust_paths(
@@ -99,6 +128,7 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
         AnalysisProgressScope::Worktree,
         sink,
         open_rust_index_paths,
+        disclosure_probes,
     )
 }
 
@@ -180,6 +210,7 @@ fn check_with_progress_and_origins(
         scope,
         sink,
         &Default::default(),
+        crate::analysis::DisclosureProbes::Run,
     )
 }
 
@@ -189,6 +220,12 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
     open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+    // #7716: the LSP diagnostics refresh renders neither the
+    // untracked-routed-files naming (RIPR-SPEC-0116) nor the
+    // analyzed-revisions naming (#5997), so it passes `Skip` and pays no
+    // probe worker; every other consumer renders the check output's
+    // disclosure fields and keeps `Run`.
+    disclosure_probes: crate::analysis::DisclosureProbes,
 ) -> Result<
     (
         CheckOutput,
@@ -286,6 +323,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 &languages,
                 &config.languages().rust,
                 config.languages(),
+                disclosure_probes,
             )?
         }
         AnalysisProgressScope::Repo => run_repo_analysis_with_oracle_policy_and_rust_config(

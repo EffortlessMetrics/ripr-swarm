@@ -1075,7 +1075,11 @@ fn analyze_related_assertions(
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
             // observes a predicate that is that owner's whole tail. Its kind
             // stays the classifier's `relational_check` (RIPR-SPEC-0231);
-            // only its strength relative to this probe rises.
+            // only its strength relative to this probe rises. #6578: the
+            // same holds for an inline expect-test comparison
+            // (`expect![["5"]].assert_eq(&owner(..))`), whose kind stays
+            // `snapshot` (RIPR-SPEC-0231 step 6); the pin admits no other
+            // snapshot spelling.
             let owner_pinned = match probe.family {
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
@@ -1083,6 +1087,7 @@ fn analyze_related_assertions(
                         | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
+                        | OracleKind::Snapshot
                 ),
                 // A changed `return Err(..);` is an `error_path` probe; its
                 // pin compares the owner's whole `Err(..)` result.
@@ -1095,8 +1100,9 @@ fn analyze_related_assertions(
                 _ => false,
             } && pin_strength_admits(assertion)
                 && (return_admission.owner_return_pin)(test, assertion);
-            let bool_owner_pinned =
-                owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
+            let strength_raising_pin = owner_pinned
+                && (matches!(assertion.kind, OracleKind::RelationalCheck)
+                    || is_inline_expect_snapshot(assertion));
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
@@ -1242,7 +1248,7 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let mut relative_strength = if bool_owner_pinned {
+                let mut relative_strength = if strength_raising_pin {
                     OracleStrength::Strong
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
@@ -3620,7 +3626,17 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
 /// the whole two-valued result, and `owner_pin` alone admits that shape.
 fn pin_strength_admits(assertion: &OracleFact) -> bool {
     matches!(assertion.kind, OracleKind::RelationalCheck)
+        || is_inline_expect_snapshot(assertion)
         || assertion.strength == OracleStrength::Strong
+}
+
+/// #6578: a `snapshot` oracle the owner pin may raise is only the inline
+/// `expect![[..]].assert_eq(..)` comparison it reads like `assert_eq!`; an
+/// `insta` macro, `expect_file!`, `assert_debug_eq` or any other text the
+/// classifier grades `snapshot` keeps its medium strength.
+fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::Snapshot)
+        && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
 }
 
 #[cfg(test)]
@@ -5554,6 +5570,23 @@ return Err(\"typed pin\".into());
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
         )));
+        // #6578: of the medium snapshots, only the inline expect-test
+        // comparison the owner pin reads like `assert_eq!`.
+        assert!(pin_strength_admits(&oracle(
+            "expect![[\"w12\"]].assert_eq(&render(4));",
+            OracleKind::Snapshot,
+            OracleStrength::Medium,
+        )));
+        for text in [
+            "insta::assert_snapshot!(render(4));",
+            "expect![[\"w12\"]].assert_debug_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ] {
+            assert!(
+                !pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
     }
 
     #[test]

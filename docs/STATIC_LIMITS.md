@@ -39,6 +39,7 @@ rust_subprocess_binary_reach_unresolved
 wrapper_error_binding_unresolved
 python_transitive_reach_unresolved
 rust_assertion_context_unresolved
+rust_log_capture_unresolved
 ```
 
 When `static_limit_kind` is absent but stable static-limit text is present,
@@ -69,6 +70,7 @@ action.
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. |
 | `rust_assertion_context_unresolved` | A related Rust test has an `assert_eq!`, but RIPR refused it for a limit of its own reading: the file did not parse or could not be placed, the test could not be identified, it carries a feature `cfg`, or a glob import or unresolved `#[macro_use]` may rebind the macro. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). The "not credited" note names the refused assertion; check that it compares the changed value, and add a test only if none does. |
+| `rust_log_capture_unresolved` | A changed `log::` record is checked by a related Rust test that installs a capturing logger (`log::set_logger` or `log::set_boxed_logger`, directly or through a same-file helper that returns the installed logger) before calling the owner and asserts exactly on a value read from the captured store, against a string literal that carries the record's static template text, but RIPR does not resolve the logger or match the format template against the asserted text. | The gap is withheld (`static_unknown`, #7133). Check that the assertion compares the changed record; add a test only if none does. |
 
 ## Seam Readings: `opaque` and `activation_unknown`
 

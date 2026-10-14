@@ -83,12 +83,15 @@ typed envelope on stderr:
 - `error.message` carries the exact human prose, verbatim; it is the
   non-authority rendering and stays free to change. Consumers branch on
   `error.kind`, never on this text.
+- For `policy_omitted`, the prose names the same `agent brief` command as
+  `error.remedy_route` to inspect policy, and explains that re-listing cannot
+  change the policy decision. The packet and repair-before omission paths
+  share that guidance; genuinely unknown seam IDs retain pilot/list guidance.
 - `error.remedy_route` names one typed command for the kind's remedy family,
   bound to the same root the failing call used.
 - The card's stdout stays empty on every refusal: stdout is the handoff
   artifact stream, the same rule `agent verify` follows (RIPR-SPEC-0134).
-  Without `--json`, stderr carries the prose rendering only, byte-identical
-  to the pre-typing rendering.
+  Without `--json`, stderr carries the same prose rendering only.
 - Operational could-not-complete failures (an unreadable config, a failed
   git head or dirty-state probe, a detail-source serialization failure, an
   unreadable attempt inventory) stay exit code `2` with human prose only.
@@ -96,7 +99,7 @@ typed envelope on stderr:
   `unavailable` instruction and the three unavailable witness families
   (RIPR-SPEC-0194 acceptance); that in-band card state is typed already and
   is not a refusal. No card DTO field, success-path schema, route-gate, or
-  packet byte changes.
+  successful packet byte changes.
 
 ## Required Evidence
 
@@ -155,6 +158,12 @@ typed envelope on stderr:
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/agent_policy_guidance.rs` exercises a real seam
+  first visible in `agent brief`, then configured off and confirmed omitted:
+  card human/JSON remedy parity, packet JSON message/stderr parity, and both
+  repair-before renderings preserve their status and output channels. A literal
+  unknown seam under the same policy retains pilot/list recovery on all three
+  commands. Packet without `--json` retains its argument-validation refusal.
 - `crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card`
   extends the cold-agent refusal journey: exit code `3`, empty stdout, and
   the parseable `agent_card_refusal` envelope on stderr under `--json`.

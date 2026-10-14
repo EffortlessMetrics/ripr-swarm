@@ -110,6 +110,7 @@ fn smoke_assertion() -> TypeScriptAssertion {
         has_dynamic_matcher_arg: false,
         oracle_confidence: OracleConfidence::Low,
         rendered_call: None,
+        loose_number_expected: false,
     }
 }
 
@@ -177,6 +178,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -219,6 +221,7 @@ fn direct_test_with_assertion(
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Unknown,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -255,6 +258,7 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -4377,6 +4381,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -4456,6 +4461,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -5032,6 +5038,93 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
             .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
         "recovery must name the env knob: {}",
         capped.recovery.detail
+    );
+    Ok(())
+}
+
+/// Aggregate refusals must reach the same eight-path sample and true-total
+/// summary as per-file refusals (#7868). Literal expectations independently
+/// pin the advertised disclosure cap instead of deriving it from production.
+#[test]
+fn analyze_diff_bounds_workspace_budget_disclosure_with_true_total() -> Result<(), String> {
+    let root = ts_unique_tempdir("workspace-budget-sample")?;
+    let source = "// synthetic source padding exceeds the 32-byte workspace budget\nexport const value = 1;\n";
+    assert!(
+        source.len() > 32 && source.len() <= 1024,
+        "fixture must trigger only the aggregate cap"
+    );
+    for index in (0..12).rev() {
+        ts_write_file(&root.join(format!("src/pkg_{index:02}.ts")), source)?;
+    }
+    let options = ts_analysis_options(root.clone());
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(&options, &[], 1024, 32);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let disclosure = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.bounded_detail.as_deref().is_some_and(|detail| {
+                detail.starts_with("workspace_read_budget_exhausted:")
+                    || detail.starts_with("typescript_read_limit_sampled:")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(disclosure.len(), 9, "eight paths plus one summary");
+    assert_eq!(
+        disclosure
+            .iter()
+            .filter_map(|limitation| limitation.path.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            "src/pkg_00.ts",
+            "src/pkg_01.ts",
+            "src/pkg_02.ts",
+            "src/pkg_03.ts",
+            "src/pkg_04.ts",
+            "src/pkg_05.ts",
+            "src/pkg_06.ts",
+            "src/pkg_07.ts"
+        ],
+    );
+    for limitation in &disclosure[..8] {
+        assert_eq!(limitation.affected_items, Some(1));
+        assert_eq!(
+            limitation.bounded_detail.as_deref(),
+            Some(
+                "workspace_read_budget_exhausted: per-run read budget exhausted with only 32 bytes remaining (RIPR_TS_MAX_WORKSPACE_READ_BYTES)"
+            )
+        );
+    }
+    let summary = disclosure[8];
+    assert_eq!(summary.path, None);
+    assert_eq!(summary.affected_items, Some(12));
+    assert!(summary.bounded_detail.as_deref().is_some_and(|detail| {
+        detail.starts_with(
+            "typescript_read_limit_sampled: 12 workspace file(s) refused by read caps;",
+        ) && detail.contains("4 further refused path(s)")
+    }));
+    for limitation in &disclosure {
+        assert_eq!(
+            limitation.kind,
+            AnalysisLimitationKind::LanguageScopeUnsupported
+        );
+        assert_eq!(
+            limitation.producer_stage,
+            crate::analysis_outcome::AnalysisStage::LanguageAdapter
+        );
+        assert_eq!(
+            limitation.recovery.kind,
+            AnalysisRecoveryKind::IncreaseConfiguredLimit
+        );
+        assert_eq!(
+            limitation.recovery.detail,
+            "Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, then re-run the analysis."
+        );
+    }
+    assert!(
+        result.findings.is_empty(),
+        "refused sources produce no findings"
     );
     Ok(())
 }
@@ -6575,6 +6668,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: vec!["./api".to_string()],
         scope_bindings: Vec::new(),
@@ -6668,6 +6762,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Low,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -6918,6 +7013,7 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -7347,6 +7443,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             has_dynamic_matcher_arg: true,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -7416,6 +7513,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             has_dynamic_matcher_arg: true,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -7487,6 +7585,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
             has_dynamic_matcher_arg: true,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8027,6 +8126,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8289,6 +8389,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
+                loose_number_expected: false,
             },
             TypeScriptAssertion {
                 matcher: "toBe".to_string(),
@@ -8303,6 +8404,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
+                loose_number_expected: false,
             },
         ],
         mocks_in_file: Vec::new(),
@@ -8399,6 +8501,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8486,6 +8589,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8573,6 +8677,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8658,6 +8763,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8743,6 +8849,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -8830,6 +8937,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
+                loose_number_expected: false,
             },
             TypeScriptAssertion {
                 matcher: "toBe".to_string(),
@@ -8845,6 +8953,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
+                loose_number_expected: false,
             },
         ],
         mocks_in_file: Vec::new(),
@@ -8926,6 +9035,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -9012,6 +9122,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -9168,6 +9279,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -9255,6 +9367,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -9316,6 +9429,7 @@ fn strong_be_assertion() -> TypeScriptAssertion {
         has_dynamic_matcher_arg: false,
         oracle_confidence: OracleConfidence::High,
         rendered_call: None,
+        loose_number_expected: false,
     }
 }
 
@@ -10265,6 +10379,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Medium,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -10298,6 +10413,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::Low,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -10386,6 +10502,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -10463,6 +10580,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -10559,6 +10677,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::Medium,
                 rendered_call: None,
+                loose_number_expected: false,
             },
             // Assertion 2: return-value observer (family-matching for ReturnValue seam).
             TypeScriptAssertion {
@@ -10574,6 +10693,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
                 has_dynamic_matcher_arg: false,
                 oracle_confidence: OracleConfidence::High,
                 rendered_call: None,
+                loose_number_expected: false,
             },
         ],
         mocks_in_file: Vec::new(),
@@ -11291,6 +11411,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -11391,6 +11512,7 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
             has_dynamic_matcher_arg: false,
             oracle_confidence: OracleConfidence::High,
             rendered_call: None,
+            loose_number_expected: false,
         }],
         mocks_in_file: Vec::new(),
         scope_bindings: Vec::new(),
@@ -15766,6 +15888,7 @@ mod reexport_chain_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod table_case_tests;
+mod typed_loose_equality_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

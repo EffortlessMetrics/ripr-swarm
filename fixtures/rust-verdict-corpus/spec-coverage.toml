@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 105
+floor = 106
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -21,7 +21,7 @@ floor = 105
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 33
+match_floor = 34
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
@@ -432,6 +432,11 @@ scope = "in"
 [[spec.waived]]
 example = 9
 reason = "both arms return 2 (`1 + 1` and `2`), so the widened pattern `0..=3` to `0..=4` and every other mutant of the edited pattern leave f unchanged for every input; the edit is equivalent and no runtime truth exists"
+
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "in"
 
 # Rust oracle kind and strength admission
 [[spec]]

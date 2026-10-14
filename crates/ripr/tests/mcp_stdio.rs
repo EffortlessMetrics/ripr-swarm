@@ -335,6 +335,27 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
         ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
         (
+            "ripr_list_gaps",
+            "file",
+            json!({}),
+            json!("src/input-control.rs"),
+            "string",
+        ),
+        (
+            "ripr_list_gaps",
+            "class",
+            json!({}),
+            json!("weakly_exposed"),
+            "string",
+        ),
+        (
+            "ripr_list_gaps",
+            "language",
+            json!({}),
+            json!("rust"),
+            "string",
+        ),
+        (
             "ripr_get_gap",
             "snapshot_id",
             json!({"canonical_id": "gap:input-control"}),
@@ -1716,6 +1737,312 @@ fn install_b4_repair_ready_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "closed boundary")?;
     Ok(root)
+}
+
+/// Real committed multi-item input for RIPR-SPEC-0211 / #7464. The two
+/// pricing boundaries have strong test sites; the uncovered Rust predicates
+/// and (when compiled) Python predicate provide distinct excluded subjects.
+fn install_gap_filter_fixture() -> Result<PathBuf, String> {
+    let root = install_b4_repair_ready_fixture()?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub mod pricing;\npub mod uncovered;\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
+        .map_err(|error| error.to_string())?;
+    let pricing = "pub fn discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\npub fn fee(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount + 5 } else { amount }\n}\n";
+    let uncovered =
+        "pub fn accepts(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
+    std::fs::write(root.join("src/pricing.rs"), pricing).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/uncovered.rs"), uncovered).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/pricing.rs"), "use mcp_journey_fixture::pricing::{discount, fee};\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(100, 100), 90);\n}\n#[test]\nfn fee_boundary() {\n    assert_eq!(fee(100, 100), 105);\n}\n").map_err(|error| error.to_string())?;
+    let languages = if cfg!(feature = "lang-python") {
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"mcp-filter-fixture\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/cart.py"), "def accepts(amount, threshold):\n    if amount > threshold:\n        return amount - 1\n    return amount\n").map_err(|error| error.to_string())?;
+        "[languages]\nenabled = [\"rust\", \"python\"]\n"
+    } else {
+        "[languages]\nenabled = [\"rust\"]\n"
+    };
+    std::fs::write(root.join("ripr.toml"), languages).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "filter baseline")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    std::fs::write(root.join("src/pricing.rs"), pricing.replace(">=", ">"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/uncovered.rs"), uncovered.replace(">=", ">"))
+        .map_err(|error| error.to_string())?;
+    if cfg!(feature = "lang-python") {
+        std::fs::write(root.join("src/cart.py"), "def accepts(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n    return amount\n").map_err(|error| error.to_string())?;
+    }
+    commit_fixture(&root, "narrow Rust and widen Python boundaries")?;
+    Ok(root)
+}
+
+fn check_filtered_gap_page(
+    document: &Value,
+    expected_ids: &[&str],
+    selected: usize,
+    filtered: usize,
+    snapshot_id: &str,
+) -> Result<(), String> {
+    let items = document["items"].as_array().ok_or("list omitted items")?;
+    let ids = items
+        .iter()
+        .map(|item| item["canonical_id"].as_str().ok_or("item omitted ID"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids != expected_ids
+        || document["selected"] != json!(selected)
+        || document["filtered"] != json!(filtered)
+        || document["page"]["returned"] != json!(expected_ids.len())
+        || document["snapshot_id"] != snapshot_id
+        || document["schema_version"] != "ripr-mcp-gap-list-v2"
+    {
+        return Err(format!(
+            "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
+        ));
+    }
+    Ok(())
+}
+
+/// A successful raw-stdio discriminator, including actual continuation replay.
+/// Dropping only the forwarded filter after validation must return excluded
+/// subjects and fail these literal ID/count oracles. No synthetic snapshot is
+/// injected and no WorkspaceSession method is called by this test.
+#[test]
+fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Result<(), String> {
+    const DISCOUNT: &str =
+        "gap:rust:src/pricing.rs:discount:predicate_boundary:predicate:amount==threshold";
+    const FEE: &str = "gap:rust:src/pricing.rs:fee:predicate_boundary:predicate:amount==threshold";
+    const UNCOVERED: &str =
+        "gap:rust:src/uncovered.rs:accepts:predicate_boundary:predicate:amount==threshold";
+    const RETURN: &str =
+        "gap:rust:src/uncovered.rs:accepts:return_value:return_value:amount>threshold";
+    const PYTHON: &str =
+        "gap:python:src/cart.py:accepts:predicate_boundary:predicate:amount>=threshold";
+    let timeout = Duration::from_mins(1);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let (binary, digest) = Observation::executable_custody(Path::new(env!("CARGO_BIN_EXE_ripr")))?;
+    let fixture_tree =
+        common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD^{tree}"])?;
+    eprintln!(
+        "filter control fixture_tree={} binary={} sha256={digest}",
+        fixture_tree.trim(),
+        binary.display()
+    );
+    let mut session = SequentialStdio::spawn(&root)?;
+    let discovery = session.call("discover-filters", "server/discover", json!({}), timeout)?;
+    if discovery.get("result").is_none() {
+        return Err(format!("discovery failed: {discovery}"));
+    }
+    let refresh = session.call_tool(
+        "refresh-filters",
+        "ripr_refresh",
+        json!({}),
+        Duration::from_mins(3),
+    )?;
+    let refresh = structured_tool_success(&refresh, "filter refresh")?;
+    if refresh["attempt"]["state"] != "completed"
+        || refresh["snapshot"]["outcome_kind"] != "complete_with_findings"
+    {
+        return Err(format!(
+            "fixture must complete analysis before filter assertions: {refresh}"
+        ));
+    }
+    let all = session.call_tool("all-gaps", "ripr_list_gaps", json!({}), timeout)?;
+    let all = structured_tool_success(&all, "unfiltered list")?;
+    let snapshot_id = all["snapshot_id"]
+        .as_str()
+        .ok_or("list omitted snapshot ID")?;
+    let mut all_ids = vec![DISCOUNT, FEE, UNCOVERED, RETURN];
+    let mut unready = vec![UNCOVERED, RETURN];
+    if cfg!(feature = "lang-python") {
+        all_ids.insert(0, PYTHON);
+        unready.insert(0, PYTHON);
+    }
+    let selected = all_ids.len();
+    check_filtered_gap_page(&all, &all_ids, selected, selected, snapshot_id)?;
+    for item in all["items"].as_array().ok_or("list omitted items")? {
+        let id = item["canonical_id"].as_str().ok_or("item omitted ID")?;
+        let ready = [DISCOUNT, FEE].contains(&id);
+        if item["repair_packet_ready"] != ready
+            || item["repair_ineligibility"]
+                != if ready {
+                    Value::Null
+                } else {
+                    json!("fix_site_not_established")
+                }
+            || item["class"] != if ready { "exposed" } else { "no_static_path" }
+        {
+            return Err(format!(
+                "fixture lost distinct class/readiness subjects: {item}"
+            ));
+        }
+        let gap = session.call_tool(
+            "readiness",
+            "ripr_get_gap",
+            json!({"canonical_id": id, "snapshot_id": snapshot_id}),
+            timeout,
+        )?;
+        let gap = structured_tool_success(&gap, "get gap readiness")?;
+        if gap.pointer("/item/readiness/repair_packet_ready") != Some(&json!(ready)) {
+            return Err(format!("summary and full-gap readiness disagree: {gap}"));
+        }
+    }
+
+    // Frozen pre-feature v1 success schema, from a7ed66f6e. Its closed top
+    // level rejects the two added fields even when they are called additive.
+    let v1: Value = serde_json::from_str(include_str!("fixtures/mcp-gap-list-v1.schema.json"))
+        .map_err(|error| error.to_string())?;
+    let properties = v1["properties"]
+        .as_object()
+        .ok_or("v1 fixture omitted properties")?;
+    let required = v1["required"]
+        .as_array()
+        .ok_or("v1 fixture omitted required")?;
+    let accepts_v1_shape = |document: &Value| {
+        document.as_object().is_some_and(|object| {
+            object.keys().all(|key| properties.contains_key(key))
+                && required
+                    .iter()
+                    .all(|key| key.as_str().is_some_and(|key| object.contains_key(key)))
+        })
+    };
+    let mut legacy = all.clone();
+    let legacy_object = legacy.as_object_mut().ok_or("list must be an object")?;
+    legacy_object.remove("filtered");
+    legacy_object.remove("filters");
+    legacy_object.insert("schema_version".into(), json!("ripr-mcp-gap-list-v1"));
+    if v1["additionalProperties"] != false || !accepts_v1_shape(&legacy) || accepts_v1_shape(&all) {
+        return Err(
+            "strict v1 top-level closure must accept legacy keys and reject the extended envelope"
+                .into(),
+        );
+    }
+
+    let mut cases = vec![
+        (json!({"file": "./src/pricing.rs"}), vec![DISCOUNT, FEE]),
+        (json!({"file": "pricing.rs"}), vec![DISCOUNT, FEE]),
+        (json!({"file": "src/uncovered.rs"}), vec![UNCOVERED, RETURN]),
+        (json!({"class": "exposed"}), vec![DISCOUNT, FEE]),
+        (json!({"class": "no_static_path"}), unready.clone()),
+        (
+            json!({"language": "rust"}),
+            vec![DISCOUNT, FEE, UNCOVERED, RETURN],
+        ),
+        (json!({"repair_ready": true}), vec![DISCOUNT, FEE]),
+        (json!({"repair_ready": false}), unready),
+        (
+            json!({"file": "src/pricing.rs", "class": "exposed", "language": "rust", "repair_ready": true}),
+            vec![DISCOUNT, FEE],
+        ),
+        (
+            json!({"file": "src/pricing.rs", "class": "no_static_path"}),
+            vec![],
+        ),
+        (json!({"class": "unknown-class"}), vec![]),
+        (json!({"language": "unknown-language"}), vec![]),
+        (json!({"file": "missing.rs"}), vec![]),
+    ];
+    if cfg!(feature = "lang-python") {
+        cases.push((json!({"language": "python"}), vec![PYTHON]));
+    }
+    for (arguments, expected) in cases {
+        let reply = session.call_tool("filtered", "ripr_list_gaps", arguments.clone(), timeout)?;
+        let document = structured_tool_success(&reply, "filtered list")?;
+        check_filtered_gap_page(&document, &expected, selected, expected.len(), snapshot_id)?;
+        for field in ["file", "class", "language", "repair_ready"] {
+            if document["filters"][field] != arguments[field] {
+                return Err(format!("filter echo lost {field}: {document}"));
+            }
+        }
+        if document["page"]["has_more"] != false || document["page"]["next_offset"] != Value::Null {
+            return Err(format!(
+                "complete filtered page must close its window: {document}"
+            ));
+        }
+    }
+    let first_args = json!({"file":"src/pricing.rs", "class":"exposed", "language":"rust", "repair_ready":true, "limit":1, "snapshot_id":snapshot_id});
+    let first = session.call_tool("filtered-first", "ripr_list_gaps", first_args, timeout)?;
+    let first = structured_tool_success(&first, "first filtered page")?;
+    check_filtered_gap_page(&first, &[DISCOUNT], selected, 2, snapshot_id)?;
+    let next = first
+        .pointer("/continuation/next_page")
+        .ok_or("first page omitted bound continuation")?;
+    let expected_args = json!({"snapshot_id":snapshot_id, "offset":1, "limit":1, "file":"src/pricing.rs", "class":"exposed", "language":"rust", "repair_ready":true});
+    if first["page"]
+        != json!({"offset":0, "limit":1, "returned":1, "has_more":true, "next_offset":1})
+        || next["tool"] != "ripr_list_gaps"
+        || next["arguments"] != expected_args
+    {
+        return Err(format!(
+            "filtered continuation lost its exact window/binding: {first}"
+        ));
+    }
+    let next_tool = next["tool"].as_str().ok_or("continuation omitted tool")?;
+    let replay = session.call_tool(
+        "filtered-replay",
+        next_tool,
+        next["arguments"].clone(),
+        timeout,
+    )?;
+    let replay = structured_tool_success(&replay, "replayed filtered page")?;
+    check_filtered_gap_page(&replay, &[FEE], selected, 2, snapshot_id)?;
+    if replay["page"]
+        != json!({"offset":1, "limit":1, "returned":1, "has_more":false, "next_offset":null})
+        || replay.pointer("/continuation/next_page").is_some()
+    {
+        return Err(format!(
+            "filtered replay must finish exactly once: {replay}"
+        ));
+    }
+    let status = session.call_tool("filter-status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "status after filters")?;
+    if status.pointer("/session/last_completed_snapshot/snapshot_id") != Some(&json!(snapshot_id)) {
+        return Err(format!(
+            "filter reads changed the completed snapshot: {status}"
+        ));
+    }
+    // A different committed input replaces the snapshot. Replay the actual
+    // old continuation unchanged; no fabricated stale identity is supplied.
+    std::fs::write(
+        root.join("src/uncovered.rs"),
+        "pub fn accepts(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "replace uncovered predicate")?;
+    let replaced = session.call_tool(
+        "replace-refresh",
+        "ripr_refresh",
+        json!({}),
+        Duration::from_mins(3),
+    )?;
+    let replaced = structured_tool_success(&replaced, "replacement refresh")?;
+    if replaced["attempt"]["state"] != "completed"
+        || replaced["snapshot"]["snapshot_id"] == snapshot_id
+    {
+        return Err(format!(
+            "changed committed input must replace the snapshot: {replaced}"
+        ));
+    }
+    let stale = session.call_tool(
+        "stale-replay",
+        next_tool,
+        next["arguments"].clone(),
+        timeout,
+    )?;
+    if stale.pointer("/result/isError") != Some(&json!(true))
+        || stale.pointer("/result/structuredContent/failure/code") != Some(&json!("stale_snapshot"))
+    {
+        return Err(format!(
+            "old generated continuation must fail stale: {stale}"
+        ));
+    }
+    Ok(())
 }
 
 fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String> {

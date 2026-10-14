@@ -29,7 +29,9 @@ use crate::config::load_for_root;
 use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
 use crate::output;
 
-use super::agent::unknown_seam_id_hint;
+use super::agent::{
+    policy_omitted_seam_hint, policy_omitted_seam_remedy_route, unknown_seam_id_hint,
+};
 
 /// Schema version of the `ripr agent card` typed-refusal document
 /// (`kind: "agent_card_refusal"`). Deliberately distinct from the success
@@ -133,12 +135,7 @@ fn refusal_remedy_route(
         AgentCardRefusalKind::SeamNotFound => {
             format!("ripr pilot --root {root}")
         }
-        AgentCardRefusalKind::PolicyOmitted => {
-            format!(
-                "ripr agent brief --root {root} --seam-id {} --json",
-                crate::agent::loop_commands::shell_arg(seam_id)
-            )
-        }
+        AgentCardRefusalKind::PolicyOmitted => policy_omitted_seam_remedy_route(root_path, seam_id),
         AgentCardRefusalKind::WitnessUnavailable => {
             format!("ripr check --root {root} --json")
         }
@@ -180,16 +177,14 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
 
     let policy = AgentBriefPolicy::from_config(&config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        // Mirror `agent packet` (#4332): a policy-omitted seam is a dead end
-        // without the listing route; name it like the not-found refusals do.
-        // #5007: the policy decision is a typed refusal, never a transient
-        // error — re-listing seams cannot fix it.
+        // #5007 / #7736: a policy decision has its own recovery guidance;
+        // re-listing seams cannot fix it.
         return Err(AgentCardError::refusal(
             AgentCardRefusalKind::PolicyOmitted,
             format!(
                 "agent card seam_id {} {reason}. {}",
                 options.seam_id,
-                unknown_seam_id_hint(&options.root, &options.seam_id)
+                policy_omitted_seam_hint(&options.root, &options.seam_id)
             ),
         ));
     }

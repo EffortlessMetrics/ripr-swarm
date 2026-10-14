@@ -66,12 +66,13 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.2` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
+| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v2`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #5355; additive `grip_class` / `classification` / `warnings` #7290) | `schema_version` | `0.1` |
+| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -228,7 +229,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.1`)
+## Agent stub (`rust_test_stub`, schema `0.2`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -238,8 +239,19 @@ stale or mistyped seam id, the most common refusal — renders the envelope
 too, with `refusal.kind: seam_not_found`, `seam_id` repeating the
 requested id (`null` for a location selector, which never resolved to a
 seam id), and `owner` / `grip_class` / `classification` `null` where seam
-resolution would have supplied them (#7390). Additive fields on schema
-`0.1` (#7290):
+resolution would have supplied them (#7390). An ambiguous location selector
+instead uses `refusal.kind: selector_ambiguous`: several files match the path
+suffix, or disjoint seams of the requested kind tie. Its reason names the
+paths or seam IDs to choose; the unresolved identity and disclosure fields
+stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
+empty stdout, and the human decision prose after the stderr JSON.
+
+Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
+The field set is unchanged; the new refusal-kind spelling requires the new
+version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish
+`selector_ambiguous` (choose a specific path or seam ID) from `seam_not_found`
+(correct or re-list the selector). Legacy `0.1` did not distinguish ambiguity
+from absence. The disclosure fields introduced in `0.1` (#7290) remain:
 
 - `grip_class` — the inventory seam grip class when classification named
   this seam (`strongly_gripped`, `weakly_gripped`, `ungripped`, …), else
@@ -259,7 +271,8 @@ resolution would have supplied them (#7390). Additive fields on schema
 
 Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
 `derived_inputs`, `written`, `run_command`, and the refusal `refusal`
-object) keep their `0.1` meanings.
+object) keep their previous meanings, apart from the corrected selector
+refusal taxonomy above.
 
 ## Executed-control packet (`executed_control_packet`, schema `1`)
 
@@ -688,11 +701,13 @@ fixture goldens strip the member so analyzer contracts stay finding-shaped.
 the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
-The diff-scoped CLI exits `2` for `unsupported_input` after emitting this
+The diff-scoped `check` CLI exits `2` for `unsupported_input` after emitting this
 original report; it does not append or substitute a refusal document. Complete
 and `partial_with_limitations` reports remain advisory exit `0`. Outcome
 counts and identity remain available even when malformed input leaves retained
 findings. Empty input remains complete `no_scope`, rather than analyzed coverage.
+`ripr diff` applies the same exit mapping to its original `ripr_diff` report
+(schema version `0.1`); its diagnostic prose stays on stderr.
 
 `identity.config_identity` (#5988) is the fingerprint of the exact
 `ripr.toml` text loaded for the run. It is non-null exactly when a config
@@ -2108,7 +2123,8 @@ JSON fields:
   `rust_value_propagation_unresolved`, or
   `wrapper_error_binding_unresolved`, or
   `python_transitive_reach_unresolved`, or
-  `rust_assertion_context_unresolved`.
+  `rust_assertion_context_unresolved`, or
+  `rust_log_capture_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
@@ -2606,6 +2622,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `python_transitive_reach_unresolved` -- (RIPR-SPEC-0201, additive) A Python test constructs or calls into the owner's class, and a bounded same-class `self.` / `cls.` path may reach the changed method, but the preview adapter does not fully trace that path. Classification stays `no_static_path`; this is a named limitation, not a related-test or coverage claim.
 
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+- `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 
 Reserved `flow_sink` values:
 
@@ -9580,6 +9597,12 @@ decision report is read-only policy over existing repo exposure, PR guidance,
 GapRecord decisions, SARIF policy, labels, receipts, recommendation
 calibration, and optional imported mutation calibration artifacts.
 
+Colliding `--out` / `--out-md` destinations are refused at argument parsing
+with exit 2 and no writes, including an implicit `.md` destination equal to
+`--out`. RIPR-SPEC-0014 documents the cwd-based native lexical path contract
+and its filesystem alias limits. An explicit distinct `--out-md` permits a
+`.md`-named JSON destination; report formats do not depend on filename suffixes.
+
 The evaluator is:
 
 ```text
@@ -13102,7 +13125,7 @@ Report packet index field contract:
 Field contract:
 
 - `queue_disposition[].disposition` is advisory. It may be
-  `merge_candidate`, `needs_rebase`, `needs_review`, `close_duplicate`,
+  `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
   `do_not_touch_wrong_lane`.
 - `queue_disposition[]` never closes, updates, merges, comments on, or mutates
@@ -17755,7 +17778,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.66",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.69",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18455,7 +18478,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.34",
+    "schema_version": "1.36",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18466,7 +18489,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.66",
+      "schema_version": "1.69",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

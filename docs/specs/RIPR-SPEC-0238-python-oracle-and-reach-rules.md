@@ -178,6 +178,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | Last segment | Kind / strength |
 | --- | --- |
 | `assertEqual`, `assertDictEqual` | `exact_value` / strong |
+| `assertListEqual` | `unknown`, shape `unknown_custom_helper`; the bounded standard unittest context in RIPR-SPEC-0028 promotes to `exact_value` / strong |
 | `assertIn`, `assertRegex`, `assertNotEqual` | `relational_check` / weak |
 | `assertTrue`, `assertFalse` | `smoke_only` / smoke |
 | `assertRaisesRegex` | `exact_error_variant` / strong |
@@ -195,7 +196,8 @@ code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3,
-12, 14 and 15 below as the only changes (rule 15 changes row 5 for `and`).
+12, 14 and 15 below and the RIPR-SPEC-0028 `assertListEqual` context as
+the changes (rule 15 changes row 5 for `and`).
 Rule 13 changes relations and, for pytest's callable form, reads `match=`
 as `broad_error`. Rule 17 reads a mock assertion
 as strong for one credit branch only; its table row is unchanged.
@@ -569,7 +571,8 @@ mutant calibrates the rule; ripr reports only the static shape.
       `@staticmethod` (#7634), which only bind the call, `p` is never rebound, and the body has no
       `lambda`, `for` or `:=` that could rebind it, a local the test binds
       once to the owner's result is the mock it passed as well, for both
-      `p(...)` and `p.m(...)` (#7586).
+      `p(...)` and `p.m(...)` (#7586). Any other decorator, or one whose
+      name cannot be read, leaves the result uncredited.
       Either form credits only when the pinned expectation reads the new
       arguments as a different call. A changed argument count or keyword
       set does. So does a rewritten argument when neither side keeps the

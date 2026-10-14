@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The Rust verdict corpus gains 13 cases for numbered acceptance examples that
   no case covered yet. Spec-example coverage was 88 of 135 and is now 100 of
   130, with the floor raised to 100; the denominator shrinks because five

@@ -5,6 +5,55 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_closing_propagation_cannot_borrow_a_sibling_error",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/propagated_error_closing_early_path",
+      "vector": "complete_try_expression_is_not_changed_exit_activation",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_empty_each_registers_no_test_evidence",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_empty_each",
+      "vector": "empty_parameter_tables_have_no_running_discriminator",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "rust_slice_ordinary_call_cannot_credit_skipped_rows",
       "language": "rust",
       "tier": "pure",
@@ -2162,6 +2211,68 @@
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_effectful_argument",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_effectful_argument",
+      "vector": "unittest_list_argument_skips_before_owner_call",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_equal_values",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_equal_values",
+      "vector": "unittest_list_python_equal_scalar_change",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_derived_result",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_derived_result",
+      "vector": "unittest_list_derived_result_ignores_changed_owner_value",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_nested_class",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_nested_class",
+      "vector": "unittest_nested_class_not_default_registered",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
       ]
     },
     {
@@ -5585,6 +5696,22 @@
           "type": "expected_class",
           "class": "infection_unknown"
         }
+      ]
+    },
+    {
+      "id": "typescript_owner_alias_return_cannot_observe_effect",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_effect_owner_alias",
+      "vector": "renamed_owner_return_is_not_a_side_channel",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
       ]
     }
   ]

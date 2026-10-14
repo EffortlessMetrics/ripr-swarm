@@ -305,6 +305,15 @@ pub(super) fn related_test_relation(
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
     }
+    // The bounded list oracle already owns a parsed direct-call operand.
+    // Preserve its identity for valid spacing/grouping that text calls miss.
+    if test.assertions.iter().any(|assertion| {
+        assertion.oracle_strength == OracleStrength::Strong
+            && super::oracles::unittest_list::calls_owner(&assertion.text, Some(test), owner)
+                == Some(true)
+    }) {
+        return Some(PythonRelationKind::SyntacticCall);
+    }
     if import_alias_calls_owner(test, owner) {
         return Some(PythonRelationKind::ImportAliasCall);
     }

@@ -56,19 +56,23 @@ Use the packet's recommendation as the default, then apply these rules:
 | --- | --- | --- |
 | `wait` | required checks are pending and the branch is otherwise current | a required check already failed or GitHub says the branch cannot merge |
 | `inspect failure` | a required check failed, was cancelled unexpectedly, or is missing | the only issue is that optional advisory checks are still running |
-| `rebase` | the PR is behind main and strict freshness is required before merge | long required jobs are near completion and their result is still useful |
+| `inspect integration` | a non-Draft PR is behind main after existing review/check waits | Draft, required review or running checks still have their own next transition |
 | `merge` | required checks pass, review requirements are satisfied, and mergeability is clean | the branch changed externally and has not been re-read |
 | `stop for judgment` | auto-merge settings, branch protection, required review, or duplicate-PR selection is unclear | the issue is deterministic cleanup that the repo already reports |
 
-`rebase` means update the PR branch by the repo's normal freshness flow. It
-does not mean force-push over remote work.
+`inspect integration` asks whether there is an actual conflict, changed explicit
+prerequisite, material combined-tree failure or applicable exact-base policy.
+The `BEHIND` observation alone establishes none of these and authorizes no
+branch update. Keep useful proof and review for unchanged source, inputs and
+contracts; refresh affected dimensions if an integration repair changes them.
 
 ## Branch Freshness
 
 When `main` moves while checks are running, do not restart CI reflexively. Let
 active required jobs finish if their result will still be useful for repair.
-Refresh only when strict freshness has invalidated the run, GitHub reports the
-branch behind and blocked, or the current run is already cancelled or stale.
+Refresh only for an actual conflict, changed explicit prerequisite, material
+combined-tree failure or applicable exact-base policy. A cancelled or stale
+run needs its cause inspected; it does not by itself require branch movement.
 
 Before pushing your own branch update:
 

@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,6 +5,6 @@
+     if early { return Err(Failure::Missing); }
+     value.ok_or(
+         Failure::Missing
+-    );
++    )?;
+     Ok(())
+ }

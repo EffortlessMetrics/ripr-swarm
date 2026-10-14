@@ -1235,6 +1235,8 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
+    // #7133: a captured log record the test asserts on is a named limit.
+    classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }
@@ -2183,6 +2185,7 @@ impl RustAdapter {
                 seeded.record_span(&mut parser_spans);
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
+                let propagation_origin = seeded.propagation_origin;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index =
@@ -2199,6 +2202,7 @@ impl RustAdapter {
                     workspace_index_complete,
                     dependency_edges.as_ref(),
                     related_test_candidate_index,
+                    propagation_origin.as_ref(),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
@@ -2719,6 +2723,7 @@ impl RustAdapter {
                     true,
                     Some(&dependency_edges),
                     related_test_candidate_index,
+                    None,
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every

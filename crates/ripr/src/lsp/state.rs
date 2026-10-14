@@ -1008,7 +1008,9 @@ impl AnalysisSnapshot {
 
     /// The diagnostics one URI serves under the stored delivery selection
     /// (#1973). A committed snapshot always carries a selection, so this is
-    /// the selection-filtered set push and pull agree on. A snapshot without
+    /// the canonical membership push and pull agree on. Transports append the
+    /// shared delivery limitation separately; it is not canonical evidence.
+    /// A snapshot without
     /// a committed selection (unit-test fixture) serves its complete
     /// diagnostics, matching the pre-selection-authority behavior.
     pub(super) fn served_diagnostics_for_uri(&self, uri: &Uri) -> Vec<Diagnostic> {

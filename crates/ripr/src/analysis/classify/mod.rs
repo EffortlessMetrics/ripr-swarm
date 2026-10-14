@@ -25,9 +25,8 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts, activation_and_boundary_input,
-    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
-    signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
+    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
@@ -43,7 +42,7 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
@@ -66,7 +65,7 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness,
+    constant_tail_witness, fallible_literal_witness, format_tail_witness,
 };
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,

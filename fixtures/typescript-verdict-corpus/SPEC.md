@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Eleven small authored TypeScript packages under `subjects/`, our own code
+Thirteen small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -17,7 +17,10 @@ under this repository's license, grouped by test runner:
   imports, mocked and unobserved owners), `authored-ts-jest-monorepo` (a
   workspace package), `authored-ts-jest-alias` (a tsconfig `paths` alias) and
   `authored-ts-jest-mined` (default-export objects, test functions passed by
-  reference, suite factories, copy-versus-identity equality).
+  reference, suite factories, copy-versus-identity equality), plus two
+  one-test packages for RIPR-SPEC-0258's committed snapshots:
+  `authored-ts-jest-snapshot-unwritten` (no committed `.snap` file) and
+  `authored-ts-jest-snapshot-update` (a `jest -u` test script).
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
   (its older cases labeled under vitest 3.2.7; its `package.json` now pins
   4.1.11).
@@ -92,6 +95,15 @@ that ends the jest process with exit code 1. The test command fails, which
 is what counts as detection, but no test is named as failing, and the case's
 `failing_test` says so rather than naming the test whose callback raised it
 (#7734).
+
+The five `jest-spec0258-*` cases came last and were labeled the same way.
+Their two own subjects exist because each one's whole-package state is the
+point: a missing snapshot fails every `jest --ci` run of the unedited
+package, so `authored-ts-jest-snapshot-unwritten` runs `jest --ci=false`,
+where each run, started from the committed package without a `.snap`
+file, writes the entry from what the code returns; and
+`authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
+its `jest -u` script and rewrites the committed entry.
 
 ## Layout
 
