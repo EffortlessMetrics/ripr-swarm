@@ -1,9 +1,12 @@
 //! Public-path and independently valued runtime controls for SPEC-0225 example 5.
 
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 const SOURCE: &str = include_str!(
     "../../../fixtures/rust-verdict-corpus/subjects/authored-spec0225-5/src/lib.rs.txt"
@@ -45,6 +48,59 @@ fn source(body: &str) -> Result<String, String> {
     ))
 }
 
+const STREAM_LIMIT: u64 = 64 * 1024;
+
+fn read_bounded_stream(path: &Path) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(STREAM_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > STREAM_LIMIT {
+        return Err(format!(
+            "stream {} exceeds {STREAM_LIMIT} bytes",
+            path.display()
+        ));
+    }
+    Ok(bytes)
+}
+
+// File-backed streams avoid pipe backpressure. The shared process owner
+// terminates and reaps on timeout before Scratch removes its owned directory.
+fn run_bounded(
+    mut command: Command,
+    root: &Path,
+    label: &str,
+    budget: Duration,
+) -> Result<Output, String> {
+    let stdout = root.join(format!("{label}.stdout"));
+    let stderr = root.join(format!("{label}.stderr"));
+    command
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&stdout).map_err(|error| error.to_string())?)
+        .stderr(std::fs::File::create(&stderr).map_err(|error| error.to_string())?);
+    let mut child =
+        ripr::process_owner::OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if started.elapsed() >= budget {
+            child.terminate_tree()?;
+            return Err(format!(
+                "{label} exceeded its {budget:?} budget; owned process terminated and reaped"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    Ok(Output {
+        status,
+        stdout: read_bounded_stream(&stdout)?,
+        stderr: read_bounded_stream(&stderr)?,
+    })
+}
+
 fn runtime(source: &str, fails: bool, label: &str) -> Result<(), String> {
     // Runtime sources live outside the analyzed root; the index sees only the
     // one intended lib.rs and cannot borrow a mutant's or duplicate test's oracle.
@@ -54,22 +110,21 @@ fn runtime(source: &str, fails: bool, label: &str) -> Result<(), String> {
         .0
         .join(format!("runtime{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&input, source).map_err(|error| error.to_string())?;
-    let compiled = Command::new("rustc")
+    let mut compile = Command::new("rustc");
+    compile
         .args(["--edition=2024", "--test"])
         .arg(&input)
         .arg("-o")
-        .arg(&binary)
-        .output()
-        .map_err(|error| error.to_string())?;
+        .arg(&binary);
+    let compiled = run_bounded(compile, &scratch.0, "compile", Duration::from_mins(2))?;
     assert!(
         compiled.status.success(),
         "{label}: compile failed: {}",
         String::from_utf8_lossy(&compiled.stderr)
     );
-    let result = Command::new(&binary)
-        .args(["--exact", "tests::builds_config"])
-        .output()
-        .map_err(|error| error.to_string())?;
+    let mut execute = Command::new(&binary);
+    execute.args(["--exact", "tests::builds_config"]);
+    let result = run_bounded(execute, &scratch.0, "execute", Duration::from_secs(10))?;
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
         stdout.contains("running 1 test"),
