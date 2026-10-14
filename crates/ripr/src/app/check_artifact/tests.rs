@@ -369,7 +369,7 @@ fn context_from_artifact_is_byte_identical_to_fresh_context() -> Result<(), Stri
         let fresh =
             crate::app::collect_context_with_config(input.clone(), SAMPLE_SELECTOR, 2, &config)?;
         let reused =
-            collect_context_from_artifact(input, SAMPLE_SELECTOR, 2, &config, &path, None)?;
+            collect_context_from_artifact(input, SAMPLE_SELECTOR, 2, &config, &path, None, false)?;
         // The explain command names its source (#3952), `--diff` fresh and
         // `--from` reused, as `explain` does; everything else is identical.
         let (fresh_packet, fresh_command) = split_explain_command(&fresh)?;
@@ -430,7 +430,8 @@ fn context_from_artifact_honors_max_related_tests_beyond_json_render_cap() -> Re
             })
             .collect();
         write_check_artifact(&path, &input, &config, &[finding.clone()], false)?;
-        let packet = collect_context_from_artifact(input, &finding.id, 12, &config, &path, None)?;
+        let packet =
+            collect_context_from_artifact(input, &finding.id, 12, &config, &path, None, false)?;
         if !packet.contains("reuse_cap_test_11") {
             return Err(
                 "context --from did not honor --max-related-tests beyond the JSON render cap"
