@@ -58,6 +58,10 @@ mod tests {
 
     #[test]
     fn shadowed_buffer() {
+        #[allow(
+            clippy::let_and_return,
+            reason = "returning the shadowed binding is the negative witness under test"
+        )]
         fn shadowed_summary() -> String {
             let mut text = String::new();
             text.push_str("before\n");
