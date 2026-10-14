@@ -1178,7 +1178,7 @@ fn settle_file_capture_worker(
     }
     worker
         .join()
-        .map_err(|_| format!("{stream} capture worker panicked for {error_context}"))
+        .map_err(|_panic| format!("{stream} capture worker panicked for {error_context}"))
 }
 
 fn publish_stdout_capture(
