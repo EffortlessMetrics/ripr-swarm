@@ -259,7 +259,13 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         .analysis_status?.attempt_id;
       let attemptAfterRefresh = attemptBeforeRefresh;
       for (let issued = 0; issued < 3 && attemptAfterRefresh === attemptBeforeRefresh; issued++) {
-        await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+        try {
+          await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+        } catch (error) {
+          // The command channel itself can reject during the startup window;
+          // the attempt check below decides whether a re-issue is needed.
+          stages.push({ phase, refresh_issue: issued, rejected: String(error) });
+        }
         attemptAfterRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
