@@ -1,0 +1,44 @@
+{
+  "case_id": "trap-tier-dropped-conjunct",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-tier-dropped-conjunct.diff",
+  "anchor": {
+    "file": "src/tiers.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_input_where_dropped_conjunct_is_false",
+  "hard_case": "The edit drops the conjunct `other > 0` and moves the boundary. The test's input sits on the surviving comparison's boundary (points == 100), but with other == 0 both the old and the new predicate are false, so the input separates neither change (#7898).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "100 < points",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: not equivalent (gold_tier(101, 0) was 0 and is now 1), but one_hundred_with_no_other_is_not_gold asserts gold_tier(100, 0) == 0, which holds before and after"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "False-credit trap for #7898: boundary credit for the surviving comparison `100 < points` must not stand in for the dropped operand `other > 0`. Before the fix ripr read the predicate exposed from the input at 100. Spec cells: RIPR-SPEC-0001 (boundary input as infection evidence).",
+  "labeling_observation": {
+    "ripr_commit": "f139737",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
