@@ -242,9 +242,9 @@ non-actionable category from `typescript_actionability_for`
 
 - **G-H. Refused strong effect observer (#7514).** For `SideEffect` and
   `CallDeletion`, a selected strong oracle whose typed observation state is
-  not `Yes` cannot supply the repair assertion shape. Repeating or
-  strengthening that assertion does not establish observation of the changed
-  effect. Retain the diagnostic gap record without an assertion shape, mark
+  not `Yes` cannot supply the repair assertion shape. Static evidence does not
+  establish that repeating or strengthening that assertion would observe the
+  changed effect. Retain the diagnostic gap record without an assertion shape, mark
   its `agent_packet` projection ineligible, and let the shared validator
   report that an effect-observing assertion is needed. This does not change
   weaker-oracle strengthening, other probe families, or classification.

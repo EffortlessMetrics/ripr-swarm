@@ -1199,9 +1199,9 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             boundary_parameters.as_ref(),
         )
     });
-    // #7514: strengthening a strong assertion already refused by the effect
-    // observation guard cannot establish the missing effect. Do not offer its
-    // return-value shape as a repair. Keep weaker-oracle strengthening and
+    // #7514: a strong assertion rejected by the effect observation guard has
+    // no confirmed static link to the effect. Do not offer its borrowed shape
+    // as a ready repair. Keep weaker-oracle strengthening and
     // other families on their existing paths; the shared validator below
     // consumes this refusal through normal projection eligibility.
     let unconfirmed_effect = matches!(
