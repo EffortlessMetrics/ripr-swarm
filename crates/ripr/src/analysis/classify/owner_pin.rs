@@ -3870,9 +3870,13 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
             continue;
         }
         let before = masked[..offset].trim_end();
+        // Step past the whole boundary character: a non-ASCII one is more
+        // than one byte, and `position + 1` would split it (#7926 review).
         let start = before
-            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .map_or(0, |position| position + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, character)| !(character.is_ascii_alphanumeric() || *character == '_'))
+            .map_or(0, |(position, character)| position + character.len_utf8());
         let name = &before[start..];
         if !is_plain_identifier(name) || NEGATING_KEYWORDS.contains(&name) {
             continue;
@@ -5367,17 +5371,91 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
         })
 }
 
-/// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like. Related-test reach shares the
-/// single-file rename refusal (#7067).
+/// Whether the file renames some item to `name` (`use a::b as name;`,
+/// `extern crate a as name;`), so `name` may not be the item it looks like.
+/// Related-test reach shares the single-file rename refusal (#7067).
+///
+/// Only an `as` inside a `use` or `extern crate` item renames: a cast
+/// (`letters as u32`) or a qualified path (`<T as Clone>::clone`) in plain
+/// code binds no name, so it does not make `u32` or `Clone` something
+/// else. Lexical, so a `use` in any module, function body or macro body
+/// counts. An `as` inside a macro invocation's arguments or an attribute
+/// counts too: the macro may expand it into a `use`
+/// (`import!(other::Fake as u32);`), and ripr does not expand macros.
 pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "as")
+    let spans = rename_item_spans(&masked);
+    whole_word_offsets(&masked, "as").into_iter().any(|offset| {
+        starts_with_word(masked[offset + "as".len()..].trim_start(), name)
+            && spans.iter().any(|span| span.contains(&offset))
+    })
+}
+
+/// The byte spans in `masked` where an `as` may rename: every `use ..;`
+/// and `extern crate ..;` item, from the keyword to its `;` (or the end of
+/// the text when the `;` is missing, which keeps an unterminated item
+/// renaming), every macro invocation's delimited arguments and every
+/// attribute (`#[..]`, `#![..]`). An unmatched delimiter runs to the end of
+/// the text, which fails closed.
+fn rename_item_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = masked.as_bytes();
+    let delimited = |open_at: usize| {
+        let (open, close) = match bytes[open_at] {
+            b'(' => (b'(', b')'),
+            b'[' => (b'[', b']'),
+            _ => (b'{', b'}'),
+        };
+        open_at..matching_close(masked, open_at, open, close).unwrap_or(masked.len())
+    };
+    // Any `name!` followed by a delimiter, whatever the name: a Unicode or
+    // keyword-like macro name still expands its arguments (#7926 review).
+    // A negation such as `if !(x)` adds a span too, which only refuses more.
+    let macro_spans = masked.match_indices('!').filter_map(|(bang, _)| {
+        let named = masked[..bang]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|character| character.is_alphanumeric() || character == '_');
+        let after = masked[bang + 1..].trim_start();
+        (named && after.starts_with(['(', '[', '{'])).then(|| delimited(masked.len() - after.len()))
+    });
+    let attribute_spans = masked.match_indices('#').filter_map(|(hash, _)| {
+        let after = masked[hash + 1..].trim_start();
+        let after = after.strip_prefix('!').map_or(after, str::trim_start);
+        after
+            .starts_with('[')
+            .then(|| delimited(masked.len() - after.len()))
+    });
+    let mut spans: Vec<std::ops::Range<usize>> = macro_spans.chain(attribute_spans).collect();
+    spans.extend(rename_statement_spans(masked));
+    spans
+}
+
+/// The `use ..;` and `extern crate ..;` items of [`rename_item_spans`].
+fn rename_statement_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let item_end = |from: usize| {
+        masked[from..]
+            .find(';')
+            .map_or(masked.len(), |end| from + end)
+    };
+    // `impl Trait + use<'a>` (precise capturing) is not an import.
+    let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
-        .any(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .filter(|offset| !masked[offset + "use".len()..].trim_start().starts_with('<'))
+        .map(|offset| offset..item_end(offset))
+        .collect();
+    spans.extend(
+        whole_word_offsets(masked, "extern")
+            .into_iter()
+            .filter(|offset| {
+                starts_with_word(masked[offset + "extern".len()..].trim_start(), "crate")
+            })
+            .map(|offset| offset..item_end(offset)),
+    );
+    spans
 }
 
 /// An alias cannot be excluded merely because its spelling differs from an

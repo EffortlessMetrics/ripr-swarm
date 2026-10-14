@@ -668,7 +668,10 @@ rule only for an assertion whose context was admitted.
    bring only a workspace-declared type of that name, and a workspace glob
    counts only while no workspace file re-exports the name or a glob from
    elsewhere, renames to it or aliases it. The scan is file-wide, not
-   per-module. The changed line must be one whole field
+   per-module. A rename is an `as` inside a `use` or `extern crate` item, a
+   macro invocation's arguments (a macro may expand them into a `use`) or an
+   attribute; a cast (`letters as u32`) or a qualified path
+   (`<Window as Clone>`) in plain code renames nothing (#7926). The changed line must be one whole field
    initializer at the literal's own brace depth: a field of a nested literal
    or an argument of a call within a field (`start: f(Raw { start: .. })`)
    is not the outer field's value. No workspace `trait Clone` may exist, the
