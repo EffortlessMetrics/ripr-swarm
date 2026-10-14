@@ -6822,6 +6822,7 @@ fixtures = [
   "fixtures/typescript-preview-false-actionable-audit"
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/bounded_read.rs",
   "crates/ripr/src/analysis/language/typescript/package.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
