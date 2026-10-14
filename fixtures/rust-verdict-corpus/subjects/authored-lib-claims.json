@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-claims",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against claims 0.8.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "0d8d150c4e221eb1b75c8994d929c768685eb9c4dae0b739e5b87dd74c404c38"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "a997d3398f0b6442663522167ddd0d437c32bb0d31f716dfcdf15ac925705363"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "511d2730cee6126993a01f06ede731dd839eea8418492608f0f15c97f05bbc63"
+    }
+  ]
+}

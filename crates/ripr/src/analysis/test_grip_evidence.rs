@@ -19,20 +19,21 @@ mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
-    ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict,
+    ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
 };
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
-    CompactTest, assertion_target_tokens, call_text_contains_named_call,
-    find_related_tests_compact, find_related_tests_with_context, required_discriminator_text,
-    sort_related_tests_for_seam, strip_comments_and_strings,
-    test_assertion_mentions_any_target_token,
+    CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
+    find_related_tests_with_context, required_discriminator_text, sort_related_tests_for_seam,
+    strip_comments_and_strings, test_assertion_mentions_any_target_token,
 };
 
 use super::classify::{
     assertion_observes_direct_collection, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, owner_call_text, test_calls_free_function,
+    direct_collection_mutation_receiver, owner_call_text,
+    reach_evidence as classify_reach_evidence, relation_establishes_reach,
+    test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -344,7 +345,11 @@ fn evidence_for_seam_with_context(
 
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
 
-    let reach = reach_evidence(seam, &related, owner_fn, context);
+    let related_reasons: Vec<(&TestSummary, RelationReason)> = related_with_reason
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related, owner_fn);
@@ -413,11 +418,20 @@ pub(crate) fn compact_evidence_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
-    let related_indexed = find_related_tests_compact(seam, context);
+    let ranked = find_related_tests_ranked(seam, context);
+    let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let related_indexed: Vec<&CompactTest<'_>> = ranked
+        .iter()
+        .take(COMPACT_RELATED_TEST_LIMIT)
+        .map(|(indexed, _reason)| *indexed)
+        .collect();
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
-    let reach = reach_evidence(seam, &related, owner_fn, context);
+    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related, owner_fn);
@@ -443,16 +457,61 @@ pub(crate) fn compact_evidence_for_seam(
     }
 }
 
+/// Reach evidence: does a related test call the seam's owner?
+///
+/// Only relations that tie a test to running the owner count
+/// ([`relation_establishes_reach`], the rule diff-mode reach uses). A test
+/// related only by sharing the owner's file or module, by asserting a token
+/// the seam's expression names, by naming the owner in its own name or an
+/// import path, or by calling a fixture-shaped helper may never run the
+/// owner: crediting it let an uncalled `as_kb` borrow a sibling test's
+/// exact-value oracle and read `reach: yes` (#5335). When every related
+/// test is such a relation, the shared diff-mode reach decides: `weak` when
+/// something could still run the owner unseen (a doctest or caller names
+/// it, a trait impl, a test macro), otherwise `no`. A bounded transitive,
+/// macro or trait-dispatch witness from repo reach keeps it `weak` too.
+/// Either way the seam can no longer read `strongly_gripped`; the related
+/// tests stay listed as suggestions.
 fn reach_evidence(
     seam: &RepoSeam,
-    related: &[&TestSummary],
+    related: &[(&TestSummary, RelationReason)],
     owner_fn: Option<&FunctionSummary>,
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
-    let names: Vec<&str> = related.iter().take(3).map(|t| t.name.as_str()).collect();
+    let reaches = related
+        .iter()
+        .any(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()));
+    if !reaches {
+        let shared = classify_reach_evidence(related, owner_fn, || {
+            owner_fn.is_none_or(|owner| context.unseen_reach_names().may_reach_unseen(owner))
+        });
+        if shared.state != StageState::No {
+            return shared;
+        }
+        let unreached = reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
+        if unreached.state == StageState::No {
+            return shared;
+        }
+        // An unresolved path from a test toward the owner exists, so these
+        // nearby tests may run it after all: weak reach, never full reach.
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!("{} {}", shared.summary, unreached.summary),
+        );
+    }
+    // Name only the tests whose relation establishes reach, in ranked
+    // order: a proximity or affinity test ranked ahead of the reaching one
+    // must not be named as reaching the owner (#5335 review round 2).
+    let names: Vec<&str> = related
+        .iter()
+        .filter(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()))
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect();
     StageEvidence::new(
         StageState::Yes,
         Confidence::Medium,
@@ -1837,16 +1896,9 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related.iter().any(|t| {
-        oracles_match_sink(
-            seam,
-            &t.assertions,
-            owner_fn,
-            owner_fn.is_some_and(|owner| {
-                value_contradiction::bare_owner_call_is_shadowed(t, &owner.name)
-            }),
-        )
-    });
+    let any_matching_sink = related
+        .iter()
+        .any(|t| oracles_match_sink(seam, t, owner_fn));
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1862,17 +1914,16 @@ fn propagate_evidence(
 
 fn oracles_match_sink(
     seam: &RepoSeam,
-    oracles: &[OracleFact],
+    test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
-    shadowed: bool,
 ) -> bool {
-    oracles
+    test.assertions
         .iter()
         // A statically contradicted assertion propagates nothing: it pins
         // the mutant's value, not the owner's (#6026).
         .filter(|oracle| {
             !matches!(
-                exact_value_assertion_verdict(owner_fn, &oracle.text, shadowed),
+                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test),
                 ExactValueVerdict::Contradicted { .. }
             )
         })
@@ -1937,14 +1988,11 @@ fn discriminate_evidence(
     let mut best_matching = OracleStrength::None;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
-        let shadowed = owner_fn.is_some_and(|owner| {
-            value_contradiction::bare_owner_call_is_shadowed(test, &owner.name)
-        });
         for oracle in &test.assertions {
             // A statically contradicted exact-value assertion keeps at most
             // Weak credit: it pins the mutant's value and fails at baseline,
             // so it must not grade the seam's discrimination up (#6026).
-            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, shadowed);
+            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, test);
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
@@ -1997,9 +2045,9 @@ fn discriminate_evidence(
 fn effective_oracle_strength(
     owner_fn: Option<&FunctionSummary>,
     oracle: &OracleFact,
-    shadowed: bool,
+    test: &TestSummary,
 ) -> (OracleStrength, Option<String>) {
-    match exact_value_assertion_verdict(owner_fn, &oracle.text, shadowed) {
+    match exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -2020,10 +2068,9 @@ fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&Functio
     let Some(owner_fn) = owner_fn else {
         return false;
     };
-    let shadowed = value_contradiction::bare_owner_call_is_shadowed(test, &owner_fn.name);
     test.assertions.iter().any(|oracle| {
         matches!(
-            exact_value_assertion_verdict(Some(owner_fn), &oracle.text, shadowed),
+            exact_value_assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
             ExactValueVerdict::Contradicted { .. }
         )
     })
@@ -2778,10 +2825,8 @@ fn best_oracle(
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
-    let shadowed = owner_fn
-        .is_some_and(|owner| value_contradiction::bare_owner_call_is_shadowed(test, &owner.name));
     for oracle in &test.assertions {
-        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, shadowed);
+        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, test);
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();

@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -152,7 +152,7 @@ def parse_with_patch_call(text):
+ class Settings:
+     @property
+     def version(self):
+-        return 1
++        return 2
+ 
+ 
+ def fmt(n):

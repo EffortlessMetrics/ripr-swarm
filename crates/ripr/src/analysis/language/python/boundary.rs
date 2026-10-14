@@ -49,6 +49,66 @@ use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
 use std::collections::BTreeMap;
 
+/// One strong related call to the owner with the literal value each bound
+/// parameter takes (an explicit argument or a literal default).
+pub(super) struct PythonOwnerCallValues {
+    pub(super) line: usize,
+    pub(super) text: String,
+    pub(super) values: BTreeMap<String, String>,
+}
+
+/// The owner calls the boundary rule reads, for another activation rule
+/// (`term_activation.rs`): the same strong rows, the same constants.
+///
+/// None when some strong related test calls the owner in a way no row
+/// binds, so the rows do not cover every strong input.
+pub(super) fn strong_owner_call_values(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<Vec<PythonOwnerCallValues>> {
+    let constants = unrebound_constants(owner, related_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    if gaps {
+        return None;
+    }
+    let rows = rows
+        .into_iter()
+        .map(|row| PythonOwnerCallValues {
+            line: row.line,
+            text: row.text,
+            values: row
+                .bindings
+                .into_iter()
+                .map(|(parameter, binding)| (parameter, binding.value))
+                .collect(),
+        })
+        .collect();
+    Some(rows)
+}
+
+/// The owner's module constants no related test file reassigns
+/// (`pricing.DISCOUNT_THRESHOLD = 5` can change one at runtime).
+pub(super) fn unrebound_constants(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Vec<PythonModuleConstant> {
+    owner
+        .module_constants
+        .iter()
+        .filter(|constant| {
+            !related_candidates.iter().any(|candidate| {
+                candidate
+                    .test
+                    .constant_rebinding
+                    .assigns_attribute(&constant.name)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether static evidence places a strong related call on the boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BoundaryActivation {
@@ -100,21 +160,7 @@ pub(super) fn python_boundary_evidence(
         .as_ref()
         .map(|(left, right)| format!("{left} == {right}"));
 
-    // A related test file that assigns the constant's attribute
-    // (`pricing.DISCOUNT_THRESHOLD = 5`) can change it at runtime.
-    let constants: Vec<PythonModuleConstant> = owner
-        .module_constants
-        .iter()
-        .filter(|constant| {
-            !related_candidates.iter().any(|candidate| {
-                candidate
-                    .test
-                    .constant_rebinding
-                    .assigns_attribute(&constant.name)
-            })
-        })
-        .cloned()
-        .collect();
+    let constants = unrebound_constants(owner, related_candidates);
     let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
@@ -270,7 +316,10 @@ fn module_constant<'a>(
 
 /// An operand's value independent of any test call: its own literal, or the
 /// literal of the module constant it names.
-fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+pub(super) fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+    if let Some((base, offset)) = integer_offset(operand) {
+        return static_operand(base, constants).and_then(|value| shifted_integer(&value, offset));
+    }
     literal_value(operand)
         .or_else(|| module_constant(operand, constants).map(|constant| constant.value.clone()))
 }
@@ -317,8 +366,12 @@ pub(super) fn python_return_comparison(line_text: &str) -> Option<&str> {
         return None;
     };
     let (left, right) = simple_comparison_operands(expression, start, len)?;
-    let whole_sides =
-        expression.get(..start)?.trim() == left && expression.get(start + len..)?.trim() == right;
+    // An offset operand (`total + 1 > limit`) is a boundary inside an `if`,
+    // but a returned arithmetic expression keeps its return-value family.
+    let whole_sides = is_simple_operand(&left)
+        && is_simple_operand(&right)
+        && expression.get(..start)?.trim() == left
+        && expression.get(start + len..)?.trim() == right;
     whole_sides.then_some(expression)
 }
 
@@ -386,15 +439,27 @@ fn simple_comparison_operands(
     let right_side = condition.get(operator_start + operator_len..)?.trim_start();
 
     let left_start = trailing_operand_start(left_side);
-    let left = &left_side[left_start..];
     let before_left = left_side[..left_start].trim_end();
+
+    let mut left_start = left_start;
+    let mut before_left = before_left;
+    // `C - 1 < x`: a trailing integer literal may close a `base +/- N` operand.
+    if let Some(extended) = leading_offset_start(left_side, left_start) {
+        left_start = extended;
+        before_left = left_side[..left_start].trim_end();
+    }
+    let left = &left_side[left_start..];
     let left_boundary_ok = before_left.is_empty()
         || before_left.ends_with('(')
         || ["not", "and", "or", "if"]
             .into_iter()
             .any(|keyword| ends_with_keyword(before_left, keyword));
 
-    let right_end = leading_operand_end(right_side);
+    let mut right_end = leading_operand_end(right_side);
+    // `x > C - 1`: a simple operand followed by `+ N` or `- N`.
+    if let Some(extended) = trailing_offset_end(right_side, right_end) {
+        right_end = extended;
+    }
     let right = &right_side[..right_end];
     let after_right = right_side[right_end..].trim_start();
     let right_boundary_ok = after_right.is_empty()
@@ -403,8 +468,72 @@ fn simple_comparison_operands(
             .into_iter()
             .any(|keyword| starts_with_keyword(after_right, keyword));
 
-    (left_boundary_ok && right_boundary_ok && is_simple_operand(left) && is_simple_operand(right))
+    let operand_ok = |operand: &str| {
+        is_simple_operand(operand)
+            || integer_offset(operand).is_some_and(|(base, _)| is_simple_operand(base))
+    };
+    (left_boundary_ok && right_boundary_ok && operand_ok(left) && operand_ok(right))
         .then(|| (left.to_string(), right.to_string()))
+}
+
+/// A `base + N` / `base - N` operand with an integer literal offset, the
+/// rewritten form of an inclusive bound (`x >= C` as `x > C - 1`). Returns the
+/// base text and the signed offset.
+fn integer_offset(operand: &str) -> Option<(&str, i128)> {
+    let idx = operand.rfind(['+', '-'])?;
+    let base = operand[..idx].trim_end();
+    let digits = operand[idx + 1..].trim_start();
+    if base.is_empty() || digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let magnitude: i128 = digits.parse().ok()?;
+    let offset = if operand[idx..].starts_with('-') {
+        -magnitude
+    } else {
+        magnitude
+    };
+    Some((base, offset))
+}
+
+/// End of `text[..end]` extended over a following `+ N` / `- N` integer offset.
+fn trailing_offset_end(text: &str, end: usize) -> Option<usize> {
+    let rest = &text[end..];
+    let after_space = rest.trim_start();
+    let sign = after_space
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '+' | '-'))?;
+    let digits = after_space[sign.len_utf8()..].trim_start();
+    let digit_len = digits.chars().take_while(char::is_ascii_digit).count();
+    if digit_len == 0 || digits[digit_len..].starts_with(|ch: char| is_operand_char(ch)) {
+        return None;
+    }
+    Some(text.len() - digits.len() + digit_len)
+}
+
+/// Start of a `base + N` / `base - N` operand whose integer literal begins at
+/// `start` in `text`, when the text before it is `base +` or `base -`.
+fn leading_offset_start(text: &str, start: usize) -> Option<usize> {
+    let literal = &text[start..];
+    if literal.is_empty() || !literal.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let before = text[..start].trim_end();
+    let sign = before
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '+' | '-'))?;
+    let before_sign = before[..before.len() - sign.len_utf8()].trim_end();
+    let base_start = trailing_operand_start(before_sign);
+    let base = &before_sign[base_start..];
+    is_simple_operand(base).then_some(base_start)
+}
+
+/// An integer value shifted by `offset`; None for any non-integer value.
+fn shifted_integer(value: &str, offset: i128) -> Option<String> {
+    let canonical = canonical_decimal(value)?;
+    let integer: i128 = canonical.parse().ok()?;
+    Some(integer.checked_add(offset)?.to_string())
 }
 
 /// Byte offset where the operand that ends `text` starts: a quoted string
@@ -495,6 +624,20 @@ fn strong_owner_call_rows(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Vec<CallRow> {
+    strong_owner_call_rows_with_gaps(owner, constants, related_candidates, focus).0
+}
+
+/// The strong owner-call rows, and whether some strong related test has an
+/// owner call that binds no row (a `*args` unpack, a comment inside the
+/// argument list) or no owner call this reader recognizes at all. A rule
+/// that needs every strong input (`term_activation.rs`) treats that as
+/// unresolved; the boundary rule reads the rows it has.
+fn strong_owner_call_rows_with_gaps(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> (Vec<CallRow>, bool) {
     let (method_call, skip) = match owner.owner_kind {
         Some(OwnerKind::Method) => (true, 1),
         Some(OwnerKind::ClassMethod) => (
@@ -507,9 +650,10 @@ fn strong_owner_call_rows(
             ),
         ),
         Some(OwnerKind::Function) => (false, 0),
-        _ => return Vec::new(),
+        _ => return (Vec::new(), true),
     };
     let mut rows = Vec::new();
+    let mut gaps = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -524,34 +668,47 @@ fn strong_owner_call_rows(
         if !strong {
             continue;
         }
+        // The test body, plus the call each callable-form exception assertion
+        // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
+        // calls `owner(20)`).
+        let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
+        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+            assertion
+                .callable_call
+                .as_deref()
+                .map(|call| (assertion.line, call))
+        }));
+        let mut candidate_rows = 0usize;
         for name in owner_call_names(owner, candidate.test, method_call) {
-            for (offset, arglist) in
-                call_arglists_with_offsets(&candidate.test.body_text, &name, method_call)
-            {
-                let Some((bindings, case_arguments)) =
-                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                else {
-                    continue;
-                };
-                let line =
-                    candidate.test.line + candidate.test.body_text[..offset].matches('\n').count();
-                let text = call_line_text(&candidate.test.body_text, offset);
-                match (&candidate.test.parametrize, case_arguments.is_empty()) {
-                    (Some(parametrize), false) => {
-                        rows.extend(parametrize.cases.iter().map(|case| {
-                            parametrize_case_row(line, &text, &bindings, &case_arguments, case)
-                        }));
+            for (first_line, text) in &sources {
+                for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                    let Some((bindings, case_arguments)) =
+                        bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                    else {
+                        gaps = true;
+                        continue;
+                    };
+                    candidate_rows += 1;
+                    let line = first_line + text[..offset].matches('\n').count();
+                    let text = call_line_text(text, offset);
+                    match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                        (Some(parametrize), false) => {
+                            rows.extend(parametrize.cases.iter().map(|case| {
+                                parametrize_case_row(line, &text, &bindings, &case_arguments, case)
+                            }));
+                        }
+                        _ => rows.push(CallRow {
+                            line,
+                            text,
+                            bindings,
+                        }),
                     }
-                    _ => rows.push(CallRow {
-                        line,
-                        text,
-                        bindings,
-                    }),
                 }
             }
         }
+        gaps |= candidate_rows == 0;
     }
-    rows
+    (rows, gaps)
 }
 
 /// The owner's own name plus any `from M import owner as alias` alias and
@@ -757,6 +914,10 @@ fn resolve_operand(
     row: &CallRow,
     constants: &[PythonModuleConstant],
 ) -> Option<String> {
+    if let Some((base, offset)) = integer_offset(operand) {
+        return resolve_operand(base, row, constants)
+            .and_then(|value| shifted_integer(&value, offset));
+    }
     static_operand(operand, constants)
         .or_else(|| row.bindings.get(operand).map(|b| b.value.clone()))
 }

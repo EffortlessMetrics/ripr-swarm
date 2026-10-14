@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-lib-insta",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against serde 1.0.229, insta 1.49.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "2d7633ceeeb279cc5303a3bdb6a73573780f074669bbd59e10fbfefada57e751"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "456d45fb43c51abb3d1480cf3712f74aff1bd3102fc8e6979f7ba614ed42d162"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "b02d8a9fcf422bca690798d569ff0afaca7eaf22725c5d219fb57c69d76e7926"
+    },
+    {
+      "path": "src/snapshots/lib_insta__tests__discount_tiers_file_snapshot.snap",
+      "sha256": "de8808684dad76b75c2631ef4fdd42749604f93fca10d3c2097ec36baa386f4b"
+    },
+    {
+      "path": "src/snapshots/lib_insta__tests__record_json_with_redacted_id.snap",
+      "sha256": "ed6e6431eab892c2eba5fa120ec2c975ba295d6bbb97b22371d2b2b406c23391"
+    }
+  ]
+}

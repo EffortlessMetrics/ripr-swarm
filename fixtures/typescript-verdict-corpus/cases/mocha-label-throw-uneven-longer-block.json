@@ -1,0 +1,47 @@
+{
+  "case_id": "mocha-label-throw-uneven-longer-block",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-label-throw-uneven-longer-block.diff",
+  "anchor": {
+    "file": "src/label.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": "a comment line is added above the `throw` in the same block, so two removed lines meet three added lines and the `throw` is the third; it must pair with the removed `throw` by content, since position and the shared new-side coordinate both point elsewhere (#7524).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; edit applied by hand and `npx mocha` run on the whole package",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"label is blank\");",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the thrown message changes from \"label must not be blank\" to \"label is blank\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The comment above the `throw` is reworded and a second comment line is added, and the `throw` message changes from \"label must not be blank\" to \"label is blank\", as one block of two removed lines and three added lines. The test asserts `expect(() => parseLabel(\"  \")).to.throw(\"blank\")`, a substring check that both messages satisfy, so the edited package's tests still pass. RIPR-SPEC-0243 rule 4 (example 14's broad half): a payload that passes on both versions is broad_error/weak, so the change is a gap. Reported in #7524.",
+  "labeling_observation": {
+    "ripr_commit": "38b0eae",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0243#14"
+  ]
+}

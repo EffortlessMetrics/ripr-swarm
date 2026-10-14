@@ -266,9 +266,9 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("failed to serialize first-pr packet: {err}"))?;
     fs::write(&json_path, format!("{json_text}\n"))
-        .map_err(|err| format!("failed to write {}: {err}", json_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
     fs::write(&markdown_path, render_start_here_markdown(&packet))
-        .map_err(|err| format!("failed to write {}: {err}", markdown_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
     validate_start_here_packet(&json_path, &markdown_path)?;
     print!(
         "{}",
@@ -645,14 +645,15 @@ fn materialize_check_output_gap_ledger(
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
     fs::write(&gap_ledger_path, json)
-        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&gap_ledger_path, &err))?;
     let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
     if let Some(parent) = gap_ledger_markdown.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_markdown, markdown)
-        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_markdown.display()))?;
+    fs::write(&gap_ledger_markdown, markdown).map_err(|err| {
+        crate::output::file_write::write_failure_message(&gap_ledger_markdown, &err)
+    })?;
     Ok(())
 }
 
@@ -1297,9 +1298,49 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
                 reason.push(' ');
                 reason.push_str(&note);
             }
+            // #7374: the printed regeneration chain mixes a repo-scoped
+            // repo-exposure/gap-ledger artifact with a diff-scoped
+            // review-cards artifact. On a local checkout where the work is
+            // committed on the base branch itself, the cards render from an
+            // empty base..head diff while the ledger still carries
+            // repo-scoped rows, and a bare "no actionable gap" is vacuous.
+            // Name the scope mismatch and the one flag that repairs it.
+            if !records.is_empty() && review_comments_report_empty_diff(root, options) {
+                reason.push_str(&format!(
+                    " The review cards at `{}` were rendered from an empty `{}..{}` diff, so no PR-local repair start exists, while the gap ledger carries repo-scoped rows (repo-exposure is repo-scoped by design); regenerate the cards with the real PR base, for example `ripr review-comments --root {} --base {}~1 --head {} --out {}` when the work is one local commit, then rerun first-pr with the same base, for example `ripr first-pr --root {} --base {}~1 --head {}`.",
+                    options.review_comments,
+                    options.base,
+                    options.head,
+                    shell_arg(&options.command_root()),
+                    options.head,
+                    options.head,
+                    options.anchored_arg(&options.review_comments),
+                    shell_arg(&options.command_root()),
+                    options.head,
+                    options.head
+                ));
+            }
             Selection::no_action("no_action", reason, records.len())
         }
     }
+}
+
+/// #7374: true when the current review-cards artifact was rendered from a
+/// diff-scoped `review-comments` run whose `base..head` diff was empty (the
+/// local-checkout-committed-on-base shape). `CardFallback::NoCard` is only
+/// reached after the report passed the root/base/head currentness checks, so
+/// the scope fields here describe this invocation's own artifacts.
+fn review_comments_report_empty_diff(root: &Path, options: &FirstPrOptions) -> bool {
+    let Ok(report) = read_json(&resolve_path(root, &options.review_comments)) else {
+        return false;
+    };
+    string_path(&report, &["analysis_scope", "scope"]).as_deref()
+        == Some("diff_scoped_changed_files")
+        && report
+            .get("analysis_scope")
+            .and_then(|scope| scope.get("changed_files"))
+            .and_then(Value::as_array)
+            .is_some_and(|files| files.is_empty())
 }
 
 /// Second source for a start (#3906): when the ledger yields no top gap, the
@@ -2669,6 +2710,18 @@ fn base_fetch_refspec(branch: &str) -> String {
 
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
+        if branch.is_empty() {
+            // Fail closed (#7368): an `origin/` base with an empty branch is
+            // an invalid ref that no fetch spelling can make resolve, so
+            // fetch-everything advice would be dead recovery. Point at a
+            // rerun with a valid base instead; the example ref is concrete so
+            // the line stays safe to copy into a shell (an unquoted `<ref>`
+            // would parse as redirection).
+            return format!(
+                "ripr first-pr --root {} --base origin/main --head HEAD",
+                shell_arg(&options.command_root())
+            );
+        }
         format!(
             "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
@@ -2882,6 +2935,37 @@ mod tests {
         assert!(
             first_pr_write_command(&FirstPrOptions::default(), out, true)
                 .contains("--base <ref> --head")
+        );
+    }
+
+    #[test]
+    fn fetch_base_command_with_empty_origin_branch_points_at_valid_rerun() {
+        // #7368: `origin/` with an empty branch is an invalid ref that no
+        // fetch spelling can make resolve; the recovery must point at a rerun
+        // with a valid base instead of dead fetch-everything advice.
+        let empty = FirstPrOptions {
+            base: "origin/".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&empty);
+        assert!(
+            command.contains("--base origin/main --head HEAD"),
+            "{command}"
+        );
+        assert!(
+            !command.contains('<'),
+            "the recovery command must stay safe to copy into a shell: {command}"
+        );
+        assert!(!command.contains("fetch"), "{command}");
+
+        let named = FirstPrOptions {
+            base: "origin/trunk".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&named);
+        assert!(
+            command.contains("+refs/heads/trunk:refs/remotes/origin/trunk"),
+            "{command}"
         );
     }
 
@@ -3322,7 +3406,7 @@ mod tests {
             "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
         ));
         assert!(summary.contains(&format!(
-            "Regeneration command: `ripr check --root {} --mode instant",
+            "Regeneration command (Bash): `ripr check --root {} --mode instant",
             shell_arg(&crate::agent::loop_commands::bound_root("."))
         )));
         assert_eq!(packet["selected"]["also_missing"][0]["id"], "gap_ledger");
@@ -3339,8 +3423,17 @@ mod tests {
             "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        // Resolve both positions: the recovery command carries a `(Bash)`
+        // label once a PowerShell variant exists, so an unlabeled `find`
+        // returns `None` and `None < Some(_)` would pass vacuously.
+        let regen_at = summary
+            .find("Regeneration command (Bash):")
+            .ok_or_else(|| summary.clone())?;
+        let also_missing_at = summary
+            .find("Also missing:")
+            .ok_or_else(|| summary.clone())?;
         assert!(
-            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            regen_at < also_missing_at,
             "repo exposure recovery must precede the dependent ledger: {summary}"
         );
         let markdown = render_start_here_markdown(&packet);
@@ -4676,9 +4769,64 @@ mod tests {
         assert!(summary.contains("Verify command: `not_applicable`"));
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
+        // Default options run with preflight off, so no preflight gate
+        // applies and the plain stop line renders unchanged.
         assert!(markdown.contains("- Safe next action: stop on no-action"));
         assert!(!markdown.contains("## Blocked"));
         cleanup(&repo)
+    }
+
+    /// #7372: the no-action/empty-diff headline must not declare "stop on
+    /// no-action" while the packet's own preflight reports needs_attention
+    /// (the empty-`base..head` local-checkout case); with a ready preflight
+    /// the stop language is unchanged.
+    #[test]
+    fn no_action_headline_defers_to_needs_attention_preflight() -> Result<(), String> {
+        let packet_for = |preflight_status: &str| {
+            json!({
+                "status": "no_action",
+                "selected": {
+                    "state": "no_action",
+                    "output_state": "no_actionable_gap",
+                    "reason": "No repairable PR-local Rust gap was selected."
+                },
+                "preflight": {"status": preflight_status, "mode": "write", "checks": []}
+            })
+        };
+        let watched = render_start_here_markdown(&packet_for("needs_attention"));
+        assert!(
+            watched.contains("preflight below reports `needs_attention`"),
+            "{watched}"
+        );
+        assert!(
+            !watched.contains("- Safe next action: stop on no-action"),
+            "{watched}"
+        );
+        let summary = start_here_cli_summary(
+            &packet_for("needs_attention"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains("resolve the preflight needs-attention items"),
+            "{summary}"
+        );
+
+        let ready = render_start_here_markdown(&packet_for("ready"));
+        assert!(
+            ready.contains("- Safe next action: stop on no-action"),
+            "{ready}"
+        );
+        let ready_summary = start_here_cli_summary(
+            &packet_for("ready"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            ready_summary.contains("no repair action selected; inspect supporting evidence"),
+            "{ready_summary}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -5156,6 +5304,39 @@ mod tests {
         let text = packet.to_string();
         assert!(!text.contains("agent repair"), "{text}");
         assert!(!markdown.contains("Start repair"), "{markdown}");
+        Ok(())
+    }
+
+    /// #7374: when the review cards were rendered from an empty `base..head`
+    /// diff (the work committed on the base branch itself) while the gap
+    /// ledger still carries repo-scoped rows, a bare "no actionable gap" is
+    /// vacuous; the reason must name the empty diff, the repo-scope design,
+    /// and the one flag that repairs it.
+    #[test]
+    fn empty_diff_cards_with_repo_scoped_ledger_rows_name_the_real_base() -> Result<(), String> {
+        let repo = temp_repo("first-pr-empty-diff-cards")?;
+        write_no_top_gap_ledger(&repo)?;
+        let mut report = review_comments_report(Vec::new());
+        report["analysis_scope"] = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "changed_files": []
+        });
+        write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), report)?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        cleanup(&repo)?;
+
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        for needle in [
+            "empty `origin/main..HEAD` diff",
+            "repo-scoped",
+            "--base HEAD~1",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!("reason must name {needle:?}, got:\n{reason}"));
+            }
+        }
         Ok(())
     }
 
@@ -5917,7 +6098,7 @@ mod tests {
             Path::new("start-here.md"),
         );
         let status_line = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
-        let recheck_line = format!("{STATIC_RECHECK_LABEL}: `{expected}`\n");
+        let recheck_line = format!("{STATIC_RECHECK_LABEL} (Bash): `{expected}`\n");
         let boundary_line = format!("{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n");
         let status_at = summary.find(&status_line).ok_or(summary.clone())?;
         let recheck_at = summary.find(&recheck_line).ok_or(summary.clone())?;
@@ -5937,7 +6118,7 @@ mod tests {
         );
         let markdown = render_start_here_markdown(&packet);
         assert!(
-            markdown.contains(&format!("- {STATIC_RECHECK_LABEL}: `{expected}`\n"))
+            markdown.contains(&format!("- {STATIC_RECHECK_LABEL} (Bash): `{expected}`\n"))
                 && markdown.contains(&format!(
                     "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 )),
@@ -6304,9 +6485,10 @@ mod tests {
             if check_id == "git_diff" {
                 assert!(
                     markdown
-                        .contains("Choose a head with changes or commit PR work before rerunning."),
+                        .contains("pass the commit before the work (for example `--base HEAD~1`"),
                     "{markdown}"
                 );
+                assert!(markdown.contains("--base HEAD~1"), "{markdown}");
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;

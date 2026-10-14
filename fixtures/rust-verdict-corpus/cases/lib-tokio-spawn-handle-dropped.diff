@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 008cf8f..d0341b8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+ }
+ 
+ pub async fn discount(p: u32) -> u32 {
+-    p - p / 10
++    p.saturating_sub(p / 10)
+ }
+ 
+ pub async fn tax(p: u32) -> u32 {

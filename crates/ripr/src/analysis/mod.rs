@@ -70,12 +70,15 @@ pub(crate) use language::{
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
     is_ts_js_source_extension, route, ts_js_source_kind,
 };
+#[cfg(all(test, feature = "lang-perl"))]
+pub(crate) use language::{
+    EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
+    with_concrete_discriminator,
+};
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
-#[cfg(all(test, feature = "lang-perl"))]
-pub(crate) use language::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
 };
@@ -88,10 +91,10 @@ pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
-    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
-    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
-    file_seams_without_evidence_at_with_config,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
+    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
@@ -951,12 +954,14 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 
@@ -965,12 +970,14 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 

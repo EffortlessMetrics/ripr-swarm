@@ -43,6 +43,24 @@ pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>
     }
 }
 
+/// The call of a bare or once-awaited statement registration (SPEC-0243
+/// rule 1). All registration consumers share this boundary, including the
+/// option fence, callback shadows, assertion admission and title masking.
+/// Initializers, nested calls and other wrappers remain outside it.
+fn statement_call<'s, 'a>(stmt: &'s Statement<'a>) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Statement::ExpressionStatement(statement) = stmt else {
+        return None;
+    };
+    let expression = match &statement.expression {
+        Expression::AwaitExpression(awaited) => &awaited.argument,
+        expression => expression,
+    };
+    match expression {
+        Expression::CallExpression(call) => Some(call),
+        _ => None,
+    }
+}
+
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the second parse must
@@ -678,12 +696,40 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
+        // Await must not turn a local helper's unused callback into test
+        // evidence. Admit its registration root before assertion extraction
+        // can take the recognized-assertion shortcut. Bare roots retain their
+        // existing behavior; registration API expansion is a separate claim.
+        if let Statement::ExpressionStatement(statement) = stmt
+            && matches!(statement.expression, Expression::AwaitExpression(_))
+            && let Some(call) = statement_call(stmt)
+            && !scope.admission.registration_is_known(
+                call,
+                call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe),
+                scope
+                    .levels
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(depth, level)| {
+                        level.iter().map(move |(name, _, phase)| {
+                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                        })
+                    })
+                    .chain(
+                        declared_names
+                            .iter()
+                            .map(|name| (name.clone(), scope.levels.len() == 1)),
+                    ),
+            )
+        {
+            continue;
+        }
         // The structural helpers recognize global `undefined`; apply this
         // declaration-scope fence before either a test or suite can donate
         // assertions. Callback-local bindings do not affect registration options.
         if !unshadowed_undefined
-            && let Statement::ExpressionStatement(expression) = stmt
-            && let Expression::CallExpression(call) = &expression.expression
+            && let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
@@ -746,9 +792,7 @@ pub(crate) fn collect_tests_from_statements(
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
-            if let Statement::ExpressionStatement(statement) = stmt
-                && let Expression::CallExpression(call) = &statement.expression
-            {
+            if let Some(call) = statement_call(stmt) {
                 test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
@@ -941,8 +985,8 @@ fn collect_scope_bindings(
                 ));
             }
         }
-        Statement::ExpressionStatement(expr_stmt) => {
-            let Expression::CallExpression(call) = &expr_stmt.expression else {
+        Statement::ExpressionStatement(_) => {
+            let Some(call) = statement_call(stmt) else {
                 return;
             };
             let phase = match &call.callee {
@@ -1383,10 +1427,7 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 /// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
 /// `it('x', { timeout }, (t) => ...)`).
 fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return Vec::new();
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
+    let Some(call) = statement_call(stmt) else {
         return Vec::new();
     };
     call.arguments
@@ -1409,12 +1450,7 @@ fn module_specifier_span(stmt: &Statement<'_>) -> Option<oxc_span::Span> {
 }
 
 fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     match call.arguments.first()? {
         oxc_ast::ast::Argument::StringLiteral(literal) => {
             Some(literal.span.start as usize..literal.span.end as usize)
@@ -1597,7 +1633,10 @@ fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) ->
 /// statement: every declaration at this level, plus the `var` and function
 /// declarations nested blocks hoist out. Block-scoped `let`/`const`/`class`
 /// and catch/loop bindings stay inside their block.
-fn collect_registration_scope_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+pub(super) fn collect_registration_scope_names(
+    statements: &[Statement<'_>],
+    out: &mut Vec<String>,
+) {
     for statement in statements {
         match statement {
             Statement::BlockStatement(_)
@@ -1716,12 +1755,7 @@ pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
     {
@@ -1741,12 +1775,7 @@ pub(crate) fn test_from_statement(
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptTest> {
-    let Statement::ExpressionStatement(expr_stmt) = stmt else {
-        return None;
-    };
-    let Expression::CallExpression(call) = &expr_stmt.expression else {
-        return None;
-    };
+    let call = statement_call(stmt)?;
     let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
@@ -1800,11 +1829,15 @@ pub(crate) fn test_name_and_assertions_from_call(
             names
         })
         .unwrap_or_default();
-    let bindings = bindings.without_shadowed(|name| {
-        parameters.iter().any(|parameter| parameter == name)
-            || body_declarations.iter().any(|declared| declared == name)
-            || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
-    });
+    // The registration callee resolves at the call site, so the runner is
+    // decided before the callback's own declarations shadow anything.
+    let bindings = bindings
+        .for_registration(callee_root_name(&call.callee))
+        .without_shadowed(|name| {
+            parameters.iter().any(|parameter| parameter == name)
+                || body_declarations.iter().any(|declared| declared == name)
+                || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
+        });
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
     // re-declares it.
@@ -1837,6 +1870,17 @@ pub(crate) fn test_name_and_assertions_from_call(
         })
         .unwrap_or_default();
     Some((name, assertions))
+}
+
+/// The identifier a registration callee starts from: `test` for `test`,
+/// `test.only` or `test.each(...)`; `None` for any other shape.
+fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
+    match callee {
+        Expression::Identifier(identifier) => Some(identifier.name.as_str()),
+        Expression::StaticMemberExpression(member) => callee_root_name(&member.object),
+        Expression::CallExpression(call) => callee_root_name(&call.callee),
+        _ => None,
+    }
 }
 
 /// Extract the name bound to the test callback's first parameter.
@@ -1933,15 +1977,38 @@ fn call_callee_is_active_each_declaration(
     call: &oxc_ast::ast::CallExpression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
+    each_declaration_callee(call, root).is_some_and(|each_call| {
+        !each_table_is_empty(each_call) && declaration_options_are_active(call)
+    })
+}
+
+fn each_declaration_callee<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+    root: TestDeclarationRoot,
+) -> Option<&'b oxc_ast::ast::CallExpression<'a>> {
     let Expression::CallExpression(each_call) = &call.callee else {
-        return false;
+        return None;
     };
     let Expression::StaticMemberExpression(member) = &each_call.callee else {
+        return None;
+    };
+    (member.property.name.as_str() == "each"
+        && expression_is_active_declaration(&member.object, root))
+    .then_some(each_call)
+}
+
+/// Zero rows register zero callbacks, unlike a single empty row (`[[]]`).
+/// Extra arguments may invoke tagged-table formatting; only the ordinary
+/// one-argument literal table is decided here. Other tables keep their
+/// existing unresolved-row behavior.
+fn each_table_is_empty(each_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    let [table] = each_call.arguments.as_slice() else {
         return false;
     };
-    member.property.name.as_str() == "each"
-        && expression_is_active_declaration(&member.object, root)
-        && declaration_options_are_active(call)
+    table.as_expression().is_some_and(|table| {
+        matches!(runtime_expression(table), Expression::ArrayExpression(array)
+            if array.elements.is_empty())
+    })
 }
 
 fn expression_is_active_declaration(
@@ -2312,10 +2379,13 @@ pub(crate) fn detect_partial_test_extraction(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
+        let imports = extract_imports_from_statements(&ret.program.body);
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
             source: &source,
             extracted_starts: &extracted_starts,
+            admission,
             gap: None,
         };
         finder.visit_statements(&ret.program.body);
@@ -2364,6 +2434,7 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
+    admission: TypeScriptAdmissionContext,
     gap: Option<(usize, &'static str, String)>,
 }
 
@@ -2491,7 +2562,40 @@ impl UnextractedTestFinder<'_> {
             Expression::FunctionExpression(func) => self.visit_function(func),
             Expression::ClassExpression(class) => self.visit_class(class),
             Expression::AwaitExpression(await_expr) => {
-                self.visit_expression(&await_expr.argument, false);
+                // A trusted import can disagree with the supported local
+                // spelling (`test as describe`, or the reverse). These
+                // aliases are unindexed, including assertion-only callbacks
+                // with no nested test-shaped call for `visit_call` to find.
+                if statement_position
+                    && let Expression::CallExpression(call) = &await_expr.argument
+                    && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+                        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                        && self
+                            .admission
+                            .registration_is_known(call, true, std::iter::empty())
+                        || (call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                            || call_callee_is_active_each_declaration(
+                                call,
+                                TestDeclarationRoot::Describe,
+                            ))
+                            && self.admission.registration_is_known(
+                                call,
+                                false,
+                                std::iter::empty(),
+                            ))
+                {
+                    self.gap = Some((
+                        self.source.line_for_offset(call.span.start as usize),
+                        "runner registration kind mismatch",
+                        snippet_for_span(
+                            self.source,
+                            call.span.start as usize,
+                            call.span.end as usize,
+                        ),
+                    ));
+                    return;
+                }
+                self.visit_expression(&await_expr.argument, statement_position);
             }
             Expression::UnaryExpression(unary) => {
                 self.visit_expression(&unary.argument, false);
@@ -2557,6 +2661,25 @@ impl UnextractedTestFinder<'_> {
     /// chains — that the extractor did not index. Only checked at statement
     /// position: nested calls (assertions, helpers) are never registrations.
     fn visit_call(&mut self, call: &oxc_ast::ast::CallExpression<'_>, statement_position: bool) {
+        // A known-empty table's callback cannot register descendants. Keep
+        // scanning evaluated title/options expressions, but do not report
+        // inline callbacks as dropped active registrations.
+        if [TestDeclarationRoot::Test, TestDeclarationRoot::Describe]
+            .into_iter()
+            .any(|root| each_declaration_callee(call, root).is_some_and(each_table_is_empty))
+        {
+            for argument in &call.arguments {
+                if let Some(expression) = argument.as_expression() {
+                    self.visit_empty_table_evaluated_expression(expression);
+                } else {
+                    self.visit_argument(argument);
+                }
+                if self.gap.is_some() {
+                    return;
+                }
+            }
+            return;
+        }
         if statement_position && self.gap.is_none() {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is
@@ -2598,6 +2721,74 @@ impl UnextractedTestFinder<'_> {
             }
         }
         self.visit_arguments(&call.arguments);
+    }
+
+    /// Empty-table arguments still evaluate calls and comma operands;
+    /// only an invoked non-generator function value executes its body.
+    fn visit_empty_table_evaluated_expression(&mut self, expression: &Expression<'_>) {
+        match runtime_expression(expression) {
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {}
+            Expression::SequenceExpression(sequence) => {
+                for item in &sequence.expressions {
+                    self.visit_empty_table_evaluated_expression(item);
+                    if self.gap.is_some() {
+                        return;
+                    }
+                }
+            }
+            Expression::CallExpression(call) => {
+                self.visit_call(call, true);
+                if self.gap.is_none() {
+                    match runtime_expression(&call.callee) {
+                        Expression::ArrowFunctionExpression(arrow) => {
+                            self.visit_empty_table_invoked_statements(&arrow.body.statements);
+                        }
+                        Expression::FunctionExpression(function) if !function.generator => {
+                            if let Some(body) = &function.body {
+                                self.visit_empty_table_invoked_statements(&body.statements);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            expression => self.visit_expression(expression, false),
+        }
+    }
+
+    /// Returning or storing a function value in an IIFE still leaves it dormant.
+    fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
+        for statement in statements {
+            if self.gap.is_some() {
+                return;
+            }
+            match statement {
+                Statement::ExpressionStatement(expression) => {
+                    self.visit_empty_table_evaluated_expression(&expression.expression);
+                }
+                Statement::ReturnStatement(returned) => {
+                    if let Some(argument) = &returned.argument {
+                        self.visit_empty_table_evaluated_expression(argument);
+                    }
+                    return;
+                }
+                Statement::VariableDeclaration(declaration) => {
+                    for declarator in &declaration.declarations {
+                        if let Some(initializer) = &declarator.init {
+                            self.visit_empty_table_evaluated_expression(initializer);
+                        }
+                        if self.gap.is_some() {
+                            return;
+                        }
+                    }
+                }
+                Statement::BlockStatement(block) => {
+                    self.visit_empty_table_invoked_statements(&block.body);
+                }
+                Statement::FunctionDeclaration(_) => {}
+                statement => self.visit_statement(statement),
+            }
+        }
     }
 
     fn visit_arguments(&mut self, arguments: &[Argument<'_>]) {

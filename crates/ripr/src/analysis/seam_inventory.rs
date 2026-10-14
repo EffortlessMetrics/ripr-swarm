@@ -39,6 +39,7 @@ use super::seams::{
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -164,6 +165,10 @@ pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<Classifie
 #[derive(Clone, Debug)]
 pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// The key that admitted or produced this full Rust inventory. Keeping
+    /// its consumed corpus identity avoids a later renderer hashing new
+    /// workspace bytes for old classifications. Synthetic reports have none.
+    pub(crate) corpus_key: Option<RepoSeamCacheKey>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -234,6 +239,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
+                    corpus_key: Some(key),
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -290,6 +296,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             // its SeamLimitInfo in the envelope; a complete run stored None.
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
+                corpus_key: Some(key),
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -355,6 +362,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        corpus_key: key.is_reusable().then_some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -377,10 +385,12 @@ pub(crate) fn workspace_cache_key_at_with_config(
     if let Some(key) =
         fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
     {
+        key.require_reusable()?;
         return Ok(key);
     }
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
+    key.require_reusable()?;
     store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
@@ -1461,6 +1471,13 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The current change's classified seams and canonical missing-file coverage.
+#[derive(Debug)]
+pub(crate) struct ClassifiedChangeReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) absent_file_limitations: Vec<AnalysisLimitation>,
+}
+
 /// Classify the seams in `changed_files` (root-relative) for which
 /// `on_change` holds, and only those: the other seams in those files get no
 /// evidence. No owner names are passed, so no caller files join the scope.
@@ -1474,7 +1491,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     config: &RiprConfig,
     changed_files: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
-) -> Result<Vec<ClassifiedSeam>, String> {
+) -> Result<ClassifiedChangeReport, String> {
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1488,7 +1505,18 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .map(|inventory| inventory.classified)
+    .and_then(|inventory| {
+        // The supplement keeps its classified seams: an absent-file name the
+        // portable limitation path refuses (a drive-like name on Unix, say)
+        // degrades to the bounded path-less disclosure instead of failing
+        // the whole report (#6976).
+        let absent_file_limitations =
+            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
+        Ok(ClassifiedChangeReport {
+            classified: inventory.classified,
+            absent_file_limitations,
+        })
+    })
 }
 
 /// The changed Rust files (root-relative) that diff analysis covers but the
@@ -2345,6 +2373,37 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
+}
+
+/// Read-only selection for current-input export. Use the ordinary corpus and
+/// key authorities, but never update the live fingerprint cache during export.
+pub(crate) fn current_cache_keys_at(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<
+    (
+        RepoSeamCacheKey,
+        Vec<super::seam_cache::RepoFileFactCacheKey>,
+    ),
+    String,
+> {
+    repo_exposure_seam_limit()?;
+    let mut files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+    files.sort();
+    let inputs = workspace_key_inputs(root, config);
+    let mut builder = FilesContentHashBuilder::new();
+    let mut keys = Vec::with_capacity(files.len());
+    for path in files {
+        cancellation::checkpoint()?;
+        let bytes = std::fs::read(root.join(&path))
+            .map_err(|error| format!("read {} for cache export: {error}", path.display()))?;
+        let key = super::seam_cache::RepoFileFactCacheKey::new(&path, &bytes);
+        builder.push_digest(&path, key.content_hash());
+        keys.push(key);
+    }
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
 }
 
 impl WorkspaceKeyInputs {
@@ -5842,6 +5901,105 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
 
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
+    -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/owner_return_pin_fallible_literal/input");
+        let config = RiprConfig::default();
+        for mutation in ["replacement", "inverted"] {
+            let root = make_tempdir(&format!("fallible-warm-{mutation}"))?;
+            for file in [
+                "Cargo.toml",
+                "Cargo.lock",
+                "src/lib.rs",
+                "src/test_support.rs",
+            ] {
+                let source =
+                    std::fs::read_to_string(fixture.join(file)).map_err(|e| e.to_string())?;
+                write_file(&root.join(file), &source)?;
+            }
+            assert!(
+                crate::analysis::workspace::verified_anyhow_identity(&root).is_some(),
+                "prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)"
+            );
+            let full = inventory_classified_seams_at(&root)?;
+            let compact = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+            for inventory in [&full, &compact] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "exact nonempty owner subject");
+                assert_eq!(answer[0].class, SeamGripClass::StronglyGripped);
+            }
+            let key = workspace_cache_key_at_with_config(&root, &config)?;
+            let full_cache = RepoSeamFactCache::at(&root);
+            let compact_cache = RepoSeamFactCache::at_compact_classified(&root);
+            for cache in [&full_cache, &compact_cache] {
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&key),
+                    CacheLoad::Hit(_)
+                ));
+                cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
+            }
+            // A distinct writer payload demonstrates both actual warm readers
+            // serve the cached entry, rather than merely repeating a cold pass.
+            assert!(inventory_classified_seams_at(&root)?.is_empty());
+            assert!(inventory_compact_classified_seams_at_with_config(&root, &config)?.is_empty());
+            // Repo grip uses its separate, existing oracle heuristic. Cache
+            // currentness must be checked independently of that classification:
+            // use a distinct cached class that no cold run here produces.
+            let mut marked_full = full.clone();
+            let mut marked_compact = compact.clone();
+            for item in marked_full.iter_mut().chain(marked_compact.iter_mut()) {
+                item.class = SeamGripClass::Intentional;
+            }
+            full_cache.store_classified_seams_with_limit(&key, &marked_full, None, 10)?;
+            compact_cache.store_classified_seams_with_limit(&key, &marked_compact, None, 10)?;
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                assert!(
+                    inventory
+                        .iter()
+                        .all(|s| s.class == SeamGripClass::Intentional)
+                );
+                assert_eq!(inventory.len(), 1, "actual marked warm entry");
+            }
+            if mutation == "replacement" {
+                write_file(
+                    &root.join(".cargo/config.toml"),
+                    "[source.crates-io]\nreplace-with='fake'\n[source.fake]\ndirectory='vendor'\n",
+                )?;
+            } else {
+                let file = root.join("src/test_support.rs");
+                let source = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+                write_file(&file, &source.replace("actual == 7", "actual == 8"))?;
+            }
+            assert_ne!(key, workspace_cache_key_at_with_config(&root, &config)?);
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "mutation still analyzed");
+                assert_ne!(
+                    answer[0].class,
+                    SeamGripClass::Intentional,
+                    "{mutation}: stale marked cache entry"
+                );
+            }
+            std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 

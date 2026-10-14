@@ -1,0 +1,9 @@
+[package]
+name = "spec0229-8b"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[workspace]

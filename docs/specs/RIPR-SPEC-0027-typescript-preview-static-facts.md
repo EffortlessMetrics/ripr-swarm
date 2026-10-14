@@ -154,6 +154,18 @@ Test discovery:
   suite is named by the computed-title placeholder `<computed title, line N>`
 - Jest/Vitest `test.each`, `it.each`, and table-driven variants when
   syntactically identifiable
+  - An inline empty literal table (including erased TypeScript wrappers)
+    registers no callback and contributes no test or descendant-suite evidence.
+    Its dormant callback does not create a partial-extraction warning. Direct
+    registrations in evaluated arguments, including comma-expression operands
+    and directly invoked inline arrow or ordinary function bodies, remain
+    disclosed. Creating or returning a function value does not execute its body;
+    invoking a generator without advancing it leaves its body dormant. This
+    bounded disclosure does not resolve named helper calls or evaluate arbitrary
+    control flow.
+    A single empty row `[[]]` remains active even when the callback has no parameters. This decision
+    applies to the ordinary single-argument `.each(table)` form; extra arguments
+    and nonliteral tables keep their existing unresolved behavior (#7596).
 - `test(...)`, `it(...)`, and `describe(...)` registered inside a `for`,
   `for...of`, or `for...in` loop body or a `.forEach(...)` callback, at file
   or `describe` level. The body is extracted once and relates to owners

@@ -11,12 +11,13 @@
 //! higher `RIPR_MAX_DIFF_INDEX_FILES` guard bounds memory, so a narrowed
 //! selection still over the threshold runs instead of refusing.
 //!
-//! The extra packages cannot contribute related tests here. The selection
-//! is never workspace-complete, so the related-test package guard drops
-//! every cross-package test that is not reached through the owner-uniqueness
-//! or dependency-edge admits, and both of those admits require a
-//! workspace-complete index. What a dependent file can still change is a
-//! whole-index scan:
+//! The extra packages contribute few related tests here. The selection is
+//! never workspace-complete, so the related-test package guard drops every
+//! cross-package test that is not reached through the owner-uniqueness or
+//! dependency-edge admits. Both admits require a workspace-complete index,
+//! except the dependency-edge type-path route on an inherent-impl owner
+//! whose whole package is indexed (#6617). What a dependent file can still
+//! change is a whole-index scan:
 //!
 //! - name-keyed scans of the changed owner: the "may be reached unseen" and
 //!   non-test-caller scans, same-named definitions (receiver identity,
@@ -37,7 +38,8 @@
 //! and composition or subprocess markers are admitted outright. The macro
 //! bindings of withheld files are folded into the owner-pin unions without
 //! indexing them. The witness walks run only for `no_static_path` findings
-//! and proximity-only `weakly_exposed` ones (#7071);
+//! and `weakly_exposed` ones with only proximity evidence (#7071) or a weak
+//! direct discriminator beside an unresolved macro route (#7542);
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
 //! when that widening would exceed the narrowing threshold.
@@ -353,7 +355,10 @@ impl AdmissionQuery {
         spells(&self.mentioned)
             || (!self.mentioned.is_empty() && contains(bytes, b"include_str!"))
             || declares(&[b"fn"], &self.defined)
-            || declares(&[b"struct", b"enum", b"union"], &self.declared_types)
+            || declares(
+                &[b"struct", b"enum", b"union", b"trait", b"mod", b"type"],
+                &self.declared_types,
+            )
             || spells(&self.implemented_traits)
             || (self.binary_owner
                 && (contains(bytes, b"CARGO_BIN_EXE_") || contains(bytes, b"cargo_bin")))
@@ -407,7 +412,9 @@ pub(super) fn admission_query(
 /// The witness search for this finding's owner would need more files than
 /// the narrowing threshold allows. Today's full selection refused the whole run in
 /// this case; this keeps the run and names the unsearched reach instead of
-/// letting `no_static_path` read as a searched-and-empty result.
+/// letting `no_static_path` read as a searched-and-empty result. The same
+/// disclosure also withholds an unsupported mixed weak-direct gap when its
+/// dependent macro-witness search could not run (#7542).
 pub(super) fn apply_reach_search_over_limit(
     finding: &mut crate::domain::Finding,
     probe: &crate::domain::Probe,
@@ -1339,6 +1346,11 @@ mod tests {
         };
         assert!(query.admits(b"pub struct Widget;"));
         assert!(query.admits(b"enum Widget { A }"));
+        // A `trait`, `mod` or `type` of the name also changes which `T` an
+        // associated-function pin can name (#6617).
+        assert!(query.admits(b"pub trait Widget {}"));
+        assert!(query.admits(b"mod Widget {}"));
+        assert!(query.admits(b"type Widget = u8;"));
         assert!(!query.admits(b"let w: Widget = make();"));
         assert!(query.admits(b"impl Render for Thing {}"));
         assert!(!query.admits(b"fn unrelated() {}"));

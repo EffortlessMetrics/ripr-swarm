@@ -15746,13 +15746,18 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod error_payload_tests;
+mod instance_class_tests;
 mod literal_matcher_tests;
+mod lookup_table_tests;
 mod loop_declared_tests;
+mod match_object_tests;
 mod mock_form_tests;
+mod mock_object_argument_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;
 mod nested_callback_tests;

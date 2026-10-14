@@ -6,6 +6,7 @@
 //! Split from a monolithic 9497-line file for maintainability.
 //! The only public API of this module is `TypeScriptAdapter`.
 
+use super::super::diff::lines_look_alike;
 pub(crate) use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
@@ -60,12 +61,19 @@ mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
+mod committed_snapshot;
+mod deleted_lines;
+#[cfg(test)]
+mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
+mod lookup_table_guard;
+mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
 #[cfg(test)]
@@ -83,7 +91,11 @@ mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
+#[cfg(test)]
+mod rejection_equality_tests;
 mod related_tests;
+#[cfg(test)]
+mod replaced_block_tests;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
@@ -106,10 +118,14 @@ pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
+pub(crate) use committed_snapshot::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
+pub(crate) use lookup_table_guard::*;
+pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
@@ -213,6 +229,44 @@ impl TypeScriptAdapter {
         file_read_limit: u64,
         workspace_read_budget: u64,
     ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            file_read_limit,
+            workspace_read_budget,
+            &[],
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits_and_handwritten`] with the
+    /// environment-resolved read caps, for callers outside the TypeScript
+    /// module (the pipeline).
+    pub(crate) fn analyze_diff_with_handwritten_env(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            ts_file_read_limit(),
+            ts_workspace_read_budget(),
+            handwritten,
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386): exact repository-relative
+    /// paths admitted past the built-in excluded-directory conventions, so a
+    /// hand-written source under a `dist/`, `build/` or `out/` directory is
+    /// walked, read and counted instead of silently dropped.
+    pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits_and_handwritten(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        file_read_limit: u64,
+        workspace_read_budget: u64,
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -220,7 +274,8 @@ impl TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_scan = collect_workspace_typescript_files(&options.root);
+        let workspace_scan =
+            collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
         let workspace_files = workspace_scan.files;
         let changed_paths = changed_files
             .iter()
@@ -294,7 +349,9 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let tests = extract_tests(relative, source);
+                let mut tests = extract_tests(relative, source);
+                // RIPR-SPEC-0258: a committed snapshot entry pins the value.
+                promote_committed_snapshots(&options.root, relative, source, &mut tests);
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
@@ -383,7 +440,11 @@ impl TypeScriptAdapter {
             // would put an uninspected file in the report denominator.
             if !TypeScriptAdapter.accepts_path(&changed.path)
                 || is_detectable_generated_typescript_path(&changed.path)
-                || is_detectable_excluded_typescript_path(&changed.path)
+                || (is_detectable_excluded_typescript_path(&changed.path)
+                    && !crate::config::is_declared_handwritten_typescript_path(
+                        handwritten,
+                        &changed.path,
+                    ))
             {
                 continue;
             }
@@ -462,21 +523,27 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7524). The three guards below read the old line from one
+            // pairing: by position in an even block, by content in an uneven
+            // one, by coordinate where a removed line interrupts the run.
+            let counterparts = changed.aligned_counterparts();
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,
-                // method, or arrow owner (no paired removed line) whose body
-                // carries its own added lines has no behavior of its own —
-                // the body lines are the probes. Probing it would ask for a
-                // discriminator no test can supply. A changed signature
-                // (paired removed line), a default value, or a one-line
-                // body keeps its probe.
-                if !changed
-                    .removed_lines
-                    .iter()
-                    .any(|removed| removed.new_side_line == added.line)
+                // method, or arrow owner whose body carries its own added
+                // lines has no behavior of its own; the body lines are the
+                // probes. Probing it would ask for a discriminator no test
+                // can supply. A changed signature (a counterpart that looks
+                // like it, or a removed line naming the owner), a default
+                // value, or a one-line body keeps its probe.
+                if !counterparts
+                    .get(&added.line)
+                    .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
                     && is_new_owner_opening_line(
                         &changed.path,
                         added.line,
@@ -493,28 +560,20 @@ impl TypeScriptAdapter {
                     continue;
                 }
                 // Annotation-only guard (#4282): TypeScript erases types, so a
-                // line whose in-place removed counterpart differs only in type
-                // syntax has no behavior for a test to discriminate. Pairing
-                // mirrors the Python adapter (same new-side position).
-                if changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
-                    .is_some_and(|removed| {
-                        is_annotation_only_signature_change(
-                            &changed.path,
-                            &removed.text,
-                            &added.text,
-                            file_has_decorators,
-                        )
-                    })
-                {
+                // line whose removed counterpart differs only in type syntax
+                // has no behavior for a test to discriminate.
+                if counterparts.get(&added.line).is_some_and(|removed| {
+                    is_annotation_only_signature_change(
+                        &changed.path,
+                        &removed.text,
+                        &added.text,
+                        file_has_decorators,
+                    )
+                }) {
                     continue;
                 }
-                let old_line_text = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
+                let old_line_text = counterparts
+                    .get(&added.line)
                     .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
@@ -581,6 +640,36 @@ impl TypeScriptAdapter {
                     }
                     findings.push(finding);
                 }
+            }
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+                &all_owners,
+                &findings,
+                |line, text, owner| {
+                    // Only the resolved owner is offered, so the classifier's
+                    // owner lookup cannot land on a different one.
+                    classify_change_with_alias_state(
+                        &changed.path,
+                        line,
+                        text,
+                        None,
+                        std::slice::from_ref(owner),
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                },
+            );
+            for mut finding in deleted {
+                test_index_consumed = true;
+                finding.evidence.extend(discovery_evidence.clone());
+                findings.push(finding);
             }
         }
         let mut changed_files_by_language = Vec::new();

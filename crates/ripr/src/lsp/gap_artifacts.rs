@@ -1,3 +1,4 @@
+use crate::domain::command_tokens;
 use crate::domain::{CommandSpec, LanguageId, LanguageStatus, StaticLimitKind};
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT;
@@ -13,11 +14,20 @@ const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.j
 pub(super) struct GapArtifactValidationContext<'a> {
     pub(super) root: &'a Path,
     pub(super) enabled_languages: &'a [LanguageId],
+    pub(super) repo_config: &'a crate::config::RiprConfig,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GapArtifactCorpusCurrentness {
+    CurrentRustWorkspace,
+    PreviewOrMixedUnavailable,
+    EmptyActionableQueueUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ValidatedGapArtifact {
     pub(super) kind: GapArtifactKind,
+    pub(super) corpus_currentness: Option<GapArtifactCorpusCurrentness>,
     pub(super) root: Option<String>,
     pub(super) identities: Vec<GapArtifactIdentity>,
     pub(super) language: Option<LanguageId>,
@@ -65,6 +75,9 @@ pub(super) enum GapArtifactRejection {
     /// A file the artifact's records name no longer has the content the
     /// artifact was computed from (#4544). Carries the repo-relative path.
     StaleSubject(String),
+    /// The full analyzed Rust source/test corpus changed, including files
+    /// outside the artifact's named repair route.
+    StaleCorpus,
     /// The artifact carries no usable `source_subject` stamp, so it cannot be
     /// matched to the current workspace (#4544). Carries the reason code.
     UnverifiableSubject(&'static str),
@@ -76,6 +89,35 @@ pub(super) enum GapArtifactRejection {
 }
 
 impl ValidatedGapArtifact {
+    pub(super) fn corpus_currentness_json(&self) -> Option<Value> {
+        let kind = match self.kind {
+            GapArtifactKind::GapDecisionLedger => "gap_decision_ledger",
+            GapArtifactKind::ActionableGaps => "actionable_gaps",
+            _ => return None,
+        };
+        let (scope, currentness, limitation) = match self.corpus_currentness? {
+            GapArtifactCorpusCurrentness::CurrentRustWorkspace => {
+                ("rust_workspace", "current", None)
+            }
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable => (
+                "preview_or_mixed_language",
+                "unavailable",
+                Some("preview_or_mixed_corpus_provenance_unavailable"),
+            ),
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable => (
+                "empty_actionable_queue",
+                "unavailable",
+                Some("empty_actionable_queue_corpus_scope_unavailable"),
+            ),
+        };
+        Some(serde_json::json!({
+            "kind": kind,
+            "scope": scope,
+            "corpus_currentness": currentness,
+            "limitation": limitation,
+        }))
+    }
+
     pub(super) fn is_safe_projection_input(&self) -> bool {
         let kind_is_supported = matches!(
             self.kind,
@@ -172,6 +214,7 @@ impl GapArtifactRejection {
             Self::OutOfWorkspacePath(_) => "out_of_workspace_path",
             Self::StaleArtifact => "stale_artifact",
             Self::StaleSubject(_) => "stale_subject",
+            Self::StaleCorpus => "stale_corpus",
             Self::UnverifiableSubject(_) => "unverifiable_subject",
             Self::UnavailableLanguage(_) => "unavailable_language",
             Self::UnsupportedSchema(_) => "unsupported_schema",
@@ -185,10 +228,12 @@ impl GapArtifactRejection {
 pub(super) fn validate_workspace_gap_artifact_report(
     root: &Path,
     enabled_languages: &[LanguageId],
+    repo_config: &crate::config::RiprConfig,
 ) -> GapArtifactValidationReport {
     let context = GapArtifactValidationContext {
         root,
         enabled_languages,
+        repo_config,
     };
     let mut report = GapArtifactValidationReport::default();
     for relative in [
@@ -274,7 +319,8 @@ pub(super) fn validate_gap_artifact(
     {
         return Err(GapArtifactRejection::MissingIdentity);
     }
-    validate_source_subject(artifact, kind, context.root)?;
+    validation.corpus_currentness =
+        validate_source_subject(artifact, kind, context.root, context.repo_config)?;
     Ok(validation)
 }
 
@@ -291,7 +337,8 @@ pub(super) fn validate_source_subject(
     artifact: &Value,
     kind: GapArtifactKind,
     root: &Path,
-) -> Result<(), GapArtifactRejection> {
+    repo_config: &crate::config::RiprConfig,
+) -> Result<Option<GapArtifactCorpusCurrentness>, GapArtifactRejection> {
     let (items, subject_paths): (&[Value], SubjectPathsFn) = match kind {
         GapArtifactKind::GapDecisionLedger => (
             artifact
@@ -310,7 +357,7 @@ pub(super) fn validate_source_subject(
         ),
         GapArtifactKind::EvidenceRecord
         | GapArtifactKind::FirstUsefulAction
-        | GapArtifactKind::AgentReceipt => return Ok(()),
+        | GapArtifactKind::AgentReceipt => return Ok(None),
     };
     let required = items
         .iter()
@@ -320,7 +367,73 @@ pub(super) fn validate_source_subject(
         root,
         artifact.get("source_subject"),
         &required,
-    ))
+    ))?;
+
+    if kind == GapArtifactKind::ActionableGaps && items.is_empty() {
+        // The kind validator already requires the existing complete zero-count
+        // queue contract. Preserve that no-action admission without claiming
+        // that an empty language population proves a current Rust corpus.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable,
+        ));
+    }
+
+    // Inspect the complete raw population, including no-action records and
+    // every packet finding. A missing language cannot select a weaker scope
+    // merely because a sibling record is a known preview language.
+    let mut known_language = false;
+    let mut preview_or_mixed = false;
+    let mut missing_language = false;
+    let mut observe = |value: &Value| -> Result<(), GapArtifactRejection> {
+        match language_from_value(value)? {
+            Some(language) => {
+                known_language = true;
+                preview_or_mixed |= language != LanguageId::Rust;
+            }
+            None => missing_language = true,
+        }
+        Ok(())
+    };
+    for item in items {
+        if kind == GapArtifactKind::ActionableGaps {
+            let findings = item.get("raw_findings").and_then(Value::as_array);
+            if item.get("language").is_some() || findings.is_none_or(Vec::is_empty) {
+                observe(item)?;
+            }
+            if let Some(findings) = findings {
+                for finding in findings {
+                    observe(finding)?;
+                }
+            }
+        } else {
+            observe(item)?;
+        }
+    }
+    if missing_language || !known_language {
+        return Err(GapArtifactRejection::UnverifiableSubject(
+            "source_subject_corpus_scope_missing",
+        ));
+    }
+    if preview_or_mixed {
+        // Preserve the existing named-file admission for these languages.
+        // A Rust-only hash cannot establish their whole corpus currentness.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+        ));
+    }
+    match gap_source_subject::check_rust_corpus_subject(
+        root,
+        artifact.get("source_subject"),
+        repo_config,
+    ) {
+        gap_source_subject::CorpusSubjectCheck::Current => {
+            Ok(Some(GapArtifactCorpusCurrentness::CurrentRustWorkspace))
+        }
+        gap_source_subject::CorpusSubjectCheck::Stale => Err(GapArtifactRejection::StaleCorpus),
+        gap_source_subject::CorpusSubjectCheck::Unverifiable(reason) => {
+            Err(GapArtifactRejection::UnverifiableSubject(reason))
+        }
+    }
 }
 
 /// Map a stamp comparison onto the shared typed rejection vocabulary so the
@@ -354,6 +467,7 @@ fn validate_first_useful_action(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(commands)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::FirstUsefulAction,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -454,6 +568,7 @@ fn validate_gap_decision_ledger(
     }
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -604,6 +719,7 @@ fn validate_actionable_gaps(
 
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::ActionableGaps,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -669,12 +785,22 @@ fn validate_actionable_packet_projection_fields(
         "canonical_item.repair_route",
         "actionable packet must carry canonical repair_route_source",
     )?;
-    require_actionable_packet_source(
-        packet,
-        &["verify_command_source"],
-        "canonical_item.verify_command",
-        "actionable packet must carry canonical verify_command_source",
-    )?;
+    if !path_value(Some(packet), &["verify_command_source"])
+        .and_then(Value::as_str)
+        .is_some_and(crate::domain::actionable_verify_source_is_supported)
+    {
+        return Err(GapArtifactRejection::MalformedArtifact(
+            "actionable packet must carry supported verify_command_source",
+        ));
+    }
+    if path_value(Some(packet), &["verify_command"])
+        .and_then(Value::as_str)
+        .is_some_and(crate::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare)
+    {
+        return Err(GapArtifactRejection::MalformedArtifact(
+            "actionable packet must not carry an unbounded verify_command",
+        ));
+    }
     if packet
         .get("public_projection_eligible")
         .and_then(Value::as_bool)
@@ -1031,6 +1157,7 @@ fn validate_evidence_record(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(canonical_item)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::EvidenceRecord,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -1062,6 +1189,7 @@ fn validate_agent_receipt(
     ]);
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::AgentReceipt,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -1440,11 +1568,11 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     };
     if trimmed
         .chars()
-        .any(|character| matches!(character, ';' | '&' | '|' | '<' | '>' | '`' | '\0'))
+        .any(|character| matches!(character, ';' | '&' | '|' | '`' | '\0'))
     {
         return false;
     }
-    if !substitution_is_quoted(trimmed) {
+    if !literal_metacharacters_are_single_quoted(trimmed, &['$', '(', ')', '<', '>']) {
         return false;
     }
     if trimmed.contains("../") || trimmed.contains("..\\") {
@@ -1488,10 +1616,7 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     if !command_payload_is_safe(root, trimmed) {
         return Some(command.to_string());
     }
-    let (body, redirect) = match trimmed.rsplit_once(" > ") {
-        Some((body, tail)) => (body, Some(tail)),
-        None => (trimmed, None),
-    };
+    let (body, redirect) = split_producer_stdout_redirect(trimmed)?;
     // Only a top-level `--root .` pair is the route's root; the same text
     // inside a quoted argument (a recorded `--verify-command '...'`) is data.
     // A whole token written `'.'` is the same root once the shell unquotes it.
@@ -1673,15 +1798,44 @@ fn token_unquotes_to(token: &str, expected: &str) -> bool {
 /// `shell_arg`-rendered token naming a file under `<root>/target/ripr/`.
 /// A command without `>` passes through unchanged.
 fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str> {
-    if !command.contains('>') {
-        return Some(command);
-    }
-    let (body, tail) = command.rsplit_once(" > ")?;
-    if body.contains('>') {
+    let (body, redirect) = split_producer_stdout_redirect(command)?;
+    if !literal_metacharacters_are_single_quoted(body, &['>']) {
         return None;
     }
+    let Some(tail) = redirect else {
+        return Some(body);
+    };
     let target = shell_arg_token(tail)?;
     redirect_target_is_ripr_artifact(root, target).then_some(body)
+}
+
+/// Locate the producer's one space-delimited stdout operator using the same
+/// top-level token spans as portable-root binding. A quoted `>` is argument
+/// data; this split grants no allowance for active operators in the body or
+/// unsafe redirect targets. Those remain the existing validators' decision.
+fn split_producer_stdout_redirect(command: &str) -> Option<(&str, Option<&str>)> {
+    let spans = top_level_token_spans(command);
+    let redirects = spans
+        .iter()
+        .filter(|span| &command[(*span).clone()] == ">")
+        .collect::<Vec<_>>();
+    let redirect = match redirects.as_slice() {
+        [] => return Some((command, None)),
+        [redirect] => *redirect,
+        _ => return None,
+    };
+    // Preserve the existing literal ` > ` producer form. Joined, append and
+    // stderr operators are not stdout redirects under this display contract.
+    if redirect.start == 0
+        || command.as_bytes().get(redirect.start - 1) != Some(&b' ')
+        || command.as_bytes().get(redirect.end) != Some(&b' ')
+    {
+        return None;
+    }
+    Some((
+        &command[..redirect.start - 1],
+        Some(&command[redirect.end + 1..]),
+    ))
 }
 
 /// Undo `loop_commands::shell_arg` for one token: bare when every character is
@@ -1700,7 +1854,7 @@ pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
     let inner = token.strip_prefix('\'')?.strip_suffix('\'')?;
     // PowerShell also closes a `'` span on a typographic quote (U+2018-U+201F),
     // which would expose the rest of the target as commands; mirrors
-    // `substitution_is_quoted` and the VS Code client's `redirectTailPath`.
+    // `literal_metacharacters_are_single_quoted` and the VS Code client's `redirectTailPath`.
     if inner.is_empty()
         || inner.contains(['\'', '\0', '\n', '\r'])
         || inner.contains(|ch: char| ('\u{2018}'..='\u{201f}').contains(&ch))
@@ -1738,16 +1892,16 @@ fn redirect_target_is_ripr_artifact(root: &Path, target: &str) -> bool {
         && components.next().is_some()
 }
 
-/// `$`, `(` and `)` open command or process substitution (`$(cmd)`, `<(cmd)`,
-/// PowerShell `$(...)`/`@(...)`), so they may appear only inside a
-/// single-quoted span, where `shell_arg` puts them (a gap id such as
-/// `'...:len(x)'`). That span is inert in bash, zsh, fish and PowerShell only
+/// Substitution punctuation and literal comparison operators in producer
+/// identities may appear only inside a single-quoted span, where `shell_arg`
+/// puts them (a gap id such as `'...:len(x)'` or `'...:amount>=threshold'`).
+/// That span is inert in bash, zsh, fish and PowerShell only
 /// when the command has no `"`, `\` or typographic quote, so those refuse the
 /// allowance, as does an unterminated span. Mirrors the VS Code client's
 /// `hasUnsafeShellMetacharacter` (#4225, #4239).
-fn substitution_is_quoted(command: &str) -> bool {
-    let is_substitution = |character: char| matches!(character, '$' | '(' | ')');
-    if !command.contains(is_substitution) {
+fn literal_metacharacters_are_single_quoted(command: &str, characters: &[char]) -> bool {
+    let is_metacharacter = |character: char| characters.contains(&character);
+    if !command.contains(is_metacharacter) {
         return true;
     }
     if command.contains(|character| matches!(character, '"' | '\\' | '\u{2018}'..='\u{201f}')) {
@@ -1758,7 +1912,7 @@ fn substitution_is_quoted(command: &str) -> bool {
         && spans
             .iter()
             .step_by(2)
-            .all(|span| !span.contains(is_substitution))
+            .all(|span| !span.contains(is_metacharacter))
 }
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
@@ -1816,28 +1970,6 @@ fn looks_like_command_payload(value: &str) -> bool {
         || trimmed.starts_with("python -m pytest ")
 }
 
-fn command_tokens(command: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    for character in command.chars() {
-        match (quote, character) {
-            (Some(active), value) if value == active => quote = None,
-            (None, '"' | '\'') => quote = Some(character),
-            (None, value) if value.is_whitespace() => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(character),
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
 fn is_inside_workspace(root: &Path, path: &Path) -> bool {
     super::uri::path_is_within_root(root, path)
 }
@@ -1891,6 +2023,15 @@ fn contains_text_static_limit(value: &Value) -> bool {
 }
 
 fn known_static_limit_kind(kind: &str) -> bool {
+    // These are closed producer-owned ledger markers, not analyzer taxonomy
+    // or permission to project an ineligible record as an action.
+    if matches!(
+        kind,
+        crate::output::gap_decision_ledger::PYTHON_PREVIEW_STATIC_LIMIT_KIND
+            | crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND
+    ) {
+        return true;
+    }
     [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
@@ -1912,6 +2053,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::WrapperErrorBindingUnresolved,
         StaticLimitKind::PythonTransitiveReachUnresolved,
         StaticLimitKind::RustAssertionContextUnresolved,
+        StaticLimitKind::RustLogCaptureUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -2139,13 +2281,28 @@ mod tests {
     }
 
     fn root() -> PathBuf {
-        PathBuf::from("/workspace")
+        std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-validation-unit-{}",
+            std::process::id()
+        ))
     }
+
+    static TEST_REPO_CONFIG: std::sync::LazyLock<crate::config::RiprConfig> =
+        std::sync::LazyLock::new(crate::config::RiprConfig::default);
+    static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+        let path = root();
+        assert!(
+            std::fs::create_dir_all(&path).is_ok(),
+            "create owned unit workspace"
+        );
+        path
+    });
 
     fn context(enabled_languages: &[LanguageId]) -> GapArtifactValidationContext<'_> {
         GapArtifactValidationContext {
-            root: Path::new("/workspace"),
+            root: &TEST_ROOT,
             enabled_languages,
+            repo_config: &TEST_REPO_CONFIG,
         }
     }
 
@@ -2308,10 +2465,7 @@ mod tests {
     /// absent under the fixture roots, so the stamp records `null` digests
     /// and stays current until a test creates, edits, or deletes one.
     fn stamped(artifact: Value) -> Value {
-        crate::output::gap_source_subject::with_source_subject_for_test(
-            Path::new("/workspace"),
-            artifact,
-        )
+        crate::output::gap_source_subject::with_source_subject_for_test(&TEST_ROOT, artifact)
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {
@@ -2523,6 +2677,7 @@ mod tests {
         let context = GapArtifactValidationContext {
             root: &workspace,
             enabled_languages: &[LanguageId::Rust],
+            repo_config: &TEST_REPO_CONFIG,
         };
         let validated =
             validate_gap_artifact(&artifact, &context).map_err(|err| format!("{err:?}"))?;
@@ -3535,10 +3690,13 @@ mod tests {
 
     #[test]
     fn command_root_accepts_quoted_workspace_path() {
-        let workspace = root();
-        let command = "ripr agent verify --root \"/workspace\" --json";
+        let workspace = root().join("quoted workspace");
+        let command = format!(
+            "ripr agent verify --root \"{}\" --json",
+            workspace.display()
+        );
 
-        assert!(command_payload_is_safe(&workspace, command));
+        assert!(command_payload_is_safe(&workspace, &command));
     }
 
     #[test]
@@ -3778,6 +3936,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             let stamp = |artifact: Value| {
                 crate::output::gap_source_subject::with_source_subject_for_test(&root, artifact)
@@ -3877,6 +4036,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             for (shape, observer) in [
                 ("string", json!("tests/observer.rs::t")),
@@ -3947,7 +4107,8 @@ mod tests {
         fs::write(&actionable_path, actionable_gaps_report().to_string())
             .map_err(|err| format!("write {}: {err}", actionable_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert_eq!(report.artifacts.len(), 2);
         assert!(report.rejections.is_empty());
         assert!(
@@ -3979,7 +4140,8 @@ mod tests {
         fs::write(&report_path, "{")
             .map_err(|err| format!("write {}: {err}", report_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert!(report.artifacts.is_empty());
         assert_eq!(
             report.rejections,
@@ -3991,5 +4153,292 @@ mod tests {
 
         fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
         Ok(())
+    }
+
+    // These are explicit synthetic guard discriminators, separate from the
+    // real producer/projector -> framed-LSP composition proof (#7471).
+    #[test]
+    fn actionable_projection_rejects_unknown_missing_and_recommendation_provenance() {
+        let artifact = actionable_gaps_report();
+        let packet = &artifact["packets"][0];
+        assert_eq!(validate_actionable_packet_projection_fields(packet), Ok(()));
+        for source in [
+            json!("unrecognized.verify_command"),
+            json!("evidence_record.recommendation.verify_command"),
+            json!(""),
+            Value::Null,
+            json!(42),
+            json!(true),
+            json!([]),
+            json!({}),
+        ] {
+            let mut altered = packet.clone();
+            altered["verify_command_source"] = source.clone();
+            assert!(
+                matches!(
+                    validate_actionable_packet_projection_fields(&altered),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ),
+                "an allow-all provenance shortcut must refuse {source}: {altered}"
+            );
+        }
+        let mut missing = packet.clone();
+        if let Some(fields) = missing.as_object_mut() {
+            fields.remove("verify_command_source");
+        }
+        assert!(matches!(
+            validate_actionable_packet_projection_fields(&missing),
+            Err(GapArtifactRejection::MalformedArtifact(_))
+        ));
+    }
+
+    #[test]
+    fn actionable_projection_rejects_broad_snapshot_verify_with_either_recognized_source() {
+        let artifact = actionable_gaps_report();
+        let packet = &artifact["packets"][0];
+        assert_eq!(validate_actionable_packet_projection_fields(packet), Ok(()));
+        // Explicit forged-eligible negative. Shell/root safety alone permits
+        // this safe command body; it does not establish bounded verification.
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            let mut broad = packet.clone();
+            broad["verify_command_source"] = json!(source);
+            broad["verify_command"] = json!(
+                "ripr agent verify --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+            );
+            assert!(
+                matches!(
+                    validate_actionable_packet_projection_fields(&broad),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ),
+                "recognized provenance must not upgrade a broad snapshot comparison: {broad}"
+            );
+        }
+    }
+
+    #[test]
+    fn actionable_projection_related_source_preserves_exclusion_and_payload_guards() {
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            let mut packet = actionable_gaps_report()["packets"][0].clone();
+            packet["verify_command_source"] = json!(source);
+            for (field, value) in [
+                ("public_projection_eligible", json!(false)),
+                (
+                    "projection_exclusion_reasons",
+                    json!(["unbounded_verify_command"]),
+                ),
+            ] {
+                let mut excluded = packet.clone();
+                excluded[field] = value;
+                assert!(matches!(
+                    validate_actionable_packet_projection_fields(&excluded),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ));
+            }
+        }
+        for command in [
+            "ripr agent verify --root ../outside --json",
+            "ripr agent verify --root . --json; echo injected",
+        ] {
+            let mut unsafe_artifact = actionable_gaps_report();
+            unsafe_artifact["packets"][0]["verify_command_source"] =
+                json!("related_test_or_observer.name");
+            unsafe_artifact["packets"][0]["verify_command"] = json!(command);
+            assert_eq!(
+                validate_gap_artifact(&unsafe_artifact, &context(&[LanguageId::Rust])),
+                Err(GapArtifactRejection::MalformedCommandPayload(
+                    command.to_string()
+                )),
+                "accepting related provenance must preserve the full command/root safety gate"
+            );
+        }
+    }
+
+    #[test]
+    fn actionable_projection_rejects_token_equivalent_broad_snapshot_at_full_admission()
+    -> Result<(), String> {
+        // Retained healthy canonical fixture establishes full admission and
+        // safe bounded display before these explicit forged-eligible negatives.
+        let healthy = actionable_gaps_report();
+        let admitted = validate_gap_artifact(&healthy, &context(&[LanguageId::Rust]))
+            .map_err(|error| format!("healthy full-admission control: {error:?}"))?;
+        assert_eq!(admitted.kind, GapArtifactKind::ActionableGaps);
+        assert!(!admitted.identities.is_empty());
+        assert!(command_payload_is_safe(
+            &TEST_ROOT,
+            "cargo test -p ordinary_shop above_threshold_discounts"
+        ));
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            for prefix in [
+                "ripr  agent verify",
+                "ripr\tagent verify",
+                "ripr agent\tverify",
+                "ripr \t agent \t verify",
+                "r'i'pr agent verify",
+                "\"ripr\" agent verify",
+                "ripr 'agent' verify",
+                "ripr ag\"en\"t verify",
+                "ripr agent \"verify\"",
+                "ripr agent v\"er\"ify",
+            ] {
+                let command = format!(
+                    "{prefix} --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+                );
+                assert!(
+                    command_payload_is_safe(&TEST_ROOT, &command),
+                    "setup must reach boundedness after existing command/root safety: {command:?}"
+                );
+                let mut negative = healthy.clone();
+                negative["packets"][0]["verify_command_source"] = json!(source);
+                negative["packets"][0]["verify_command"] = json!(command);
+                assert!(
+                    matches!(
+                        validate_gap_artifact(&negative, &context(&[LanguageId::Rust])),
+                        Err(GapArtifactRejection::MalformedArtifact(_))
+                    ),
+                    "full admission must refuse token-equivalent broad verification with {source}: {negative}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_python_comparison_identity_preserves_payload_binding_and_one_redirect() {
+        let root = &TEST_ROOT;
+        let identity = "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold";
+        let portable = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+        assert!(command_payload_is_safe(root, &portable));
+        let bound = bind_portable_command(root, &portable);
+        assert!(bound.as_ref().is_some_and(|command| {
+            command.contains(&format!("--gap '{identity}'"))
+                && !command.contains("--root .")
+                && editor_command_is_safe(root, command)
+        }));
+        let redirected = format!(
+            "{portable} > '{}'",
+            root.join("target/ripr/receipt.json").display()
+        );
+        assert!(command_payload_is_safe(root, &redirected));
+        assert!(bind_portable_command(root, &redirected).is_some());
+        // Retain the existing narrowly inert single-quote substitution rule.
+        assert!(command_payload_is_safe(
+            root,
+            "ripr receipt write --gap 'gap:len(x):$(literal)' --status not_run"
+        ));
+    }
+
+    #[test]
+    fn comparison_identity_does_not_relax_active_shell_or_ambiguous_quote_payloads() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --gap gap:amount>=threshold",
+            "ripr receipt write --gap gap:amount<threshold",
+            "ripr receipt write --gap 'gap:amount>=threshold",
+            "ripr receipt write --gap \"gap:amount>=threshold\"",
+            "ripr receipt write --gap 'gap:amount>=threshold’'",
+            "ripr receipt write --gap 'gap:amount>=threshold'\\\"",
+            "ripr receipt write --gap \"$(echo injected)\"",
+            "ripr receipt write --gap `echo injected`",
+            "ripr agent verify --root ../outside --json",
+            "ripr agent verify --root . --json; echo injected",
+            "ripr agent verify --root . --json < outside",
+            "ripr agent verify --root . --json >> target/ripr/verify.json",
+            "ripr agent verify --root . --json>target/ripr/verify.json",
+            "ripr agent verify --root . --json > ../outside.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "active/ambiguous input must remain refused: {command:?}"
+            );
+        }
+        assert!(!known_static_limit_kind("runtime_magic"));
+        assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
+    }
+
+    #[test]
+    fn quoted_spaced_comparison_identity_and_destination_preserve_one_redirect()
+    -> Result<(), String> {
+        let root = &TEST_ROOT;
+        for (identity, target) in [
+            ("gap:python:comparison:amount > threshold", None),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt.json"),
+            ),
+            (
+                "gap:python:comparison:amount",
+                Some("target/ripr/receipt > data.json"),
+            ),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt > data.json"),
+            ),
+        ] {
+            let body = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+            let command = match target {
+                Some(target) => format!("{body} > '{target}'"),
+                None => body.clone(),
+            };
+            assert!(
+                command_payload_is_safe(root, &command),
+                "a whole single-quoted comparison is data: {command:?}"
+            );
+            assert_eq!(
+                strip_workspace_redirect(root, &command),
+                Some(body.as_str()),
+                "only the real trailing redirect may be removed: {command:?}"
+            );
+            let bound = bind_portable_command(root, &command)
+                .ok_or_else(|| format!("the safe portable route must bind: {command:?}"))?;
+            assert!(
+                bound.contains(&format!("--gap '{identity}'")) && !bound.contains("--root ."),
+                "binding must preserve the entire quoted identity and select the root: {bound:?}"
+            );
+            assert!(editor_command_is_safe(root, &bound), "{bound:?}");
+            if let Some(target) = target {
+                // This is a lexical in-root target. No file is created, and
+                // it makes no claim that this filename is valid on Windows.
+                assert!(
+                    bound.ends_with(&format!("/{target}'"))
+                        || (!target.contains('>') && bound.ends_with(&format!("/{target}"))),
+                    "binding must preserve and anchor the whole target: {bound:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_comparison_data_keeps_duplicate_redirects_and_other_metacharacters_refused() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > target/ripr/one.json > target/ripr/two.json",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > 'target/ripr/one.json' extra",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' >> target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' > target/ripr/one.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "comparison quoting must not admit unrelated syntax: {command:?}"
+            );
+            assert!(
+                !editor_command_is_safe(root, command),
+                "unsafe input must also be withheld at the editor guard: {command:?}"
+            );
+        }
     }
 }

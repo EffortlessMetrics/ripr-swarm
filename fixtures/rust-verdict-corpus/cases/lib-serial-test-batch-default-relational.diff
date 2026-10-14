@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ba79964..f4b4ab4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@
+ }
+ 
+ pub fn batch_size() -> usize {
+-    std::env::var("APP_BATCH").ok().and_then(|t| t.parse().ok()).unwrap_or(64)
++    std::env::var("APP_BATCH").ok().and_then(|t| t.parse().ok()).unwrap_or(32 * 2)
+ }
+ 
+ #[cfg(test)]

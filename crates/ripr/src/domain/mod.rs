@@ -39,15 +39,19 @@ pub(crate) use classification::{
     LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX, LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP,
     TRANSITIVE_REACH_WITNESS_PREFIX,
 };
+pub(crate) use command_spec::command_tokens;
 pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, CommandSpecValidationError, EnvironmentAssignment,
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy,
+    actionable_verify_source_is_supported,
+    verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
+pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
@@ -78,10 +82,12 @@ pub(crate) use intervention_study::{
     InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
     codes as intervention_study_codes,
 };
-pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
+pub(crate) use language::{
+    PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
+};
 pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use next_action::{
     CanonicalNextActionV1, NextActionAlternative, NextActionCheckCase, NextActionClass,

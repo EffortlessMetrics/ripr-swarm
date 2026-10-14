@@ -1537,6 +1537,21 @@ fn tampered_retained_binding_fails_closed() -> Result<(), String> {
     Ok(())
 }
 
+/// #7369 follow-up: repo artifacts carry a wall-clock `generated_at`
+/// disclosure stamp now (and the content commitment covers those bytes), so
+/// two runs of one selection differ by milliseconds. Equality checks strip
+/// the volatile artifact identity fields and keep comparing everything else.
+fn without_volatile_artifact_identity(mut value: Value) -> Value {
+    if let Some(artifact) = value
+        .get_mut("artifact")
+        .and_then(|part| part.as_object_mut())
+    {
+        artifact.remove("generated_at");
+        artifact.remove("content_sha256");
+    }
+    value
+}
+
 #[test]
 fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), String> {
     let fixture = build_fixture("deterministic")?;
@@ -1576,6 +1591,7 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
         return Err("distinct attempt continuations produced identical packet inputs".to_string());
     }
     let mut records = Vec::new();
+    let mut before_snapshots = Vec::new();
     for (id, bytes) in [(first_id, &first_packet), (second_id, &second_packet)] {
         let packet: Value = serde_json::from_slice(bytes)
             .map_err(|error| format!("parse sealed packet: {error}"))?;
@@ -1591,7 +1607,37 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
                 "sealed packet continuation does not identify its own manifest".to_string(),
             );
         }
+        // #7369: the retained before snapshot carries a wall-clock
+        // generated_at disclosure stamp, so two prepares of one selection
+        // bind different raw digests. Compare the snapshot contents minus
+        // the volatile identity fields, and keep the digests themselves out
+        // of the record comparison below.
+        let before_path = manifest["artifacts"]
+            .as_array()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["role"] == "before_snapshot")
+            })
+            .and_then(|artifact| artifact["path"].as_str())
+            .ok_or("manifest missing before_snapshot artifact")?;
+        let before_raw = std::fs::read(fixture.root.join(before_path))
+            .map_err(|error| format!("read retained before snapshot: {error}"))?;
+        let before_digest = sha256_hex(&before_raw);
         let mut record = prepare_record(&fixture, id)?;
+        if record
+            .pointer("/input/before_snapshot_sha256")
+            .and_then(Value::as_str)
+            != Some(before_digest.as_str())
+        {
+            return Err("binding does not pin its retained before snapshot bytes".to_string());
+        }
+        let before_snapshot: Value = parse_json(
+            &String::from_utf8(before_raw)
+                .map_err(|error| format!("retained before snapshot is not UTF-8: {error}"))?,
+            "retained before snapshot",
+        )?;
+        before_snapshots.push(without_volatile_artifact_identity(before_snapshot));
         let digest = sha256_hex(bytes);
         if record
             .pointer("/input/packet_sha256")
@@ -1608,7 +1654,16 @@ fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), Str
             .ok_or("binding input is not an object")?
             .remove("packet_sha256")
             .ok_or("binding input lost packet digest")?;
+        record
+            .get_mut("input")
+            .and_then(Value::as_object_mut)
+            .ok_or("binding input is not an object")?
+            .remove("before_snapshot_sha256")
+            .ok_or("binding input lost before snapshot digest")?;
         records.push(record);
+    }
+    if before_snapshots.first() != before_snapshots.get(1) {
+        return Err("equal selections produced different before snapshot content".to_string());
     }
     if records.first() != records.get(1) {
         return Err("equal non-packet inputs produced different binding fields".to_string());

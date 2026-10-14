@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0228-pushed-literal-whole-equality",
+  "subject_id": "authored-spec0228-pushed-literal",
+  "diff": "cases/spec0228-pushed-literal-whole-equality.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_call_then_assert_eq_whole_collection_through_getter",
+  "hard_case": "the changed field sits inside a literal pushed onto self.lines; the test compares the whole collection through lines(), which no field-name read reaches",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.lines.push(Line { sku: sku.to_lowercase(), qty });",
+        "mutated_line": "self.lines.push(Line { sku: sku.to_lowercase(), qty });",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_records_the_line",
+        "equivalence_review": "not equivalent: the line is recorded as \"bolt\" instead of \"BOLT\""
+      },
+      {
+        "replacement": "self.lines.push(Line { sku: String::new(), qty });",
+        "mutated_line": "self.lines.push(Line { sku: String::new(), qty });",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_records_the_line",
+        "equivalence_review": "not equivalent: the line is recorded with an empty sku"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "add_records_the_line calls add(\"bolt\", 2) and compares order.lines(), whose body returns &self.lines, with the whole expected slice, so every field of the pushed Line is compared. Spec cells: RIPR-SPEC-0228 example 14.",
+  "labeling_observation": {
+    "ripr_commit": "3ec109cd",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#14"
+  ]
+}

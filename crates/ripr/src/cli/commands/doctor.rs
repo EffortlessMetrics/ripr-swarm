@@ -152,7 +152,14 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
+    // Start-here, recovery states, the proof-rail note, and "Recommended
+    // first command: ripr check" are analysis-first-run guidance. The
+    // source-build profile exists to diagnose whether this machine can build
+    // ripr; its failing `!` lines already name the toolchain fix, so that
+    // profile must not send the reader to run analysis (#7435).
+    if profile == output::doctor::DoctorProfile::Analysis {
+        print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
+    }
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");
@@ -583,8 +590,9 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
-    // Rust: Cargo.toml at root OR .rs files in root/src
-    if root.join("Cargo.toml").exists() || shallow_has_extension(root, "rs") {
+    // Rust: Cargo.toml at root OR .rs files in root/src (shared with the
+    // enablement tip so a TypeScript-only root is not told to enable Rust).
+    if crate::domain::rust_markers_at(root) {
         found.push(LanguageId::Rust);
     }
 
@@ -922,36 +930,28 @@ fn suggest_preview_language_enablement(environment: &DoctorEnvironment) {
 /// `PreviewEnablement` becomes the typed `preview_language_gaps` field, so the
 /// tip and the JSON document name the same languages.
 fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -> Vec<String> {
-    let Some(PreviewEnablement { enabled, gaps }) = enablement else {
+    let Some(PreviewEnablement { gaps, suggestion }) = enablement else {
         return Vec::new();
     };
     // One snippet for every language to add, built on the languages already
-    // enabled: a per-language `["rust", "<lang>"]` snippet would disable the
-    // other preview language in a mixed repository, so following one tip
-    // would produce the other.
-    let mut target: Vec<&str> = enabled.iter().map(|id| id.as_str()).collect();
-    for gap in gaps {
-        if !target.contains(&gap.entry.as_str()) {
-            target.push(gap.entry.as_str());
-        }
-    }
+    // enabled that belong in this repo: a per-language `["typescript"]`
+    // snippet would disable Python in a mixed repository, so following one
+    // tip would produce the other. Default `rust` is kept only when Rust is
+    // actually detected (#7648).
     let names = gaps
         .iter()
         .map(|gap| gap.label.as_str())
         .collect::<Vec<_>>()
         .join(" and ");
-    let quoted = target
-        .iter()
-        .map(|name| format!("\"{name}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let enabled_names: Vec<&str> = suggestion.iter().map(LanguageId::as_str).collect();
+    let enabled_line = crate::domain::format_languages_enabled_toml(&enabled_names);
     let javascript_note = if gaps.iter().any(|gap| gap.label == "javascript") {
         " (the `typescript` entry also analyzes JavaScript)"
     } else {
         ""
     };
     vec![format!(
-        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. To analyze them, set in ripr.toml{javascript_note}:\n\n  [languages]\n  enabled = [{quoted}]"
+        "- Tip: {names} files detected but not enabled, so `ripr check` does not analyze them. To analyze them, set in ripr.toml{javascript_note}:\n\n  [languages]\n  {enabled_line}"
     )]
 }
 
@@ -1018,7 +1018,12 @@ fn preview_languages_to_enable(
     if gaps.is_empty() {
         return None;
     }
-    Some(PreviewEnablement { enabled, gaps })
+    let suggestion = crate::domain::enablement_tip_languages(
+        &enabled,
+        detected.contains(&LanguageId::Rust),
+        gaps.iter().map(|gap| gap.entry),
+    );
+    Some(PreviewEnablement { gaps, suggestion })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the
@@ -1030,10 +1035,12 @@ fn preview_languages_to_enable(
 /// zipped together truncate silently the moment they diverge, which would drop a
 /// gap from JSON while the screen still printed it).
 struct PreviewEnablement {
-    /// Languages already enabled in `ripr.toml` (or the default).
-    enabled: Vec<LanguageId>,
     /// One (config entry, detected source name) pair per language to add.
     gaps: Vec<PreviewLanguageGap>,
+    /// Copy-paste `[languages] enabled` list: already-enabled languages that
+    /// belong in this repo, plus the gaps. Default `rust` is omitted when
+    /// Rust is not detected (#7648).
+    suggestion: Vec<LanguageId>,
 }
 
 /// One `[languages].enabled` entry and the detected source it analyzes.
@@ -1188,13 +1195,19 @@ fn detect_test_surfaces(
                             "perl: adapter compiled (lang-perl feature ON)".to_string(),
                         ));
                     } else {
+                        // #7434: this catalog line is a semicolon-joined
+                        // detection list, not the recovery owner. The full
+                        // `unavailable_adapter_recovery()` paragraph already
+                        // prints as Perl preview `next:` (and JSON
+                        // `perl_preview.next_command`). Repeating it here
+                        // made the human screen print the same ~340-character
+                        // block twice. JSON `test_surfaces[].evidence` is this
+                        // same catalog fragment by contract, so the field
+                        // stays; only the catalog wording shortens.
                         surfaces.push(surface(
                             "perl",
                             None,
-                            format!(
-                                "perl: adapter NOT compiled; {}",
-                                id.unavailable_adapter_recovery()
-                            ),
+                            "perl: adapter NOT compiled (see Perl preview below)".to_string(),
                         ));
                     }
                     // Report runner availability from PATH, never the checkout cwd
@@ -3263,6 +3276,39 @@ mod tests {
         Ok(())
     }
 
+    /// #7506 fence: nested `rust/Cargo.toml` does not become a Rust language
+    /// marker. Scope uses the cargo-only locator; `detect_languages` stays
+    /// a shallow root scan.
+    #[test]
+    fn detect_languages_stays_shallow_when_nested_rust_lives_under_typescript_root()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("detect-polyglot-ts-nested-rust");
+        std::fs::create_dir_all(root.join("rust/crates/x/src"))
+            .map_err(|err| format!("create nested crate: {err}"))?;
+        std::fs::write(root.join("package.json"), "{\"name\": \"site\"}\n")
+            .map_err(|err| format!("write package.json: {err}"))?;
+        std::fs::write(
+            root.join("rust/Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/x\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        std::fs::write(
+            root.join("rust/crates/x/Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write package manifest: {err}"))?;
+        std::fs::write(root.join("rust/crates/x/src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        let detected = detect_languages(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        if detected != vec![LanguageId::TypeScript] {
+            return Err(format!(
+                "detect_languages must stay shallow (TypeScript only): {detected:?}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn enabled_language_keeps_primary_runtime_required_when_other_tool_is_detected() {
         let mut probes = vec![("typescript", "yarn", "install Yarn")];
@@ -3637,6 +3683,82 @@ mod tests {
                 "uncompiled adapter must not get a runnable-looking next step: {command}"
             );
         }
+    }
+
+    /// #7434: the Perl recovery paragraph belongs on `next:`. The
+    /// test-surfaces catalog is a semicolon-joined detection list; embedding
+    /// the same paragraph there prints it twice on one human screen.
+    #[test]
+    fn uncompiled_perl_adapter_recovery_prints_once_on_the_human_doctor_screen()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-perl-recovery-once");
+        std::fs::create_dir_all(root.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        std::fs::create_dir_all(root.join("t")).map_err(|err| format!("create t: {err}"))?;
+        std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+            .map_err(|err| format!("write pm: {err}"))?;
+        std::fs::write(
+            root.join("t/pricing.t"),
+            "use Test::More;\nok(1);\ndone_testing();\n",
+        )
+        .map_err(|err| format!("write t: {err}"))?;
+
+        let detected = detect_languages(&root);
+        assert!(
+            detected.contains(&LanguageId::Perl),
+            "fixture must detect Perl: {detected:?}"
+        );
+        let surfaces = detect_test_surfaces(&root, &detected);
+        assert!(
+            !surfaces.is_empty(),
+            "fixture must produce test-surface evidence"
+        );
+        let catalog = surfaces
+            .iter()
+            .map(|surface| surface.evidence.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let recovery = LanguageId::Perl.unavailable_adapter_recovery();
+        let preview = probe_perl_preview(&root, None)
+            .ok_or_else(|| format!("fixture must produce a Perl preview: {catalog}"))?;
+        let preview_text = perl_preview_lines(&preview).join("\n");
+        let screen = format!("- Detected test surfaces: {catalog}\n{preview_text}");
+        let occurrences = screen.matches(recovery.as_str()).count();
+
+        assert!(
+            !catalog.contains(&recovery),
+            "the test-surfaces catalog must not embed the recovery paragraph: {catalog}"
+        );
+
+        if cfg!(feature = "lang-perl") {
+            assert_eq!(
+                occurrences, 0,
+                "a lang-perl build has no recovery paragraph to print: {screen}"
+            );
+            assert!(
+                catalog.contains("perl: adapter compiled (lang-perl feature ON)"),
+                "compiled adapter must stay a catalog fact: {catalog}"
+            );
+        } else {
+            assert_eq!(
+                occurrences, 1,
+                "the recovery paragraph must appear once, on next:, not twice: {screen}"
+            );
+            assert!(
+                catalog.contains("perl: adapter NOT compiled (see Perl preview below)"),
+                "the catalog must name adapter state and point at the preview: {catalog}"
+            );
+            assert!(
+                preview_text.contains(&format!("next: {recovery}")),
+                "next: must keep the recovery paragraph: {preview_text}"
+            );
+            assert_eq!(
+                preview.next_command, recovery,
+                "JSON next_command must keep the recovery paragraph"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
     }
 
     #[test]
@@ -4072,8 +4194,37 @@ mod tests {
             "suggestion must name the language; got:\n{joined}"
         );
         assert!(
-            joined.contains(r#"enabled = ["rust", "typescript"]"#),
-            "suggestion must contain copy-paste TOML block; got:\n{joined}"
+            joined.contains(r#"enabled = ["typescript"]"#),
+            "a TypeScript-only root must not be told to enable Rust; got:\n{joined}"
+        );
+        assert!(
+            !joined.contains(r#""rust""#),
+            "default rust must not leak into a TypeScript-only tip; got:\n{joined}"
+        );
+        Ok(())
+    }
+
+    /// A mixed Rust + TypeScript root still names both languages, so following
+    /// the tip does not disable Rust.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn doctor_enable_tip_keeps_rust_when_rust_is_detected() -> Result<(), String> {
+        let dir = unique_command_test_dir("suggest-ts-with-rust");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"mixed\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::write(dir.join("index.ts"), "export const x = 1;\n")
+            .map_err(|err| format!("write ts: {err}"))?;
+        let suggestions = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
+        assert!(
+            suggestions[0].contains(r#"enabled = ["rust", "typescript"]"#),
+            "mixed repos keep rust; got:\n{}",
+            suggestions[0]
         );
         Ok(())
     }
@@ -4101,8 +4252,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(suggestions.len(), 1, "one combined tip: {suggestions:?}");
         assert!(
-            suggestions[0].contains(r#"enabled = ["rust", "python", "typescript"]"#),
-            "the snippet must keep python enabled; got:\n{}",
+            suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
+            "the snippet must keep python and omit undetected rust; got:\n{}",
+            suggestions[0]
+        );
+        assert!(
+            !suggestions[0].contains(r#""rust""#),
+            "no Rust markers means the tip must not name rust; got:\n{}",
             suggestions[0]
         );
         assert_eq!(
@@ -4130,9 +4286,10 @@ mod tests {
         assert_eq!(suggestions.len(), 1, "one tip: {suggestions:?}");
         assert!(
             suggestions[0].starts_with("- Tip: javascript files detected")
-                && suggestions[0].contains(r#"enabled = ["rust", "typescript"]"#)
-                && !suggestions[0].contains(r#""javascript""#),
-            "the snippet must name the typescript entry; got:\n{}",
+                && suggestions[0].contains(r#"enabled = ["typescript"]"#)
+                && !suggestions[0].contains(r#""javascript""#)
+                && !suggestions[0].contains(r#""rust""#),
+            "the snippet must name the typescript entry without rust; got:\n{}",
             suggestions[0]
         );
         assert_eq!(
@@ -4144,7 +4301,7 @@ mod tests {
         // The printed snippet must load, and after it the tip goes away.
         std::fs::write(
             dir.join("ripr.toml"),
-            "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+            "[languages]\nenabled = [\"typescript\"]\n",
         )
         .map_err(|err| format!("write ripr.toml: {err}"))?;
         let loaded =
@@ -4154,7 +4311,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             loaded,
-            Ok(vec![LanguageId::Rust, LanguageId::TypeScript]),
+            Ok(vec![LanguageId::TypeScript]),
             "the suggested snippet must load"
         );
         assert!(after.is_empty(), "typescript covers javascript: {after:?}");

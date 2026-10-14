@@ -126,7 +126,9 @@ pub(crate) fn parser_oracles_for_function(
         .descendants()
         .find_map(ast::Fn::cast)?;
     let line_index = LineIndex::new(function_text);
-    let mut oracles = extract_parser_oracles(&function, function_text, &line_index);
+    // The re-parse holds only this function, so no file scope is visible.
+    let mut oracles =
+        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
     let line_offset = function_start_line.saturating_sub(1);
     for oracle in &mut oracles {
         oracle.line += line_offset;
@@ -585,7 +587,12 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
                     &body,
                 ),
                 calls,
-                assertions: extract_parser_oracles(&function, text, &line_index),
+                assertions: extract_parser_oracles(
+                    &function,
+                    text,
+                    &line_index,
+                    DropInScope::WholeFile,
+                ),
                 literals,
                 attrs,
                 nested_fn_names,
@@ -2259,6 +2266,7 @@ fn extract_parser_oracles(
     function: &ast::Fn,
     text: &str,
     line_index: &LineIndex,
+    drop_in_scope: DropInScope,
 ) -> Vec<OracleFact> {
     // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
     // `expect_err` variable bindings so assertions on those variables can be
@@ -2279,7 +2287,9 @@ fn extract_parser_oracles(
             continue;
         };
         let macro_name = path.syntax().text().to_string().replace(' ', "");
-        if !is_assertion_macro(&macro_name) {
+        if !is_assertion_macro(&macro_name)
+            || drop_in_root_may_be_rebound(&macro_name, function.syntax(), drop_in_scope)
+        {
             continue;
         }
         let range = macro_call.syntax().text_range();
@@ -2288,11 +2298,13 @@ fn extract_parser_oracles(
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
-        // point as WholeObjectEquality.
+        // point as WholeObjectEquality. An assertion RIPR-SPEC-0231 weakened
+        // is never upgraded, matching the line-scan path in `scan.rs`.
         if matches!(
             classification.kind,
             OracleKind::ExactValue | OracleKind::WholeObjectEquality
-        ) && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+        ) && classification.strength == OracleStrength::Strong
+            && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
         {
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
@@ -2402,11 +2414,88 @@ pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
+    let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
     matches!(
         macro_name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
+}
+
+/// Crates whose path-qualified assertion macros keep the std semantics:
+/// `pretty_assertions` and `similar_asserts` only change the failure diff,
+/// `std`/`core` are the built-ins, and `assert_matches` exports the
+/// std-shaped `assert_matches!`. Any other crate path stays unadmitted, so
+/// an unknown `other::assert_eq!` never gains assertion authority.
+const DROP_IN_ASSERTION_CRATES: &[&str] = &[
+    "std",
+    "core",
+    "pretty_assertions",
+    "similar_asserts",
+    "assert_matches",
+];
+
+/// The leaf of `crate::leaf` when `crate` is a known drop-in assertion crate.
+/// The owner-return admission gate shares it, so a qualified drop-in
+/// `assert_eq!` faces the same execution admission as a bare one.
+pub(crate) fn drop_in_assertion_leaf(macro_name: &str) -> Option<&str> {
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let (crate_name, leaf) = path.split_once("::")?;
+    (DROP_IN_ASSERTION_CRATES.contains(&crate_name) && !leaf.contains("::")).then_some(leaf)
+}
+
+/// Whether the tree a parser oracle is read from is the function's whole
+/// source file, so a drop-in crate root can be checked against the file's own
+/// bindings.
+#[derive(Clone, Copy)]
+enum DropInScope {
+    WholeFile,
+    /// A re-parse of the function text alone: the file is not visible.
+    Unknown,
+}
+
+/// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
+/// may name something other than the crate. It may when the file declares a
+/// module or an `extern crate` rename with the root's name, imports another
+/// item under it, or has an item-position macro call that could emit such a
+/// binding; and always when the file is not visible. Any such binding
+/// anywhere in the file refuses, without resolving which module it sits in,
+/// so a local module that re-exports a non-checking `assert_eq` gains no
+/// assertion authority. A binding in another file reached through a glob
+/// import (`use super::*` in an out-of-line test module), and a Cargo package
+/// rename, are not visible here.
+fn drop_in_root_may_be_rebound(
+    macro_name: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    scope: DropInScope,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if drop_in_assertion_leaf(macro_name).is_none() {
+        return false;
+    }
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let Some((root, _)) = path.split_once("::") else {
+        return false;
+    };
+    let (DropInScope::WholeFile, Some(file)) = (scope, node.ancestors().last()) else {
+        return true;
+    };
+    let names = |name: Option<ast::Name>| {
+        name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+    };
+    super::use_rebinds_crate_name(&file, root)
+        || file.descendants().any(|node| {
+            if let Some(module) = ast::Module::cast(node.clone()) {
+                return names(module.name());
+            }
+            if let Some(krate) = ast::ExternCrate::cast(node.clone()) {
+                return names(krate.rename().and_then(|rename| rename.name()));
+            }
+            ast::MacroCall::can_cast(node.kind())
+                && node
+                    .parent()
+                    .is_some_and(|parent| matches!(parent.kind(), K::SOURCE_FILE | K::ITEM_LIST))
+        })
 }
 
 pub(crate) struct LineIndex {

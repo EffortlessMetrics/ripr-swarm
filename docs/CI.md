@@ -358,7 +358,7 @@ and single-platform CI was the root cause enabling both.
 - **Always-on subset (#4938).** Every subscribed `pull_request` action
   (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
   per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` lib tests, the #4918 cache-warning smoke, and
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
@@ -650,12 +650,14 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
-- Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
-  directly as Ready never receives a `ready_for_review` event and never gets
-  the required check.
-- A push after Ready leaves the new head without the required check. Convert
-  to Draft and mark Ready again once the push is final. If the PR had
-  auto-merge armed, check that it is still armed after the toggle.
+- Open PRs as Draft (`gh pr create --draft`), then follow the
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting qualification. A PR opened directly as Ready never receives a
+  `ready_for_review` event and never gets the required check.
+- A push after Ready leaves the new head without the required check. Return to
+  Draft and refresh affected proof and review through the same handoff before
+  another Ready transition. Reassess exact-head merge prerequisites before
+  rearming auto-merge.
 - Labels such as `full-ci` take effect at the next Ready transition, not when
   they are added.
 
@@ -987,10 +989,11 @@ dropped delivery from a post-Ready push, but its summary row carries each PR's
 a glance. A head mutated after Ready has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
 `pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
-conflicts first: query the PR's `mergeable_state`; `dirty` means merge `main`
-into the branch first, and only then convert the PR to Draft and mark it Ready
-for review again, which runs the full Ready-triggered qualification on the
-exact head and also recovers a dropped delivery. The required check, not run existence, is the
+conflicts first: query the PR's `mergeable_state`; `dirty` means repair the
+conflict while Draft, then apply the shared
+[Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before requesting
+qualification for the composed head. That handoff also governs recovery from a
+dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120

@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-test2-overdrawn-ok-smoke",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-overdrawn-ok-smoke.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 23
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "test2_ok_truthy_smoke",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 0 >= $balance ? 1 : 0;",
+        "mutated_line": "return 0 >= $balance ? 1 : 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: zero reads as overdrawn"
+      },
+      {
+        "replacement": "return -5 > $balance ? 1 : 0;",
+        "mutated_line": "return -5 > $balance ? 1 : 0;",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: negative balances are overdrawn",
+        "equivalence_review": "not equivalent: -1 is no longer overdrawn"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok(is_overdrawn(-1)) passes when zero becomes overdrawn but fails when -1 stops being overdrawn: one of two mutants is caught. Spec cells: RIPR-SPEC-0064 smoke_ok.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-overdrawn-ok-smoke.json",
+    "sha256": "7eca8346dc52ee9d12a05e2d892408b53555895543d5cbf8abbcceb9f1c6ef0a",
+    "provenance": "producer"
+  }
+}

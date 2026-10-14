@@ -1,0 +1,165 @@
+{
+  "claim": "RIPR #6734 recommendation consumer",
+  "observed_date": "2026-10-13",
+  "base_sha": "de63466000c63427eb78cd9a5bcee761cd6d57c4",
+  "fixture_license": "MIT OR Apache-2.0 (newly authored; patterns referenced, no upstream implementation copied)",
+  "runtime": {
+    "perl": "5.40.1",
+    "Test::More": "1.302199",
+    "Test2::V0": "0.000162",
+    "TAP::Harness": "3.48"
+  },
+  "defect": {
+    "before": "return $price_cents * $quantity;",
+    "after": "return $price_cents + $quantity;"
+  },
+  "runs": [
+    {
+      "implementation": "baseline",
+      "test": "load",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/load.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-load.log",
+      "raw_log_sha256": "dbd3eef02a36974049b16ddd7105bd395a9aa0f9b40ffd50a8e73936ebc5a26f",
+      "log_sha256": "3b895298078b22b3bd9c630b6c83687778186a3dcec9750c4baf3128d7d2d080"
+    },
+    {
+      "implementation": "baseline",
+      "test": "total_more",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_more.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-total_more.log",
+      "raw_log_sha256": "44c4e2e26f85876c8a5fcd6569b04f1148a2f7e2136d7fafef73d7669c864e7e",
+      "log_sha256": "5b7d66328723979643d1d5d7da9756896c8aa75785b6ab44c1ae72ad0f685c7c"
+    },
+    {
+      "implementation": "baseline",
+      "test": "total_test2",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_test2.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-total_test2.log",
+      "raw_log_sha256": "042f0b1c774171f282d78c4676d71e5bd473c67abd251ee0cf785817425effe9",
+      "log_sha256": "73c3e656adc2149d2670326b6e2f9075d758291e29f44e470d6fdef56633fc47"
+    },
+    {
+      "implementation": "defective",
+      "test": "load",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/load.t"
+      ],
+      "status": 0,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-load.log",
+      "raw_log_sha256": "6dd55d0b24813df3e424f460cb4546cea93bbfb380d8fd1b03eca554bb6544d4",
+      "log_sha256": "daf74c40e5f9dcec0041d37f0e1020f45fc1cafe1d8a44c0f20218371f13ae70"
+    },
+    {
+      "implementation": "defective",
+      "test": "total_more",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_more.t"
+      ],
+      "status": 1,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-total_more.log",
+      "raw_log_sha256": "8a3843b8fd6f77b960dabc992a21ff6ccffc1cc19f7e3d966f0080ab5dffa7b9",
+      "log_sha256": "842b9a5040b96327f4923c80e037cc27fb72d52caa020c0a04825f5f0a0c9dc9"
+    },
+    {
+      "implementation": "defective",
+      "test": "total_test2",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_test2.t"
+      ],
+      "status": 1,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-total_test2.log",
+      "raw_log_sha256": "c94a5221312264684e14112d3479695f7dc80824cfdcf930e6c6248f61fa74f2",
+      "log_sha256": "12d038f85432f405dadcb2a7653aba8da5f9e3e625615a48cda1fd1a36686278"
+    },
+    {
+      "implementation": "baseline",
+      "test": "smoke_more",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_more.t"
+      ],
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-smoke_more.log",
+      "raw_log_sha256": "fe6bdd54351a1b6320df5d381c55817621e93f80c3126d425b329d14e0e12e1d",
+      "log_sha256": "5a9bdd3aef770f3904f5307cfb6377d6eefc6121b3b8d76c3bd28eb5cd0481ee"
+    },
+    {
+      "implementation": "defective",
+      "test": "smoke_more",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_more.t"
+      ],
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-smoke_more.log",
+      "raw_log_sha256": "eaf3ed87b4495dbba442fbd888f0a6bad8ed2f3070586dd905da560f10ff7bd9",
+      "log_sha256": "657be741991ab55ef64875545c328ba44db26a880c35e3e6e710cc5efbf15bd7"
+    },
+    {
+      "implementation": "baseline",
+      "test": "smoke_test2",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_test2.t"
+      ],
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-smoke_test2.log",
+      "raw_log_sha256": "7bc9d100b0457fd851cf55a41c6d2a744f304f935aa4bd4456b6ab3e7f3f1d93",
+      "log_sha256": "f6445f72e944cb3ff5746568b8f9f2c072b3b765fa6ede5a851bd9315079bc4f"
+    },
+    {
+      "implementation": "defective",
+      "test": "smoke_test2",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_test2.t"
+      ],
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-smoke_test2.log",
+      "raw_log_sha256": "818ccd281c80d51aa0ea349b6d4d716c0f16f6cfadd267dc827646a1110e4c5a",
+      "log_sha256": "57587f173bc5a82d90e38213d95699b46b3135e9407c76d2db715c2d7e9df454"
+    }
+  ],
+  "limits": [
+    "Authored fixtures only, not real-repository accuracy or ranking samples.",
+    "Actual prove executions are independent fixture oracles, not RIPR runtime mutation outcomes.",
+    "Authored packets prove consumer selection only; no live exporter or static Perl extraction was exercised.",
+    "Direct truthiness controls pass the defective implementation; direct reach alone earns no exact-discrimination claim."
+  ],
+  "log_normalization": "Readable runtime-logs trim only trailing line whitespace; exact original UTF-8 bytes and SHA-256 are retained in runtime-raw-logs.json."
+}

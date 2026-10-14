@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex09-mock-arg",
+  "subject_id": "authored-py-pytest-spec0233",
+  "origin": "authored",
+  "anchor": "src/subject.py:175",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_mock_result_assert_called_once_with",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-test-case-arrow-expected-value",
+  "subject_id": "authored-lib-test-case",
+  "diff": "cases/lib-test-case-arrow-expected-value.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_case_arrow_expected_value",
+  "hard_case": "ripr does not read the `=> 4` expected value in #[test_case] as an oracle (unknown/none) and reports reachable_unrevealed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + x",
+        "mutated_line": "x + x",
+        "outcome": "tests_failed",
+        "failing_test": "tests::squares::test_case_2_3_expects_9",
+        "equivalence_review": "not equivalent: square(3) = 6 instead of 9 (square(2)=4 coincides)"
+      },
+      {
+        "replacement": "x * x + 1",
+        "mutated_line": "x * x + 1",
+        "outcome": "tests_failed",
+        "failing_test": "tests::squares::test_case_1_2_expects_4",
+        "equivalence_review": "not equivalent: square(2) = 5 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "#[test_case(x => expected)] generates an assert_eq on the return value; two cases (2=>4, 3=>9) together kill both mutants, including x + x which agrees at 2.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

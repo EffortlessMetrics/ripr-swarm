@@ -22,6 +22,34 @@
       "sha256": "9a30ac96b5d5c1b67eca69e1e2cf0798817d9578c8d7d904a81a67b983b35cba"
     },
     {
+      "path": "src/announceMail.ts",
+      "sha256": "ef0c1bd79cdd20ff37762305e11aaaf82b08d86dc7298674387f84c7d6199b88"
+    },
+    {
+      "path": "src/announceRetry.ts",
+      "sha256": "e19653af548f2b9a9a05b2b642ba1e3ecec576a2b5fa61a5c74da04f41c5e4ef"
+    },
+    {
+      "path": "src/chargeAfterIf.ts",
+      "sha256": "1ec037c4d9aadd8897322c206404fc2565d12d2bd886a5d3a29054da02355c36"
+    },
+    {
+      "path": "src/chargeBraceless.ts",
+      "sha256": "f615be581997ea75cd6d5524bfd35a353199bd2116c8bfc93730fa8a6cb3c0fc"
+    },
+    {
+      "path": "src/chargeDirect.ts",
+      "sha256": "c345d2d5cde7de399be09b93213dd8126709de46dbd015e003e6f762def5c044"
+    },
+    {
+      "path": "src/chargeNotify.ts",
+      "sha256": "de82687b6966fbbb4357f6c7d866ef734d8ea754dd1ade5b2c5996c91738a8d3"
+    },
+    {
+      "path": "src/chargeTimes.ts",
+      "sha256": "54ceed6a360d6344f3af8d70a00d58c452e7a34ceca7f6af66067e632cf2cf46"
+    },
+    {
       "path": "src/fee31.ts",
       "sha256": "18dfbac373facc8024c08a53e6fb3e26cc784f53ddf597fc77d752000aa43f27"
     },
@@ -30,8 +58,16 @@
       "sha256": "50cf6260d4aff29cfaadaac771a61c2c10b674e23118da3a179eb51d842ccc90"
     },
     {
+      "path": "src/fee33.ts",
+      "sha256": "c526f7d07c6a28b24b5c3e64e7c877d751b0a3739410d806685f44afd1c4d9fd"
+    },
+    {
       "path": "src/other24.ts",
       "sha256": "4ab17e36fbb4ec87d85c18d66621f3ba8f7ba2ff158b0db146c8c12fcc461528"
+    },
+    {
+      "path": "src/otherDefault.ts",
+      "sha256": "983e1bf07d724387372dc789ffe9f3c84f8de3cfe42d685b65eb1ea259a318ac"
     },
     {
       "path": "src/priceAlias.ts",
@@ -46,8 +82,20 @@
       "sha256": "421d2161cdc7190f68d8822b5706322f1d46db4ecd8dd29ab138b6aa4417cb62"
     },
     {
+      "path": "src/priceDestructured.ts",
+      "sha256": "ea7808b29c49fe400147a6bd293c95d053dde7a9133efe0042cc3ba6cdab15a6"
+    },
+    {
       "path": "src/priceDynamic.ts",
       "sha256": "6f5c7a645bc35993169ef741ca6c912d46720b88debdbef03e0f4b66532791d5"
+    },
+    {
+      "path": "src/priceFeeDefault.ts",
+      "sha256": "0caab8fd34438dcc7c36af24bc11fa4959ab4e3c7e914065ff145731a3d157be"
+    },
+    {
+      "path": "src/priceFeeDefaultZero.ts",
+      "sha256": "d1f1e29e15217d544d94a5286a3b12b44b67e719e0e52a38dbabfec0d2558767"
     },
     {
       "path": "src/priceFeeMocked.ts",
@@ -56,6 +104,14 @@
     {
       "path": "src/priceLocal.ts",
       "sha256": "a4d8f34d7219a8b92d97b3b11bda3ccffa844f642302c2e3be559162ae13bd7f"
+    },
+    {
+      "path": "src/priceNamedRound.ts",
+      "sha256": "a7f449c2c452b5eabc34b33de3d431e5597ecf372b2ba8bad77e1742931edf4a"
+    },
+    {
+      "path": "src/priceOneHop.ts",
+      "sha256": "e0c784f4f6adc88fa428601969e8a1f65a5f5ebf3e2275cbcd4f16e7207c1659"
     },
     {
       "path": "src/priceOtherMocked.ts",
@@ -70,6 +126,14 @@
       "sha256": "01f210c2de52af2efbc596494390af062f5a69b93a8b44e1fbd0250825a307ae"
     },
     {
+      "path": "src/priceShadowed.ts",
+      "sha256": "2e6b1203f20bb31a734bb154d56616ba1ea4f77344228b74a48c2385de735c1e"
+    },
+    {
+      "path": "src/priceTwoFiles.ts",
+      "sha256": "46e8373600b63699b71a11ac72e3894a9124ce65ae7b78d658c9fb2a1450487c"
+    },
+    {
       "path": "src/priceUnobserved.ts",
       "sha256": "a96e2a875fd37ce9d2cfaf3187161f70ce1f431ba7fa1a06d7462507df1c1eb8"
     },
@@ -78,8 +142,20 @@
       "sha256": "3dfa217087d7b57d84430eee790af40e7fb10c5d8427333f81f9e5bf506f0a70"
     },
     {
+      "path": "src/priceWeakPin.ts",
+      "sha256": "2e4293269045df05ea0331e3ee7b2947b77c2e4e9ab2e956426ddf5b2940e716"
+    },
+    {
       "path": "src/save.ts",
       "sha256": "c974f80138160b38055ce3742d838aa926ca150c966d9156d8f30bdcf4c8c508"
+    },
+    {
+      "path": "src/saveFactory.ts",
+      "sha256": "5286230bec833897c31c4ed2848c80c1bda2f6fb41d028e474896eb846b47a13"
+    },
+    {
+      "path": "src/saveSpread.ts",
+      "sha256": "0ec5c9db3b84ba4299210218232d0457c93fc841a8fe9002045711dd33824c77"
     },
     {
       "path": "src/unrelated32.ts",
@@ -88,6 +164,34 @@
     {
       "path": "test/add.test.ts",
       "sha256": "d33610af21859ec0bd68ea3ddc378091c8a527514fb18a805a67cdafd46bc493"
+    },
+    {
+      "path": "test/announceMail.test.ts",
+      "sha256": "9d6964eae98c1f4b24a10697ca7f5c6f05e0c05118f952a52aaea4e7dbf9de5c"
+    },
+    {
+      "path": "test/announceRetry.test.ts",
+      "sha256": "79caa9c3d4ad70b61d0456a30955c49428ffda500158b9d14d0fe7fb30828e81"
+    },
+    {
+      "path": "test/chargeAfterIf.test.ts",
+      "sha256": "71d897a8abf82b85859750eea82d7d83717a859e1ebeeb8e42d3802a91b7b9fa"
+    },
+    {
+      "path": "test/chargeBraceless.test.ts",
+      "sha256": "89bc38dc4563f3f580d6e2756a724f58a9f5ddb89aa6f2851e1db0c7384a9679"
+    },
+    {
+      "path": "test/chargeDirect.test.ts",
+      "sha256": "a0c8d7f2a67d183cf8cb77292b9c85f3f009f1ad8851fab4c60a51babb38b3c2"
+    },
+    {
+      "path": "test/chargeNotify.test.ts",
+      "sha256": "0672bd5a65da6f19d475bc5a4d8a473a5ca94f70e9f531c70d8aca64e3e457bd"
+    },
+    {
+      "path": "test/chargeTimes.test.ts",
+      "sha256": "c69ef54015d51b5fd53dce515f184cac3d7ea3432d7c73d4f22f9fdeed73aff0"
     },
     {
       "path": "test/priceAlias.test.ts",
@@ -102,8 +206,20 @@
       "sha256": "2cac3a2811be2fcee254dd16e06cc246f87fb1faa9e03b13df8ce340fa4d6b95"
     },
     {
+      "path": "test/priceDestructured.test.ts",
+      "sha256": "7f4cdc70d87b56483e195b1f53d5943020d97c22d559146eb00cd656e9d5692a"
+    },
+    {
       "path": "test/priceDynamic.test.ts",
       "sha256": "bc3bd453dd2d621498eb1201c2352e2b7c6f302ea00621f12abd046c3d19c3c0"
+    },
+    {
+      "path": "test/priceFeeDefault.test.ts",
+      "sha256": "3e90a21565c8804823bba3414818e8bc7cc7e263c81199bf2f820a21a44f0cc4"
+    },
+    {
+      "path": "test/priceFeeDefaultZero.test.ts",
+      "sha256": "8f9c9ad715424a904d053c884585fae32783e64d771012d2670f64e606df4034"
     },
     {
       "path": "test/priceFeeMocked.test.ts",
@@ -112,6 +228,14 @@
     {
       "path": "test/priceLocal.test.ts",
       "sha256": "5b4cfdb9f01333bbccccda581480e1c54ffed526d892c0d357b0c21d6ac6cfd3"
+    },
+    {
+      "path": "test/priceNamedRound.test.ts",
+      "sha256": "5e28291fda2ac066bbfb3d3ebe9b6dcd4368435ce0bf07d9fdf0cb08daa9c365"
+    },
+    {
+      "path": "test/priceOneHop.test.ts",
+      "sha256": "b3415d9242ff7786d204bbe69f29f3e3c260239045c572a90ed1ce41b4390aec"
     },
     {
       "path": "test/priceOtherMocked.test.ts",
@@ -126,6 +250,18 @@
       "sha256": "a4261b15f06d92f17b0080a35eb2fbdd9726b1eaca391906688fd8906e81915e"
     },
     {
+      "path": "test/priceShadowed.test.ts",
+      "sha256": "0da3baf31b2ec29e0dd86c4f667a354264987c47baffda114513a0dd29447fa6"
+    },
+    {
+      "path": "test/priceTwoFilesMocked.test.ts",
+      "sha256": "279eabe6c06e91531c4882a1461caccc2a11aad4068c0ae03bd14a74d6972ef4"
+    },
+    {
+      "path": "test/priceTwoFilesUnmocked.test.ts",
+      "sha256": "33ca7e4c4c2f95171c065632c7db9cd5bbc5ff1ff291e3c75783a4ee706b0d20"
+    },
+    {
       "path": "test/priceUnobserved.test.ts",
       "sha256": "56f177a1b915ef8e9810a82da1c495912b8ee3bfdba128d20165478df87c700d"
     },
@@ -134,8 +270,20 @@
       "sha256": "d7c8fec12831aac749d0eac985d4c91d2b686cb06240ca2530e049c32fd96fa6"
     },
     {
+      "path": "test/priceWeakPin.test.ts",
+      "sha256": "4cad64a3c3563992d7a44c5981a526735a7d449b0429bb84e3722cbdca4096e7"
+    },
+    {
       "path": "test/save.test.ts",
       "sha256": "4ce935359cceafe8b072b1f7f0ffa0e555b4025cb0d9dfdb6313888e8bec2f7a"
+    },
+    {
+      "path": "test/saveFactory.test.ts",
+      "sha256": "cbdea2e20b21dde94f5a5584f5a2aca3beb43eb69b0efbd2cdd573d172b71219"
+    },
+    {
+      "path": "test/saveSpread.test.ts",
+      "sha256": "42f6686de8775091a7bba6f4a5189c825f10af4b2ef371ba42af1ede5707cb83"
     },
     {
       "path": "tsconfig.json",

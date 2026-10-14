@@ -1,3 +1,4 @@
+mod attempt_inventory;
 mod framing;
 mod gaps;
 mod protocol;
@@ -37,7 +38,7 @@ Options:
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
 `ripr_get_repair_attempt`, `ripr_get_receipt_status`, and
-`ripr_get_repair_card`, the resource
+`ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
@@ -48,8 +49,10 @@ untracked files are outside the analyzed scope. `ripr check` defaults to the
 working tree when staged or unstaged tracked edits exist; shared check
 authority does not mean identical input. Use `ripr check --committed` for
 committed input, or `ripr check --worktree --format json` for staged and
-unstaged tracked edits outside MCP. The other tools read the committed
-snapshot and never re-run analysis. `ripr_prepare_repair` evaluates producer
+unstaged tracked edits outside MCP. Gap and card tools read the committed snapshot and never re-run analysis.
+`ripr_list_repair_attempts` discovers durable CLI attempts before or after
+refresh, with bounded inventory-bound pages; it never creates the store.
+`ripr_prepare_repair` evaluates producer
 repair-readiness facts and may create one in-memory session repair
 transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read
 session transactions and the durable attempt store without executing

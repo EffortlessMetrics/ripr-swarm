@@ -61,7 +61,7 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // Cache help bodies live beside the cache parser but are also the flag source
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
-pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_EXPORT_HELP, CACHE_STATUS_HELP};
 pub(super) use task_first::{
     CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
 };
@@ -1196,6 +1196,18 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         &repo_exposure_json,
         &mutants_json,
     )?;
+    // Disclose on stderr (machine JSON output on stdout is unchanged) what
+    // can actually be said about artifact identity. The join is file/line
+    // capable and cargo-mutants JSON usually carries no head, so a silent
+    // success lets a foreign same-line mutant inherit the static seam's
+    // authority. Mirror `ripr outcome`'s disclosure (#7449 / #1942).
+    eprintln!(
+        "{}",
+        output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &repo_exposure_json,
+            &mutants_json,
+        )
+    );
     let rendered = match options.format {
         CalibrateFormat::Markdown => {
             output::mutation_calibration::render_mutation_calibration_md(&report)
@@ -1320,12 +1332,15 @@ enum SnapshotCaptureKind {
 }
 
 fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
+    // Quote after `display_path`: the NotFound prefix stays human-readable,
+    // but the pasted redirect must remain one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
     match kind {
         SnapshotCaptureKind::Outcome => format!(
-            "Run `ripr check --format repo-exposure-json > {displayed_path}` first, or pass a `ripr check --json` output."
+            "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
         ),
         SnapshotCaptureKind::RepoExposure => {
-            format!("Run `ripr check --format repo-exposure-json > {displayed_path}` first.")
+            format!("Run `ripr check --format repo-exposure-json > {quoted_path}` first.")
         }
         SnapshotCaptureKind::CargoMutants => {
             "Run `cargo mutants` first, then pass its output directory or `outcomes.json`."
@@ -3183,6 +3198,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
+    // #7352: a fresh explain run re-executes the full check pipeline to
+    // resolve one finding id; on a cold large repository the silent window
+    // looked like a hang. The same stderr-only stage lines `ripr check`
+    // projects disclose the work without touching machine stdout. The
+    // `--from` artifact path runs no pipeline and wires no sink.
+    let progress = crate::cli::progress::CliProgressSink::for_stderr(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        crate::cli::progress::ProgressPolicy::STANDARD,
+    );
+    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3194,15 +3219,21 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::explain_finding_with_config_and_navigation_mode(
+            app::explain_finding_with_config_navigation_mode_and_progress(
                 input,
                 &selector,
                 &config,
                 explicit.mode,
                 worktree,
+                progress_sink,
             )?
         }
     };
+    // #7352 review: producer `completed` is held until `commit_success`;
+    // without this call the dropped sink projects `ripr progress: failed`
+    // despite the successful render, exactly the `ripr check` contract the
+    // stage lines borrow.
+    progress.commit_success();
     println!("{rendered}");
     Ok(())
 }
@@ -7054,6 +7085,45 @@ language = "rust"
     }
 
     #[test]
+    fn calibrate_zero_recognized_mutant_records_fails_closed() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-zero-records");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let repo = dir.join("repo-exposure.json");
+        std::fs::write(&repo, calibration_repo_json())
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+
+        for (label, body) in [
+            ("empty-array", "[]"),
+            ("empty-object", "{}"),
+            ("non-mutant-array", r#"["hello"]"#),
+        ] {
+            let mutants = dir.join(format!("{label}.json"));
+            std::fs::write(&mutants, body).map_err(|err| format!("write {label}: {err}"))?;
+            let message = err_message(
+                calibrate(&args(&[
+                    "cargo-mutants",
+                    "--mutants-json",
+                    &mutants.display().to_string(),
+                    "--repo-exposure-json",
+                    &repo.display().to_string(),
+                ])),
+                &format!("{label} must fail closed"),
+            )?;
+            assert!(
+                message.contains("0 mutant records recognized"),
+                "{label}: expected zero-record error, got {message}"
+            );
+            assert!(
+                !message.contains("All imported runtime mutants matched a static seam"),
+                "{label}: command error must not render the vacuous all-matched report:\n{message}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn calibrate_missing_inputs_name_the_caller_capture_command() -> Result<(), String> {
         let dir = unique_command_test_dir("calibrate-missing");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
@@ -7169,6 +7239,123 @@ language = "rust"
                 "ripr check --json",
             ],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_quotes_spaced_not_found_redirect_and_keeps_plain_path_bare()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let plain = PathBuf::from("definitely-missing-snapshot.json");
+        let plain_display = output::outcome::display_path(&plain);
+        assert_eq!(
+            shell_arg(&plain_display),
+            plain_display,
+            "control path must stay a bare shell token"
+        );
+        let plain_message = err_message(
+            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            "plain missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &plain_message,
+            &plain_display,
+            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !plain_message.contains(&format!("> '{plain_display}'")),
+            "unambiguous redirect must stay unquoted:\n{plain_message}"
+        );
+
+        let spaced = PathBuf::from("missing snapshot.json");
+        let spaced_display = output::outcome::display_path(&spaced);
+        let quoted = shell_arg(&spaced_display);
+        assert_ne!(
+            quoted, spaced_display,
+            "a space must force quoting of the redirect token"
+        );
+        assert!(
+            spaced_display.contains(' '),
+            "fixture path must contain a space: {spaced_display}"
+        );
+
+        let outcome = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            "spaced missing outcome snapshot must fail",
+        )?;
+        assert!(
+            outcome.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "NotFound prefix stays unquoted:\n{outcome}"
+        );
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !outcome.contains(&format!("> {spaced_display}`")),
+            "spaced redirect must not stay bare:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            "spaced missing repo-exposure snapshot must fail",
+        )?;
+        assert!(
+            repo.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "RepoExposure prefix stays unquoted:\n{repo}"
+        );
+        assert_missing_snapshot_named_capture(
+            &repo,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_not_found_quotes_spaced_capture_redirect() -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let dir = unique_command_test_dir("outcome-spaced");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let missing_before = dir.join("missing before.json");
+        let displayed = output::outcome::display_path(&missing_before);
+        let quoted = shell_arg(&displayed);
+        assert!(
+            displayed.contains(' '),
+            "CLI fixture path must contain a space: {displayed}"
+        );
+        assert_ne!(quoted, displayed);
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before.display().to_string(),
+                "--after",
+                &dir.join("after.json").display().to_string(),
+            ])),
+            "spaced missing --before must fail",
+        )?;
+        assert!(
+            message.starts_with(&format!("read {displayed} failed: not found.")),
+            "CLI NotFound prefix stays unquoted:\n{message}"
+        );
+        assert_missing_snapshot_named_capture(
+            &message,
+            &displayed,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !message.contains(&format!("> {displayed}`")),
+            "CLI spaced redirect must not stay bare:\n{message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 
@@ -7426,8 +7613,10 @@ language = "rust"
             "calibrated-gate entry does not state what it narrows to:\n{mode_doc}"
         );
         assert!(
-            workflow.contains("Each setting and step is explained in docs/CI.md"),
-            "the workflow no longer points at the setting docs"
+            workflow.contains(
+                "# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\n"
+            ),
+            "the workflow no longer gives the adopter a public CI guide URL"
         );
 
         Ok(())
@@ -7851,9 +8040,11 @@ language = "rust"
             overridden.map(|options| (options.base_ref, options.comment_mode)),
             Ok(("release".to_string(), "off".to_string()))
         );
-        // Outside any workflow the base falls back to `main`.
+        // #7368: with no base_ref/default_branch anywhere, the base stays
+        // empty so the summary renders its fail-closed "no base derivable"
+        // wording instead of inventing `origin/main`.
         let bare = super::ci_summary::parse_ci_summary_options(&[]);
-        assert_eq!(bare.map(|options| options.base_ref), Ok("main".to_string()));
+        assert_eq!(bare.map(|options| options.base_ref), Ok(String::new()));
     }
 
     #[test]

@@ -269,11 +269,11 @@ use no_panic::{
     strip_toml_value_comment,
 };
 use policy::{
-    check_allow_attributes, check_ci_lane_whitelist, check_covered_by, check_doc_roles,
-    check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
-    check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_workflows, qualify_python_wheelhouse,
+    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
+    check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
+    check_local_context, check_network_policy, check_no_panic_family, check_positioning_language,
+    check_process_policy, check_product_copy, check_proof_packs, check_release_targets,
+    check_static_language, check_text_encoding, check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -320,11 +320,11 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
-    GoldenDriftEntry, GoldenDriftSemantics, first_line_difference, fixture_cache_dir,
-    fixture_contract_violations, golden_assistant_loop_health_contract_violations_at,
-    golden_drift_semantics, golden_drift_type, goldens_check_failure_message,
-    json_string_values_for_key, next_pending_heading, normalize_golden_text, parse_reason,
-    run_fixture, run_fixture_outputs, validate_bless_reason,
+    GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics, first_line_difference,
+    fixture_cache_dir, fixture_contract_violations,
+    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
+    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
+    normalize_golden_text, parse_reason, run_fixture, run_fixture_outputs, validate_bless_reason,
 };
 #[cfg(test)]
 pub(crate) use reports::{
@@ -579,6 +579,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
+    "check-changelog-fragments",
     "check-readme-state",
     "markdown-links",
     "check-pr-shape",
@@ -631,6 +632,7 @@ fn precommit() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
     check_pr_shape()?;
@@ -687,13 +689,64 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
+    let mut child_diagnostics = Vec::new();
+    if let Err(error) = check_fast_gates(
+        &changed,
+        &categories,
+        &mut ran,
+        &mut skipped,
+        &mut child_diagnostics,
+    ) {
+        return check_fast_failure_report(&error, &child_diagnostics, |body| {
+            write_report("check-fast.md", body)
+        });
+    }
+
+    let body = format!(
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        ran.iter()
+            .map(|g| format!("- {g}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        if skipped.is_empty() {
+            "- none".to_string()
+        } else {
+            skipped
+                .iter()
+                .map(|g| format!("- {g}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    );
+    write_report(
+        "check-fast.md",
+        &(body + &check_fast_diagnostics(&child_diagnostics)),
+    )
+}
+
+fn check_fast_gates(
+    changed: &[String],
+    categories: &ChangedFileCategories,
+    ran: &mut Vec<&'static str>,
+    skipped: &mut Vec<&'static str>,
+    child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run("cargo", &["fmt", "--check"])?;
+    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
     ran.push("fmt --check");
     check_static_language()?;
     ran.push("check-static-language");
     check_command_catalog()?;
     ran.push("check-command-catalog");
+
+    // RIPR-SPEC-0060: validate applicable support declarations before the
+    // compilation-bearing Rust gates, using the unchanged leaf/report owner.
+    if categories.support_tiers {
+        check_support_tiers()?;
+        ran.push("check-support-tiers");
+    } else {
+        skipped.push("check-support-tiers (not applicable)");
+    }
 
     // Conditional gates based on changed file categories.
     if categories.rust_src {
@@ -703,7 +756,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         ran.push("check-allow-attributes");
         check_file_policy()?;
         ran.push("check-file-policy");
-        run(
+        run::run_diagnostic(
             "cargo",
             &[
                 "clippy",
@@ -713,6 +766,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
                 "-D",
                 "warnings",
             ],
+            child_diagnostics,
         )?;
         ran.push("clippy");
     } else {
@@ -764,26 +818,40 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         changed.len()
     );
 
-    let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
-        ran.iter()
-            .map(|g| format!("- {g}"))
+    Ok(())
+}
+
+fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
+    format!(
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        run::COMMAND_DIAGNOSTIC_DISCLOSURE,
+        diagnostics
+            .iter()
+            .map(|row| format!("- {}", row.render()))
             .collect::<Vec<_>>()
             .join("\n"),
-        if skipped.is_empty() {
-            "- none".to_string()
-        } else {
-            skipped
-                .iter()
-                .map(|g| format!("- {g}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+    )
+}
+
+fn check_fast_failure_report(
+    error: &str,
+    diagnostics: &[run::CommandDiagnostic],
+    mut write: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let body = format!(
+        "# check-fast report\n\nStatus: failed\n\nOriginal failure:\n```text\n{error}\n```\n{}",
+        check_fast_diagnostics(diagnostics)
     );
-    write_report("check-fast.md", &body)
+    match write(&body) {
+        Ok(()) => Err(error.to_string()),
+        Err(report_error) => Err(format!(
+            "{error}; failed to publish current check-fast report: {report_error}"
+        )),
+    }
 }
 
 struct ChangedFileCategories {
+    support_tiers: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -792,6 +860,17 @@ struct ChangedFileCategories {
 
 fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     ChangedFileCategories {
+        // Direct leaf inputs plus proof-command/catalog owners. One bounded
+        // scan per applicable invocation; unrelated changes retain the no-op.
+        support_tiers: files.iter().any(|f| {
+            (f.starts_with("docs/specs/") && f.ends_with(".md"))
+                || f == SUPPORT_TIERS_PATH
+                || f == "README.md"
+                || f == RUST_REPAIR_TRUST_CORPUS_PATH
+                || f.starts_with("xtask/src/")
+                || f.starts_with(".github/workflows/")
+                || f.starts_with("scripts/")
+        }),
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
@@ -874,6 +953,37 @@ fn check_fast_selector_failure_report(error: &str) -> String {
 #[cfg(test)]
 mod check_fast_selector_tests {
     use super::*;
+
+    #[test]
+    fn check_fast_children_keep_native_outcomes_and_failure_diagnostics() -> Result<(), String> {
+        let mut rows = Vec::new();
+        run::run_diagnostic("git", &["--version"], &mut rows)?;
+        let original = run::run_diagnostic("git", &["--definitely-not-a-git-option"], &mut rows)
+            .err()
+            .ok_or("invalid git passed")?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].outcome, "pass");
+        assert_eq!(rows[1].outcome, "failed");
+        assert!(rows.iter().all(|row| row.status.is_some()
+            && row.elapsed_ms.is_some()
+            && row.cargo_progress.is_none()));
+        assert_eq!(rows[1].argv, ["--definitely-not-a-git-option"]);
+        let mut body = String::new();
+        let error = check_fast_failure_report(&original, &rows, |current| {
+            body = current.to_string();
+            Err("injected diagnostic I/O".to_string())
+        })
+        .err()
+        .ok_or("failed gate passed")?;
+        assert!(error.contains(&original) && error.contains("injected diagnostic I/O"));
+        assert!(
+            body.contains("Status: failed")
+                && body.contains("outcome=failed")
+                && !body.contains("Status: pass")
+        );
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
@@ -1358,6 +1468,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
     check_pr_shape()?;
@@ -3206,15 +3317,15 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if readiness.behind_main {
-        return "rebase";
-    }
     if pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
     {
         return "wait";
+    }
+    if readiness.behind_main {
+        return "inspect integration";
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {
@@ -3680,6 +3791,8 @@ fn pr_triage_stale_draft_findings(prs: &[PrTriagePullRequest], today: i64) -> Ve
         .collect()
 }
 
+const PR_BEHIND_RECOMMENDED_ACTION: &str = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+
 fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding> {
     prs.iter()
         .filter(|pr| pr.merge_state_status.eq_ignore_ascii_case("BEHIND"))
@@ -3693,8 +3806,7 @@ fn pr_triage_behind_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFinding
                 format_pr_triage_ref(pr),
                 pr.merge_state_status
             )],
-            recommended_action: "Update the branch before relying on CI or merge-readiness state."
-                .to_string(),
+            recommended_action: PR_BEHIND_RECOMMENDED_ACTION.to_string(),
         })
         .collect()
 }
@@ -3805,12 +3917,6 @@ fn pr_triage_queue_disposition(
             "duplicate or stale work needs canonical owner selection",
             "Choose the canonical branch, refresh the stale draft, or close superseded variants.",
         )
-    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
-        (
-            "needs_rebase",
-            "branch is behind its base",
-            "Update the branch before relying on CI or merge-readiness state.",
-        )
     } else if pr_has_finding(findings, pr.number, "policy-sensitive surface") {
         (
             "do_not_touch_wrong_lane",
@@ -3831,6 +3937,12 @@ fn pr_triage_queue_disposition(
             "needs_review",
             "PR is draft or still requires review",
             "Finish review before merge or further queue disposition.",
+        )
+    } else if pr.merge_state_status.eq_ignore_ascii_case("BEHIND") {
+        (
+            "needs_integration_review",
+            "branch is behind its base; material integration judgment is pending",
+            PR_BEHIND_RECOMMENDED_ACTION,
         )
     } else if pr.merge_state_status.eq_ignore_ascii_case("CLEAN") {
         (
@@ -4667,7 +4779,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -12457,7 +12569,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 10] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 12] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -12468,6 +12580,9 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // the public-API path limit. Moved here from `language/rust/mod.rs`
         // so `ripr check` and seam reach (#5411) share one mapping.
         "crates/ripr/src/analysis/classify/transitive_reach.rs",
+        // #5577: a gated trait's syntax in a test-file helper counts for any
+        // type, like a test's; in production code only for types it names.
+        "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module
@@ -12478,6 +12593,11 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // admission uses the same authority for proposed tests/*.rs leaves (#4576).
         "crates/ripr/src/analysis/new_test_target.rs",
         "crates/ripr/src/analysis/new_test_target/integration.rs",
+        // #6544: same-name call identity tells an integration-test crate
+        // apart from the owner's library crate, so its `crate::` and local
+        // modules never name the owner's; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/call_identity.rs",
     ];
 
     let files = tracked_files()?;
@@ -20465,7 +20585,6 @@ fn guarded_allow_attributes_in_text(
             continue;
         }
 
-        let line = byte_line_number(text, index);
         let mut cursor = index + 1;
         if cursor < bytes.len() && bytes[cursor] == b'!' {
             cursor += 1;
@@ -20499,8 +20618,11 @@ fn guarded_allow_attributes_in_text(
             index += 1;
             continue;
         };
+        let mut line = None;
         for lint in attribute_lints(&text[content_start..content_end]) {
             if guarded.contains(lint.as_str()) {
+                // Rejected hash markers need no prefix scan for a line number.
+                let line = *line.get_or_insert_with(|| byte_line_number(text, index));
                 findings.push((line, format!("{kind}({lint})")));
             }
         }

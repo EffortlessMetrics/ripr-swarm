@@ -1,0 +1,4 @@
+fn main() {
+    let frame: [u8; lib_trybuild::frame_len(2)] = [0u8; 5];
+    println!("{}", frame.len());
+}

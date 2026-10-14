@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-rstest-case-attribute-expected",
+  "subject_id": "authored-lib-rstest",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "rstest_case_attribute_table",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

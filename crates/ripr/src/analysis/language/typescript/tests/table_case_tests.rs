@@ -133,3 +133,292 @@ fn non_ascii_table_stays_unresolved() {
         vec![(Some("loyaltyTier(points)".to_string()), None, true, 7)]
     );
 }
+
+// Independent literal-oracle additions for tests/table_case_tests.rs.
+// Reuses its retained public analyze_diff helper `tier_finding`.
+#[test]
+fn empty_parameter_tables_register_no_test_evidence() -> Result<(), String> {
+    for registration in [
+        r#"test.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"it.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.only.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.concurrent.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.each(([] as const))("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"describe.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"suite.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"describe.each(([] satisfies readonly unknown[]))("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"test.skip("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.todo("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+    ] {
+        let source = format!("import {{ loyaltyTier }} from \"../src/tier\";\n{registration}\n");
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 0, "{registration}");
+        assert_eq!(observed_and_expected(&source), Vec::new(), "{registration}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{registration}"
+        );
+        let finding = tier_finding("empty-parameter-table", &source)?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{registration}");
+        assert_eq!(finding.ripr.reach.state, StageState::No, "{registration}");
+        assert_eq!(finding.related_tests.len(), 0, "{registration}");
+        assert_evidence_lacks(&finding, "typescript_test_extraction_partial");
+    }
+    Ok(())
+}
+
+#[test]
+fn nonempty_zero_parameter_cases_and_ordinary_siblings_retain_exact_credit() -> Result<(), String> {
+    for registration in [
+        r#"test.each([[]])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.only.each([[]])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.each([1000])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"describe("live suite", () => { test("live", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"describe.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+           test("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+    ] {
+        let source = format!("import {{ loyaltyTier }} from \"../src/tier\";\n{registration}\n");
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{registration}");
+        assert_eq!(tests[0].local_name, "live", "{registration}");
+        assert_eq!(tests[0].assertions.len(), 1, "{registration}");
+        assert_eq!(
+            tests[0].assertions[0].observed_expression.as_deref(),
+            Some("loyaltyTier(1000)")
+        );
+        assert_eq!(
+            tests[0].assertions[0].expected_value_or_variant.as_deref(),
+            Some("\"gold\"")
+        );
+        assert!(!tests[0].assertions[0].has_dynamic_matcher_arg);
+        let finding = tier_finding("nonempty-or-ordinary-parameter-table", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{registration}");
+        assert_eq!(finding.ripr.reach.state, StageState::Yes, "{registration}");
+        assert_eq!(finding.related_tests.len(), 1, "{registration}");
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_evidence_lacks(&finding, "typescript_test_extraction_partial");
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions() -> Result<(), String>
+{
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { loyaltyTier } from "../src/tier";
+describe.each([])(class EvaluatedTitle {
+    static { test("evaluated live test", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }
+}, () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_some(),
+        "evaluated title expressions can register a live test"
+    );
+    if let Some(gap) = gap {
+        assert_eq!(gap.sample_line, 3);
+        assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+        assert!(gap.snippet.contains("evaluated live test"));
+        assert!(!gap.snippet.contains("dead child"));
+    }
+    let root = ts_unique_tempdir("empty-table-evaluated-title")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().any(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing evaluated-title finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn empty_tables_preserve_partial_disclosure_for_evaluated_sequence_titles() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { test, describe, expect } from "vitest";
+import { loyaltyTier } from "../src/tier";
+describe.each([])((test("evaluated live test", () => { expect(loyaltyTier(1000)).toBe("gold"); }), "dead suite"), () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_some(),
+        "evaluated sequence titles register a live test"
+    );
+    if let Some(gap) = gap {
+        assert_eq!(gap.sample_line, 3);
+        assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+        assert!(gap.snippet.contains("evaluated live test"));
+        assert!(!gap.snippet.contains("dead child"));
+    }
+    let root = ts_unique_tempdir("empty-table-evaluated-sequence-title")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().any(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing evaluated-sequence-title finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn empty_tables_ignore_discarded_function_values_in_sequence_titles() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { test, describe, expect } from "vitest";
+import { loyaltyTier } from "../src/tier";
+describe.each([])((() => { test("dead title callback", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }, "dead suite"), () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_none(),
+        "discarded function values cannot register tests"
+    );
+    let root = ts_unique_tempdir("empty-table-discarded-sequence-function")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().all(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_none_or(|detail| !detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing discarded-sequence-function finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn empty_tables_disclose_only_executed_inline_title_functions() -> Result<(), String> {
+    let file = Path::new("tests/tier.test.ts");
+    let cases = [
+        (
+            "arrow-block",
+            r#"(() => { test("live arrow title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            true,
+        ),
+        (
+            "ordinary-function",
+            r#"(function () { test("live function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            true,
+        ),
+        (
+            "expression-arrow",
+            r#"(() => (test("live concise title", () => { expect(loyaltyTier(1000)).toBe("gold"); }), "dead suite"))()"#,
+            true,
+        ),
+        (
+            "generator-not-advanced",
+            r#"(function* () { test("dead generator title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })()"#,
+            false,
+        ),
+        (
+            "returned-dormant-function",
+            r#"(() => (() => { test("dead returned function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }))()"#,
+            false,
+        ),
+        (
+            "uninvoked-dormant-function",
+            r#"(() => { test("dead uninvoked function title", () => { expect(loyaltyTier(1000)).toBe("gold"); }); return "dead suite"; })"#,
+            false,
+        ),
+    ];
+    for (label, title, partial_warning) in cases {
+        let source = format!(
+            "import {{ test, describe, expect }} from \"vitest\";\n\
+             import {{ loyaltyTier }} from \"../src/tier\";\n\
+             describe.each([])({title}, () => {{ test(\"dead empty callback\", () => {{ expect(loyaltyTier(1000)).toBe(\"gold\"); }}); }});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 0, "{label}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert_eq!(gap.is_some(), partial_warning, "{label}");
+        if let Some(gap) = gap {
+            assert!(gap.snippet.contains("live"), "{label}: {}", gap.snippet);
+            assert!(!gap.snippet.contains("dead empty callback"), "{label}");
+        }
+        let root = ts_unique_tempdir(&format!("empty-table-iife-{label}"))?;
+        ts_write_file(&root.join("src/tier.ts"), TIER)?;
+        ts_write_file(&root.join("tests/tier.test.ts"), &source)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let result = result?;
+        let actual_partial = result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        });
+        assert_eq!(actual_partial, partial_warning, "{label}");
+        assert_eq!(result.findings.len(), 1, "{label}");
+        let finding = result
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == TIER_LINE.0)
+            .ok_or_else(|| format!("missing IIFE finding: {label}"))?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{label}");
+        assert_eq!(finding.ripr.reach.state, StageState::No, "{label}");
+        assert_eq!(finding.related_tests.len(), 0, "{label}");
+    }
+    Ok(())
+}

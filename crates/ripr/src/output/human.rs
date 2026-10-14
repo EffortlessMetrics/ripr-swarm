@@ -143,7 +143,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output);
+    let mut out = render_header_summary(output, config);
     render_analysis_outcome_disclosure(&mut out, output);
     render_suppression_policy_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
@@ -191,7 +191,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output);
+    let mut out = render_header_summary(output, config);
 
     render_analysis_outcome_disclosure(&mut out, output);
     render_suppression_policy_block(&mut out, output);
@@ -226,13 +226,33 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
-    let mut findings_rendered = 0usize;
-    for finding in &output.findings {
-        if suppressed_ids.contains(finding.id.as_str()) {
-            continue;
+    let visible: Vec<_> = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .collect();
+    // Navigation is the established CLI/library compatibility boundary. Build
+    // sharing only from visible donors; public library legacy bytes stay exact.
+    // Decide once to avoid rescanning the catalogue for each finding.
+    let shared = drill_in
+        .map(|_| shared::SharedReport::build(&visible))
+        .filter(shared::SharedReport::is_shared);
+    if let Some(shared) = &shared {
+        shared.render_catalogue(&mut out);
+    }
+    let findings_rendered = visible.len();
+    for (ordinal, finding) in visible.iter().enumerate() {
+        let shared_sections = shared.as_ref().map(|shared| &shared.findings[ordinal]);
+        if shared_sections.is_some() {
+            out.push_str(&format!("Finding {}: ", ordinal + 1));
         }
-        findings_rendered += 1;
-        out.push_str(&render_finding_with_config(finding, config, &output.root));
+        out.push_str(&sections::render_finding_with_shared_sections(
+            finding,
+            config,
+            &output.root,
+            JsonPointerWording::CheckFlag,
+            shared_sections,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             for command in [
@@ -295,13 +315,22 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
     }
 }
 
-fn render_header_summary(output: &CheckOutput) -> String {
+fn render_header_summary(output: &CheckOutput, config: &RiprConfig) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
+    // the header CI logs keep. Absence is the explicit built-in-defaults
+    // signal — never a fake path.
+    if let Some(path) = config.source_path() {
+        out.push_str(&format!(
+            "config: {}\n",
+            crate::output::path::human_path(path)
+        ));
+    }
     render_analyzed_revisions(&mut out, output);
     out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
@@ -782,9 +811,9 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 advisory.file_count, file_label, language,
             ));
         } else if !advisory.enabled {
-            let language_lowercase = advisory.language.to_lowercase();
+            let enabled_line = preview_enablement_toml(&output.root, &advisory.language);
             out.push_str(&format!(
-                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
+                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
                 advisory.file_count, file_label, language,
             ));
             if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
@@ -811,6 +840,35 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
             ));
         }
     }
+}
+
+/// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
+/// Names Rust only when the analyzed root actually has Rust markers (#7648).
+fn preview_enablement_toml(root: &Path, language: &str) -> String {
+    let rust_detected = crate::domain::rust_markers_at(root);
+    let to_add = match crate::domain::LanguageId::from_wire(language) {
+        Some(crate::domain::LanguageId::JavaScript) => crate::domain::LanguageId::TypeScript,
+        Some(id) => id,
+        None => {
+            let mut names = Vec::new();
+            if rust_detected {
+                names.push("rust");
+            }
+            names.push(language);
+            return crate::domain::format_languages_enabled_toml(&names);
+        }
+    };
+    let enabled: &[crate::domain::LanguageId] = if rust_detected {
+        &[crate::domain::LanguageId::Rust]
+    } else {
+        &[]
+    };
+    let suggestion = crate::domain::enablement_tip_languages(enabled, rust_detected, [to_add]);
+    let names: Vec<&str> = suggestion
+        .iter()
+        .map(crate::domain::LanguageId::as_str)
+        .collect();
+    crate::domain::format_languages_enabled_toml(&names)
 }
 
 /// Render per-language run-status lines for languages that did not complete
@@ -884,6 +942,7 @@ pub fn render_finding(finding: &Finding) -> String {
         finding,
         &RiprConfig::default(),
         Path::new("."),
+        JsonPointerWording::CheckFlag,
     ))
 }
 
@@ -895,7 +954,13 @@ pub(crate) fn render_finding_with_context_command(
     context_command: &str,
     root: &Path,
 ) -> String {
-    let mut out = render_finding_with_config(finding, config, root);
+    // #7476: explain reuses check's evidence window, but rejects the
+    // `--format` flag that window names. The pointer wording is selected while
+    // the evidence lines are built (`ExplainNamesCheck`), so it names check as
+    // prose without rewriting anything else in the rendered finding — quoted
+    // source fragments keep their exact bytes.
+    let mut out =
+        render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
     out.push_str(&explain::render_verdict_explanation(finding));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -915,15 +980,18 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 mod evidence_lines;
 mod explain;
 mod sections;
+mod shared;
 mod triage;
 
+pub(crate) use evidence_lines::JsonPointerWording;
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
 mod tests {
-    use super::{render, render_finding, terminal_safe};
+    use super::{render, render_finding, render_with_config, terminal_safe};
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
+    use crate::config::RiprConfig;
     use crate::domain::{
         ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
         Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
@@ -983,6 +1051,9 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("mode: draft"));
+        // RIPR-SPEC-0255 (#7536): built-in defaults are an explicit absence —
+        // no config line, never a fake path.
+        assert!(!rendered.contains("\nconfig:"));
         // #4322: canonical class tokens, unknown classes kept separate, and an
         // unsuppressed/total denominator.
         assert!(rendered.contains(
@@ -990,6 +1061,41 @@ mod tests {
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    /// RIPR-SPEC-0255 (#7536): a run that loaded a `ripr.toml` names it in
+    /// the header, directly after `root:`; the named file is the one that
+    /// governed, so a different loaded file names a different path.
+    #[test]
+    fn header_names_the_loaded_config_path() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let loaded = RiprConfig {
+            source_path: Some(PathBuf::from("repo/ripr.toml")),
+            ..RiprConfig::default()
+        };
+
+        let rendered = render_with_config(&output, &loaded);
+
+        assert!(rendered.contains("root: repo\nconfig: repo/ripr.toml\n"));
     }
 
     /// #5258: when the unanalyzed working-tree state is untracked files, the
@@ -1504,10 +1610,53 @@ mod tests {
                 "suggested_verify_command: pytest tests/test_pricing.py::test_small_order_pays_shipping".to_string(),
                 "suggested_verify_command_confidence: high".to_string(),
             ];
+            finding.related_tests = vec![RelatedTest {
+                name: "test_small_order_pays_shipping".to_string(),
+                file: PathBuf::from("tests/test_pricing.py"),
+                line: 7,
+                oracle: Some("assert shipping_fee(5)".to_string()),
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Smoke,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            }];
         } else {
             finding.activation.missing_discriminators.clear();
         }
         finding
+    }
+
+    /// #7587: a deleted or moved Python line is base-side evidence and names
+    /// a line the candidate no longer has, so it gets no repair card, while
+    /// the same finding on the candidate side keeps its card.
+    #[test]
+    fn base_side_python_finding_gets_no_repair_card() {
+        let carded = python_preview_finding(11, true);
+        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = carded.clone();
+            base_side.source_currentness = currentness;
+            assert!(
+                crate::output::python_repair_card::python_repair_card(&base_side).is_none(),
+                "{currentness:?}"
+            );
+        }
+    }
+
+    /// #7587 review: without a card the full render falls back to the
+    /// placement evidence, which a base-side finding must not reach either.
+    #[test]
+    fn base_side_python_finding_gets_no_repair_placement() {
+        let mut base_side = python_preview_finding(11, true);
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(crate::output::python_repair_card::python_repair_card(&base_side).is_none());
+        let rendered = render_finding(&base_side);
+        assert!(!rendered.contains("Repair placement"), "{rendered}");
+        assert!(!rendered.contains("suggested file:"), "{rendered}");
     }
 
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
@@ -1521,6 +1670,11 @@ mod tests {
         let carded = python_preview_finding(11, true);
         assert!(crate::output::python_repair_card::python_repair_card(&uncarded).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
+        assert_eq!(
+            crate::output::python_repair_card::python_repair_card(&carded)
+                .map(|card| card.current_test_evidence),
+            Some("tests/test_pricing.py:7 test_small_order_pays_shipping currently has oracle_strength=smoke, oracle_kind=smoke_only: assert shipping_fee(5)".to_string())
+        );
         for findings in [
             vec![uncarded.clone(), carded.clone()],
             vec![carded.clone(), uncarded.clone()],
@@ -4070,6 +4224,155 @@ mod tests {
         );
     }
 
+    /// #7476: `ripr explain` prints the same evidence window as check, but it
+    /// does not accept `--format`. The explain footnote must name check's JSON
+    /// format instead of a flag that `ripr explain --format json` rejects.
+    /// Check's own renderer keeps the flag, because that command accepts it.
+    #[test]
+    fn explain_evidence_window_names_check_json_not_an_explain_flag() {
+        let mut finding = sample_finding();
+        for index in 1..9 {
+            finding.related_tests.push(RelatedTest {
+                name: format!("test_extra_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 100 + index,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            });
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            explained.contains(
+                "related tests (showing 5 of 9; more via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            !explained.contains("--format json"),
+            "explain must not print a format flag it rejects:\n{explained}"
+        );
+
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("related tests (showing 5 of 9; more in --format json)"),
+            "{checked}"
+        );
+
+        for index in 0..28 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 400 + index,
+                text: format!("extra({index})"),
+                value: format!("extra{index} = {index}"),
+                context: ValueContext::AssertionArgument,
+            });
+        }
+        let over_cap = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            over_cap.contains(
+                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+            ),
+            "{over_cap}"
+        );
+        assert!(!over_cap.contains("--format"), "{over_cap}");
+    }
+
+    /// #7476 review: the explain pointer rewrite used to run over the whole
+    /// rendered finding, so quoted source or a judged assertion that itself
+    /// contained a pointer phrase was silently changed and explain no longer
+    /// showed the analyzed code. The wording is now selected while the
+    /// evidence lines are built, so explain preserves those bytes verbatim
+    /// and only the window pointers carry the check-prose form.
+    #[test]
+    fn explain_preserves_source_and_oracle_containing_pointer_phrases() {
+        let mut finding = sample_finding();
+        finding.probe.before =
+            Some("assert_eq!(list(), \"full list in --format json\")".to_string());
+        finding.probe.after =
+            Some("assert_eq!(list(), \"--format json keeps a ranked 32\")".to_string());
+        if let Some(test) = finding.related_tests.first_mut() {
+            test.oracle = Some("assert_eq!(line, \"; more in --format json\")".to_string());
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("after:  assert_eq!(list(), \"--format json keeps a ranked 32\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("assert_eq!(line, \"; more in --format json\")"),
+            "explain changed the judged assertion:\n{explained}"
+        );
+        // Only the window pointer carries the explain wording.
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+
+        // Check's own renderer keeps both the flag pointer and the verbatim
+        // source, pinning the distinction between the two surfaces.
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+    }
+
     /// #4320: the digest shows only the first related test; the line must
     /// carry the total so the reader knows how much reaching-test evidence
     /// exists. A single related test keeps the unmarked form.
@@ -4979,7 +5282,7 @@ mod tests {
         );
     }
 
-    fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
+    pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
             harness_projections: Vec::new(),
@@ -5008,7 +5311,7 @@ mod tests {
         }
     }
 
-    fn sample_finding() -> Finding {
+    pub(super) fn sample_finding() -> Finding {
         Finding {
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
@@ -5361,8 +5664,12 @@ mod tests {
             // Adapter compiled in: the ripr.toml edit is real, but it is not
             // sufficient on its own — a fact packet/exporter is still needed.
             assert!(
-                rendered.contains("[languages]\nenabled = [\"rust\", \"perl\"]"),
-                "expected copy-paste TOML block; got:\n{rendered}"
+                rendered.contains("[languages]\nenabled = [\"perl\"]"),
+                "a non-Rust root must not be told to enable Rust; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(r#""rust""#),
+                "default rust must not leak into a Perl-only tip; got:\n{rendered}"
             );
             assert!(
                 rendered.contains("Perl also needs a fact packet"),
@@ -5378,6 +5685,7 @@ mod tests {
             );
             assert!(
                 !rendered.contains("Enable it in ripr.toml")
+                    && !rendered.contains("enabled = [\"perl\"]")
                     && !rendered.contains("enabled = [\"rust\", \"perl\"]"),
                 "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
             );
@@ -5439,8 +5747,12 @@ mod tests {
         );
         if cfg!(feature = "lang-python") {
             assert!(
-                rendered.contains(r#"enabled = ["rust", "python"]"#),
-                "expected python-specific copy-paste TOML block; got:\n{rendered}"
+                rendered.contains(r#"enabled = ["python"]"#),
+                "expected python-specific copy-paste TOML block without rust; got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains(r#""rust""#),
+                "a non-Rust root must not be told to enable Rust; got:\n{rendered}"
             );
         } else {
             // Adapter NOT compiled in: config load rejects `python`, so the
@@ -5451,10 +5763,63 @@ mod tests {
                 "expected not-compiled Python disclosure; got:\n{rendered}"
             );
             assert!(
-                !rendered.contains(r#"enabled = ["rust", "python"]"#),
+                !rendered.contains(r#"enabled = ["python"]"#)
+                    && !rendered.contains(r#"enabled = ["rust", "python"]"#),
                 "must not advise a ripr.toml edit this binary rejects; got:\n{rendered}"
             );
         }
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn render_not_enabled_disclosure_keeps_rust_when_root_has_rust_markers() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-tip-rust-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create rust root: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"mixed\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: root.clone(),
+            base: None,
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: vec![PreviewLanguageAdvisory {
+                language: "python".to_string(),
+                file_count: 1,
+                sample_paths: vec!["app/models.py".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            }],
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let rendered = render(&output);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            rendered.contains(r#"enabled = ["rust", "python"]"#),
+            "mixed repos keep rust in the check tip; got:\n{rendered}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -6484,8 +6849,9 @@ mod tests {
         assert!(not_enabled.contains(expected), "{not_enabled}");
         if cfg!(feature = "lang-typescript") {
             assert!(
-                not_enabled.contains("enabled = [\"rust\", \"typescript\"]"),
-                "{not_enabled}"
+                not_enabled.contains("enabled = [\"typescript\"]")
+                    && !not_enabled.contains(r#""rust""#),
+                "a non-Rust root must suggest typescript only: {not_enabled}"
             );
             assert!(
                 not_enabled

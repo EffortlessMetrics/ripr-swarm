@@ -35,17 +35,21 @@ mod typescript;
 
 pub(crate) use adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult};
 pub(crate) use id::LanguageId;
+#[cfg(all(test, feature = "lang-perl"))]
+pub(crate) use perl::{
+    EXACT_RETURN_PACKET, only_finding, perl_direct_and_advisory_finding, perl_miss_matrix_findings,
+    with_concrete_discriminator,
+};
 #[cfg(feature = "lang-perl")]
 pub(crate) use perl::{PERL_PRODUCER_FAILURE_REASON_PREFIX, PerlAdapter};
-#[cfg(all(test, feature = "lang-perl"))]
-pub(crate) use perl::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
     JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_script_language,
-    is_ts_js_source_extension, route, ts_js_source_kind, unanalyzed_source_language,
+    is_ts_js_source_extension, route, snapshot_input, ts_js_source_kind,
+    unanalyzed_source_language,
 };
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,

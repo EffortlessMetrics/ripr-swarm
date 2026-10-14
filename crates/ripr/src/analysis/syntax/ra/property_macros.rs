@@ -66,7 +66,10 @@ pub(super) fn unresolved_property_macros(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{is_assertion_macro, is_assertion_macro_leaf, summarize_file_with_parser};
+    use super::super::{
+        is_assertion_macro, is_assertion_macro_leaf, parser_oracles_for_function,
+        summarize_file_with_parser,
+    };
     use std::path::Path;
 
     #[test]
@@ -128,6 +131,82 @@ mod tests {
         }
         assert!(is_assertion_macro("assert_eq"));
         assert!(!is_assertion_macro("other::assert_eq"));
+    }
+
+    #[test]
+    fn drop_in_assertion_crate_paths_keep_assertion_authority() {
+        for name in [
+            "pretty_assertions::assert_eq",
+            "pretty_assertions::assert_ne",
+            "similar_asserts::assert_eq",
+            "std::assert_eq",
+            "::core::assert",
+            "assert_matches::assert_matches",
+        ] {
+            assert!(is_assertion_macro(name), "{name}");
+        }
+        for name in [
+            "other::assert_eq",
+            "pretty_assertions::nested::assert_eq",
+            "pretty_assertions::assert_float",
+            "proptest::prop_assert_eq",
+        ] {
+            assert!(!is_assertion_macro(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn qualified_drop_in_assertions_classify_unless_their_root_is_bound_locally()
+    -> Result<(), String> {
+        use crate::domain::{OracleKind, OracleStrength};
+        let test =
+            "#[test]\nfn pins() {\n    pretty_assertions::assert_eq!(make(2).value, 2);\n}\n";
+        for prefix in [
+            "",
+            "use pretty_assertions;\n",
+            "use {pretty_assertions};\n",
+            "use pretty_assertions::{self};\n",
+            "extern crate pretty_assertions;\n",
+        ] {
+            let source = format!("{prefix}{test}");
+            let facts = summarize_file_with_parser(Path::new("src/lib.rs"), &source)?;
+            assert_eq!(facts.tests.len(), 1, "{source}");
+            let [assertion] = facts.tests[0].assertions.as_slice() else {
+                return Err(format!("expected one assertion in {source}"));
+            };
+            assert_eq!(assertion.kind, OracleKind::ExactValue, "{source}");
+            assert_eq!(assertion.strength, OracleStrength::Strong, "{source}");
+        }
+        // A local module, import or crate rename can bind the root to a
+        // macro that does not compare, so the call earns no assertion.
+        for prefix in [
+            "mod pretty_assertions { pub use crate::noop as assert_eq; }\n",
+            "mod tests { mod pretty_assertions {} }\n",
+            "use crate::helpers as pretty_assertions;\n",
+            "use crate::helpers::pretty_assertions;\n",
+            "use crate::{helpers::r#pretty_assertions};\n",
+            "extern crate my_macros as pretty_assertions;\n",
+            "use crate::helpers::pretty_assertions::{self};\n",
+            "use crate::{pretty_assertions};\n",
+            // An item-position macro may emit such a module.
+            "my_macros::emit_mod!();\n",
+            "mod tests { shim!(); }\n",
+        ] {
+            let source = format!("{prefix}{test}");
+            let facts = summarize_file_with_parser(Path::new("src/lib.rs"), &source)?;
+            assert_eq!(facts.tests.len(), 1, "{source}");
+            assert!(facts.tests[0].assertions.is_empty(), "{source}");
+        }
+        // A promoted function is re-parsed alone, so its file's bindings
+        // are not visible and a qualified drop-in fails closed there.
+        let qualified = "fn pins() {\n    pretty_assertions::assert_eq!(make(2).value, 2);\n}\n";
+        assert_eq!(parser_oracles_for_function(qualified, 1), Some(Vec::new()));
+        let bare = qualified.replace("pretty_assertions::", "");
+        assert_eq!(
+            parser_oracles_for_function(&bare, 1).map(|oracles| oracles.len()),
+            Some(1)
+        );
+        Ok(())
     }
 
     #[test]

@@ -1,4 +1,4 @@
-<!-- section: Features -->
+<!-- section: Added -->
 - One canonical next action (#6304, RIPR-SPEC-0242): a single selector
   projects the primary action for check triage, RepairCard `next_action`,
   and RepairAttempt status from a closed eight-class vocabulary with exact

@@ -7,6 +7,7 @@ mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -9343,6 +9344,68 @@ fn allow_attribute_detection_ignores_untracked_lints() {
 }
 
 #[test]
+fn allow_attribute_detection_preserves_literal_multiline_byte_lines() {
+    let text = format!(
+        "// 🦀 # noise\n{}\nconst HASH: &str = \"#\";\n{}\n dead_code,\n warnings,\n clippy::module_name_repetitions,\n reason = \"🦀 #\")]\nfn f() {{}}\n{}\n// {}\n",
+        concat!("#", "[cfg(any())]"),
+        concat!("#", "[allow("),
+        concat!("#", "![expect(unused_imports)]"),
+        concat!("#", "[allow(unsafe_code)]"),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    // The existing text scanner also recognizes attribute text in comments.
+    assert_eq!(
+        findings,
+        vec![
+            (4, "allow(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (10, "expect(unused_imports)".to_string()),
+            (11, "allow(unsafe_code)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
+    for text in [
+        "#",
+        "#!",
+        "#[]",
+        concat!("#", "[allow]"),
+        concat!("#", "[allow(warnings"),
+        concat!("#", "[allows(warnings)]"),
+        concat!("#", "[expect = (warnings)]"),
+        concat!("#", "[allow(warning)]"),
+        concat!("#", "[allow(reason = \"warnings\")]"),
+        concat!("#", "[allow(clippy::module_name_repetitions)]"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
+    let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
+            (129, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn allow_attribute_budget_fails_stale_shrunk_and_orphaned_rows() {
     let guarded = guarded_allow_attribute_lints();
     let mut allowlist = BTreeMap::new();
@@ -12905,7 +12968,12 @@ fn goldens_check_failure_message_is_a_repair_card() {
         },
     }];
     let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
-    let message = super::goldens_check_failure_message(&entries, &violations);
+    let provenance = super::GoldenDriftProvenance {
+        binary: "/work/target/debug/ripr".to_string(),
+        ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+        revision: "abc123".to_string(),
+    };
+    let message = super::goldens_check_failure_message(&entries, &violations, &provenance);
     assert!(message.contains("golden-drift.md"), "{message}");
     assert!(
         message.contains("python_field_assignment_shape"),
@@ -12917,6 +12985,9 @@ fn goldens_check_failure_message_is_a_repair_card() {
         message.contains("reproduce: cargo xtask goldens check"),
         "{message}"
     );
+    // #7401: the card names the build that produced the actual side.
+    assert!(message.contains("ripr 0.11.0 (abc123)"), "{message}");
+    assert!(message.contains("/work/target/debug/ripr"), "{message}");
 }
 
 #[test]
@@ -28467,6 +28538,40 @@ upload_debug_artifacts: false
     assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
 }
 
+#[test]
+fn check_droid_common_flags_missing_contents_read() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "review_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_contents_write() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "contents: write\nreview_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
 fn valid_droid_security_scan_yaml() -> &'static str {
     r#"
 on:
@@ -28478,6 +28583,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     steps:
@@ -28648,6 +28758,40 @@ fn check_droid_security_scan_flags_debug_artifact_upload() {
         violations
             .iter()
             .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_contents_write() {
+    let yaml = valid_droid_security_scan_yaml().replace("contents: read", "contents: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_id_token_write() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("contents: read", "contents: read\n      id-token: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant id-token: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_contents_read() {
+    let yaml = valid_droid_security_scan_yaml().replace("      contents: read\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
     );
 }
 
@@ -29308,7 +29452,135 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let mut behind = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     behind.merge_state_status = "BEHIND".to_string();
     let behind_readiness = gh_pr_status_readiness(&behind, &contexts, true, Vec::new());
-    assert_eq!(gh_pr_safe_next_action(&behind, &behind_readiness), "rebase");
+    assert_eq!(
+        gh_pr_safe_next_action(&behind, &behind_readiness),
+        "inspect integration"
+    );
+}
+
+#[test]
+fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
+    let contexts = vec!["rust".to_string()];
+    for (case, draft, review, status, conclusion, expected) in [
+        (
+            "behind only",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect integration",
+        ),
+        ("draft", true, "APPROVED", "COMPLETED", "SUCCESS", "wait"),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "wait",
+        ),
+        (
+            "running check",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "wait",
+        ),
+        ("queued check", false, "APPROVED", "QUEUED", "", "wait"),
+        (
+            "failed check",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "inspect failure",
+        ),
+        (
+            "changes requested",
+            false,
+            "CHANGES_REQUESTED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect failure",
+        ),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", status, conclusion)]);
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.merge_state_status = "bEhInD".to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert!(readiness.behind_main, "{case}: setup must exercise BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{case}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
+    let contexts = vec!["rust".to_string()];
+    for (state, expected) in [
+        ("CLEAN", "merge"),
+        ("BEHIND", "inspect integration"),
+        ("DIRTY", "inspect failure"),
+        ("UNKNOWN", "wait"),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+        pr.merge_state_status = state.to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert_eq!(readiness.behind_main, state == "BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{state}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_waits_for_a_running_advisory_check() {
+    let mut pr = gh_pr_status_pr(vec![
+        gh_pr_status_check("rust", "COMPLETED", "SUCCESS"),
+        gh_pr_status_check("droid/review", "IN_PROGRESS", ""),
+    ]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert!(readiness.behind_main);
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+}
+
+#[test]
+fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), String> {
+    let pr = parse_gh_pr_status_pull_request(
+        r#"{
+            "number": 42,
+            "title": "behind-only observation",
+            "isDraft": false,
+            "mergeStateStatus": "BEHIND",
+            "headRefName": "candidate",
+            "baseRefName": "main",
+            "reviewDecision": "APPROVED",
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ]
+        }"#,
+    )?;
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "setup must contain the successful check"
+    );
+    let contexts = vec!["rust".to_string()];
+    let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+    let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
+    assert!(markdown.contains("- behind main: `true`"));
+    assert!(markdown.contains("- safe next action: `inspect integration`"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pr, &contexts, &readiness))
+        .map_err(|err| format!("behind PR packet should parse: {err}"))?;
+    assert_eq!(json["schema_version"], "0.1");
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(json["merge_state"], "BEHIND");
+    assert_eq!(json["behind_main"], true);
+    assert_eq!(json["safe_next_action"], "inspect integration");
+    Ok(())
 }
 
 #[test]
@@ -29457,7 +29729,7 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
     );
     assert_eq!(
         dispositions.get(&2).map(String::as_str),
-        Some("needs_rebase")
+        Some("needs_integration_review")
     );
     assert_eq!(
         dispositions.get(&3).map(String::as_str),
@@ -29472,6 +29744,130 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Result<(), String> {
+    let mut pr = triage_pr(2, "devex: behind", &["docs/CI.md"]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(prs, today);
+    let behind = findings
+        .iter()
+        .filter(|f| f.category == "behind main")
+        .collect::<Vec<_>>();
+    assert_eq!(behind.len(), 1, "setup must exercise the behind finding");
+    let expected = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+    assert_eq!(behind[0].recommended_action, expected);
+    let dispositions = pr_triage_queue_dispositions(prs, &findings);
+    assert_eq!(dispositions.len(), 1);
+    assert_eq!(dispositions[0].disposition, "needs_integration_review");
+    assert_eq!(dispositions[0].recommended_action, expected);
+    let markdown = pr_triage_markdown(prs, &findings, today);
+    assert!(markdown.contains("`needs_integration_review`"));
+    assert!(markdown.contains("BEHIND"));
+    let (finding_section, remaining_sections) = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("board must contain the queue section")?;
+    assert!(finding_section.contains(&format!("Recommended action:\n\n```text\n{expected}\n```")));
+    let queue_section = remaining_sections
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("board must contain the open PR section")?
+        .0;
+    let queue_row = queue_section
+        .lines()
+        .find(|row| row.starts_with("| #2 |"))
+        .ok_or("board must contain this PR's disposition row")?;
+    assert!(queue_row.ends_with(&format!(" | {expected} |")));
+    assert!(!markdown.contains("needs_rebase"));
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &findings, today, "fixture"))
+        .map_err(|err| format!("behind board packet should parse: {err}"))?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_integration_review"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    let encoded_findings = json["findings"]
+        .as_array()
+        .ok_or("board findings must be an array")?;
+    let encoded_behind = encoded_findings
+        .iter()
+        .find(|f| f["category"] == "behind main")
+        .ok_or("board must retain the behind observation")?;
+    assert_eq!(encoded_behind["recommended_action"], expected);
+    let recommended_actions = json["recommended_actions"]
+        .as_array()
+        .ok_or("board recommended actions must be an array")?;
+    let behind_action = recommended_actions
+        .iter()
+        .find(|a| a["category"] == "behind main")
+        .ok_or("board must recommend a next step for the behind observation")?;
+    assert_eq!(behind_action["action"], expected);
+    Ok(())
+}
+
+#[test]
+fn pr_triage_behind_keeps_review_validation_and_policy_routes() {
+    for (case, draft, review, status, conclusion, path, expected) in [
+        (
+            "draft",
+            true,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "pending",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "failed",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "policy",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            ".github/workflows/ci.yml",
+            "do_not_touch_wrong_lane",
+        ),
+    ] {
+        let mut pr = triage_pr(2, "devex: behind", &[path]);
+        pr.merge_state_status = "BEHIND".to_string();
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.checks = vec![gh_pr_status_check("rust", status, conclusion)];
+        let prs = std::slice::from_ref(&pr);
+        let findings = pr_triage_findings(prs, days_from_civil(2026, 5, 14));
+        let dispositions = pr_triage_queue_dispositions(prs, &findings);
+        assert_eq!(dispositions.len(), 1);
+        assert_eq!(dispositions[0].disposition, expected, "{case}");
+    }
 }
 
 #[test]
@@ -29873,7 +30269,9 @@ fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
     let common = report
         .lines()
-        .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
+        .find(|line| {
+            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
+        })
         .ok_or("common packet coverage is absent from the policy report")?;
     let common_tests = packet_coverage_selected_tests(common)?;
     for subject in [
@@ -29974,7 +30372,7 @@ fn packet_coverage_report_fixture() -> String {
             "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
             "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
             "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
-            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "`cargo test -p xtask --bin xtask --locked --offline portable_consumer`\n",
             "- line 1; host={host}; declared=unix; {native}; ",
             "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
         ),
@@ -29997,6 +30395,23 @@ fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
         );
         write(&path, &extra);
         assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_unpinned_or_wrong_common_binary() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-common-binary", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for target in ["", "--bin neighboring_binary "] {
+            write(&path, &report.replacen("--bin xtask ", target, 1));
+            if assert_packet_coverage_report().is_ok() {
+                return Err(format!("wrong common packet target accepted: {target:?}"));
+            }
+        }
+        Ok(())
     })
 }
 

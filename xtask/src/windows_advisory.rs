@@ -796,7 +796,7 @@ fn load_run(log: &Path, status: &Path) -> RunOutcome {
 /// `\x1b[1m\x1b[92m     Running\x1b[0m unittests src\lib.rs (...)`. Matching a
 /// prefix like `Running ` against that fails, which is how the first real lane
 /// run reported no targets while parsing every failure correctly.
-fn strip_ansi(line: &str) -> String {
+pub(crate) fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
     while let Some(ch) = chars.next() {
