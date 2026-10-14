@@ -916,7 +916,10 @@ fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
 #[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
-    // `Codec::decode` owner never takes a bare call.
+    // `Codec::decode` owner never takes a bare call. #6617 decision: the
+    // associated owner now establishes a `Codec::decode(..)` pin
+    // (RIPR-SPEC-0172), so B2 is asserted directly on the test side: the
+    // pin exists and the bare `decode(8)` assertion is not admitted.
     let lib = "pub struct Codec;\n\nimpl Codec {\n    pub fn decode(input: u32) -> u32 {\n        input.rotate_left(3)\n    }\n}\n\npub fn decode(input: u32) -> u32 {\n    input + 1\n}\n";
     let tests = "use demo::decode;\n\n#[test]\nfn decodes() {\n    assert_eq!(decode(8), 9);\n}\n";
     let index = index(&[(LIB, lib), (TESTS, tests)]);
@@ -927,7 +930,12 @@ fn bare_call_names_only_a_module_level_function() {
     assert!(associated.is_some_and(|function| !function.item.has_self_param));
     let Some(associated) = associated else { return };
     let probe = return_probe(associated, "input.rotate_left(3)");
-    assert!(OwnerReturnPin::establish(&probe, associated, &index).is_none());
+    let associated_pin = OwnerReturnPin::establish(&probe, associated, &index);
+    assert!(associated_pin.is_some());
+    let Some(associated_pin) = associated_pin else {
+        return;
+    };
+    assert!(admitted_texts(&index, &associated_pin).is_empty());
     // The free function does take the bare call, and the associated
     // function of the same name does not compete with it.
     let free = index.functions().iter().find(|function| {
@@ -7034,4 +7042,289 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
         admitted(&index, &pin),
         vec![("assert!(matches!(check(5), Ok(5)));".to_string(), false)]
     );
+}
+
+// --- #6617: associated-function owners pinned through `T::name(..)` ---
+
+/// An inherent associated `Gauge::reading` (the owner, first in the file)
+/// beside a module-level `reading` of the same name.
+const ASSOC_GAUGE_LIB: &str = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n\npub struct Other;\n\npub fn reading() -> u32 {\n    0\n}\n";
+
+fn gauge_test(prelude: &str, body: &str) -> String {
+    format!("{prelude}\n\n#[test]\nfn reads() {{\n    {body}\n}}\n")
+}
+
+/// The assertions of the one test that the `Gauge::reading` pin admits, or
+/// `None` when the pin is not established.
+fn gauge_admitted(files: &[(&str, &str)]) -> Option<Vec<String>> {
+    let index = index(files);
+    let owner = owner(&index, "reading");
+    assert_eq!(
+        (owner.item.container.clone(), owner.item.has_self_param),
+        (
+            FunctionContainer::Inherent {
+                self_ty: "Gauge".to_string()
+            },
+            false
+        ),
+        "the fixture's owner is the associated `Gauge::reading`"
+    );
+    let pin = establish(&index, "reading", "40 + 2")?;
+    Some(admitted_texts(&index, &pin))
+}
+
+#[test]
+fn associated_function_pins_through_a_directly_imported_owner_type() {
+    for body in [
+        "assert_eq!(Gauge::reading(), 42);",
+        "assert_eq!(42, Gauge::reading());",
+        "let value = Gauge::reading();\n    assert_eq!(value, 42);",
+    ] {
+        let tests = gauge_test("use demo::Gauge;", body);
+        let admitted = gauge_admitted(&[(LIB, ASSOC_GAUGE_LIB), (TESTS, &tests)]);
+        assert_eq!(admitted.map(|texts| texts.len()), Some(1), "{body}");
+    }
+}
+
+#[test]
+fn associated_function_pin_refuses_other_names_for_the_type() {
+    for (prelude, body) in [
+        // Aliased, glob, brace-list and missing imports.
+        (
+            "use demo::Gauge as Knob;",
+            "assert_eq!(Knob::reading(), 42);",
+        ),
+        (
+            "use demo::Other as Gauge;",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        ("use demo::*;", "assert_eq!(Gauge::reading(), 42);"),
+        ("use demo::{Gauge};", "assert_eq!(Gauge::reading(), 42);"),
+        ("", "assert_eq!(Gauge::reading(), 42);"),
+        // A crate that is not the owner's library (an unindexed dependency).
+        ("use spare::Gauge;", "assert_eq!(Gauge::reading(), 42);"),
+        // An import that does not reach the top-level test.
+        (
+            "mod inner {\n    use demo::Gauge;\n}",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        // The test's file or body rebinds the name.
+        (
+            "use demo::Gauge;",
+            "struct Gauge;\n    assert_eq!(Gauge::reading(), 42);",
+        ),
+        (
+            "use demo::Gauge;",
+            "use spare::Gauge;\n    assert_eq!(Gauge::reading(), 42);",
+        ),
+        (
+            "use demo::Gauge;\nmod nested {\n    pub use spare::Gauge;\n}",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        // Another type's associated function of the same name.
+        ("use demo::Other;", "assert_eq!(Other::reading(), 42);"),
+        ("use demo::Gauge;", "assert_eq!(Other::reading(), 42);"),
+        // A bare call names the module-level `reading`, never the owner.
+        ("use demo::reading;", "assert_eq!(reading(), 42);"),
+        // The owner compared with itself, a method-call shape, an
+        // inequality, and a call chained after the owner.
+        (
+            "use demo::Gauge;",
+            "assert_eq!(Gauge::reading(), Gauge::reading());",
+        ),
+        (
+            "use demo::Gauge;",
+            "let gauge = Gauge;\n    assert_eq!(gauge.reading(), 42);",
+        ),
+        ("use demo::Gauge;", "assert_ne!(Gauge::reading(), 41);"),
+        (
+            "use demo::Gauge;",
+            "assert_eq!(Gauge::reading().min(99), 42);",
+        ),
+    ] {
+        let tests = gauge_test(prelude, body);
+        let admitted = gauge_admitted(&[(LIB, ASSOC_GAUGE_LIB), (TESTS, &tests)]);
+        // A test-local `struct Gauge` is a second workspace declaration, so
+        // that shape refuses already on the owner side; every other row is
+        // refused by the test-side gate on an established pin.
+        let expected = if body.starts_with("struct Gauge;") {
+            None
+        } else {
+            Some(Vec::new())
+        };
+        assert_eq!(admitted, expected, "{tests}");
+    }
+}
+
+#[test]
+fn associated_function_pin_refuses_a_cfg_gated_owner() {
+    // With the cfg off, `Gauge::reading()` reaches a trait default the
+    // index never sees (#7724), so a gate on the owner, its `impl` or an
+    // enclosing module refuses.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    for lib in [
+        "pub struct Gauge;\n\n#[cfg(feature = \"inherent\")]\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg(feature = \"inherent\")]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg_attr(feature = \"inherent\", inline)]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+    ] {
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}");
+    }
+    // Control: the same owner without a cfg pins.
+    let lib = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+    assert_eq!(admitted.map(|texts| texts.len()), Some(1), "{lib}");
+}
+
+#[test]
+fn associated_function_pin_refuses_a_longer_import_path() {
+    // `demo::fs` re-exports another crate, whose own `Gauge` the test could
+    // be importing; the pin admits only `use <krate>::T;`.
+    let reexporting = format!("pub use spare as fs;\n{ASSOC_GAUGE_LIB}");
+    for (lib, prelude) in [
+        (reexporting.as_str(), "use demo::fs::Gauge;"),
+        (ASSOC_GAUGE_LIB, "use demo::self::Gauge;"),
+    ] {
+        let tests = gauge_test(prelude, "assert_eq!(Gauge::reading(), 42);");
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}\n{tests}");
+    }
+    // Control: the same library admits the direct import.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    let admitted = gauge_admitted(&[(LIB, &reexporting), (TESTS, &tests)]);
+    assert_eq!(
+        admitted.map(|texts| texts.len()),
+        Some(1),
+        "the direct import must still pin"
+    );
+}
+
+#[test]
+fn associated_function_pin_is_not_established_beside_a_competitor() {
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    for other in [
+        // Another type's associated function or a trait item of the name.
+        "pub struct Meter;\nimpl Meter {\n    pub fn reading() -> u32 {\n        1\n    }\n}\n",
+        "pub trait Read {\n    fn reading() -> u32 {\n        1\n    }\n}\n",
+        // A second `Gauge`, or a module, trait or alias of the name.
+        "pub mod spare {\n    pub struct Gauge;\n}\n",
+        "pub mod Gauge {\n    pub fn level() -> u32 {\n        1\n    }\n}\n",
+        "pub trait Gauge {}\n",
+        "pub type Gauge = u32;\n",
+    ] {
+        let admitted = gauge_admitted(&[
+            (LIB, ASSOC_GAUGE_LIB),
+            (TESTS, &tests),
+            ("src/other.rs", other),
+        ]);
+        assert_eq!(admitted, None, "{other}");
+    }
+    // The library re-exports a foreign `Gauge` beside its own: the pin is
+    // established but the import may name the foreign type.
+    let admitted = gauge_admitted(&[
+        (LIB, &format!("pub use external::Gauge;\n{ASSOC_GAUGE_LIB}")),
+        (TESTS, &tests),
+    ]);
+    assert_eq!(admitted, Some(Vec::new()));
+    // A generic self type is not a plain type name.
+    let generic = "pub struct Gauge<T>(T);\n\nimpl<T> Gauge<T> {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let index = index(&[(LIB, generic), (TESTS, &tests)]);
+    assert!(establish(&index, "reading", "40 + 2").is_none());
+}
+
+/// The `authored-old-deps` corpus shape (#6617): `panel`'s integration test
+/// imports `meter::Gauge`; `spare` holds a same-named free `reading`. The
+/// manifests decide which crate names reach the owner's library.
+#[test]
+fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> Result<(), String> {
+    let panel_manifest = "[package]\nname = \"panel\"\nversion = \"0.1.0\"\n\n[dependencies]\nmeter = { path = \"../meter\" }\nspare = { path = \"../spare\" }\ngadget = \"1\"\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-associated",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"meter\", \"spare\", \"panel\"]\n",
+            ),
+            (
+                "meter/Cargo.toml",
+                "[package]\nname = \"meter\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "spare/Cargo.toml",
+                "[package]\nname = \"spare\"\nversion = \"0.1.0\"\n",
+            ),
+            ("panel/Cargo.toml", panel_manifest),
+        ],
+    )?;
+    let meter = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let spare = "pub fn reading() -> u32 {\n    0\n}\n";
+    let admitted = |test_source: &str| {
+        let mut index = RustIndex::default();
+        for (path, text) in [
+            ("meter/src/lib.rs", meter),
+            ("spare/src/lib.rs", spare),
+            ("panel/src/lib.rs", "//! Panel.\n"),
+            ("panel/tests/direct.rs", test_source),
+        ] {
+            let facts = summarize_file(PathBuf::from(path), text.to_string());
+            index.extend_functions(facts.functions.iter().cloned());
+            index.extend_tests(facts.tests.iter().cloned());
+            index.insert_file_only(PathBuf::from(path), facts);
+        }
+        index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        let owner = index.functions().iter().find(|function| {
+            function.name == "reading" && function.file == Path::new("meter/src/lib.rs")
+        });
+        let owner = owner?;
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "40 + 2"), owner, &index)?;
+        let syntax = OwnerPinSyntax::default();
+        let test = index.tests().at(0);
+        Some(
+            test.assertions
+                .iter()
+                .filter(|assertion| pin.admits(test, assertion, &index, &|_, _| false, &syntax))
+                .count(),
+        )
+    };
+    let direct = admitted(&gauge_test(
+        "use meter::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let sibling = admitted(&gauge_test(
+        "use spare::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let registry = admitted(&gauge_test(
+        "use gadget::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let synthetic_name = admitted(&gauge_test(
+        "use demo::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let aliased = admitted(&gauge_test(
+        "use meter::Gauge as Knob;",
+        "assert_eq!(Knob::reading(), 42);",
+    ));
+    let globbed = admitted(&gauge_test(
+        "use meter::*;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let bare = admitted(&gauge_test(
+        "use spare::reading;",
+        "assert_eq!(reading(), 42);",
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(direct, Some(1), "`use meter::Gauge;` must pin the owner");
+    for (label, refused) in [
+        ("sibling crate", sibling),
+        ("registry dependency", registry),
+        ("undeclared crate", synthetic_name),
+        ("alias", aliased),
+        ("glob", globbed),
+        ("bare free call", bare),
+    ] {
+        assert_eq!(refused, Some(0), "{label}");
+    }
+    Ok(())
 }

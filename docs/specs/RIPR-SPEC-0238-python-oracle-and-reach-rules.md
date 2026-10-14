@@ -538,8 +538,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     owner credits `direct` with reason
     `strong_oracle_observes_changed_effect_channel` when it compares, with
     `==`, the channel that line writes. The test must call the owner by a
-    module-identified name (a free function), or a method owner on a
-    local bound to its class (rule 9). The channels:
+    module-identified name (a free function), a method owner on a
+    local bound to its class, or a `@classmethod` or `@staticmethod` owner
+    on that local or on its imported class, by its name or an import alias
+    the test does not rebind (rule 9, #7634). A method's or classmethod's
+    first parameter is its receiver whatever it is named; a staticmethod
+    has none. The channels:
     - `print(...)` or `sys.stdout.write(...)`: `capsys`, `capfd` or their
       binary forms' `readouterr().out`, inline or through a local the
       test binds once to `readouterr()` after an owner call;
@@ -560,8 +564,9 @@ mutant calibrates the rule; ripr reports only the static shape.
       the same method, so none of them credits. A changed `p(...)` that
       calls the parameter itself is read the same way, through
       `L.assert_called_once_with(`. When the owner's only `return` is its
-      last statement, `return p`, the owner is undecorated, synchronous
-      and not a generator, `p` is never rebound, and the body has no
+      last statement, `return p`, the owner is synchronous, not a
+      generator, and has no decorator but `@classmethod` or
+      `@staticmethod` (#7634), which only bind the call, `p` is never rebound, and the body has no
       `lambda`, `for` or `:=` that could rebind it, a local the test binds
       once to the owner's result is the mock it passed as well, for both
       `p(...)` and `p.m(...)` (#7586).
@@ -1138,7 +1143,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
   with a comment or an assignment, a starred argument, identity
   arithmetic and a requoted string or respelled number do not credit;
   literal arithmetic on either side, an added argument, a changed keyword
-  set, different literals and another name do.
+  set, different literals and another name do. Each row pins the
+  arguments the new call passes (#7719). A third test pins a
+  `@classmethod` and a `@staticmethod` owner called on its imported class,
+  through the returned and the passed-local mock, an import alias, a
+  staticmethod handler in second position and a classmethod receiver
+  named `klass`. It keeps uncredited the result of a classmethod with a
+  second decorator, an instance method called on the class, a decorator
+  that only ends in `classmethod`, a same-named method of another class
+  and a class name the test rebinds (#7634).
 
 ## Implementation Mapping
 

@@ -2079,7 +2079,15 @@ impl RustAdapter {
         // `find_related_tests`. Only a whole-workspace index can admit (the
         // same precondition as the #2971 uniqueness bypass), so narrower
         // passes skip the manifest scan entirely.
-        let (manifest_dir_prefixes, dependency_adjacency) = if workspace_index_complete {
+        //
+        // #6617: a package-narrowed index that took in dependent packages
+        // can still hold a dependent crate's test of an inherent owner, and
+        // the inherent type-path admit needs only the owner's whole package
+        // indexed. The context then names the packages the index left
+        // partial; every other admit still requires the complete index.
+        let dependency_context_applies =
+            workspace_index_complete || !dependent_package_roots.is_empty();
+        let (manifest_dir_prefixes, dependency_adjacency) = if dependency_context_applies {
             let manifest_dir_prefixes =
                 crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
             let dependency_adjacency = workspace::PathDependencyAdjacency::build(
@@ -2089,6 +2097,15 @@ impl RustAdapter {
         } else {
             (Vec::new(), None)
         };
+        let unindexed_manifests = if workspace_index_complete || dependency_adjacency.is_none() {
+            BTreeSet::new()
+        } else {
+            classify::manifests_with_unindexed_files(
+                &manifest_dir_prefixes,
+                &analyzable_rust_files,
+                &index_files,
+            )
+        };
         let dependency_edges =
             dependency_adjacency
                 .as_ref()
@@ -2096,6 +2113,7 @@ impl RustAdapter {
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
+                    unindexed_manifests: &unindexed_manifests,
                 });
 
         // #4722: a changed file the reference parser refused was indexed
@@ -2677,10 +2695,12 @@ impl RustAdapter {
         let dependency_adjacency = workspace::PathDependencyAdjacency::build(
             &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
         );
+        let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
+            unindexed_manifests: &unindexed_manifests,
         };
 
         for path in &production_files {
