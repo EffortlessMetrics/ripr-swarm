@@ -57,41 +57,49 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/orders.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/orders.rs",
             "value": "20",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/orders.rs",
             "value": "2",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/orders.rs",
             "value": "800",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "5",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "4",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "false",
             "context": "assertion_argument"
           }
@@ -107,41 +115,49 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/orders.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/orders.rs",
           "value": "20",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/orders.rs",
           "value": "2",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/orders.rs",
           "value": "800",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "5",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "4",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "false",
           "context": "assertion_argument"
         }
@@ -260,41 +276,49 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/orders.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/orders.rs",
             "value": "20",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/orders.rs",
             "value": "2",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/orders.rs",
             "value": "800",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "5",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "4",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "false",
             "context": "assertion_argument"
           }
@@ -305,41 +329,49 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/orders.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/orders.rs",
           "value": "20",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/orders.rs",
           "value": "2",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/orders.rs",
           "value": "800",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "5",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "4",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "false",
           "context": "assertion_argument"
         }
@@ -451,11 +483,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "items = 5",
             "context": "function_argument"
           },
@@ -467,11 +501,13 @@
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "false",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "items = 4",
             "context": "function_argument"
           }
@@ -482,11 +518,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "items = 5",
           "context": "function_argument"
         },
@@ -498,11 +536,13 @@
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "false",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "items = 4",
           "context": "function_argument"
         }
@@ -586,11 +626,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "true",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "tests/orders.rs",
             "value": "items = 5",
             "context": "function_argument"
           },
@@ -602,11 +644,13 @@
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "false",
             "context": "assertion_argument"
           },
           {
             "line": 16,
+            "source_file": "tests/orders.rs",
             "value": "items = 4",
             "context": "function_argument"
           }
@@ -617,11 +661,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "true",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "tests/orders.rs",
           "value": "items = 5",
           "context": "function_argument"
         },
@@ -633,11 +679,13 @@
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "false",
           "context": "assertion_argument"
         },
         {
           "line": 16,
+          "source_file": "tests/orders.rs",
           "value": "items = 4",
           "context": "function_argument"
         }

@@ -329,6 +329,7 @@ mod tests {
             flow_sink: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
+            source_file: None,
             line: 12,
             text: "assert!(result.is_err())".to_string(),
             value: "result.is_err()".to_string(),

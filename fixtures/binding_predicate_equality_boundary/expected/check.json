@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/split.rs",
             "value": "\"a\"",
             "context": "assertion_argument"
           },
           {
             "line": 5,
+            "source_file": "tests/split.rs",
             "value": "delim = '.'",
             "context": "function_argument"
           },
@@ -70,16 +72,19 @@
           },
           {
             "line": 5,
+            "source_file": "tests/split.rs",
             "value": "input = \"a.b\"",
             "context": "function_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/split.rs",
             "value": "\"a\"",
             "context": "assertion_argument"
           },
           {
             "line": 10,
+            "source_file": "tests/split.rs",
             "value": "delim = 'x'",
             "context": "function_argument"
           },
@@ -91,6 +96,7 @@
           },
           {
             "line": 10,
+            "source_file": "tests/split.rs",
             "value": "input = \"ab\"",
             "context": "function_argument"
           }
@@ -101,11 +107,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/split.rs",
           "value": "\"a\"",
           "context": "assertion_argument"
         },
         {
           "line": 5,
+          "source_file": "tests/split.rs",
           "value": "delim = '.'",
           "context": "function_argument"
         },
@@ -117,16 +125,19 @@
         },
         {
           "line": 5,
+          "source_file": "tests/split.rs",
           "value": "input = \"a.b\"",
           "context": "function_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/split.rs",
           "value": "\"a\"",
           "context": "assertion_argument"
         },
         {
           "line": 10,
+          "source_file": "tests/split.rs",
           "value": "delim = 'x'",
           "context": "function_argument"
         },
@@ -138,6 +149,7 @@
         },
         {
           "line": 10,
+          "source_file": "tests/split.rs",
           "value": "input = \"ab\"",
           "context": "function_argument"
         }

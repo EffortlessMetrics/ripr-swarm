@@ -1414,6 +1414,7 @@ mod seam_hover_tests {
             observe: stage(StageState::Yes, "Exact value assertion exists"),
             discriminate: stage(StageState::Weak, "Equality boundary missing"),
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),

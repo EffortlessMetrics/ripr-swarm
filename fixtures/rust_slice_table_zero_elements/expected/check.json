@@ -60,71 +60,85 @@
         "observed_values": [
           {
             "line": 44,
+            "source_file": "src/lib.rs",
             "value": "0",
             "context": "assertion_argument"
           },
           {
             "line": 45,
+            "source_file": "src/lib.rs",
             "value": "2",
             "context": "assertion_argument"
           },
           {
             "line": 45,
+            "source_file": "src/lib.rs",
             "value": "3",
             "context": "assertion_argument"
           },
           {
             "line": 45,
+            "source_file": "src/lib.rs",
             "value": "4",
             "context": "assertion_argument"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "\"\"",
             "context": "table_row"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "\"Bob\"",
             "context": "table_row"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "\"ada\"",
             "context": "table_row"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "'?'",
             "context": "table_row"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "'A'",
             "context": "table_row"
           },
           {
             "line": 50,
+            "source_file": "src/lib.rs",
             "value": "'B'",
             "context": "table_row"
           },
           {
             "line": 52,
+            "source_file": "src/lib.rs",
             "value": "\"{name:?}\"",
             "context": "assertion_argument"
           },
           {
             "line": 61,
+            "source_file": "src/lib.rs",
             "value": "\"{s:?}\"",
             "context": "assertion_argument"
           },
           {
             "line": 62,
+            "source_file": "src/lib.rs",
             "value": "\"{s:?}\"",
             "context": "assertion_argument"
           },
           {
             "line": 67,
+            "source_file": "src/lib.rs",
             "value": "\"total {total}\"",
             "context": "assertion_argument"
           }
@@ -140,71 +154,85 @@
       "observed_values": [
         {
           "line": 44,
+          "source_file": "src/lib.rs",
           "value": "0",
           "context": "assertion_argument"
         },
         {
           "line": 45,
+          "source_file": "src/lib.rs",
           "value": "2",
           "context": "assertion_argument"
         },
         {
           "line": 45,
+          "source_file": "src/lib.rs",
           "value": "3",
           "context": "assertion_argument"
         },
         {
           "line": 45,
+          "source_file": "src/lib.rs",
           "value": "4",
           "context": "assertion_argument"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "\"\"",
           "context": "table_row"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "\"Bob\"",
           "context": "table_row"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "\"ada\"",
           "context": "table_row"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "'?'",
           "context": "table_row"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "'A'",
           "context": "table_row"
         },
         {
           "line": 50,
+          "source_file": "src/lib.rs",
           "value": "'B'",
           "context": "table_row"
         },
         {
           "line": 52,
+          "source_file": "src/lib.rs",
           "value": "\"{name:?}\"",
           "context": "assertion_argument"
         },
         {
           "line": 61,
+          "source_file": "src/lib.rs",
           "value": "\"{s:?}\"",
           "context": "assertion_argument"
         },
         {
           "line": 62,
+          "source_file": "src/lib.rs",
           "value": "\"{s:?}\"",
           "context": "assertion_argument"
         },
         {
           "line": 67,
+          "source_file": "src/lib.rs",
           "value": "\"total {total}\"",
           "context": "assertion_argument"
         }

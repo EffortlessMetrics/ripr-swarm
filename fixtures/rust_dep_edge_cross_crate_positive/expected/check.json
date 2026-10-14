@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 6,
+            "source_file": "crates/c/tests/it.rs",
             "value": "7",
             "context": "assertion_argument"
           },
           {
             "line": 6,
+            "source_file": "crates/c/tests/it.rs",
             "value": "points = 7",
             "context": "function_argument"
           }
@@ -69,11 +71,13 @@
       "observed_values": [
         {
           "line": 6,
+          "source_file": "crates/c/tests/it.rs",
           "value": "7",
           "context": "assertion_argument"
         },
         {
           "line": 6,
+          "source_file": "crates/c/tests/it.rs",
           "value": "points = 7",
           "context": "function_argument"
         }

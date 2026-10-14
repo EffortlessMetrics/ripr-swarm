@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -69,11 +71,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -148,11 +152,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -163,11 +169,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -242,11 +250,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -262,11 +272,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -346,11 +358,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -361,11 +375,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -440,11 +456,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -455,11 +473,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -534,11 +554,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -549,11 +571,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }
@@ -628,11 +652,13 @@
         "observed_values": [
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "8080",
             "context": "assertion_argument"
           },
           {
             "line": 15,
+            "source_file": "src/lib.rs",
             "value": "input = \"8080\"",
             "context": "function_argument"
           }
@@ -643,11 +669,13 @@
       "observed_values": [
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "8080",
           "context": "assertion_argument"
         },
         {
           "line": 15,
+          "source_file": "src/lib.rs",
           "value": "input = \"8080\"",
           "context": "function_argument"
         }

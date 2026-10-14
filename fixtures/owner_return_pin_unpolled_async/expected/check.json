@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 3,
+            "source_file": "tests/weight_tests.rs",
             "value": "12",
             "context": "assertion_argument"
           },
           {
             "line": 3,
+            "source_file": "tests/weight_tests.rs",
             "value": "input = 4",
             "context": "function_argument",
             "provenance": "fn checks_weight() { let _later = async { assert_eq!(weight(4), 12); }; }"
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 3,
+          "source_file": "tests/weight_tests.rs",
           "value": "12",
           "context": "assertion_argument"
         },
         {
           "line": 3,
+          "source_file": "tests/weight_tests.rs",
           "value": "input = 4",
           "context": "function_argument",
           "provenance": "fn checks_weight() { let _later = async { assert_eq!(weight(4), 12); }; }"

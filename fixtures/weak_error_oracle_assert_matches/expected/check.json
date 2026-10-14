@@ -54,11 +54,13 @@
         "observed_values": [
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "AuthError::RevokedToken",
             "context": "enum_variant"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "token = \"\"",
             "context": "function_argument"
           }
@@ -69,11 +71,13 @@
       "observed_values": [
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "AuthError::RevokedToken",
           "context": "enum_variant"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "token = \"\"",
           "context": "function_argument"
         }
@@ -146,11 +150,13 @@
         "observed_values": [
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "AuthError::RevokedToken",
             "context": "enum_variant"
           },
           {
             "line": 11,
+            "source_file": "tests/errors.rs",
             "value": "token = \"\"",
             "context": "function_argument"
           }
@@ -161,11 +167,13 @@
       "observed_values": [
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "AuthError::RevokedToken",
           "context": "enum_variant"
         },
         {
           "line": 11,
+          "source_file": "tests/errors.rs",
           "value": "token = \"\"",
           "context": "function_argument"
         }

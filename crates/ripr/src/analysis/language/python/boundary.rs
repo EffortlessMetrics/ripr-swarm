@@ -169,6 +169,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
+                    source_file: None,
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -218,6 +219,7 @@ pub(super) fn python_boundary_evidence(
         {
             observed = true;
             observed_values.push(ValueFact {
+                source_file: None,
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",

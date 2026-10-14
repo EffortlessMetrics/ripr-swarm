@@ -23,3 +23,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_fallible_literal (3)
+
+Reason:
+RIPR-SPEC-0158 and #7805: additive source_file metadata only; exact locked anyhow source preparation preserves exposed classification
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

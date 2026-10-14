@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 9,
+            "source_file": "src/lib.rs",
             "value": "value = 1",
             "context": "function_argument"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 9,
+          "source_file": "src/lib.rs",
           "value": "value = 1",
           "context": "function_argument"
         }

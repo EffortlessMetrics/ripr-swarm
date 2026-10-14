@@ -54,6 +54,7 @@
         "observed_values": [
           {
             "line": 23,
+            "source_file": "src/lib.rs",
             "value": "io::ErrorKind::Other",
             "context": "enum_variant"
           }
@@ -64,6 +65,7 @@
       "observed_values": [
         {
           "line": 23,
+          "source_file": "src/lib.rs",
           "value": "io::ErrorKind::Other",
           "context": "enum_variant"
         }
@@ -136,6 +138,7 @@
         "observed_values": [
           {
             "line": 23,
+            "source_file": "src/lib.rs",
             "value": "io::ErrorKind::Other",
             "context": "enum_variant"
           }
@@ -146,6 +149,7 @@
       "observed_values": [
         {
           "line": 23,
+          "source_file": "src/lib.rs",
           "value": "io::ErrorKind::Other",
           "context": "enum_variant"
         }

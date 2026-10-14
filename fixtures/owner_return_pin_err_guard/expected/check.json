@@ -55,11 +55,13 @@
         "observed_values": [
           {
             "line": 5,
+            "source_file": "tests/weight_tests.rs",
             "value": "input = 4",
             "context": "function_argument"
           },
           {
             "line": 6,
+            "source_file": "tests/weight_tests.rs",
             "value": "input = 4",
             "context": "function_argument"
           }
@@ -70,11 +72,13 @@
       "observed_values": [
         {
           "line": 5,
+          "source_file": "tests/weight_tests.rs",
           "value": "input = 4",
           "context": "function_argument"
         },
         {
           "line": 6,
+          "source_file": "tests/weight_tests.rs",
           "value": "input = 4",
           "context": "function_argument"
         }
