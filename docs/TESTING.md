@@ -211,7 +211,12 @@ The test suite:
 CI runs the suite headless with `xvfb-run -a npm run test:e2e`. The test
 runner stores downloaded VS Code archives under
 `target/ripr/vscode-test-cache` so generated editor-host state stays with the
-rest of the repo-local build output.
+rest of the repo-local build output. Isolated host user-data is
+`target/ripr/vscode-test-user-data`, with VS Code logs under `logs/`. A
+test-host failure copies a size-capped, redacted log subset into
+`target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
+the vscode job fails. Success runs do not retain the diagnostics copy, and
+collection cannot change the original test exit status.
 
 ## Golden Output
 

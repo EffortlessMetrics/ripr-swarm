@@ -48985,6 +48985,146 @@ fn vscode_e2e_preserves_installed_server_selection() -> Result<(), String> {
     Ok(())
 }
 
+fn vscode_job_block(workflow: &str) -> Result<&str, String> {
+    const HEADER: &str = "\n  vscode:\n";
+    let start = workflow
+        .find(HEADER)
+        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+    let mut offset = start + HEADER.len();
+    while offset < workflow.len() {
+        let rest = &workflow[offset..];
+        let (line, line_end) = match rest.find('\n') {
+            Some(idx) => (&rest[..idx], offset + idx + 1),
+            None => (rest, workflow.len()),
+        };
+        if let Some(key) = line.strip_prefix("  ")
+            && !key.starts_with([' ', '-', '#'])
+            && key.contains(':')
+            && key.starts_with(char::is_alphabetic)
+        {
+            return Ok(&workflow[start..offset]);
+        }
+        offset = line_end;
+    }
+    Ok(&workflow[start..])
+}
+
+fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    if !job.contains("xvfb-run -a npm run test:e2e") {
+        violations.push("vscode job is missing the e2e host step".to_string());
+    }
+    if job.contains("continue-on-error") {
+        violations.push(
+            "continue-on-error would launder the original VS Code test exit status".to_string(),
+        );
+    }
+    let Some(upload_at) = job.find("Upload VS Code test host diagnostics") else {
+        violations.push("vscode job is missing the failure-only diagnostics upload".to_string());
+        return violations;
+    };
+    let upload = &job[upload_at..];
+    if !upload.contains("if: failure()") {
+        violations.push("diagnostics upload must be if: failure() only".to_string());
+    }
+    if upload.contains("if: always()") {
+        violations.push("diagnostics upload must not run on success".to_string());
+    }
+    if !upload.contains("actions/upload-artifact@v7") {
+        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    }
+    if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
+        violations
+            .push("diagnostics upload must use the pinned host diagnostics folder".to_string());
+    }
+    if !upload.contains("retention-days: 5") {
+        violations.push("diagnostics upload must cap retention at 5 days".to_string());
+    }
+    if !upload.contains("if-no-files-found: ignore") {
+        violations
+            .push("missing diagnostics must not replace the original test failure".to_string());
+    }
+    violations
+}
+
+#[test]
+fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering() {
+    let success_upload = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+      - name: Upload VS Code test host diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(success_upload)
+            .iter()
+            .any(|violation| violation.contains("must not run on success")),
+        "success uploads must fail the contract"
+    );
+
+    let laundered_exit = r#"
+  vscode:
+    steps:
+      - run: xvfb-run -a npm run test:e2e
+        continue-on-error: true
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/ripr/vscode-test-host-diagnostics/
+          retention-days: 5
+          if-no-files-found: ignore
+"#;
+    assert!(
+        vscode_host_diagnostics_contract_violations(laundered_exit)
+            .iter()
+            .any(|violation| violation.contains("launder")),
+        "continue-on-error must fail the contract"
+    );
+}
+
+#[test]
+fn vscode_ci_job_retains_failure_only_host_diagnostics() -> Result<(), String> {
+    let root = repo_root()?;
+    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|err| format!("read ci.yml: {err}"))?;
+    let job = vscode_job_block(&workflow)?;
+    let violations = vscode_host_diagnostics_contract_violations(job);
+    assert!(
+        violations.is_empty(),
+        "vscode host diagnostics contract: {violations:?}"
+    );
+
+    let runner = fs::read_to_string(root.join("editors/vscode/test/runTest.ts"))
+        .map_err(|err| format!("read runTest.ts: {err}"))?;
+    assert!(
+        runner.contains("resolveUserDataDir"),
+        "runTest.ts must pin user-data through resolveUserDataDir"
+    );
+    assert!(
+        runner.contains("finalizeHostRun"),
+        "runTest.ts must preserve the original host exit through finalizeHostRun"
+    );
+    assert!(
+        !runner.contains("vscode-test-user-data', runId"),
+        "user-data must be a known folder, not a pid-suffixed path"
+    );
+
+    let collector = fs::read_to_string(root.join("editors/vscode/test/hostDiagnostics.ts"))
+        .map_err(|err| format!("read hostDiagnostics.ts: {err}"))?;
+    assert!(collector.contains("HOST_DIAGNOSTICS_RETENTION_DAYS = 5"));
+    assert!(collector.contains("MAX_HOST_DIAGNOSTICS_BYTES = 5 * 1024 * 1024"));
+    assert!(collector.contains("USER_DATA_DIR_NAME = 'vscode-test-user-data'"));
+    assert!(collector.contains("HOST_DIAGNOSTICS_DIR_NAME = 'vscode-test-host-diagnostics'"));
+    Ok(())
+}
+
 #[test]
 fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), String> {
     let report = with_repo_cwd(build_lsp_cockpit_report)?;
