@@ -6,6 +6,27 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_SCRATCH: AtomicUsize = AtomicUsize::new(0);
 
+trait CheckedFixtureReplace {
+    fn replace_checked(&self, from: &str, to: &str) -> String;
+}
+
+impl CheckedFixtureReplace for str {
+    fn replace_checked(&self, from: &str, to: &str) -> String {
+        let replaced = str::replace(self, from, to);
+        assert_ne!(
+            replaced, self,
+            "fixture replacement `{from}` matched no source text"
+        );
+        replaced
+    }
+}
+
+#[test]
+#[should_panic(expected = "fixture replacement `missing pattern` matched no source text")]
+fn fixture_replacement_rejects_missing_pattern() {
+    let _ = "fixture source".replace_checked("missing pattern", "replacement");
+}
+
 const SOURCE: &str =
     include_str!("../../../fixtures/rust_sibling_effect_oracle/input/src/sensors/ripr_limits.rs");
 const DIFF: &str = include_str!("../../../fixtures/rust_sibling_effect_oracle/diff.patch");
@@ -79,7 +100,7 @@ fn finding_with_files(
 #[test]
 fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), String> {
     let with = effect(SOURCE, DIFF, ".or_default()")?;
-    let without = SOURCE.replace("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
+    let without = SOURCE.replace_checked("assert_eq!(parse_note(&oriented), expected);", "let _ = parse_note(&oriented);").replace_checked("assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "let _ = parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"));");
     assert_ne!(without, SOURCE);
     assert!(!without.contains("assert_eq!(parse_note(&oriented), expected);"));
     assert!(!without.contains("parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected"));
@@ -88,7 +109,7 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
         without
             .contains("parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\"))")
     );
-    let without = without.replace(
+    let without = without.replace_checked(
         "let expected =",
         "let expected: Option<Vec<(String, String)>> =",
     );
@@ -139,7 +160,7 @@ fn direct_effect_observer_retains_strong_credit() -> Result<(), String> {
     let diff = "diff --git a/src/sensors/ripr_limits.rs b/src/sensors/ripr_limits.rs\n--- a/src/sensors/ripr_limits.rs\n+++ b/src/sensors/ripr_limits.rs\n@@ -3,3 +3,3 @@\n fn record(recorder: &Recorder, payload: &str) {\n-    recorder.sent.borrow_mut().push(\"old\".to_owned());\n+    recorder.sent.borrow_mut().push(payload.to_owned());\n }\n";
     for source in [
         source.to_string(),
-        source.replace("#[test]", "fn through_helper(recorder: &Recorder, payload: &str) { record(recorder, payload); }\n#[test]").replace("record(&recorder, \"note\")", "through_helper(&recorder, \"note\")"),
+        source.replace_checked("#[test]", "fn through_helper(recorder: &Recorder, payload: &str) { record(recorder, payload); }\n#[test]").replace_checked("record(&recorder, \"note\")", "through_helper(&recorder, \"note\")"),
     ] {
         for family in ["side_effect", "call_deletion"] {
         let finding = finding(&source, diff, "recorder.sent.borrow_mut().push(payload.to_owned())", family)?;
@@ -205,7 +226,7 @@ fn changed_effect(source: &str, expression: &str) -> String {
         .position(|line| line.contains(expression))
         .unwrap_or(0)
         + 1;
-    let previous = expression.replace("(1)", "(0)");
+    let previous = expression.replace_checked("(1)", "(0)");
     format!(
         "--- a/src/sensors/ripr_limits.rs\n+++ b/src/sensors/ripr_limits.rs\n@@ -{line},1 +{line},1 @@\n-        {previous};\n+        {expression};\n"
     )
@@ -215,13 +236,13 @@ fn changed_effect(source: &str, expression: &str) -> String {
 fn implicit_trait_effect_observers_retain_strong_credit() -> Result<(), String> {
     for source in [
         ITERATOR_OBSERVER.to_string(),
-        ITERATOR_OBSERVER.replace("for _ in counter {}", "counter.for_each(|_| {});"),
+        ITERATOR_OBSERVER.replace_checked("for _ in counter {}", "counter.for_each(|_| {});"),
         ITERATOR_OBSERVER
-            .replace(
+            .replace_checked(
                 "let counter = Counter { sink: state.clone()",
                 "let mut counter = Counter { sink: state.clone()",
             )
-            .replace("for _ in counter {}", "while counter.next().is_some() {}"),
+            .replace_checked("for _ in counter {}", "while counter.next().is_some() {}"),
         ADD_OBSERVER.to_string(),
     ] {
         let finding = finding(
@@ -248,11 +269,11 @@ fn implicit_trait_effect_observers_retain_strong_credit() -> Result<(), String> 
 #[test]
 fn free_and_inherent_trait_method_names_do_not_admit_decoys() -> Result<(), String> {
     for source in [
-        ITERATOR_OBSERVER.replace("impl Iterator for Counter {\n    type Item = ();", "impl Counter {"),
-        ITERATOR_OBSERVER.replace("impl Iterator for Counter {\n    type Item = ();\n    fn next(&mut self) -> Option<()> {", "fn next(counter: &mut Counter) -> Option<()> {").replace("self.", "counter.").replace("    }\n}\n#[derive", "}\n#[derive").replace("counter.next()", "next(&mut counter)"),
+        ITERATOR_OBSERVER.replace_checked("impl Iterator for Counter {\n    type Item = ();", "impl Counter {"),
+        ITERATOR_OBSERVER.replace_checked("impl Iterator for Counter {\n    type Item = ();\n    fn next(&mut self) -> Option<()> {", "fn next(counter: &mut Counter) -> Option<()> {").replace_checked("self.", "counter.").replace_checked("    }\n}\n#[derive", "}\n#[derive").replace_checked("counter.next()", "next(&mut counter)"),
     ] {
         for source in [source.clone(), format!("{source}\nstruct Other;\nimpl Iterator for Other {{ type Item = (); fn next(&mut self) -> Option<()> {{ None }} }}\n")] {
-        let source = source.replace("for _ in counter {}", "let _ = counter;").replace("Cell::new(1)", "Cell::new(0)");
+        let source = source.replace_checked("for _ in counter {}", "let _ = counter;").replace_checked("Cell::new(1)", "Cell::new(0)");
         let expression = if source.contains("self.sink.set(1)") { "self.sink.set(1)" } else { "counter.sink.set(1)" };
         let finding = finding(&source, &changed_effect(&source, expression), expression, "call_deletion")?;
         assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
@@ -265,7 +286,7 @@ fn free_and_inherent_trait_method_names_do_not_admit_decoys() -> Result<(), Stri
 
 #[test]
 fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String> {
-    let source = ITERATOR_OBSERVER.replace("#[test]\nfn direct_smoke() {\n    let mut counter = Counter { sink: Rc::new(Cell::new(0)), finished: false };\n    let _ = counter.next();\n}\n", "");
+    let source = ITERATOR_OBSERVER.replace_checked("#[test]\nfn direct_smoke() {\n    let mut counter = Counter { sink: Rc::new(Cell::new(0)), finished: false };\n    let _ = counter.next();\n}\n", "");
     assert!(!source.contains("fn direct_smoke"));
     let finding = finding(
         &source,
@@ -284,7 +305,7 @@ const UNUSED_TRAIT: &str =
 
 #[test]
 fn unused_reverse_trait_does_not_authorize_parser_oracle() -> Result<(), String> {
-    for source in [UNUSED_TRAIT.to_string(), UNUSED_TRAIT.replace("let input=", "let _counter=Counter { sink:Rc::new(RefCell::new(Vec::new())), finished:false };\n    let input=")] {
+    for source in [UNUSED_TRAIT.to_string(), UNUSED_TRAIT.replace_checked("let input=", "let _counter=Counter { sink:Rc::new(RefCell::new(Vec::new())), finished:false };\n    let input=")] {
         for family in ["side_effect", "call_deletion"] {
             let expression = "output.borrow_mut().push(1)";
             let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
@@ -308,30 +329,30 @@ fn implicit_observer() {
 #[test]
 fn paired_implicit_dispatch_matrix_binds_both_effect_families() -> Result<(), String> {
     let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
-    let add = iterator.replace("impl Iterator for Counter {\n    type Item=();\n    fn next(&mut self)->Option<()> {\n        if self.finished { return None; }\n        self.finished=true;\n        record(&self.sink);\n        Some(())\n    }\n}", "impl std::ops::Add<()> for Counter {\n    type Output=();\n    fn add(self, _: ()) {\n        record(&self.sink);\n    }\n}").replace("for _ in counter {}", "let _=counter + ();");
+    let add = iterator.replace_checked("impl Iterator for Counter {\n    type Item=();\n    fn next(&mut self)->Option<()> {\n        if self.finished { return None; }\n        self.finished=true;\n        record(&self.sink);\n        Some(())\n    }\n}", "impl std::ops::Add<()> for Counter {\n    type Output=();\n    fn add(self, _: ()) {\n        record(&self.sink);\n    }\n}").replace_checked("for _ in counter {}", "let _=counter + ();");
     assert!(add.contains("impl std::ops::Add"));
     let paths = [
         iterator.clone(),
-        iterator.replace("for _ in counter {}", "counter.for_each(|_| {});"),
+        iterator.replace_checked("for _ in counter {}", "counter.for_each(|_| {});"),
         iterator
-            .replace("let counter=", "let mut counter=")
-            .replace("for _ in counter {}", "while counter.next().is_some() {}"),
+            .replace_checked("let counter=", "let mut counter=")
+            .replace_checked("for _ in counter {}", "while counter.next().is_some() {}"),
         add,
     ];
     for reverse in paths {
         let direct = reverse
-            .replace("    output.borrow_mut().push(1);", "")
-            .replace("record(&self.sink);", "self.sink.borrow_mut().push(1);");
+            .replace_checked("    output.borrow_mut().push(1);", "")
+            .replace_checked("record(&self.sink);", "self.sink.borrow_mut().push(1);");
         let direct = if direct.contains("impl std::ops::Add") {
             format!(
                 "use std::ops::Add;\n{}",
-                direct.replace(
+                direct.replace_checked(
                     "record(&sink);",
                     "let counter=Counter { sink,finished:false }; let _=counter.add(());",
                 )
             )
         } else {
-            direct.replace(
+            direct.replace_checked(
                 "record(&sink);",
                 "let _=Counter { sink,finished:false }.next();",
             )
@@ -398,22 +419,22 @@ fn paired_implicit_dispatch_matrix_binds_both_effect_families() -> Result<(), St
 fn free_inherent_and_wrong_receiver_push_matrix_stays_weak() -> Result<(), String> {
     let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
     let inherent = iterator
-        .replace(
+        .replace_checked(
             "impl Iterator for Counter {\n    type Item=();",
             "impl Counter {",
         )
-        .replace("for _ in counter {}", "let _=counter;")
-        .replace("vec![1]", "vec![]");
+        .replace_checked("for _ in counter {}", "let _=counter;")
+        .replace_checked("vec![1]", "vec![]");
     let free = inherent
-        .replace(
+        .replace_checked(
             "impl Counter {\n    fn next(&mut self)->Option<()> {",
             "fn next(counter: &mut Counter)->Option<()> {",
         )
-        .replace("self.", "counter.")
-        .replace("    }\n}\n#[derive", "}\n#[derive");
+        .replace_checked("self.", "counter.")
+        .replace_checked("    }\n}\n#[derive", "}\n#[derive");
     let wrong = iterator
-        .replace("for _ in counter {}", "let _=counter; for _ in [()] {}")
-        .replace("vec![1]", "vec![]");
+        .replace_checked("for _ in counter {}", "let _=counter; for _ in [()] {}")
+        .replace_checked("vec![1]", "vec![]");
     for source in [inherent, free, wrong] {
         for source in [
             source.clone(),
@@ -442,25 +463,25 @@ fn same_test_dispatch_cannot_credit_disconnected_assertions() -> Result<(), Stri
     let dispatch = "let sink=Rc::new(RefCell::new(Vec::new())); let counter=Counter { sink:sink.clone(), finished:false }; for _ in counter {}";
     let parser = "assert_eq!(parse_note(&format!(\"{input}\")), expected);";
     let cases = [
-        UNUSED_TRAIT.replace("    let input=", &format!("    {dispatch}\n    let input=")),
-        UNUSED_TRAIT.replace(parser, &format!("{parser}\n    {dispatch}")),
+        UNUSED_TRAIT.replace_checked("    let input=", &format!("    {dispatch}\n    let input=")),
+        UNUSED_TRAIT.replace_checked(parser, &format!("{parser}\n    {dispatch}")),
         format!(
             "{UNUSED_TRAIT}\n#[test]\nfn disconnected() {{\n {dispatch}\n let fresh=Rc::new(RefCell::new(vec![7]));\n assert_eq!(Observation {{ sink:fresh }}, Observation {{ sink:Rc::new(RefCell::new(vec![7])) }});\n}}\n"
         ),
         format!(
             "{UNUSED_TRAIT}{}",
             REVERSE_OBSERVER
-                .replace(
+                .replace_checked(
                     "Observation { sink },",
                     "Observation { sink:Rc::new(RefCell::new(Vec::new())) },"
                 )
-                .replace("vec![1]", "vec![]")
+                .replace_checked("vec![1]", "vec![]")
         ),
         format!(
             "{UNUSED_TRAIT}{}",
             REVERSE_OBSERVER
-                .replace("    for _ in counter {}\n", "")
-                .replace("    assert_eq!", "    for _ in [()] {}\n    assert_eq!")
+                .replace_checked("    for _ in counter {}\n", "")
+                .replace_checked("    assert_eq!", "    for _ in [()] {}\n    assert_eq!")
         ),
     ];
     for source in cases {
@@ -492,19 +513,19 @@ fn implicit_credit_belongs_to_the_ordered_shared_sink_assertion() -> Result<(), 
     let decoy = "let expected=Some(vec![7]); assert_eq!(parse_note(\"x\"), expected);";
     for observer in [
         REVERSE_OBSERVER.to_string(),
-        REVERSE_OBSERVER.replace("for _ in counter {}", "counter.for_each(|_| {});"),
+        REVERSE_OBSERVER.replace_checked("for _ in counter {}", "counter.for_each(|_| {});"),
         REVERSE_OBSERVER
-            .replace("let counter=", "let mut counter=")
-            .replace("for _ in counter {}", "while counter.next().is_some() {}"),
+            .replace_checked("let counter=", "let mut counter=")
+            .replace_checked("for _ in counter {}", "while counter.next().is_some() {}"),
     ] {
         for source in [
             format!(
                 "{UNUSED_TRAIT}{}",
-                observer.replace(assertion, &format!("{decoy}\n    {assertion}"))
+                observer.replace_checked(assertion, &format!("{decoy}\n    {assertion}"))
             ),
             format!(
                 "{UNUSED_TRAIT}{}",
-                observer.replace(assertion, &format!("{assertion}\n    {decoy}"))
+                observer.replace_checked(assertion, &format!("{assertion}\n    {decoy}"))
             ),
         ] {
             for family in ["side_effect", "call_deletion"] {
@@ -544,22 +565,22 @@ fn implicit_credit_belongs_to_the_ordered_shared_sink_assertion() -> Result<(), 
         format!(
             "{UNUSED_TRAIT}{}",
             REVERSE_OBSERVER
-                .replace("    for _ in counter {}\n", "")
-                .replace(
+                .replace_checked("    for _ in counter {}\n", "")
+                .replace_checked(
                     assertion,
                     &format!("{assertion}\n    for _ in counter {{}}")
                 )
         ),
         format!(
             "{UNUSED_TRAIT}{}",
-            REVERSE_OBSERVER.replace(
+            REVERSE_OBSERVER.replace_checked(
                 assertion,
                 &format!("let sink=Rc::new(RefCell::new(vec![1]));\n    {assertion}")
             )
         ),
         format!(
             "{UNUSED_TRAIT}{}",
-            REVERSE_OBSERVER.replace(
+            REVERSE_OBSERVER.replace_checked(
                 assertion,
                 &format!("sink.borrow_mut().clear();\n    {assertion}")
             )
@@ -584,24 +605,24 @@ fn implicit_binding_refuses_self_comparison_and_opaque_observers() -> Result<(),
     let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
     let actual = "Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) }";
     for source in [
-        iterator.replace(
+        iterator.replace_checked(
             actual,
             "Observation { sink:sink.clone() }, Observation { sink:sink.clone() }",
         ),
         iterator
-            .replace("assert_eq!", "assert_ne!")
-            .replace("vec![1]", "vec![42]"),
-        iterator.replace("#[derive(Debug,PartialEq)]", "#[derive(Debug)]")
+            .replace_checked("assert_eq!", "assert_ne!")
+            .replace_checked("vec![1]", "vec![42]"),
+        iterator.replace_checked("#[derive(Debug,PartialEq)]", "#[derive(Debug)]")
             + "\nimpl PartialEq for Observation { fn eq(&self, _: &Self) -> bool { true } }\n",
-        iterator.replace(
+        iterator.replace_checked(
             "let sink=Rc::new(RefCell::new(Vec::new()));\n    let counter=",
             "let sink=Rc::new(RefCell::new(Vec::new())).clone();\n    let counter=",
         ),
-        iterator.replace(
+        iterator.replace_checked(
             "    assert_eq!(Observation",
             "    let never = || assert_eq!(Observation",
         ),
-        iterator.replace("record(&self.sink);", "let never = || record(&self.sink);"),
+        iterator.replace_checked("record(&self.sink);", "let never = || record(&self.sink);"),
     ] {
         for family in ["side_effect", "call_deletion"] {
             let expression = "output.borrow_mut().push(1)";
@@ -627,7 +648,7 @@ fn implicit_binding_refuses_self_comparison_and_opaque_observers() -> Result<(),
 
 #[test]
 fn receiver_construction_cannot_seed_the_observed_effect() -> Result<(), String> {
-    let source = ITERATOR_OBSERVER.replace(
+    let source = ITERATOR_OBSERVER.replace_checked(
         "Counter { sink: state.clone(), finished: false };",
         "Counter { sink: state.clone(), finished: { state.set(1); false } };",
     );
@@ -645,17 +666,17 @@ fn receiver_construction_cannot_seed_the_observed_effect() -> Result<(), String>
 
 #[test]
 fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result<(), String> {
-    let reverse = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+    let reverse = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
         "record(&self.sink);",
         "record(&self.sink);\n        self.sink.borrow_mut().clear();\n        self.sink.borrow_mut().push(1);",
     );
     let macro_definition = "macro_rules! reset_sink { ($sink:expr) => {{ $sink.borrow_mut().clear(); $sink.borrow_mut().push(1); }}; }\n";
-    let mut hidden_dispatch_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+    let mut hidden_dispatch_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
         "record(&self.sink);",
         "record(&self.sink);\n        reset_sink!(&self.sink);",
     );
     hidden_dispatch_write.insert_str(0, macro_definition);
-    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
         "output.borrow_mut().push(1);",
         "output.borrow_mut().push(1);\n    reset_sink!(output);",
     );
@@ -664,7 +685,7 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
         + "\nimpl Drop for crate::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
     let aliased_destructor = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
         + "\nuse std::ops::Drop as Finalizer;\nimpl Finalizer for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
-    let aliased_dispatch_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+    let aliased_dispatch_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
         "impl Iterator for Counter",
         "impl std::iter::Iterator for Counter",
     ) + "\nuse hostile_crate::Iterator;\nimpl Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
@@ -675,17 +696,17 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
     let macro_destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
         + "\nmacro_rules! install_drop { () => { impl Drop for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } } }; }\ninstall_drop!();\n";
     let custom_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
-        .replace("struct Counter", "#[derive(CustomDrop)]\nstruct Counter");
+        .replace_checked("struct Counter", "#[derive(CustomDrop)]\nstruct Counter");
     let imported_builtin_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
-        .replace("use std::", "use hostile_macros::{Debug};\nuse std::");
+        .replace_checked("use std::", "use hostile_macros::{Debug};\nuse std::");
     let qualified_builtin_spelling =
         format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nother_macros::vec!();\n";
     let grouped_macro_import = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
-        .replace("use std::", "use hostile_macros::{vec};\nuse std::")
+        .replace_checked("use std::", "use hostile_macros::{vec};\nuse std::")
         + "\nvec!();\n";
     for source in [
         reverse,
-        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace_checked(
             "output.borrow_mut().push(1);",
             "output.borrow_mut().push(1);\n    output.borrow_mut().clear();\n    output.borrow_mut().push(1);",
         ),
@@ -724,7 +745,7 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
         )?;
         assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
     }
-    let source = ITERATOR_OBSERVER.replace(
+    let source = ITERATOR_OBSERVER.replace_checked(
         "self.sink.set(1);",
         "self.sink.set(1);\n        self.sink.set(1);",
     );
@@ -742,7 +763,7 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
 #[test]
 fn independent_token_observer_survives_implicit_refusal() -> Result<(), String> {
     for original in [ITERATOR_OBSERVER, ADD_OBSERVER] {
-        let source = original.replace("state", "sink").replace(
+        let source = original.replace_checked("state", "sink").replace_checked(
             "assert_eq!(Observation { cell: sink }, Observation { cell: Rc::new(Cell::new(1)) });",
             "assert_eq!(sink.get(), 1);",
         );
