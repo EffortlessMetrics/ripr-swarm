@@ -180,6 +180,27 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "const send = jest.fn(); announce(...[7], send);",
         // Passed at another parameter's position.
         "const send = jest.fn(); announce(send, 7);",
+        // One call site run more than once (RIPR-SPEC-0256): in a loop or a
+        // callback, any recorded call may match the payload.
+        "const send = jest.fn(); for (const id of [7, 8]) announce(id, send);",
+        "const send = jest.fn(); let id = 6; while (id++ < 8) announce(id, send);",
+        "const send = jest.fn(); [7, 8].forEach((id) => announce(id, send));",
+        "const send = jest.fn(); [7, 8].forEach(function (id) { announce(id, send); });",
+        // A method, getter or class may run the call twice.
+        "const send = jest.fn(); const h = { run(id) { announce(id, send); } }; h.run(7); h.run(8);",
+        "const send = jest.fn(); const h = { get go() { return announce(7, send); } }; h.go; h.go;",
+        "const send = jest.fn(); class H { x = announce(7, send); } new H(); new H();",
+        // A `{` in a function's parameters, or a generic's comma inside an
+        // arrow's expression body, does not end the function early.
+        "const send = jest.fn(); [{ id: 7 }, { id: 8 }].forEach(function ({ id }) { announce(id, send); });",
+        "const send = jest.fn(); [7, 8].forEach((id) => wrap<number, number>(announce(id, send)));",
+        // A default parameter value runs on every call that omits it.
+        "const send = jest.fn(); const run = (r = announce(7, send)) => r; run(); run();",
+        "const send = jest.fn(); function run(r = announce(7, send)) { return r; } run(); run();",
+        // A `.fn<` that is a comparison, not a mock factory's type
+        // arguments, does not hide the callback after it.
+        "const send = jest.fn(); const small = cfg.fn<3; [7, 8].forEach((id) => id > 0 && announce(id, send));",
+        "const send = jest.fn(); const small = cfg.fn<3; [7, 8].forEach((id) => { if (id >(0)) announce(id, send); });",
         // A local definition with the owner's name reads as a second call
         // and fails safe.
         "function announce(a, b) {} const send = jest.fn(); announce(7, send);",
@@ -187,6 +208,12 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         assert!(
             !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, test),
             "{test}"
+        );
+        // Inside a test callback, so the scope is the test's own block.
+        let wrapped = format!("it(\"t\", () => {{\n    {test}\n  }});");
+        assert!(
+            !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, &wrapped),
+            "{wrapped}"
         );
     }
 }

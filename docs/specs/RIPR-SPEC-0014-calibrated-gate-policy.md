@@ -56,8 +56,8 @@ The contract is:
   route;
 - static decisions use RIPR static evidence vocabulary and never claim runtime
   adequacy;
-- every gate run writes deterministic JSON and Markdown before returning a
-  non-zero exit code for a blocking decision.
+- every gate evaluation with distinct output destinations writes deterministic
+  JSON and Markdown before returning a non-zero exit code for a blocking decision.
 
 ## Behavior
 
@@ -84,6 +84,17 @@ The command writes:
 target/ripr/reports/gate-decision.json
 target/ripr/reports/gate-decision.md
 ```
+
+`--out` and `--out-md` must select distinct output destinations. If `--out-md`
+is omitted, its path is `--out` with the extension replaced by `.md`; thus
+`--out report.md` requires an explicit, distinct `--out-md`. A collision is an
+argument error (exit 2), refused before evaluation or either output write,
+leaving existing bytes untouched and creating no output directories.
+The comparison makes paths absolute relative to the invoking cwd (not
+`--root`) and applies the shared native lexical `.` / `..` normalization.
+It does not resolve ancestor symlinks, compare hard links or case-fold names;
+it does not guarantee filesystem alias detection. Distinct parent/local paths
+and, on Unix, backslash filenames versus directory separators remain distinct.
 
 The evaluator must not:
 
@@ -119,10 +130,14 @@ or unknown confidence. They must not invent evidence. Missing required inputs
 for a configured mode should produce `config_error` with a repair command in
 the Markdown output.
 
-The first implementation should treat `repo-exposure` and `pr-guidance` as the
-primary current evidence inputs. SARIF policy, receipts, recommendation
-calibration, mutation calibration, and baseline artifacts refine the decision
-only when present.
+Only `--pr-guidance` and `--gap-ledger` feed gate candidates. `--repo-exposure`
+is advisory context, never a gate candidate source, so `gate evaluate` refuses
+an invocation that supplies `--repo-exposure`, with or without `--baseline`,
+and no candidate-feeding input up front instead of accepting it and failing
+later as `config_error` after writing reports (#7741). `--baseline` is a
+comparison input, not a candidate source (#7654). SARIF policy, receipts,
+recommendation calibration, mutation calibration, and baseline artifacts
+refine the decision only when present.
 
 ## Gate Modes
 
@@ -557,6 +572,10 @@ Initial implementation should add tests for:
 
 - gate mode parsing and default `visible-only` behavior;
 - decision JSON and Markdown rendering;
+- output destination collisions and distinct-format controls through the real
+  CLI (`crates/ripr/tests/cli_smoke/output_leaf_identity.rs::gate_*`): identical
+  explicit paths, dot segments, relative/absolute aliases and implicit Markdown
+  collision preserve sentinel bytes with exit 2 and no reported write;
 - acknowledgement label handling;
 - baseline comparison behavior;
 - `pr_evidence` candidate and limitation projection for targeted mutation;

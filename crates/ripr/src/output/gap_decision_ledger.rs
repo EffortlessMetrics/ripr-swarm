@@ -4750,7 +4750,11 @@ mod tests {
         // #7556: `python_adversarial_replaced_block_non_delta_operand` adds one
         // orthogonal card: the return of a two-line replacement block pairs
         // its own old line, so its only test observes a non-delta operand.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 13, 1) {
+        // #7586: `python_call_argument_shape` and `python_mock_assert_called`
+        // pass a mock for the called parameter and pin the changed argument
+        // (RIPR-SPEC-0238 rule 17), so both are `exposed` and drop their
+        // `no_strong_oracle` cards.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 13, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

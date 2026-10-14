@@ -36,6 +36,13 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
+- Successful `ripr init` follow-up commands for `doctor` and `check` bind
+  the selected root, including a relative or implicit root, so copying them
+  from another directory still inspects the repository that was configured.
+  If neither the supplied absolute spelling nor the resolved filesystem path
+  is lossless, completed writes and success
+  status remain truthful while executable follow-ups are omitted with an
+  actionable UTF-8-parent/alias remedy.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -249,7 +256,13 @@ generate tests, run mutation testing, or enable CI blocking policy.
 It should also be bounded for interactive first runs: if analysis exceeds the
 pilot budget, the command should write an explicit partial summary and a retry
 command instead of waiting silently or presenting incomplete analysis as
-complete.
+complete. A timeout must not leave `repo-exposure.json`, `repo-exposure.md`, or
+`agent-seam-packets.json` from an earlier complete run in the same packet
+directory as if they belonged to this run. Those unwritten siblings are removed
+before the partial summaries are written, rather than marked stale in place: a
+missing file cannot be read as this run's evidence, and the summary schema stays
+unchanged (`outputs` remains the packet path map; `outputs_written` names what
+this run produced) (#7425).
 
 ## Outcome Receipt
 
@@ -414,6 +427,22 @@ then ripr writes a conservative repo config that hides solved, intentional, and
 suppressed seam classes while showing actionable weak and unknown classes.
 ```
 
+### Init follow-ups retain the selected repository
+
+```text
+Given a Rust repository A and a different valid repository B,
+when init selects A through an absolute, relative, or implicit root,
+then its printed doctor and check commands still inspect A when replayed in B,
+including when A's path contains spaces or an apostrophe.
+A successful command that reports B's configuration is not accepted.
+If the supplied spelling contains non-UTF-8 cwd bytes but the selected
+filesystem target has a UTF-8 path, then usable follow-ups select that target,
+including parent traversal and symlink/.. traversal.
+If neither spelling is lossless, init still writes the intended config and
+succeeds, but omits follow-ups that would target a replacement-character directory.
+A valid UTF-8 absolute alias to the physical root still yields usable follow-ups.
+```
+
 ### Init does not overwrite accidentally
 
 ```text
@@ -429,6 +458,16 @@ Given a workspace with repo seam evidence,
 when a user runs ripr pilot,
 then ripr writes a pilot packet and prints the top actionable seam, why it was
 flagged, and how to compare before and after after a focused test is added.
+```
+
+### Pilot timeout does not present a previous run's artifacts
+
+```text
+Given a packet directory that still holds repo-exposure and agent-seam-packet
+files from a previous complete run,
+when ripr pilot times out,
+then those leftover files are gone and the partial summaries do not present
+them as this run's outputs.
 ```
 
 ### Pilot names languages its Rust scan did not rank
@@ -584,6 +623,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force`
 - `crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_utf8_targets_from_a_non_utf8_cwd`
 - `crates/ripr/tests/cli_smoke.rs::init_dry_run_prints_config_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow`
@@ -628,6 +671,13 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams`
 - `crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::timed_out_pilot_removes_prior_run_packet_siblings`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_is_a_no_op_when_absent`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_deletes_prior_run_files`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_unlinks_a_symlink_and_keeps_its_target`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_refuses_a_directory`
+- `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
+- `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`
 - `crates/ripr/tests/cli_smoke.rs::pilot_uses_repo_config_mode_without_explicit_flag`
@@ -677,6 +727,9 @@ Current implementation pieces:
   orders.
 - `crates/ripr/src/output/pilot/ranking.rs` ranks actionable seams and
   `crates/ripr/src/output/pilot/render.rs` renders the pilot summary files.
+  A timeout in `crates/ripr/src/cli/commands/pilot.rs` removes leftover
+  repo-exposure and seam-packet siblings before writing the partial summaries
+  (#7425).
 - `crates/ripr/src/output/outcome/mod.rs` compares before/after repo-exposure
   snapshots and renders the public targeted-test outcome receipt.
 - `crates/ripr/src/output/mutation_calibration.rs` imports supplied

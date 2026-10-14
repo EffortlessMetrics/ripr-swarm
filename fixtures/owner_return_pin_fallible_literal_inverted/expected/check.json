@@ -25,7 +25,7 @@
       },
       "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.66,
+      "confidence": 0.92,
       "probe": {
         "id": "probe:src_lib.rs:return_value:b4958fd8",
         "family": "return_value",
@@ -37,15 +37,15 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach answer: observes_answer"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: 7"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 7"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach answer: observes_answer", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: 7", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 7 (line 1)", "related test src/test_support.rs:10 observes_answer uses strong exact value oracle: ensure!(actual == 8);", "source assertion argument value 8 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach answer: observes_answer", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 7", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 7 (line 1)", "related test src/test_support.rs:10 observes_answer uses strong exact value oracle: ensure!(actual == 8);", "source assertion argument value 8 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"7","line":1}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: 7", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach answer: observes_answer"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: 7", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach answer: observes_answer"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "5": "ensure!(actual == 8);"
@@ -88,8 +88,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

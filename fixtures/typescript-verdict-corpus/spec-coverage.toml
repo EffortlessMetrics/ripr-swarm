@@ -8,23 +8,23 @@
 # analyzer verdict, oracle, probe or test-shape behavior that a corpus case
 # (a TypeScript diff plus runtime mutant truth from the subject's own tests)
 # can label: RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-# RIPR-SPEC-0252, and RIPR-SPEC-0254. An in-scope example a case cannot label is waived with a
+# RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. An in-scope example a case cannot label is waived with a
 # reason; waived examples are accounted for, never covered. No example is
-# waived today: every uncovered one could be labeled by a new case, so each
-# stays visible as uncovered. RIPR-SPEC-0243 example 33 (two test files, one
-# mocked) is the known gap tracked on #7099. Examples 30, 34 and 35 are also
-# uncovered: `jest-spec0234-ex30` labels only example 30's literal-`jest.fn`
-# half (RIPR-SPEC-0247 example 2), and the two node:test message cases keep
-# the message unchanged, so neither exercises the discrimination 34 and 35
-# state. Case ids containing `spec0234`
-# were named before the TypeScript rules were renumbered; they cite today's
-# RIPR-SPEC-0243.
+# waived today: every in-scope example has a case, and a new spec's
+# uncovered examples stay visible as uncovered. Every RIPR-SPEC-0243 example has a case:
+# `jest-spec0243-ex33-two-files-one-mocked` labels example 33 (#7099),
+# `jest-spec0243-ex30-factory-db` example 30's non-literal `db`, and the
+# `nodetest-spec0243-ex34-*` and `-ex35-*` cases change the message their
+# payload pins (the older `nodetest-currency-throws-regex` and
+# `nodetest-charge-rejects-message` keep it unchanged, so they cite neither).
+# Case ids containing `spec0234` were named before the TypeScript rules were
+# renumbered; they cite today's RIPR-SPEC-0243.
 #
 # `floor` is the covered-example count `verdict-corpus check` protects. Raise
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 46
+floor = 112
 
 # LSP Repair Packet Command
 [[spec]]
@@ -496,6 +496,33 @@ reason = "local repository scan/report command contract, not an analyzer verdict
 [[spec]]
 id = "RIPR-SPEC-0254"
 scope = "in"
+
+# TypeScript mock passed in an object argument
+[[spec]]
+id = "RIPR-SPEC-0256"
+scope = "in"
+
+# TypeScript committed snapshot entry
+[[spec]]
+id = "RIPR-SPEC-0258"
+scope = "in"
+
+# Rust closures in iterator adaptors
+[[spec]]
+id = "RIPR-SPEC-0265"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# TypeScript strict custom matcher
+[[spec]]
+id = "RIPR-SPEC-0262"
+scope = "in"
+
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # TypeScript Preview Static Facts
 [[unmeasured]]

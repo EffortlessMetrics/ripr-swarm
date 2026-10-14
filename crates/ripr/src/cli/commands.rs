@@ -61,7 +61,7 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // Cache help bodies live beside the cache parser but are also the flag source
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
-pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_EXPORT_HELP, CACHE_STATUS_HELP};
 pub(super) use task_first::{
     CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
 };
@@ -2913,7 +2913,12 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             print!("{}", output::diff_report::render_diff_report_json(&report)?)
         }
     }
-    Ok(())
+    // Preserve the already-rendered report, including supported subjects in
+    // an unsupported input. A second refusal would corrupt JSON stdout.
+    crate::cli::commands_context::analysis_outcome_exit_result(
+        "diff",
+        output.analysis_outcome.as_ref(),
+    )
 }
 
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
@@ -3198,6 +3203,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
+    // #7352: a fresh explain run re-executes the full check pipeline to
+    // resolve one finding id; on a cold large repository the silent window
+    // looked like a hang. The same stderr-only stage lines `ripr check`
+    // projects disclose the work without touching machine stdout. The
+    // `--from` artifact path runs no pipeline and wires no sink.
+    let progress = crate::cli::progress::CliProgressSink::for_stderr(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        crate::cli::progress::ProgressPolicy::STANDARD,
+    );
+    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3209,15 +3224,21 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::explain_finding_with_config_and_navigation_mode(
+            app::explain_finding_with_config_navigation_mode_and_progress(
                 input,
                 &selector,
                 &config,
                 explicit.mode,
                 worktree,
+                progress_sink,
             )?
         }
     };
+    // #7352 review: producer `completed` is held until `commit_success`;
+    // without this call the dropped sink projects `ripr progress: failed`
+    // despite the successful render, exactly the `ripr check` contract the
+    // stage lines borrow.
+    progress.commit_success();
     println!("{rendered}");
     Ok(())
 }

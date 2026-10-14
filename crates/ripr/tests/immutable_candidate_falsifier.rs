@@ -287,6 +287,11 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         copy["base"] = Value::Null;
         if let Some(object) = copy.as_object_mut() {
             object.remove("canonical_next_action");
+            // RIPR-SPEC-0255: `config_path` names the caller's loaded
+            // worktree file, like `root`; a tree subject's governing file
+            // is not in the worktree, so the member is absent there by
+            // design and non-portable between the two run kinds.
+            object.remove("config_path");
             for live_only in ["base_commit", "merge_base_commit", "head"] {
                 object.remove(live_only);
             }

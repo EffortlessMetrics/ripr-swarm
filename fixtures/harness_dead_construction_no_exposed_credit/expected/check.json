@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/harness_dead_construction_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/harness_dead_construction_no_exposed_credit/input/ripr.toml",
   "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":3,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
@@ -234,4 +235,5 @@
         }
       ]
     }
-  ]}
+  ]
+}

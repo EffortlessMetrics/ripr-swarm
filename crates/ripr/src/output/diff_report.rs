@@ -13,30 +13,69 @@ pub(crate) struct DiffChangedFile {
     pub(crate) removed_count: usize,
 }
 
-/// Render a workspace-relative path for a portable output contract.
+/// Render a path for a portable output contract.
 ///
-/// Emitted paths must use forward slashes on every host. The value reaching this
-/// function is a `PathBuf` that the #2099 confinement guard rebuilt with
+/// Emitted paths use forward slashes on every host. The value reaching this
+/// function is often a `PathBuf` that the #2099 confinement guard rebuilt with
 /// `PathBuf::push`, which joins with the platform separator — so on Windows a
 /// path git emitted as `src/lib.rs` is stored as `src\lib.rs`.
 ///
 /// The components are re-joined with `/` rather than string-replacing `\`,
 /// because a backslash is a legal filename character on Unix: blind replacement
-/// would rewrite a real Unix filename that happens to contain one. Only `Normal`
-/// components can appear here — the confinement guard rejects parent, root, and
-/// prefix components before a path is registered — so dropping anything else
-/// cannot silently truncate a path that reaches this point.
+/// would rewrite a real Unix filename that happens to contain one. `CurDir` is
+/// dropped so `./src/lib.rs` matches `changed_files[].path`. `RootDir`,
+/// `Prefix`, and `ParentDir` are kept: dropping them would turn an unstripped
+/// absolute or escaped path into an apparently workspace-relative target.
+/// Callers that have a report root must strip a clean in-root remainder first.
 pub(crate) fn portable_relative_path(path: &Path) -> String {
-    path.components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy()),
-            Component::CurDir
-            | Component::ParentDir
-            | Component::RootDir
-            | Component::Prefix(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::ParentDir => parts.push("..".to_string()),
+            Component::Prefix(prefix) => {
+                let text = prefix.as_os_str().to_string_lossy().replace('\\', "/");
+                let text = text.trim_end_matches('/').to_string();
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+            Component::RootDir => {
+                if parts.is_empty() {
+                    parts.push(String::new());
+                }
+            }
+            Component::CurDir => {}
+        }
+    }
+    let joined = parts.join("/");
+    if joined.is_empty() && path.has_root() {
+        // `/` is RootDir alone: joining `[""]` would silently emit an empty
+        // relative path. Keep the portable root.
+        "/".to_string()
+    } else {
+        joined
+    }
+}
+
+/// Relativize `file` against an absolute report root, then apply
+/// [`portable_relative_path`].
+///
+/// A relative root keeps its spelling: it already names a path under the
+/// invoking directory, matching `changed_files`. An empty remainder or a
+/// `..` escape is not under the root, so the original path is rendered
+/// instead of silently truncating into an apparently relative target.
+fn portable_report_path(root: &Path, file: &Path) -> String {
+    let candidate = super::path::repository_relative_path(root, file);
+    if candidate.as_os_str().is_empty()
+        || candidate
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        portable_relative_path(file)
+    } else {
+        portable_relative_path(candidate)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -201,11 +240,13 @@ pub(crate) fn build_diff_report(
                 .canonical_gap
                 .as_ref()
                 .map(|canonical| canonical.id.clone()),
-            // Same portable contract as `changed_files[].path`. This value
-            // arrives as `.\src\lib.rs` on Windows — a host separator plus a
-            // leading `./` — so it also drops the redundant current-dir
-            // component and matches how `changed_files` renders the same file.
-            file: portable_relative_path(&finding.probe.location.file),
+            // Same portable contract as `changed_files[].path`. Finding
+            // locations from an absolute `--root` include that root; strip
+            // a clean in-root remainder first so `changed_seams[].file`
+            // matches the workspace-relative spelling git already gave
+            // `changed_files`. `.\src\lib.rs` on Windows still drops the
+            // redundant current-dir component after that strip.
+            file: portable_report_path(&output.root, &finding.probe.location.file),
             line: finding.probe.location.line,
             classification: finding.class.as_str().to_string(),
             evidence: finding.evidence.clone(),
@@ -416,6 +457,27 @@ mod tests {
             portable_relative_path(Path::new("./src/lib.rs")),
             "src/lib.rs"
         );
+        // An unstripped absolute path must keep its root so a consumer cannot
+        // join it against `report.root` and land on a sibling location.
+        #[cfg(unix)]
+        {
+            let absolute = std::env::temp_dir().join("src").join("lib.rs");
+            let rendered = portable_relative_path(&absolute);
+            assert!(
+                rendered.starts_with('/'),
+                "absolute path must keep its root: {rendered}"
+            );
+            assert!(
+                rendered.ends_with("src/lib.rs"),
+                "absolute path must keep its tail: {rendered}"
+            );
+            assert_ne!(rendered, "src/lib.rs");
+        }
+        assert_eq!(
+            portable_relative_path(Path::new("../outside.rs")),
+            "../outside.rs"
+        );
+        assert_eq!(portable_relative_path(Path::new("/")), "/");
     }
 
     /// The separator defect is only *observable* on Windows: there, and only
@@ -447,6 +509,131 @@ mod tests {
         path.push("src");
         path.push(r"od\d.rs");
         assert_eq!(portable_relative_path(&path), r"src/od\d.rs");
+    }
+
+    fn check_output_with_finding(root: PathBuf, file: PathBuf) -> CheckOutput {
+        let mut finding = sample_finding();
+        finding.probe.location.file = file;
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root,
+            base: None,
+            summary: Summary {
+                probes: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        }
+    }
+
+    fn report_for(root: PathBuf, file: PathBuf) -> DiffReport {
+        build_diff_report(
+            &check_output_with_finding(root, file),
+            "origin/main",
+            "HEAD",
+            vec![DiffChangedFile {
+                path: "src/lib.rs".to_string(),
+                added_lines: vec![2],
+                removed_lines: vec![2],
+                added_count: 1,
+                removed_count: 1,
+            }],
+            "target/ripr/receipts/diff-first-origin-main-HEAD.json".to_string(),
+        )
+    }
+
+    #[test]
+    fn changed_seams_strip_an_absolute_root_before_portable_rendering() {
+        let root = std::env::temp_dir().join("ripr-diff-abs-root-unit");
+        assert!(
+            root.is_absolute(),
+            "precondition: temp_dir must be absolute, got {root:?}"
+        );
+        let file = root.join("src").join("lib.rs");
+        let report = report_for(root.clone(), file);
+        assert_eq!(report.changed_files[0].path, "src/lib.rs");
+        assert_eq!(report.changed_seams[0].file, "src/lib.rs");
+        assert_eq!(report.changed_seams[0].line, 2);
+        let root_text = root.to_string_lossy();
+        let leaked = root_text.trim_start_matches(['/', '\\']);
+        assert!(
+            !report.changed_seams[0].file.contains(leaked),
+            "absolute root leaked into changed_seams: {} vs root {root:?}",
+            report.changed_seams[0].file
+        );
+        let human = render_diff_report_human(&report);
+        assert!(
+            human.contains("src/lib.rs:2"),
+            "human output must use the workspace-relative seam path: {human}"
+        );
+    }
+
+    #[test]
+    fn changed_seams_keep_a_relative_root_prefix() {
+        let report = report_for(PathBuf::from("repo"), PathBuf::from("repo/src/lib.rs"));
+        assert_eq!(report.changed_seams[0].file, "repo/src/lib.rs");
+        assert_eq!(report.changed_seams[0].line, 2);
+    }
+
+    #[test]
+    fn changed_seams_do_not_truncate_an_outside_root_path() {
+        let root = std::env::temp_dir().join("ripr-diff-abs-root-unit");
+        let outside = std::env::temp_dir()
+            .join("ripr-diff-abs-sibling")
+            .join("src")
+            .join("lib.rs");
+        let report = report_for(root, outside.clone());
+        assert_eq!(
+            report.changed_seams[0].file,
+            portable_relative_path(&outside)
+        );
+        assert_ne!(report.changed_seams[0].file, "src/lib.rs");
+        #[cfg(unix)]
+        assert!(
+            report.changed_seams[0].file.starts_with('/'),
+            "outside-root absolute path must keep its root: {}",
+            report.changed_seams[0].file
+        );
+    }
+
+    #[test]
+    fn changed_seams_do_not_truncate_a_parent_escape() {
+        let root = std::env::temp_dir().join("ripr-diff-abs-root-unit");
+        let escaped = root.join("..").join("outside.rs");
+        let report = report_for(root, escaped.clone());
+        assert_eq!(
+            report.changed_seams[0].file,
+            portable_relative_path(&escaped)
+        );
+        assert_ne!(report.changed_seams[0].file, "outside.rs");
+        assert!(
+            report.changed_seams[0].file.contains(".."),
+            "parent escape must remain visible: {}",
+            report.changed_seams[0].file
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_seams_keep_a_unix_backslash_filename_under_an_absolute_root() {
+        let root = std::env::temp_dir().join("ripr-diff-abs-root-unit");
+        let file = root.join("src").join(r"od\d.rs");
+        let report = report_for(root, file);
+        assert_eq!(report.changed_seams[0].file, r"src/od\d.rs");
     }
 
     #[test]

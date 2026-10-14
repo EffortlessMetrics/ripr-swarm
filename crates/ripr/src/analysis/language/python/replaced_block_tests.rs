@@ -82,9 +82,13 @@ fn analyze(
     Ok(result.findings)
 }
 
+/// Candidate-side classes on one line. A deleted line no added line pairs
+/// with (the `if DEBUG:` below) is base-side evidence on the same line, which
+/// `deleted_lines_tests` covers.
 fn classes_on(findings: &[Finding], number: usize) -> Vec<ExposureClass> {
     findings
         .iter()
+        .filter(|finding| finding.source_currentness.permits_candidate_action())
         .filter(|finding| finding.probe.location.line == number)
         .map(|finding| finding.class.clone())
         .collect()

@@ -48,6 +48,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
         oracle_policy,
         languages,
         &crate::config::RustLanguageConfig::default(),
+        &crate::config::LanguagesConfig::default(),
     )
 }
 
@@ -56,6 +57,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
@@ -96,11 +98,12 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             ..options.clone()
         };
         cancellation::checkpoint()?;
-        let mut result = run_pipeline_for_diff_text(
+        let mut result = run_pipeline_for_diff_text_with_language_config(
             &candidate_options,
             oracle_policy,
             languages,
             rust_config,
+            language_config,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -137,22 +140,38 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // analysis result is evaluated only after the join, so a worker panic
     // cannot ride the scope destructor through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
     let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
         let probes = probe_base.as_deref().map(|base| {
             scope.spawn(move || {
                 cancellation::with_optional_token(probe_token.as_ref(), || {
+                    // The loader already resolved the base commit while
+                    // verifying it; reuse that id instead of spawning the
+                    // identical `rev-parse` again (#7716). A committed-history
+                    // diff runs `git diff <base>...HEAD`, so its merge base
+                    // was never computed by the loader and the probe keeps
+                    // deriving it (passing `None`).
                     diff::resolve_analyzed_revisions(
                         &options.root,
                         base,
                         false,
                         options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        None,
                     )
                 })
             })
         });
         let result = committed_source::with_overlay(overlay.clone(), || {
-            run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
+            run_pipeline_for_diff_text_with_language_config(
+                options,
+                oracle_policy,
+                languages,
+                rust_config,
+                language_config,
+                &loaded.text,
+            )
         });
         let analyzed_revisions = match probes {
             Some(handle) => handle.join().ok(),
@@ -226,6 +245,8 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
+    disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff"
@@ -251,6 +272,28 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
+    // #7716: consumers that render neither the untracked-routed-files
+    // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
+    // the LSP diagnostics refresh — run no probe worker at all. The
+    // #7292 overlap hides the probes behind the analysis only while the
+    // analysis keeps the cores; on a loaded host the worker loses that
+    // race and the join extends every refresh by the probes' full wall
+    // time (measured: four git children, ~2.2s of the didOpen →
+    // first-publish window). The disclosure fields stay empty here, which
+    // is honest because this consumer renders neither field; the check
+    // output surfaces (CLI, MCP) keep `Run` and their disclosures.
+    if disclosure_probes == super::DisclosureProbes::Skip {
+        let mut result = run_pipeline_for_diff_text_with_language_config(
+            options,
+            oracle_policy,
+            languages,
+            rust_config,
+            language_config,
+            &loaded.text,
+        )?;
+        bind_effective_base(&mut result, loaded.effective_base)?;
+        return Ok(result);
+    }
     // #7292: the untracked-routed-files probe and the analyzed-revisions
     // resolution read the repository without depending on the analysis
     // result. Run them on a worker thread DURING the analysis instead of
@@ -264,30 +307,54 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     // after the join, so a worker panic cannot ride the scope destructor
     // through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
+    let loaded_merge_base = loaded.merge_base_origin.clone();
     let probe_token = cancellation::current_token();
+    // #7716 review: capture THIS invocation's test observer on the invoking
+    // thread, before the worker exists. Ordinary `Run` invocations running
+    // in sibling test threads have no observer registered, so their workers
+    // can never signal (or be waited on by) this test's seam — the seam is
+    // invocation-scoped, not process-global (#7799).
+    #[cfg(test)]
+    let probe_worker_observer = current_probe_worker_observer();
+    #[cfg(test)]
+    let observer_for_worker = probe_worker_observer.clone();
     std::thread::scope(|scope| {
         let probes = scope.spawn(move || {
             cancellation::with_optional_token(probe_token.as_ref(), || {
                 #[cfg(test)]
-                PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
+                if let Some(observer) = observer_for_worker.as_ref() {
+                    observer.observe_worker_started();
+                }
                 // RIPR-SPEC-0116: the working-tree diff covers tracked files
                 // only; name the untracked routed files it cannot contain so
                 // the output can say so.
                 let untracked =
                     committed_source::untracked_routed_paths(&options.root, options.git_timeout);
                 let analyzed = probe_base.as_deref().map(|base| {
-                    diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+                    // The loader already resolved the base commit and this
+                    // diff's merge-base origin; reuse both instead of
+                    // spawning the identical probes again (#7716).
+                    diff::resolve_analyzed_revisions(
+                        &options.root,
+                        base,
+                        true,
+                        options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        loaded_merge_base.as_deref(),
+                    )
                 });
                 (untracked, analyzed)
             })
         });
         #[cfg(test)]
-        wait_for_probe_worker_for_test();
-        let result = run_pipeline_for_diff_text(
+        wait_for_probe_worker_for_test(probe_worker_observer.as_deref());
+        let result = run_pipeline_for_diff_text_with_language_config(
             options,
             oracle_policy,
             languages,
             rust_config,
+            language_config,
             &loaded.text,
         );
         let (untracked, analyzed) = match probes.join() {
@@ -310,29 +377,108 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     })
 }
 
-/// #7292 test seam: when the wait flag is set, the worktree pipeline's
-/// analysis phase spins (bounded) until the disclosure-probe worker has
-/// started. Before the overlap fix the probes ran only after the analysis
-/// returned, so the flag stayed unset for the whole bound and the overlap
-/// test failed; with the overlap the worker starts immediately and the
-/// wait exits at once. Test-only: the flag is never set outside tests.
+/// #7292/#7716 test seam, invocation-scoped: the probe-worker observer the
+/// driving test installs on its own thread. The worktree pipeline captures
+/// the observer from the invoking thread before spawning the worker, so a
+/// worker signals only the observer of the invocation that spawned it — an
+/// ordinary parallel `Run` test registers nothing, and its worker can never
+/// satisfy (or be waited on by) another test's seam. This replaces the
+/// earlier process-global flag pair, whose unconditional worker-body store
+/// let sibling `Run` invocations flip a `Skip` test's "never started"
+/// assertion (P1 review on #7757, reproduction in #7799).
 #[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WAIT_FOR_WORKER: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WORKER_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+#[derive(Default)]
+pub(crate) struct ProbeWorkerObserver {
+    /// When set, the pipeline's analysis phase spins (bounded) until the
+    /// worker of THIS invocation reports started — the pre-overlap behavior
+    /// left it unset for the whole bound and failed the overlap test.
+    wait_for_worker: std::sync::atomic::AtomicBool,
+    worker_started: std::sync::atomic::AtomicBool,
+}
 
 #[cfg(test)]
-fn wait_for_probe_worker_for_test() {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-    if !PROBE_OVERLAP_WAIT_FOR_WORKER.load(Ordering::Acquire) {
-        return;
+impl ProbeWorkerObserver {
+    /// An observer whose test requires the probes to overlap the analysis.
+    pub(crate) fn demanding_overlap() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            wait_for_worker: std::sync::atomic::AtomicBool::new(true),
+            worker_started: std::sync::atomic::AtomicBool::new(false),
+        })
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
+
+    /// An observer that only records whether this invocation's worker
+    /// started; the pipeline never waits on it.
+    pub(crate) fn observe_only() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    fn observe_worker_started(&self) {
+        self.worker_started
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the worker of the observed invocation started.
+    pub(crate) fn worker_started(&self) -> bool {
+        self.worker_started
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn wait_requested(&self) -> bool {
+        self.wait_for_worker
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROBE_WORKER_OBSERVER: std::cell::RefCell<
+        Option<std::sync::Arc<ProbeWorkerObserver>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn current_probe_worker_observer() -> Option<std::sync::Arc<ProbeWorkerObserver>> {
+    PROBE_WORKER_OBSERVER.with(|slot| slot.borrow().clone())
+}
+
+/// Owned registration of an observer for the installing test's thread; the
+/// registration is removed on drop, including through `?` early returns, so
+/// a failed test cannot leak its observer into later invocations.
+#[cfg(test)]
+pub(crate) struct ProbeWorkerObserverGuard;
+
+#[cfg(test)]
+impl ProbeWorkerObserverGuard {
+    pub(crate) fn install(observer: std::sync::Arc<ProbeWorkerObserver>) -> Self {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = Some(observer));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ProbeWorkerObserverGuard {
+    fn drop(&mut self) {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// How long the overlap seam waits for this invocation's worker. A
+/// pre-overlap regression keeps the worker unstarted for the whole bound and
+/// fails decisively; the bound is generous because a saturated host can
+/// delay the worker's first scheduling by tens of seconds without any
+/// overlap regression (#7799 validation).
+#[cfg(test)]
+const PROBE_WORKER_WAIT_BOUND: std::time::Duration = std::time::Duration::from_mins(2);
+
+#[cfg(test)]
+fn wait_for_probe_worker_for_test(observer: Option<&ProbeWorkerObserver>) {
+    use std::time::Instant;
+    let Some(observer) = observer.filter(|observer| observer.wait_requested()) else {
+        return;
+    };
+    let deadline = Instant::now() + PROBE_WORKER_WAIT_BOUND;
+    while !observer.worker_started() && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -703,11 +849,37 @@ fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[Langua
     route(std::path::Path::new(path)).is_some_and(|language| languages.contains(&language))
 }
 
+/// Test-only convenience: the ~40 in-module behavioral call sites predate
+/// #7386 and run without a parsed `[languages]` config, so they keep this
+/// default-config wrapper instead of threading one at every site.
+#[cfg(test)]
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    diff_text: &str,
+) -> Result<AnalysisResult, String> {
+    run_pipeline_for_diff_text_with_language_config(
+        options,
+        oracle_policy,
+        languages,
+        rust_config,
+        &crate::config::LanguagesConfig::default(),
+        diff_text,
+    )
+}
+
+/// [`run_pipeline_for_diff_text`] with the parsed `[languages]` repository
+/// configuration: the preview adapters read the `handwritten_files`
+/// declarations so exact hand-written paths under built-in excluded
+/// directories are analyzed instead of silently dropped (#7386).
+fn run_pipeline_for_diff_text_with_language_config(
+    options: &AnalysisOptions,
+    oracle_policy: &OraclePolicy,
+    languages: &[LanguageId],
+    rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
@@ -861,12 +1033,18 @@ fn run_pipeline_for_diff_text(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => {
-                analyze_typescript_diff(options, oracle_policy, preview_changed_files)
-            }
-            LanguageId::Python => {
-                analyze_python_diff(options, oracle_policy, preview_changed_files)
-            }
+            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_diff(
+                options,
+                oracle_policy,
+                preview_changed_files,
+                &language_config.typescript.handwritten_files,
+            ),
+            LanguageId::Python => analyze_python_diff(
+                options,
+                oracle_policy,
+                preview_changed_files,
+                &language_config.python.handwritten_files,
+            ),
             LanguageId::Perl => analyze_perl_diff(options, oracle_policy, preview_changed_files),
             LanguageId::Rust => {
                 continue;
@@ -947,7 +1125,8 @@ fn run_pipeline_for_diff_text(
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
-    let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
+    let preview_advisories =
+        detect_preview_advisories(languages, preview_paths.into_iter(), language_config);
     for advisory in &preview_advisories {
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
@@ -979,25 +1158,49 @@ fn run_pipeline_for_diff_text(
     // them as analyzed (#4372). They are still changed files in scope: record
     // a typed skipped-scope limitation, as the Rust adapter does for generated
     // Rust files, so an excluded-only diff is never a silently complete result
-    // (RIPR-SPEC-0082).
-    for (language, skipped) in
-        detect_preview_skipped_paths(languages, analysis_changed_files.iter())
+    // (RIPR-SPEC-0082). The recovery names the `[languages.<lang>]
+    // handwritten_files` escape hatch for directory-excluded hand-written
+    // files, mirroring the Rust generated-corpus wording, instead of a bare
+    // "retry" that cannot change the outcome (#7386). Skips whose file NAME
+    // marks them generated get their own recovery: that skip has no
+    // configuration override, so sending those users to `handwritten_files`
+    // would be a wrong actionable signal (#7386 review).
+    for (language, skip_class, skipped) in
+        detect_preview_skipped_paths(languages, analysis_changed_files.iter(), language_config)
     {
         let listed = bounded_path_listing(&skipped);
         let name = language.display_name();
+        let config_section = match language {
+            LanguageId::Python => "languages.python",
+            _ => "languages.typescript",
+        };
+        let (recovery_kind, recovery) = match skip_class {
+            PreviewSkipClass::ExcludedDirectory => (
+                AnalysisRecoveryKind::DeclareHandwrittenFiles,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. It skips \
+                     generated files and vendored, dependency, build-output and cache \
+                     directories; if one of these is hand-written, declare its exact \
+                     repository-relative path in `[{config_section}] handwritten_files` \
+                     and re-run the analysis."
+                ),
+            ),
+            PreviewSkipClass::GeneratedName => (
+                AnalysisRecoveryKind::RenameGeneratedMarkedSource,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. Its file name \
+                     marks it as generated, and generated-name skips have no configuration \
+                     override — declaring the path in `[{config_section}] handwritten_files` \
+                     cannot admit it; if it is actually hand-written, rename it so the name \
+                     no longer marks it generated and re-run the analysis."
+                ),
+            ),
+        };
         limitations.push(
             AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    format!(
-                        "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                         generated files and vendored, dependency, build-output and cache \
-                         directories; if one of these is hand-written, its changes stay \
-                         outside this analysis."
-                    ),
-                )?,
+                AnalysisRecovery::new(recovery_kind, recovery)?,
             )
             .with_affected_items(skipped.len() as u64)?
             .with_detail(format!(
@@ -1270,9 +1473,14 @@ fn run_pipeline_for_diff_text(
     })
 }
 
+/// Distinct finding lines on the candidate side. A base-side record (a
+/// deleted or moved line, #7587) sits at a projected coordinate, not a changed
+/// candidate line, so it is left out. Only preview adapters reach this count;
+/// the Rust adapter reports its own `candidate_line_count`.
 fn candidate_lines_from_findings(findings: &[Finding]) -> usize {
     findings
         .iter()
+        .filter(|finding| !finding.source_currentness.is_base_side())
         .map(|finding| {
             (
                 finding.probe.location.file.clone(),
@@ -1451,7 +1659,11 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
-    let preview_advisories = detect_repo_preview_advisories(&options.root, languages);
+    let preview_advisories = detect_repo_preview_advisories(
+        &options.root,
+        languages,
+        &crate::config::LanguagesConfig::default(),
+    );
 
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
@@ -1484,6 +1696,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
 fn detect_repo_preview_advisories(
     root: &std::path::Path,
     enabled: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
 ) -> Vec<PreviewLanguageAdvisory> {
     let discovered = super::workspace::discover_preview_language_files(root);
     let mut advisories: Vec<PreviewLanguageAdvisory> = Vec::new();
@@ -1499,7 +1712,8 @@ fn detect_repo_preview_advisories(
             .iter()
             .filter(|(lang, path)| {
                 lang == language
-                    && !(analyzed_only && is_excluded_from_preview_analysis(*lang, path))
+                    && !(analyzed_only
+                        && is_excluded_from_preview_analysis(*lang, path, language_config))
             })
             .map(|(_, path)| path.to_string_lossy().replace('\\', "/"))
             .collect();
@@ -1559,6 +1773,7 @@ const PREVIEW_LANGUAGE_ORDER: &[LanguageId] = &[
 fn detect_preview_advisories<'a, I>(
     enabled: &[LanguageId],
     paths: I,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Vec<PreviewLanguageAdvisory>
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
@@ -1580,7 +1795,7 @@ where
         // the raw count.
         if enabled.contains(&language)
             && language.is_available()
-            && is_excluded_from_preview_analysis(language, &changed.path)
+            && is_excluded_from_preview_analysis(language, &changed.path, language_config)
         {
             continue;
         }
@@ -1617,14 +1832,25 @@ where
 
 /// Changed files of each enabled, available preview language that the
 /// adapter refuses before counting, in stable language order.
+/// Why the preview adapter skipped a changed path. The two classes take
+/// different recoveries: a directory-excluded hand-written file can be
+/// admitted through `handwritten_files`, while a generated NAME stays
+/// excluded even when its exact path is declared (#7386 review).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreviewSkipClass {
+    GeneratedName,
+    ExcludedDirectory,
+}
+
 fn detect_preview_skipped_paths<'a, I>(
     enabled: &[LanguageId],
     paths: I,
-) -> Vec<(LanguageId, Vec<String>)>
+    language_config: &crate::config::LanguagesConfig,
+) -> Vec<(LanguageId, PreviewSkipClass, Vec<String>)>
 where
     I: Iterator<Item = &'a diff::ChangedFile>,
 {
-    let mut skipped: Vec<(LanguageId, Vec<String>)> = Vec::new();
+    let mut skipped: Vec<(LanguageId, PreviewSkipClass, Vec<String>)> = Vec::new();
     for changed in paths {
         let Some(language) = super::language::route(&changed.path) else {
             continue;
@@ -1632,22 +1858,57 @@ where
         if !is_preview_language(language)
             || !language.is_available()
             || !enabled.contains(&language)
-            || !is_excluded_from_preview_analysis(language, &changed.path)
+            || !is_excluded_from_preview_analysis(language, &changed.path, language_config)
         {
             continue;
         }
+        let generated_name = preview_skip_generated_name(language, &changed.path);
+        let skip_class = if generated_name {
+            PreviewSkipClass::GeneratedName
+        } else {
+            PreviewSkipClass::ExcludedDirectory
+        };
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
-        match skipped.iter_mut().find(|(lang, _)| *lang == language) {
-            Some((_, paths)) => paths.push(normalized),
-            None => skipped.push((language, vec![normalized])),
+        match skipped
+            .iter_mut()
+            .find(|(lang, class, _)| *lang == language && *class == skip_class)
+        {
+            Some((_, _, paths)) => paths.push(normalized),
+            None => skipped.push((language, skip_class, vec![normalized])),
         }
     }
-    skipped.sort_by_key(|(language, _)| {
+    skipped.sort_by_key(|(language, _, _)| {
         PREVIEW_LANGUAGE_ORDER
             .iter()
             .position(|ordered| ordered == language)
     });
     skipped
+}
+
+/// Whether a skipped preview path was excluded because its file NAME marks
+/// it generated (versus an excluded-directory convention the
+/// `handwritten_files` list can admit). The TypeScript predicate is gated
+/// behind `lang-typescript`; without that feature the TypeScript adapter
+/// never runs, so no TypeScript path can be a generated-name skip.
+#[cfg(feature = "lang-typescript")]
+fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            crate::config::is_detectable_generated_typescript_path(path)
+        }
+        LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
+        LanguageId::Rust | LanguageId::Perl => false,
+    }
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> bool {
+    match language {
+        LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
+        LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
+            false
+        }
+    }
 }
 
 /// Up to three paths, then "and N more", capped at 160 characters. Recovery
@@ -1704,29 +1965,49 @@ fn bounded_path_listing(paths: &[String]) -> String {
 ///
 /// This consults the same predicates the adapters apply ahead of
 /// `changed_count += 1` (TypeScript/JavaScript #3743, Python #3672), so the
-/// enabled advisory cannot present a file the adapter never analyzed. Perl has
-/// no excluded-path authority and is never filtered.
-fn is_excluded_from_preview_analysis(language: LanguageId, path: &std::path::Path) -> bool {
+/// enabled advisory cannot present a file the adapter never analyzed. A path
+/// declared in that language's `[languages.<lang>] handwritten_files` is not
+/// refused: the adapter admits it past the excluded-directory conventions
+/// (#7386). Perl has no excluded-path authority and is never filtered.
+fn is_excluded_from_preview_analysis(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {
-            is_excluded_from_typescript_preview_analysis(path)
+            is_excluded_from_typescript_preview_analysis(
+                path,
+                &language_config.typescript.handwritten_files,
+            )
         }
         LanguageId::Python => {
             crate::config::is_detectable_generated_python_path(path)
-                || crate::config::is_detectable_excluded_python_path(path)
+                || (crate::config::is_detectable_excluded_python_path(path)
+                    && !crate::config::is_declared_handwritten_python_path(
+                        &language_config.python.handwritten_files,
+                        path,
+                    ))
         }
         LanguageId::Rust | LanguageId::Perl => false,
     }
 }
 
 #[cfg(feature = "lang-typescript")]
-fn is_excluded_from_typescript_preview_analysis(path: &std::path::Path) -> bool {
+fn is_excluded_from_typescript_preview_analysis(
+    path: &std::path::Path,
+    handwritten: &[String],
+) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
-        || crate::config::is_detectable_excluded_typescript_path(path)
+        || (crate::config::is_detectable_excluded_typescript_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
 #[cfg(not(feature = "lang-typescript"))]
-fn is_excluded_from_typescript_preview_analysis(_path: &std::path::Path) -> bool {
+fn is_excluded_from_typescript_preview_analysis(
+    _path: &std::path::Path,
+    _handwritten: &[String],
+) -> bool {
     false
 }
 
@@ -1735,8 +2016,10 @@ fn analyze_typescript_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
+    handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
-    TypeScriptAdapter.analyze_diff(options, oracle_policy, changed_files)
+    let _ = oracle_policy;
+    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -1744,6 +2027,7 @@ fn analyze_typescript_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
+    _handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -1753,8 +2037,10 @@ fn analyze_python_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
+    handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
-    PythonAdapter.analyze_diff(options, oracle_policy, changed_files)
+    let _ = oracle_policy;
+    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
 }
 
 #[cfg(not(feature = "lang-python"))]
@@ -1762,6 +2048,7 @@ fn analyze_python_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
+    _handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Python)
 }
@@ -4887,7 +5174,7 @@ index 0000000..1111111 100644
             write(&root.join(path), "export const limit = 1;\n")?;
         }
         let counts = |enabled: &[LanguageId]| -> Vec<(String, usize, Vec<String>, bool)> {
-            detect_repo_preview_advisories(&root, enabled)
+            detect_repo_preview_advisories(&root, enabled, &Default::default())
                 .into_iter()
                 .map(|advisory| {
                     (
@@ -4931,7 +5218,7 @@ index 0000000..1111111 100644
             write(&root.join(path), "export const limit = 1;\n")?;
         }
         let counts = |enabled: &[LanguageId]| -> Vec<(usize, usize)> {
-            detect_repo_preview_advisories(&root, enabled)
+            detect_repo_preview_advisories(&root, enabled, &Default::default())
                 .into_iter()
                 .map(|advisory| (advisory.file_count, advisory.javascript_file_count))
                 .collect()
@@ -5605,7 +5892,14 @@ index 0000000..1111111 100644
         Ok(())
     }
 
-    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    /// Run one fixture git command and return its full output, for tests
+    /// that must read what git printed (for example pinning a resolved
+    /// commit id). The file's single process spawn lives here, so both
+    /// setup and read-back go through this one policy-accounted helper.
+    fn fixture_git_output(
+        root: &std::path::Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
         let output = std::process::Command::new("git")
             .current_dir(root)
             // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would redirect
@@ -5617,6 +5911,11 @@ index 0000000..1111111 100644
             .args(args)
             .output()
             .map_err(|err| format!("run git {args:?}: {err}"))?;
+        Ok(output)
+    }
+
+    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = fixture_git_output(root, args)?;
         if !output.status.success() {
             return Err(format!(
                 "git {args:?} failed: {}",
@@ -5637,11 +5936,14 @@ index 0000000..1111111 100644
     #[test]
     fn worktree_pipeline_probes_overlap_the_analysis() -> Result<(), String> {
         use crate::config::RustLanguageConfig;
-        use std::sync::atomic::Ordering;
-        use std::time::{Duration, Instant};
+        use std::sync::Arc;
+        use std::time::Instant;
 
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
-        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+        // Invocation-scoped seam (#7799): this observer belongs to THIS
+        // invocation only. Sibling tests running ordinary `Run` pipelines
+        // register no observer and cannot satisfy or wait on this one.
+        let observer = ProbeWorkerObserver::demanding_overlap();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
 
         let root = temp_root("probe-overlap")?;
         let result = (|| -> Result<(), String> {
@@ -5682,10 +5984,12 @@ index 0000000..1111111 100644
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
+                &crate::config::LanguagesConfig::default(),
+                crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
 
-            let worker_started = PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire);
+            let worker_started = observer.worker_started();
             if !worker_started {
                 return Err(
                     "the probe worker never started during the analysis: the disclosure probes \
@@ -5693,10 +5997,13 @@ index 0000000..1111111 100644
                         .to_string(),
                 );
             }
-            // The seam's own bound is 30s; reaching it means the worker was
-            // still not observed while the analysis waited for it, which is
-            // the pre-fix behavior this test pins against.
-            if elapsed >= Duration::from_secs(25) {
+            // Elapsed past the seam's wait bound only when the wait provably
+            // expired without this invocation's worker starting — the
+            // pre-fix behavior this test pins against. Under a loaded host
+            // the wait can legitimately absorb tens of seconds before the
+            // worker is scheduled, so the threshold is the wait bound
+            // itself, not a smaller timing guess (#7799 validation).
+            if elapsed >= PROBE_WORKER_WAIT_BOUND {
                 return Err(format!(
                     "the analysis waited {:.1}s for the probe worker: the probes did not overlap \
                      the analysis",
@@ -5718,9 +6025,152 @@ index 0000000..1111111 100644
             if revisions.head_commit.is_none() || revisions.base_commit.is_none() {
                 return Err("resolved commits must be named".to_string());
             }
+            // #7716 de-dup pin: the named ids must be the repository's real
+            // commits. The base commit now comes from the loader's own
+            // verification probe and the merge base from the loader's diff
+            // origin, so a regression that names a different (or absent)
+            // commit fails here.
+            // Read through the file's one policy-accounted spawn helper
+            // (`fixture_git_output`) instead of spawning a second process.
+            let git_commit = |spec: &str| -> Result<String, String> {
+                let output =
+                    fixture_git_output(&root, &["rev-parse", "--verify", "--quiet", spec])?;
+                if !output.status.success() {
+                    return Err(format!("rev-parse {spec} did not resolve"));
+                }
+                String::from_utf8(output.stdout)
+                    .map_err(|error| format!("non-utf8 rev-parse output: {error}"))
+                    .map(|commit| commit.trim().to_string())
+            };
+            let expected_base = git_commit("HEAD~1^{commit}")?;
+            if revisions.base_commit.as_deref() != Some(expected_base.as_str()) {
+                return Err(format!(
+                    "base_commit must be the loader-verified commit {expected_base}, got {:?}",
+                    revisions.base_commit
+                ));
+            }
+            let expected_head = git_commit("HEAD^{commit}")?;
+            if revisions.head_commit.as_deref() != Some(expected_head.as_str()) {
+                return Err(format!(
+                    "head_commit must be the current HEAD {expected_head}, got {:?}",
+                    revisions.head_commit
+                ));
+            }
+            // Linear history with base `HEAD~1`: the merge base IS the base
+            // tip, and the naming contract keeps the field absent rather
+            // than repeating the base commit.
+            if revisions.merge_base_commit.is_some() {
+                return Err(format!(
+                    "merge_base_commit must stay absent when it equals the base commit, got {:?}",
+                    revisions.merge_base_commit
+                ));
+            }
             Ok(())
         })();
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #7716 discriminating test: a consumer that renders neither disclosure
+    /// field (the LSP diagnostics refresh) runs no probe worker at all.
+    /// Before the skip existed, the #7292 worker spawned even for such
+    /// consumers and its four git children could lose the overlap race on a
+    /// loaded host, extending every refresh by the probes' full wall time.
+    /// With the skip THIS invocation's observer stays unsignaled while the
+    /// analysis completes, and the unrendered fields stay empty. The
+    /// observer is invocation-scoped (#7799), so an ordinary parallel `Run`
+    /// test starting its own worker cannot flip it.
+    #[test]
+    fn worktree_pipeline_skip_disclosure_probes_spawns_no_probe_worker() -> Result<(), String> {
+        use crate::config::RustLanguageConfig;
+        use std::sync::Arc;
+
+        // This observer would flip if, and only if, THIS invocation's
+        // pipeline started a probe worker (a regression of the Skip branch
+        // to the Run path), regardless of what sibling tests run.
+        let observer = ProbeWorkerObserver::observe_only();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
+
+        let root = temp_root("probe-skip")?;
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"probe-skip-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n",
+            )?;
+            fixture_git(&root, &["init", "--initial-branch", "main"])
+                .or_else(|_| fixture_git(&root, &["init"]))?;
+            fixture_git(&root, &["config", "user.email", "test@example.com"])?;
+            fixture_git(&root, &["config", "user.name", "Test"])?;
+            fixture_git(&root, &["config", "commit.gpgsign", "false"])?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "base"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n",
+            )?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "second"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n",
+            )?;
+
+            let mut options = draft_diff_options(root.clone());
+            options.base = Some("HEAD~1".to_string());
+            let analysis = run_worktree_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &RustLanguageConfig::default(),
+                &crate::config::LanguagesConfig::default(),
+                crate::analysis::DisclosureProbes::Skip,
+            )
+            .map_err(|err| format!("worktree pipeline failed: {err}"))?;
+
+            if observer.worker_started() {
+                return Err(
+                    "the disclosure-probe worker started under Skip: a consumer that renders \
+                     neither disclosure field must run no probe worker"
+                        .to_string(),
+                );
+            }
+            if analysis.analyzed_revisions.is_some() {
+                return Err(
+                    "Skip must leave the analyzed-revisions naming absent; the consumer renders \
+                     it never"
+                        .to_string(),
+                );
+            }
+            if !analysis.untracked_source_paths.is_empty() {
+                return Err(
+                    "Skip must leave the untracked-routed-files naming empty; the consumer \
+                     renders it never"
+                        .to_string(),
+                );
+            }
+            // The analysis itself is unchanged: the live diff is still read
+            // and analyzed to a complete outcome.
+            let outcome = analysis
+                .analysis_outcome
+                .ok_or("the skipped-probe run must still carry its typed outcome")?;
+            if !matches!(
+                outcome.kind,
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
+            ) {
+                return Err(format!(
+                    "the skipped-probe run must stay a complete analysis, got {:?}",
+                    outcome.kind
+                ));
+            }
+            Ok(())
+        })();
         let _ = fs::remove_dir_all(&root);
         result
     }

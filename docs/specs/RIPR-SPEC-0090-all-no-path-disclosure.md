@@ -165,7 +165,8 @@ bump. The JSON `check.json` shape is unchanged.
 
 When the disclosure fires and a Rust file produced a `no_static_path`
 finding, the note appends one sentence if the repository also contains Python
-test files (`test_*.py`, `*_test.py`, or any `.py` under `tests/` or `test/`,
+test files (`test_*.py`, `*_test.py`, `tests.py`/`test.py`, or any `.py`
+under `tests/` or `test/`,
 excluding virtualenvs, tool caches and the default ignored directories). It
 names the count (`at least N` when the bounded walk hit its entry cap or could not read a directory), one
 example path, and says ripr does not link Python tests to Rust changes. It makes

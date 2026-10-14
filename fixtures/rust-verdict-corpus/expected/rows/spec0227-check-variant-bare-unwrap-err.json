@@ -10,9 +10,9 @@
   "ideal_verdict": "gap",
   "observed_verdict": "gap",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "reachable_unrevealed"
+    "weakly_exposed"
   ],
   "outcome": "ideal",
   "contradictions": [],
@@ -26,15 +26,15 @@
       "test": "unwrap_err_on_far_input",
       "spec": "RIPR-SPEC-0227#7"
     },
-    "observed_kind": "unknown",
-    "observed_strength": "none",
+    "observed_kind": "broad_error",
+    "observed_strength": "weak",
     "observed_all": [
       {
         "test": "unwrap_err_on_far_input",
-        "kind": "unknown",
-        "strength": "none"
+        "kind": "broad_error",
+        "strength": "weak"
       }
     ],
-    "outcome": "underclaim"
+    "outcome": "match"
   }
 }

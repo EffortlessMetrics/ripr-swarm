@@ -1,0 +1,48 @@
+{
+  "case_id": "vitest-spec0254-ex02-awaited-local",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/vitest-spec0254-ex02-awaited-local.diff",
+  "anchor": {
+    "file": "src/unitPriceLocal.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_awaited_local_tobe_changed_key",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 4.1.11 (the subject's pinned version); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "const table: Record<string, number> = { apple: 120, pear: 99 };",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/unitPriceLocal.test.ts > pins the awaited pear price",
+        "equivalence_review": "not equivalent: pear costs 99 instead of 95"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The lookup table `{ apple: 120, pear: 95 }` moves pear to 99. The test binds `const price = await fetchUnitPriceLocal('pear')` and pins `expect(price).toBe(95)`, which fails on 99. RIPR-SPEC-0254 example 2: through an awaited local bound once to the owner call, with the changed key `pear` as its argument, `exposed`. ripr reports `exposed` with exact_value / strong, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0254#2"
+  ]
+}

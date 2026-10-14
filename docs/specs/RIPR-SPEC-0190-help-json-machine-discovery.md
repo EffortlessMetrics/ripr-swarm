@@ -132,6 +132,12 @@ Authority:
     the exit authority. The document does not prove a given invocation's
     status.
 
+The startup error reporter preserves that numeric mapping when stderr is
+unwritable: a previously rendered JSON refusal remains intact with exit `2`
+or `3`. Panic diagnostics are also best effort, retaining the internal-error
+exit `2` without recursive abort. This does not guarantee report production
+when an earlier analysis-stage diagnostic fails.
+
 `help --json` serializes existing catalog authority only. It never parses
 human help, executes commands, inspects a repository, or strengthens any
 command or workflow claim.

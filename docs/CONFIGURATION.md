@@ -112,6 +112,17 @@ testing, enable CI blocking policy, or unlock basic CLI usefulness.
 ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 ```
 
+After writing, `init` prints `doctor` and `check` commands with the selected
+root bound explicitly. Copy those commands to inspect the same repository
+from another directory, including when `init` used a relative `--root`.
+If its supplied spelling is not lossless, `init` tries the selected directory's
+resolved filesystem path, so `--root ..` can still select a UTF-8 parent from
+a directory with non-UTF-8 bytes. Symlink traversal follows the filesystem.
+If neither spelling represents the selected root losslessly in a portable command,
+`init` keeps its completed writes and success status, omits the follow-ups,
+and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
+with non-UTF-8 bytes still provides a usable command spelling.
+
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
@@ -756,6 +767,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | Unknown fields rejected | Catches typos. |
+| Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
 | Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
 | Expired suppressions do **not** apply | They surface as warnings on the badge so silent green-forever debt is impossible. |
@@ -980,7 +992,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `max_related_tests` | integer | `5` | Default cap for context packets and server-side collect-context commands. |
+| `max_related_tests` | integer ≥ 1 | `5` | Default cap for context packets and server-side collect-context commands. `0` is rejected at parse time with a named error — it would silently empty `related_tests` in every packet; remove the key for the default. The explicit `--max-related-tests 0` render cap is a separate, per-invocation contract. |
 
 ### `[suppressions]`
 
@@ -1018,6 +1030,25 @@ an inaccurate declaration or marker; `handwritten_files` does not override it.
 The selected source corpus participates in cache identity, and this setting is
 finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
+
+`[languages.python]` and `[languages.typescript]` configure the preview
+adapters. Each admits one override:
+
+| Key | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+
+For example, a project that keeps hand-written Python source under a `build/`
+package can admit it:
+
+```toml
+[languages.python]
+handwritten_files = ["build/lib/pipeline.py"]
+```
+
+When a changed file is still skipped by these conventions, the run's
+`language_scope_unsupported` limitation names this opt-in instead of advising a
+bare retry that cannot change the outcome (#7386).
 
 For example:
 
@@ -1080,9 +1111,9 @@ languages continue. The accepted managed producer values are
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. |
+| `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. Unknown values fail at parse time with a key-named error. |
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
-| `timeout_ms` | integer | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` also resolves to `30000`; it does not disable the timeout. |
+| `timeout_ms` | integer ≥ 1 | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` is rejected at parse time with a named error — it does not disable the timeout; remove the key for the default. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
 
 A timed-out or failed managed export does not replace the previous published

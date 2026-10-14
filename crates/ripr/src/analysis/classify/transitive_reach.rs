@@ -188,6 +188,54 @@ struct ReachGraph<'a> {
     /// Per test file: the derive names its attributes apply, filled on first
     /// use.
     file_derives: Mutex<HashMap<&'a Path, std::sync::Arc<Vec<String>>>>,
+    /// `by_name`'s call edges over interned names, built on first use. See
+    /// [`NameGraph`].
+    name_graph: OnceLock<NameGraph<'a>>,
+}
+
+/// The forward walk's edges with each production function name interned.
+/// Trait-dispatch reach walks from hundreds of trait methods, and each walk
+/// visits most of a large workspace; hashing every call name of every
+/// function on each visit made that walk most of the dispatch index's build.
+struct NameGraph<'a> {
+    /// Every name in `by_name`, sorted, so ids order as their names do.
+    names: Vec<&'a str>,
+    ids: HashMap<&'a str, u32>,
+    /// Per name id: the distinct non-macro callees, over every function with
+    /// that name, that have a production function themselves.
+    callees: Vec<Vec<u32>>,
+}
+
+impl<'a> NameGraph<'a> {
+    fn build(by_name: &HashMap<&'a str, Vec<&'a FunctionSummary>>) -> Self {
+        let mut names: Vec<&'a str> = by_name.keys().copied().collect();
+        names.sort_unstable();
+        let ids: HashMap<&'a str, u32> = names
+            .iter()
+            .zip(0u32..)
+            .map(|(&name, id)| (name, id))
+            .collect();
+        let callees = names
+            .iter()
+            .map(|name| {
+                let mut seen = HashSet::new();
+                by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|function| calls_of(function))
+                    .filter(|call| !is_macro_call(&call.name))
+                    .filter_map(|call| ids.get(call.name.as_str()).copied())
+                    .filter(|&id| seen.insert(id))
+                    .collect()
+            })
+            .collect();
+        Self {
+            names,
+            ids,
+            callees,
+        }
+    }
 }
 
 /// One invocation of a test-generating `macro_rules!` in its own file.
@@ -351,6 +399,7 @@ impl<'a> ReachGraph<'a> {
             macro_bodies,
             unique_macro_identifiers,
             tests_by_call: OnceLock::new(),
+            name_graph: OnceLock::new(),
             macro_invocations: OnceLock::new(),
             macro_definitions,
             generated_tests,
@@ -400,9 +449,8 @@ impl<'a> ReachGraph<'a> {
         let mut best: Option<(String, &'a str)> = None;
         for derive in derives.iter() {
             for &function in self.derive_entries.get(derive).into_iter().flatten() {
-                let reaches = calls_of(function).iter().any(|call| {
+                let reaches = calls_of(function).any(|call| {
                     !is_macro_call(&call.name)
-                        && !is_own_declaration(call, function)
                         && (call.name == owner_name || reaching.contains(call.name.as_str()))
                 });
                 let candidate = (derive.clone(), function.name.as_str());
@@ -568,9 +616,8 @@ impl<'a> ReachGraph<'a> {
     ) -> Option<ReceiverTypes> {
         let mut self_types = Vec::new();
         for function in self.by_name.get(entry).into_iter().flatten() {
-            let reaches = calls_of(function).iter().any(|call| {
+            let reaches = calls_of(function).any(|call| {
                 !is_macro_call(&call.name)
-                    && !is_own_declaration(call, function)
                     && (call.name == owner_name || reaching.contains(call.name.as_str()))
             });
             if !reaches {
@@ -831,7 +878,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 continue;
             };
             let mut entry: Option<(bool, &str)> = None;
-            for callee in &test.calls {
+            for callee in test_calls(test) {
                 // Skip macro invocations.
                 if is_macro_call(&callee.name) {
                     continue;
@@ -905,7 +952,7 @@ impl<'a> TransitiveReachIndex<'a> {
     /// (#5411) reads it to ask whether any test-reached code names a type.
     pub(in crate::analysis) fn test_reached_functions(&self) -> Vec<&'a FunctionSummary> {
         let graph = self.graph();
-        let calls = graph.all_tests.iter().flat_map(|test| test.calls.iter());
+        let calls = graph.all_tests.iter().flat_map(|test| test_calls(test));
         self.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
     }
 
@@ -913,6 +960,59 @@ impl<'a> TransitiveReachIndex<'a> {
     /// name, sorted by name. Macro invocations and names with no in-crate
     /// function stop their branch, as in the transitive walk.
     pub(in crate::analysis) fn functions_reached_from<'c>(
+        &self,
+        calls: impl IntoIterator<Item = &'c CallFact>,
+        depth: usize,
+    ) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let names = graph
+            .name_graph
+            .get_or_init(|| NameGraph::build(&graph.by_name));
+        let mut seen = vec![false; names.names.len()];
+        let mut frontier: Vec<u32> = Vec::new();
+        for call in calls {
+            if is_macro_call(&call.name) {
+                continue;
+            }
+            if let Some(&id) = names.ids.get(call.name.as_str())
+                && let Some(slot) = seen.get_mut(id as usize)
+                && !*slot
+            {
+                *slot = true;
+                frontier.push(id);
+            }
+        }
+        let mut reached: Vec<u32> = frontier.clone();
+        for _ in 1..depth {
+            let mut next = Vec::new();
+            for id in frontier {
+                for &callee in names.callees.get(id as usize).into_iter().flatten() {
+                    if let Some(slot) = seen.get_mut(callee as usize)
+                        && !*slot
+                    {
+                        *slot = true;
+                        next.push(callee);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            reached.extend(next.iter().copied());
+            frontier = next;
+        }
+        reached.sort_unstable();
+        reached
+            .into_iter()
+            .filter_map(|id| names.names.get(id as usize))
+            .flat_map(|name| graph.by_name.get(name).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// The walk [`Self::functions_reached_from`] replaced, over names
+    /// instead of interned ids; tests pin the two together.
+    #[cfg(test)]
+    fn functions_reached_from_by_name<'c>(
         &self,
         calls: impl IntoIterator<Item = &'c CallFact>,
         depth: usize,
@@ -1072,7 +1172,7 @@ fn macro_reach_witness_with(
             }
         }
 
-        for callee in &test.calls {
+        for callee in test_calls(test) {
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
@@ -2425,19 +2525,70 @@ fn is_ascii_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn calls_of(f: &FunctionSummary) -> &[CallFact] {
-    &f.calls
+fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&f.name, &f.calls)
 }
 
-/// Whether `call` is the function's own declaration line (`fn build(&self)`),
-/// which call facts record under the function's own name. It is no evidence
-/// that the function leads anywhere: without this, `Cache::build` would
-/// "reach" through the name `build` (#5481). A real call to a same-named
-/// function on another type (`self.queue.build()`) still counts.
-fn is_own_declaration(call: &CallFact, function: &FunctionSummary) -> bool {
-    call.name == function.name
-        && contains_identifier(&call.text, "fn")
-        && call.text.contains(&format!("fn {}", function.name))
+fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
+    calls_after_definition(&test.name, &test.calls)
+}
+
+/// `calls` without the function's own declaration (`fn build(&self)`), which
+/// call facts record under the function's own name. It is no evidence that
+/// the function leads anywhere. Left in, `Cache::build` "reaches" through the
+/// name `build` (#5481), a test named `test` calls every same-named helper,
+/// and a trait method's walk reaches every method sharing its name, so
+/// `Display::fmt` reached each `Debug::fmt` (#5577). A real call to a
+/// same-named function on another type (`self.queue.build()`) still counts.
+///
+/// Call facts keep one fact per name and line, so on a one-line function
+/// (`fn parse() { assert!(parse("1").is_ok()) }`) the fact stands for both
+/// the declaration and the call; it is dropped only when every `name(` on
+/// its line is a declaration. The line is not matched against the
+/// function's start line: that line can be an attribute (`#[derive(..)]`
+/// above a derive entry), so the declaration fact sits on a later line.
+pub(in crate::analysis) fn calls_after_definition<'c>(
+    name: &'c str,
+    calls: &'c [CallFact],
+) -> impl Iterator<Item = &'c CallFact> + 'c {
+    calls
+        .iter()
+        .filter(move |call| !(call.name == name && only_declares(&call.text, name)))
+}
+
+/// Whether every call-shaped `name(` in `line` follows `fn`.
+fn only_declares(line: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let bytes = line.as_bytes();
+    let mut declarations = 0usize;
+    let mut calls = 0usize;
+    for (start, _) in line.match_indices(name) {
+        let end = start + name.len();
+        if (start > 0 && is_ident(bytes[start - 1])) || bytes.get(end).is_some_and(|b| is_ident(*b))
+        {
+            continue;
+        }
+        let after = line[end..].trim_start();
+        if !(after.starts_with('(') || after.starts_with('<') || after.starts_with("::<")) {
+            continue;
+        }
+        if line[..start].trim_end().ends_with("fn")
+            && line[..start]
+                .trim_end()
+                .strip_suffix("fn")
+                .is_some_and(|before| {
+                    before
+                        .chars()
+                        .last()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+                })
+        {
+            declarations += 1;
+        } else {
+            calls += 1;
+        }
+    }
+    declarations > 0 && calls == 0
 }
 
 /// Returns true when the callee name looks like a macro invocation - i.e. it
@@ -2483,6 +2634,49 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      stops at a macro invocation it does not expand. \
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    fn call(line: usize, name: &str, text: &str) -> CallFact {
+        CallFact {
+            line,
+            name: name.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_not_a_call_but_a_one_line_self_call_is() {
+        let calls = [
+            call(1, "parse", "fn parse() -> u32 {"),
+            call(2, "parse", "parse(1)"),
+        ];
+        let kept: Vec<_> = calls_after_definition("parse", &calls)
+            .map(|c| c.line)
+            .collect();
+        assert_eq!(kept, vec![2]);
+        let one_line = [call(
+            1,
+            "parse",
+            "#[test] fn parse() { assert!(parse(\"1\").is_ok()); }",
+        )];
+        assert_eq!(calls_after_definition("parse", &one_line).count(), 1);
+        let delegating = [call(
+            1,
+            "build",
+            "fn build(&self) -> X { self.inner.build() }",
+        )];
+        assert_eq!(calls_after_definition("build", &delegating).count(), 1);
+        // `fn build_all(` is not `fn build(`.
+        let other = [call(1, "build", "fn build_all() { build() }")];
+        assert_eq!(calls_after_definition("build", &other).count(), 1);
+        // The declaration fact can sit below an attribute line.
+        let attributed = [call(2, "build", "fn build(&self) -> X {")];
+        assert_eq!(calls_after_definition("build", &attributed).count(), 0);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -3245,6 +3439,79 @@ mod tests {
             }
         }
         assert_eq!(reached, ["f3", "f4", "f5", "f6", "f7"]);
+    }
+
+    #[test]
+    fn interned_walk_agrees_with_the_walk_over_names() {
+        let mut decode_a = make_fn("decode", vec!["left"]);
+        decode_a.id = SymbolId("src/lib.rs::A::decode".to_string());
+        let mut decode_b = make_fn("decode", vec!["right", "expand!"]);
+        decode_b.id = SymbolId("src/lib.rs::B::decode".to_string());
+        let fns = vec![
+            make_fn("a1", vec!["a2", "missing"]),
+            make_fn("a2", vec!["a3", "a1"]),
+            make_fn("a3", vec!["a4"]),
+            make_fn("a4", vec!["a5", "decode"]),
+            make_fn("a5", vec!["a6"]),
+            make_fn("a6", vec![]),
+            decode_a,
+            decode_b,
+            make_fn("left", vec!["decode"]),
+            make_fn("right", vec![]),
+            make_fn("expand", vec!["a6"]),
+        ];
+        let index = index_with(fns, Vec::new());
+        let reach = TransitiveReachIndex::new(&index);
+        let ids = |functions: Vec<&FunctionSummary>| -> Vec<String> {
+            functions.iter().map(|f| f.id.0.clone()).collect()
+        };
+        let mut starts: Vec<&str> = reach.graph().by_name.keys().copied().collect();
+        starts.extend(["missing", "expand!"]);
+        starts.sort_unstable();
+        for start in starts {
+            let calls = vec![CallFact {
+                line: 1,
+                name: start.to_string(),
+                text: format!("{start}()"),
+            }];
+            for depth in 0..=7 {
+                assert_eq!(
+                    ids(reach.functions_reached_from(&calls, depth)),
+                    ids(reach.functions_reached_from_by_name(&calls, depth)),
+                    "{start} at depth {depth}"
+                );
+            }
+        }
+        // A start named twice is walked once.
+        let call = |name: &str| CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: format!("{name}()"),
+        };
+        let repeated = vec![call("a1"), call("a1"), call("decode")];
+        assert_eq!(
+            ids(reach.functions_reached_from(&repeated, 2)),
+            ids(reach.functions_reached_from_by_name(&repeated, 2)),
+        );
+        // Both `decode`s are followed, the macro call `expand!` names no
+        // function, and the walk stops at the depth bound before `a6`.
+        let a1 = vec![CallFact {
+            line: 1,
+            name: "a1".to_string(),
+            text: "a1()".to_string(),
+        }];
+        assert_eq!(
+            ids(reach.functions_reached_from(&a1, 5)),
+            [
+                "src/lib.rs::a1",
+                "src/lib.rs::a2",
+                "src/lib.rs::a3",
+                "src/lib.rs::a4",
+                "src/lib.rs::a5",
+                "src/lib.rs::A::decode",
+                "src/lib.rs::B::decode",
+            ]
+        );
     }
 
     #[test]

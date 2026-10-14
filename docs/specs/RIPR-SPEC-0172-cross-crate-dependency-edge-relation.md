@@ -56,7 +56,8 @@ credit):
   name or token similarity alone, and no other weak signal can ride
   through it;
 - the workspace index must be complete (the same precondition as the
-  #2971 uniqueness bypass) and the path-dependency adjacency must report
+  #2971 uniqueness bypass), except for the inherent type-path route below
+  (#6617), and the path-dependency adjacency must report
   a `Complete` capture: `limited` (partial edge inventory) and
   `unavailable` admit nothing, never a blanket admit;
 - the calling test's file and the owner's file must attribute to their
@@ -123,7 +124,20 @@ rules above:
   or standard path (`use core::{num};` then `use num::*;`) is local and
   does not refuse;
 - a `let` binding of the owner name cannot shadow `T::owner(` and does not
-  defeat this route.
+  defeat this route;
+- the index need not span the workspace for an owner in an inherent
+  `impl T` block whose whole package is indexed (#6617). Path resolution
+  prefers inherent associated items, inherent impls live in the type's own
+  crate, and the foreign-import check above reads only the owner's crate,
+  so no unindexed package can hold a competing target. A narrowed (Draft
+  or Fast) index then still admits the type-path call; a trait-impl owner,
+  the bare-call route and the uniqueness bypass keep the whole-workspace
+  precondition.
+
+The relation alone credits nothing. An associated function (no `self`)
+reaches `exposed` only through the RIPR-SPEC-0197 owner-return pin for
+`T::name(..)` calls, which repeats the identity checks on the test side:
+a free function of the same name never competes with that pin either.
 
 Everything else about relation reporting — the reason/confidence tags,
 ordering, and the shared rendering surfaces — is unchanged.
@@ -245,6 +259,9 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_fails_closed_without_owner_identity`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
 ## Implementation Mapping
@@ -254,7 +271,8 @@ call.
   `has_callable_forward_dependency`, `imports_owner_from_dependency`,
   `use_path_names_owner`, `nearest_manifest_identity`,
   `body_binds_owner_name`, `strip_comments_and_strings`,
-  `type_path_call_admits_owner`, `owner_crate_imports_type_name`
+  `type_path_call_admits_owner`, `owner_crate_imports_type_name`,
+  `type_path_index_covers_competitors`, `manifests_with_unindexed_files`
 - `crates/ripr/src/analysis/syntax/ra.rs` — `function_impl_context`
   (`FunctionFact.impl_context`)
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs` —
@@ -262,8 +280,9 @@ call.
   (section-and-name declarations per pair)
 - `crates/ripr/src/analysis/classifier.rs` — `classify_probe` threading
 - `crates/ripr/src/analysis/language/rust/mod.rs` — per-pass context
-  construction (diff mode: whole-workspace index only; repo mode:
-  always)
+  construction (diff mode: a whole-workspace index, or a package-narrowed
+  index that took in dependent packages, which feeds only the inherent
+  type-path route (#6617); repo mode: always)
 
 ## Metrics
 

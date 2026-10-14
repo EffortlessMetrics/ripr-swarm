@@ -140,7 +140,10 @@ Collection writes on a field path (`self.items.push(x)`,
 limited to `push` on a bare identifier in
 `analysis/classify/propagation_witness.rs`) to field-path receivers and to
 `insert`, so `c.items` in the test is the observed subject for `self.items`
-in the owner. This is new behavior, not reuse.
+in the owner. This is new behavior, not reuse. The getter rule under Limits applies to
+these reads too (Decision 2): `c.history()` observes `self.log` only when
+`history` resolves to a body returning `self.log`, and a shared name alone
+never confirms a field-path collection write (examples 12 and 13).
 
 ### Limits
 
@@ -223,14 +226,33 @@ changes `self.count += 2` to `self.count += 1`.
 11. `bump` writes `self.count += 2; self.reset();` (first statement
     changed from `+= 3`), with `reset` setting `count = 0`, test
     `c.bump(); assert_eq!(c.count, 0)`: not `exposed`.
+12. `self.lines.push(qty)` with argument changed, test
+    `o.add(4); assert_eq!(o.entries(), &[4])` with
+    `fn entries(&self) -> &[u32] { &self.lines }`: `exposed`. The getter
+    shares no name with the field; its body resolves the read.
+13. `self.held.push(qty)` with argument changed, test
+    `o.hold(3); assert_eq!(o.held(), &[] as &[u32])` with
+    `fn held(&self) -> &[u32] { &self.lines }`: not `exposed`. A method named
+    after the field is not a read of it.
+14. `self.lines.push(Line { sku: sku.to_uppercase(), qty })` with the `sku`
+    initializer changed, test `o.add("bolt", 2); assert_eq!(o.lines(),
+    &[Line { sku: "BOLT".to_string(), qty: 2 }])` with
+    `fn lines(&self) -> &[Line] { &self.lines }`: `exposed`. The pushed
+    literal is the whole `push` argument and the assertion compares the whole
+    collection, so it compares every field of the pushed element.
+15. `self.tags.push(Tag { label: label.to_uppercase(), weight })` with the
+    `label` initializer changed, test `o.tag("rush", 1);
+    assert_eq!(o.tags().len(), 1)`: not `exposed`. A projection of the
+    collection does not read the pushed field.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 10 cases `spec0228-*` in
-  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9,
+- Verdict corpus: 14 cases `spec0228-*` in
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
+  12-15,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -254,6 +276,69 @@ changes `self.count += 2` to `self.count += 1`.
   owner call; `FieldValue` for sibling reads.
 - `crates/ripr/src/analysis/classify/propagation_witness.rs`: field-path
   receivers for collection writes.
+
+## Implementation Status
+
+- Collection writes on a field path (`self.f.push(..)`, `self.f.insert(..)`)
+  are implemented for side-effect and call-deletion probes (#7131 lane):
+  `field_collection_write_path` and `assertion_field_collection_reads` in
+  `propagation_witness.rs`, `field_collection_observer_confirms` in
+  `reveal.rs`, `getter_plainly_reads` in `builder_override.rs`. One side of
+  the assertion (either operand of `assert_eq!`) must read the field from
+  the binding the test called the owner on, on a later line, with no
+  `let` shadow or plain `binding = ..` assignment of that name after the
+  call (on the call's own line too); comments and strings never count as
+  the call, and neither does a call inside a nested block, branch, loop or
+  closure of the test. The other operand of the `assert_eq!` must not name
+  that binding (`assert_eq!(o.entries(), o.entries())` cannot fail). A count
+  (`.len()`, `.is_empty()`) confirms only a deleted write
+  (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
+  is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
+  `self.f.as_slice()`.
+- Not yet implemented for these writes, all failing closed: rule 3 (no
+  intervening write between the owner call and the read), as before for
+  bare-receiver pushes; the `static_unknown` fallback with
+  `rust_state_read_path_unresolved` for a strong oracle on an unresolved
+  getter, which reads `weakly_exposed` instead (example 13); reads that are
+  not a compared side (`let items = &c.items;` then an assertion on
+  `items`, `assert!(!c.items.is_empty())`, `c.items.iter().any(..)`), an
+  owner called as `Basket::add(&mut c, 4)` or through a helper, and
+  `prop_assert_eq!`/`debug_assert_eq!`. A whole-value comparison of the
+  receiver keeps the effect-observer path (RIPR-SPEC-0094 Part D).
+- A field of a struct or enum literal pushed onto a field collection is
+  credited (#7131): `pushed_literal_collection_path` and
+  `assertion_whole_collection_equality` in `propagation_witness.rs`,
+  `pushed_collection_compared_whole` in `activation.rs`. The literal must be
+  the whole argument of `self.<path>.push(..)`, the push a top-level
+  statement of the owner body (not in a branch, loop, block or closure),
+  and the changed initializer must occur once on its line. Nothing later in
+  the owner body may write the field: a use of `self.<path>` other than
+  another `push`, a use of a parent field of `<path>` (`self.state` for
+  `state.log`), a bare `self` (`*self = ..`, `reset(self)`), or a call
+  `self.m(..)` whose inherent body, followed through further `self` calls,
+  may do so; an unresolved method counts as a write. The assertion must be
+  an `assert_eq!` whose one operand is the whole collection (`inv.log`,
+  `inv.history()`, optionally borrowed) read after the owner call as above,
+  and whose other operand does not name that binding. Either operand may
+  be the read. The test must call the owner on nothing but that binding (no
+  `other.add(..)`, `Order::add(&mut other, ..)` or chained
+  `Order::new().add(..)`): a value built through the owner may carry the
+  changed field into the other operand. From the first owner call to the
+  assertion the test may neither write through nor copy the binding
+  (`binding_untouched_after_owner_call` in `reveal.rs`): every owner call
+  is a bare statement (optionally ending in `.unwrap()`, `.expect(..)` or
+  `?`, never bound or chained), the assertion starts its line, and any
+  other statement between may name the binding only as a plain field read
+  that is a whole argument of `assert!`, `assert_eq!` or `assert_ne!`, with
+  no block, closure or nested macro other than `vec!` or `format!`. Projections
+  (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`, literals built in
+  a local and pushed later, `insert`, and a push preceded by another
+  statement on its line are not credited and keep the missing field-value
+  fact. A custom `PartialEq` on the element that ignores the changed field
+  is not detected: whole-value equality is taken to compare every field, as
+  for RIPR-SPEC-0225 whole-value credit.
+- Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
+  their corpus cases read `static_unknown`.
 
 ## Metrics
 

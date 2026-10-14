@@ -122,6 +122,11 @@ pub(crate) enum RustModuleTreeEdge {
 pub(crate) struct RustModuleTreeScan {
     pub(crate) edges: Vec<RustModuleTreeEdge>,
     pub(crate) complete: bool,
+    /// Whether the scan saw every edge outside function bodies: `complete`
+    /// except that a body macro call, which can only declare a module
+    /// local to its function, is not counted. Crate-level module
+    /// ownership (`call_identity`) reads this one.
+    pub(crate) items_complete: bool,
 }
 
 /// Scans one Rust source text for its module-tree edges.
@@ -133,6 +138,7 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
     let mut scan = RustModuleTreeScan {
         edges: Vec::new(),
         complete: true,
+        items_complete: true,
     };
     for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
         let attributes = module
@@ -143,15 +149,18 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
         if module.item_list().is_some() {
             if path_target != ModulePathTarget::Default {
                 scan.complete = false;
+                scan.items_complete = false;
             }
             continue;
         }
         let Some(name) = module.name() else {
             scan.complete = false;
+            scan.items_complete = false;
             continue;
         };
         let Some(inline) = enclosing_inline_modules(&module) else {
             scan.complete = false;
+            scan.items_complete = false;
             continue;
         };
         match path_target {
@@ -167,13 +176,18 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 // can no longer prove a file unreached.
                 if path.contains('\\') {
                     scan.complete = false;
+                    scan.items_complete = false;
                 }
                 scan.edges
                     .push(RustModuleTreeEdge::Path(PathBuf::from(path)));
             }
-            ModulePathTarget::Literal(_) => scan.complete = false,
+            ModulePathTarget::Literal(_) => {
+                scan.complete = false;
+                scan.items_complete = false;
+            }
             ModulePathTarget::Unknown => {
                 scan.complete = false;
+                scan.items_complete = false;
                 let (spelled, always_applies) = spelled_path_literals(&module);
                 let candidates = if inline.is_empty() {
                     spelled
@@ -244,6 +258,9 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                     .is_some_and(|tokens| nests_unknown_macro_call(&tokens))
             {
                 scan.complete = false;
+                if item_position {
+                    scan.items_complete = false;
+                }
             }
             continue;
         }
@@ -256,7 +273,10 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
             Some(target) => scan.edges.push(RustModuleTreeEdge::Include(target)),
             // Includes build output (`OUT_DIR`) or a computed path. Generated
             // code can declare `#[path]` modules, so either is unknown.
-            None => scan.complete = false,
+            None => {
+                scan.complete = false;
+                scan.items_complete = false;
+            }
         }
     }
     // Declarations and includes inside a token tree only exist after macro
@@ -272,6 +292,7 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 }))
     }) {
         scan.complete = false;
+        scan.items_complete = false;
     }
     scan
 }
@@ -481,6 +502,7 @@ mod tests {
              include!(\"fragment.rs\");\n",
         );
         assert!(scan.complete, "{scan:?}");
+        assert!(scan.items_complete, "{scan:?}");
         assert_eq!(
             scan.edges,
             vec![
@@ -519,10 +541,12 @@ mod tests {
             // A backslash names a different file on Windows than elsewhere.
             "#[path = \"back\\\\slash.rs\"]\nmod platform;\n",
         ] {
-            assert!(
-                !rust_module_tree_scan(source).complete,
-                "`{source}` must not scan as complete"
-            );
+            let scan = rust_module_tree_scan(source);
+            assert!(!scan.complete, "`{source}` must not scan as complete");
+            // Only a body macro call leaves the item tree complete: it can
+            // declare a module local to its function, never a crate-level one.
+            let body_macro = source.starts_with("fn f()") && source.contains("!(");
+            assert_eq!(scan.items_complete, body_macro, "`{source}` items");
         }
         // Over the nesting budget the parse is refused and the scan stays incomplete.
         let deep = format!(
@@ -531,6 +555,7 @@ mod tests {
             "}".repeat(300)
         );
         assert!(!rust_module_tree_scan(&deep).complete);
+        assert!(!rust_module_tree_scan(&deep).items_complete);
     }
 
     fn unresolved(

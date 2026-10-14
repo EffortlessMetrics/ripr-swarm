@@ -47,11 +47,11 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
-pub(crate) use diagnostic_witness::perl_suggested_related_test;
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
+pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
@@ -82,10 +82,12 @@ pub(crate) use intervention_study::{
     InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
     codes as intervention_study_codes,
 };
-pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
+pub(crate) use language::{
+    PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
+};
 pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use next_action::{
     CanonicalNextActionV1, NextActionAlternative, NextActionCheckCase, NextActionClass,
@@ -95,7 +97,10 @@ pub use next_action::{
 pub(crate) use next_action::{
     NextActionAttemptView, NextActionInput, current_command_platform, select_canonical_next_action,
 };
-pub(crate) use probe::{ARM_UNSELECTED_REASON_PREFIX, exact_assertion_fact, input_boundary_fact};
+pub(crate) use probe::{
+    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
+    input_boundary_fact, is_unselected_input_reason,
+};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,

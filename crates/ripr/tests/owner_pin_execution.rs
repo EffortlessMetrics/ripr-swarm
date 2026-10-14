@@ -1797,39 +1797,99 @@ fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String
 }
 
 #[test]
-fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
+fn tokio_test_regains_the_exact_oracle_but_not_the_boundary() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
-    let report = check_workspace(CheckInput {
-        root: fixture.join("input"),
-        diff_file: Some(fixture.join("diff.patch")),
-        mode: Mode::Fast,
-        format: OutputFormat::Json,
-        include_unchanged_tests: true,
-        ..CheckInput::default()
-    })?;
+    let check = |root: PathBuf, diff: PathBuf| {
+        check_workspace(CheckInput {
+            root,
+            diff_file: Some(diff),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+    };
+    let report = check(fixture.join("input"), fixture.join("diff.patch"))?;
     assert_eq!(report.findings.len(), 1, "retain the actual async owner");
-    // The tail `if`/`else` propagation sink is resolved (#6781), so the class
-    // is `static_unknown` on the unestablished async assertion provenance
-    // (#5040); discovery still supplies no execution provenance below.
-    assert_eq!(report.findings[0].class, ExposureClass::StaticUnknown);
+    // #5040: the `#[tokio::test]` body runs on tokio's runtime and the
+    // assertion reads the awaited owner value, so the exact-value oracle is
+    // strong. 100/50 is not an equality input, so `>` vs `>=` stays weak.
+    assert_eq!(report.findings[0].class, ExposureClass::WeaklyExposed);
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
             .map_err(|error| error.to_string())?;
     assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
     let finding = &json["findings"][0];
     assert_eq!(finding["probe"]["family"], "predicate");
-    assert_eq!(finding["ripr"]["observe"]["state"], "no");
-    assert_eq!(finding["ripr"]["discriminate"]["state"], "no");
-    assert_eq!(finding["oracle_strength"], "none");
+    assert_eq!(finding["ripr"]["observe"]["state"], "yes");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "yes");
+    assert_eq!(finding["oracle_kind"], "exact_value");
+    assert_eq!(finding["oracle_strength"], "strong");
+    assert_eq!(
+        finding["missing_discriminators"][0]["value"],
+        "capacity == threshold"
+    );
     let tests = finding["related_tests"]
         .as_array()
         .ok_or("missing indexed async test")?;
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0]["name"], "above_threshold_gets_reduced");
-    assert_eq!(tests[0]["oracle_strength"], "none");
-    // #5040 owns establishing the missing macro-binding/polling edge. The
-    // independently executed Tokio removal controls show the real test works;
-    // source discovery alone must not manufacture that execution provenance.
+    assert_eq!(tests[0]["oracle_strength"], "strong");
+
+    // The companion equality input discriminates the boundary on its own.
+    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let variant = |label: &str, from: &str, to: &str| -> Result<ExposureClass, String> {
+        assert!(
+            source.contains(from),
+            "{label}: the fixture must hold {from}"
+        );
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), source.replace(from, to))
+            .map_err(|error| error.to_string())?;
+        let report = check(scratch.0.clone(), fixture.join("diff.patch"))?;
+        assert_eq!(report.findings.len(), 1, "{label}: retain the async owner");
+        Ok(report.findings[0].class.clone())
+    };
+    assert_eq!(
+        variant(
+            "boundary input",
+            "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);",
+            "let result = fetch_limit(50, 50).await;\n        assert_eq!(result, 50);",
+        )?,
+        ExposureClass::Exposed
+    );
+    // A rebound `tokio` path, a custom runtime path and an unpolled async block
+    // keep the assertion's execution unestablished.
+    for (label, from, to) in [
+        (
+            "rebound tokio",
+            "    use super::*;\n",
+            "    use super::*;\n    use core as tokio;\n",
+        ),
+        (
+            "custom runtime path",
+            "#[tokio::test]",
+            "#[tokio::test(crate = \"other\")]",
+        ),
+        (
+            "unpolled async block",
+            "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);",
+            "let check = async { assert_eq!(fetch_limit(100, 50).await, 90) };\n        drop(check);",
+        ),
+    ] {
+        let class = variant(label, from, to)?;
+        assert!(
+            !matches!(class, ExposureClass::Exposed | ExposureClass::WeaklyExposed),
+            "{label}: no oracle credit, got {class:?}"
+        );
+    }
     Ok(())
 }
 
@@ -3300,6 +3360,137 @@ fn fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs
             exposed,
             "{name}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let target = scratch.0.join("runtime-target");
+    for (case, admitted) in [
+        ("real_literal", true),
+        ("nested_literal", true),
+        ("shadowed_constructor", false),
+        ("uncalled_closure", false),
+        ("effectful_operand", false),
+        ("ignored_result", false),
+        ("unrelated_equality", false),
+        ("shadowed_owner", false),
+        ("shadowed_assertion", false),
+        ("alternate_return", false),
+    ] {
+        let fixture = fixtures.join(format!("owner_return_pin_json_{case}"));
+        let report = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let findings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue
+                    && finding.probe.expression.trim() == "Ok(())"
+            })
+            .collect();
+        assert_eq!(findings.len(), 1, "{case}: nonempty current subject");
+        // Construction establishes execution context only. The nested owner
+        // call still lacks the existing pin's argument witness (#4478).
+        assert_eq!(
+            findings[0].class == ExposureClass::Exposed,
+            case == "real_literal",
+            "{case}: {:#?}",
+            findings[0]
+        );
+        if case == "nested_literal" {
+            assert_eq!(findings[0].class, ExposureClass::WeaklyExposed);
+        }
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|e| e.to_string())?;
+        assert_eq!(
+            json["analysis_outcome"]["analysis_complete"], true,
+            "{case}"
+        );
+        if admitted {
+            let current = json["findings"]
+                .as_array()
+                .ok_or("finding array")?
+                .iter()
+                .find(|finding| finding["probe"]["expression"] == "Ok(())")
+                .ok_or("current return")?;
+            assert_eq!(
+                current["ripr"]["observe"]["state"], "yes",
+                "{case}: admission"
+            );
+            assert!(
+                !current["evidence"]
+                    .as_array()
+                    .ok_or("evidence")?
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .any(|text| text.contains("assertion not credited")),
+                "{case}"
+            );
+        }
+        let root = scratch.0.join(case);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        for file in ["Cargo.toml", "Cargo.lock", "src/lib.rs", "tests/save.rs"] {
+            std::fs::copy(fixture.join("input").join(file), root.join(file))
+                .map_err(|e| e.to_string())?;
+        }
+        let correct =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|e| e.to_string())?;
+        for broken in [false, true] {
+            if broken {
+                let (prefix, suffix) = correct.rsplit_once("Ok(())").ok_or("current return")?;
+                std::fs::write(root.join("src/lib.rs"), format!("{prefix}Err(SchemaError {{ method: None, path: String::new(), expected: String::new(), observed: String::new() }}){suffix}"))
+                    .map_err(|e| e.to_string())?;
+            }
+            let manifest = root.join("Cargo.toml");
+            let output = run_with_env(
+                Path::new("cargo"),
+                &[
+                    "test".as_ref(),
+                    "--offline".as_ref(),
+                    "--locked".as_ref(),
+                    "--manifest-path".as_ref(),
+                    manifest.as_os_str(),
+                    "--test".as_ref(),
+                    "save".as_ref(),
+                    "--".as_ref(),
+                    "--nocapture".as_ref(),
+                ],
+                &[
+                    ("CARGO_TARGET_DIR".into(), target.clone().into_os_string()),
+                    ("CARGO_BUILD_JOBS".into(), "1".into()),
+                ],
+            )?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("running 1 test") && stdout.contains("0 ignored"),
+                "{case}, broken={broken}: no executed subject: {stdout}; {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                output.status.success(),
+                !broken || !admitted,
+                "{case}, broken={broken}: {stdout}; {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if broken && admitted {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains("assertion `left == right` failed")
+                );
+            }
+        }
     }
     Ok(())
 }

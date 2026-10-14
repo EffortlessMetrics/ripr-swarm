@@ -316,6 +316,19 @@ Top-level `plans/` files are documentation evidence and campaign-planning
 inputs. They appear in the docs, evidence/support, and campaign-planning
 sections of the reviewer packet without being treated as production behavior.
 
+`cargo xtask ci-policy` is the hosted Rust policy entry. It uses the same
+change-set discovery, metadata validation, policy table and three whitespace
+checks as local precommit, with the existing nine-scan collect-all producer
+before compilation-bearing file-policy enumeration. It writes
+`target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
+identifies its composition, and leaves legacy `precommit.md` and structured
+local `precommit-v2` receipts untouched.
+Its pass excludes selected Clippy; the required producer retains explicit
+`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
+policy-preflight receipt is still verified. Formatting and the later dependency,
+process and network steps are retained; no duplicate-policy removal or measured
+savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
 review.
@@ -344,7 +357,7 @@ this cleanup. Both captured scopes exclude pipe drain. Inherited-status elapsed
 includes the launch/status call and preserves inherited streams. Missing values
 are unavailable evidence. Cargo counts normalize existing ANSI color sequences
 and recognize `Compiling`, `Checking` and `Fresh` stderr progress lines only; they do not identify compiler units, prove
-artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
+artifact reuse or by themselves justify changing Clippy composition. Dirty-source HEAD,
 base and paths supply invocation context rather than immutable source identity.
 Successful report-write failures still return an I/O error; interrupted execution
 retains its original error and separately reports publication failures.
@@ -444,10 +457,13 @@ through GitHub CLI and writes `target/ripr/reports/pr-triage.md` plus
 `target/ripr/reports/pr-triage.json`. It flags same-title families, identical
 changed-file sets, stale drafts, branches behind main, incomplete validation
 signals, and policy/gate/generated workflow surfaces. It also emits an
-advisory queue disposition for each PR — `merge_candidate`, `needs_rebase`,
+advisory queue disposition for each PR — `merge_candidate`, `needs_integration_review`,
 `needs_review`, `close_duplicate`, `superseded`, `needs_fresh_validation`,
 `needs_owner_decision`, or `do_not_touch_wrong_lane`. It is advisory and never
-updates, closes, merges, or comments on PRs.
+updates, closes, merges, or comments on PRs. The behind finding and disposition
+preserve the observation and unaffected proof; they request material integration
+judgment rather than a branch update. Existing duplicate, policy, validation and
+review routes precede that disposition.
 
 `branch-inventory` is the remote-branch ownership/age report (#2024). It
 regenerates the inventory from current GitHub/Git data and writes
@@ -475,8 +491,10 @@ latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
 checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `rebase`, `inspect failure`, or `merge`. It is
-advisory and never updates the branch, comments, approves, or merges.
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+`BEHIND` requests integration judgment after Draft, review-required and pending
+waits; it does not establish that a branch update is needed. It is advisory and
+never updates the branch, comments, approves, or merges.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
@@ -958,13 +976,15 @@ failure, preserves each leaf report/error, and writes
 command. Any leaf error or aggregate report-write error returns nonzero.
 `check-file-policy` is excluded because it can compile tests. The selected
 leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
-compiles the driver when needed. This is a local workflow improvement; existing
-precommit/check-fast behavior and hosted gate routing remain unchanged.
+compiles the driver when needed. Ordinary local precommit/check-fast behavior
+is unchanged. Hosted `ci-policy` reuses this same producer once before the
+remaining policy checks; it does not add another nine-scan pass.
 
 [RIPR-SPEC-0253](specs/RIPR-SPEC-0253-local-collect-all-policy.md) maps this
 command's five acceptance cases to its actual-driver tests and production owner.
 
-The precommit inventory is:
+The policy inventory (the maintained execution authority is `PRECOMMIT_GATE_COMMANDS`
+and `precommit_policy` in `xtask/src/main.rs`) is:
 
 ```bash
 cargo fmt --check
@@ -973,21 +993,29 @@ cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-local-context
 cargo xtask check-file-policy
+cargo xtask check-covered-by
 cargo xtask check-executable-files
+cargo xtask check-text-encoding
 cargo xtask check-workflows
 cargo xtask check-droid-review-config
 cargo xtask check-spec-format
 cargo xtask check-spec-numbering
 cargo xtask check-fixture-contracts
+cargo xtask check-rust-judged-panel
+cargo xtask check-release-challenge-selection
+cargo xtask check-release-challenge-judgments
+cargo xtask check-python-judged-panel
 cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-workspace-shape
 cargo xtask check-architecture
+cargo xtask check-rust-source-role-authority
 cargo xtask check-public-api
 cargo xtask check-output-contracts
 cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
+cargo xtask check-changelog-fragments
 cargo xtask check-readme-state
 cargo xtask markdown-links
 cargo xtask check-pr-shape
@@ -996,6 +1024,10 @@ cargo xtask check-generated
 cargo xtask check-badge-diff-policy
 cargo xtask check-generated-clean
 cargo xtask check-proof-packs
+cargo xtask check-release-targets
+cargo xtask check-dependencies
+cargo xtask check-process-policy
+cargo xtask check-network-policy
 cargo xtask check-lint-policy
 ```
 

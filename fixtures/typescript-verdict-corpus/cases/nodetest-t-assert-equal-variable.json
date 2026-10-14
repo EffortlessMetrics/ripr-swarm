@@ -1,0 +1,49 @@
+{
+  "case_id": "nodetest-t-assert-equal-variable",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-t-assert-equal-variable.diff",
+  "anchor": {
+    "file": "src/gracefee.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_context_t_assert_equal_variable",
+  "hard_case": "the expected value is a test-local `const want = 30`, which the spec graded relational_check / weak before RIPR-SPEC-0247 rule 2 read a literal `const` (2026-10-14)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return days * 4;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "grace fee is three per day",
+        "equivalence_review": "not equivalent: 10 days give 40 instead of 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test declares `const want = 30` and asserts `t.assert.equal(graceFee(10), want)`; the edit makes the fee `days * 4`, so 40 is compared with 30 and the test fails. RIPR-SPEC-0247 rule 2 (amended 2026-10-14) reads a test-local `const` bound to a literal coercion cannot reach as that literal, so the assertion is exact_value / strong and the finding reads `credited`. Before the amendment the variable read relational_check / weak and the row was a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0247#10",
+    "RIPR-SPEC-0252#3"
+  ]
+}

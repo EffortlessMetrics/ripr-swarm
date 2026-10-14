@@ -35,6 +35,17 @@ closes a block opened outside its run (a lone inserted or removed
 moves existing code between branches, so it keeps its probe and the change
 never reads as "no behavioral candidates" (#4216 row 5).
 
+An equal-sized replacement with no retained long identifier token does not
+seed a second historical finding when an emitted candidate probe of the same
+family already represents that exact old line (#7807). Pairing uses the Git
+block's old/new coordinates and requires faithful `before`/`after` evidence:
+the candidate covers the whole added line, or a byte-aligned cut of the old
+line equals its `before`. A whole old line attached to a smaller constructor
+does not establish that every edit was represented. Uneven blocks, unrepresented
+families and ambiguous edits retain historical evidence. This rule changes
+removed-side reconciliation only; parser selection and constructor identities
+remain separate authorities.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
@@ -319,6 +330,50 @@ literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
 
+One bounded cardinality family reads a direct immutable slice parameter's
+`.len()` compared with a plain decimal integer. Every reach-bearing related
+test must make one binding-resolved ordinary owner call through an eager,
+nonempty immutable constant-row table. Each argument row must be an immutable
+reference to a literal array, and the complete index must contain no non-test
+caller of the owner. Tables have at most 64 rows and 256 scalar literal
+elements per slice (4 KiB source per slice). Cardinality comes from the array
+shape, never its elements or neighboring assertions: `[0, 0]` has length two.
+The existing assertion-context authority must admit the table's assertion
+macros. Equality keeps the matching call's source and line; otherwise all
+observed lengths support the missing equality. Computed rows, extra calls,
+helper or alias reach, opaque macros, mutable or shadowed bindings, skipped
+loops, asynchronous owners and custom `.len()` receivers remain outside this
+family. Other ordinary calls, method calls, closure invocation, suspension and
+yielding, explicit `loop` and `while` constructs remain outside the family. Standard assertion operands are parsed too:
+only the direct immutable result binding and intrinsic `iter().min()` /
+`iter().max()` observations rooted at the exact
+immutable slice column are admitted. Their `unwrap()` requires every row to be
+nonempty; `unwrap_or(&literal)` also admits empty slices. Same-named methods on
+other receivers and unresolved calls inside assertion operands are refused.
+Owners must be nongeneric with a primitive scalar result. User-defined types,
+traits, implementations, type aliases and imports other than `use super::*`
+in the indexed files withhold this family; it does not resolve operator dispatch
+or primitive-name aliases. Other assertion value paths and local operand
+bindings remain unsupported.
+A try expression anywhere in the test function withholds this producer:
+a discarded fallible closure can exit before the call or skip later rows, and
+this family does not resolve that control flow. The refusal also applies when
+no assertion invokes the independent assertion-context authority. Every source
+use of the owner's identifier must be accounted for by its declaration and the
+admitted direct calls; recursion, function pointers, explicit imports and opaque
+uses withhold this bounded producer. Documentation
+references, explicit `doc` attributes, documentation code blocks, workspace
+macro expansion, possible standard-macro rebinding and attributes other than
+ordinary test and `cfg(test)` withhold this producer too. Plain documentation
+comments remain eligible subject to reference accounting. It reuses
+existing unseen-reach, macro operand and binding authorities only as refusals;
+it does not resolve expansion or award evidence from it. Unreadable
+inputs never disappear from an absence claim (#7553). This producer records
+activation, while existing oracle and same-test pairing gates retain their
+limitations; it does not independently qualify strong direct-table exposure.
+This does not evaluate buffer arithmetic or similarity algorithms and does
+not change classification precedence or unresolved macro/dispatch authority.
+
 The human report's "Why unknown" line for `infection_unknown` says the change
 "reaches a sink" only when the propagation stage is `yes`; otherwise it says
 no sink the change reaches was established.
@@ -423,6 +478,24 @@ Fixture coverage:
 - `method_call_builder_argument_is_not_credited_end_to_end`
 - `all_dropped_boundary_literals_read_the_no_literal_boundary_reason`
 - `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
+- `retained_property_table_names_the_missing_empty_slice`
+- `slice_elements_are_not_slice_lengths_and_empty_rows_are_observed`
+- `unreadable_or_skippable_slice_tables_withhold_missing_empty_claims`
+- `helpers_aliases_and_opaque_macros_cannot_supply_partial_slice_evidence`
+- `equality_keeps_the_matching_table_witness`
+- `recursive_empty_input_cannot_disappear_from_cardinality_evidence`
+- `production_function_pointer_input_cannot_disappear`
+- `hidden_documentation_inputs_withhold_missing_empty_claims`
+- `unrelated_documentation_does_not_hide_known_table_inputs`
+- `workspace_expansion_limits_withhold_partial_slice_evidence`
+- `ignored_fallible_closure_cannot_credit_skipped_slice_rows`
+- `fully_executed_slice_table_needs_no_assertion_for_activation`
+- `unresolved_calls_cannot_credit_skipped_slice_rows`
+- `fallible_slice_observations_cannot_credit_later_rows`
+- `fixtures/rust_slice_table_boundary`
+- `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_slice_table_try_exit`
+- `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`

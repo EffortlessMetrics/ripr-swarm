@@ -358,7 +358,7 @@ and single-platform CI was the root cause enabling both.
 - **Always-on subset (#4938).** Every subscribed `pull_request` action
   (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
   per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` lib tests, the #4918 cache-warning smoke, and
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new

@@ -314,6 +314,10 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         match expect {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
+                let (envelope, _) = split_refusal_envelope(&stderr)?;
+                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["state"], "refused");
+                assert!(output.stdout.is_empty());
                 assert!(
                     stderr.contains(&format!("\"kind\": \"{kind}\"")),
                     "{needle}: {stderr}"
@@ -327,6 +331,9 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             }
             Expect::StopsAtRiprTodo => {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
+                let ready: serde_json::Value =
+                    serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+                assert_eq!(ready["schema_version"], "0.2");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -690,6 +697,292 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
+/// #7390: under `--json` a not-found refusal leads stderr with the typed
+/// `rust_test_stub` `state: "refused"` envelope (pretty-printed), followed by
+/// the prose refusal line; stdout stays empty. Returns the parsed envelope
+/// and the prose tail.
+fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
+    let prose_at = stderr
+        .find("ripr: agent stub: ")
+        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
+    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
+        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stderr}"))?;
+    Ok((envelope, &stderr[prose_at..]))
+}
+
+fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
+    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["kind"], "rust_test_stub");
+    assert_eq!(envelope["state"], "refused");
+    assert_eq!(envelope["refusal"]["kind"], kind);
+    // Indexing a missing field yields Null too: check presence separately.
+    for field in ["seam_id", "owner", "grip_class", "classification"] {
+        assert_eq!(envelope.get(field), Some(&serde_json::Value::Null));
+    }
+    assert_eq!(envelope.get("warnings"), Some(&serde_json::json!([])));
+}
+
+fn fixture_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>, String> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(path).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let harness_log = path == root
+                && [
+                    "ambiguous-files",
+                    "ambiguous-files-repeat",
+                    "ambiguous-seams",
+                    "ambiguous-seams-repeat",
+                ]
+                .iter()
+                .any(|label| {
+                    entry.file_name() == format!("{label}.stdout").as_str()
+                        || entry.file_name() == format!("{label}.stderr").as_str()
+                });
+            // Analysis cache is allowed; fixture inputs and new test files are not.
+            if entry.file_name() == "target" || entry.file_name() == ".ripr" || harness_log {
+                continue;
+            }
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                visit(root, &entry.path(), files)?;
+            } else {
+                files.insert(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .map_err(|error| error.to_string())?
+                        .to_path_buf(),
+                    std::fs::read(entry.path()).map_err(|error| error.to_string())?,
+                );
+            }
+        }
+        Ok(())
+    }
+    let mut files = std::collections::BTreeMap::new();
+    visit(root, root, &mut files)?;
+    Ok(files)
+}
+
+#[test]
+fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
+    let root = &scratch.directory;
+    for seam_id in [true, false] {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--json", "--write"]);
+        if seam_id {
+            command.args(["--seam-id", "no-such-seam"]);
+        } else {
+            command.args(["--at", "src/missing.rs:2"]);
+        }
+        let output = run_bounded(command, root, "absent-selector", Duration::from_mins(2))?;
+        assert_eq!(output.status.code(), Some(3));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["state"], "refused");
+        assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+        for field in ["owner", "grip_class", "classification"] {
+            assert_eq!(envelope.get(field), Some(&serde_json::Value::Null));
+        }
+        assert_eq!(envelope.get("warnings"), Some(&serde_json::json!([])));
+        if seam_id {
+            assert_eq!(envelope["seam_id"], "no-such-seam");
+            assert_eq!(
+                envelope["refusal"]["reason"],
+                "seam_id no-such-seam was not found"
+            );
+        } else {
+            assert_selector_refusal(&envelope, "seam_not_found");
+            assert_eq!(
+                envelope["refusal"]["reason"],
+                "no reported gap is in src/missing.rs"
+            );
+        }
+        assert!(prose.contains("to list finding locations"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            KIND_REFUSAL_SOURCE
+        );
+        assert!(!root.join("src/missing.rs").exists());
+    }
+    scratch.cleanup()
+}
+
+#[test]
+fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/a\", \"crates/b\"]\nresolver = \"3\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let source = "pub fn boundary(n: u32) -> bool {\n    n > 10\n}\n";
+    for package in ["a", "b"] {
+        let directory = root.join(format!("crates/{package}"));
+        std::fs::create_dir_all(directory.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            directory.join("Cargo.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(directory.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    }
+    // Both the classified-gap and shape-selection paths must refuse.
+    for kind in [None, Some("predicate")] {
+        let before = fixture_files(root)?;
+        let mut command = kind_refusal_command(root, "src/lib.rs:2", kind);
+        command.arg("--write");
+        let output = run_bounded(command, root, "ambiguous-files", Duration::from_mins(2))?;
+        assert_eq!(output.status.code(), Some(3));
+        assert!(output.stdout.is_empty());
+        let mut repeat = kind_refusal_command(root, "src/lib.rs:2", kind);
+        repeat.arg("--write");
+        let repeated = run_bounded(
+            repeat,
+            root,
+            "ambiguous-files-repeat",
+            Duration::from_mins(2),
+        )?;
+        assert_eq!(repeated.status.code(), Some(3));
+        assert_eq!(repeated.stdout, output.stdout);
+        assert_eq!(repeated.stderr, output.stderr);
+        assert_eq!(fixture_files(root)?, before);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        assert_selector_refusal(&envelope, "selector_ambiguous");
+        assert_eq!(
+            envelope["refusal"]["reason"],
+            "src/lib.rs matches more than one file with gaps (crates/a/src/lib.rs, crates/b/src/lib.rs); pass one of those paths or a seam ID"
+        );
+        assert!(prose.starts_with("ripr: agent stub: src/lib.rs matches more than one file"));
+        for package in ["a", "b"] {
+            assert_eq!(
+                std::fs::read_to_string(root.join(format!("crates/{package}/src/lib.rs")))
+                    .map_err(|error| error.to_string())?,
+                source
+            );
+            let control = run_bounded(
+                kind_refusal_command(root, &format!("crates/{package}/src/lib.rs:2"), kind),
+                root,
+                "exact-file-control",
+                Duration::from_mins(2),
+            )?;
+            assert!(
+                control.status.success(),
+                "{}",
+                String::from_utf8_lossy(&control.stderr)
+            );
+            let ready: serde_json::Value =
+                serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
+            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["state"], "ready");
+            assert_eq!(
+                ready["owner"],
+                format!("crates/{package}/src/lib.rs::boundary")
+            );
+            assert_eq!(ready["written"], false);
+        }
+    }
+    scratch.cleanup()
+}
+
+#[test]
+fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result<(), String> {
+    let source = "pub fn pair(a: u32, b: u32) -> bool {\n    a > 10 && b > 20\n}\n";
+    let scratch = kind_refusal_crate(source)?;
+    let root = &scratch.directory;
+    let before = fixture_files(root)?;
+    let mut command = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
+    command.arg("--write");
+    let output = run_bounded(command, root, "ambiguous-seams", Duration::from_mins(2))?;
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    let mut repeat = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
+    repeat.arg("--write");
+    let repeated = run_bounded(
+        repeat,
+        root,
+        "ambiguous-seams-repeat",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(repeated.status.code(), Some(3));
+    assert_eq!(repeated.stdout, output.stdout);
+    assert_eq!(repeated.stderr, output.stderr);
+    assert_eq!(fixture_files(root)?, before);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    assert_selector_refusal(&envelope, "selector_ambiguous");
+    let reason = envelope["refusal"]["reason"]
+        .as_str()
+        .ok_or("missing refusal reason")?;
+    assert!(reason.starts_with("src/lib.rs:2 holds more than one predicate_boundary seam, so --at cannot pick one; pass one of: --seam-id "), "{reason}");
+    assert_eq!(reason.matches("--seam-id ").count(), 2);
+    let ids = reason
+        .split("--seam-id ")
+        .skip(1)
+        .map(|tail| tail.trim_end_matches(", "))
+        .collect::<Vec<_>>();
+    assert_ne!(ids[0], ids[1]);
+    for id in ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", id, "--json"]);
+        let selected = run_bounded(command, root, "seam-id-control", Duration::from_mins(2))?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["seam_id"], id);
+        assert_eq!(ready["written"], false);
+    }
+    assert!(prose.starts_with(&format!("ripr: agent stub: {reason}.")));
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        source
+    );
+
+    // Nested error seams describe one behavior and remain selectable.
+    std::fs::write(root.join("src/lib.rs"), KIND_REFUSAL_SOURCE)
+        .map_err(|error| error.to_string())?;
+    let nested = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:7", Some("error_path")),
+        root,
+        "nested-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        nested.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+    let ready: serde_json::Value =
+        serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["state"], "ready");
+    assert_eq!(ready["owner"], "src/lib.rs::fallible");
+    scratch.cleanup()
+}
+
 #[test]
 fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
@@ -726,17 +1019,28 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    assert_eq!(envelope["kind"], "rust_test_stub");
+    assert_eq!(envelope["state"], "refused");
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     assert!(
-        stderr.starts_with(
+        envelope["refusal"]["reason"]
+            .as_str()
+            .map(|reason| reason.starts_with("no error_path seam"))
+            .unwrap_or(false),
+        "the envelope must echo the requested probe family: {stderr}"
+    );
+    assert!(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "the refusal must echo the requested probe family: {stderr}"
     );
     assert!(
-        !stderr.contains("no error_variant "),
+        !prose.contains("no error_variant "),
         "the internal seam kind is not the requested family: {stderr}"
     );
     scratch.cleanup()
@@ -877,10 +1181,12 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -973,10 +1279,12 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision keeps stdout empty; the envelope rides stderr"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -987,7 +1295,7 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
-        stderr.starts_with(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "{stderr}"

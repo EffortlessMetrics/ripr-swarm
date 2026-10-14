@@ -211,6 +211,43 @@ pub(crate) fn render_human_triage(
                     Some(finding) if finding.class == ExposureClass::Exposed => {
                         out.push_str(EXPOSED_PREVIEW_SAFE_ACTION);
                     }
+                    // #7384: TypeScript named limitations deliberately leave
+                    // `static_limit_kind` unset, so the structured branch above
+                    // never fires and this line fell through to generic
+                    // packet-contract jargon while the real reason sat in an
+                    // evidence line no human surface rendered. Name the
+                    // limitation and its real producer rationale, the way
+                    // `python_preview_safe_action` names a Python one.
+                    Some(finding)
+                        if matches!(
+                            finding.language,
+                            Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript)
+                        ) && typescript_named_limitation_why(finding).is_some() =>
+                    {
+                        if let Some(why) = typescript_named_limitation_why(finding) {
+                            // #7384 review: only claim "not by missing fields"
+                            // when the shared packet authority confirms the
+                            // field list is empty; a finding can carry a named
+                            // limitation AND still miss packet fields, and
+                            // naming only one blocker misdirects the repair.
+                            let missing_fields = not_ready
+                                .as_ref()
+                                .map(|actionability| {
+                                    actionability.missing_actionability_fields.as_slice()
+                                })
+                                .unwrap_or(&[]);
+                            if missing_fields.is_empty() {
+                                out.push_str(&format!(
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting.\n"
+                                ));
+                            } else {
+                                out.push_str(&format!(
+                                    "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields ({}): {why}; resolve the limitation and complete the missing fields before acting.\n",
+                                    missing_fields.join(", ")
+                                ));
+                            }
+                        }
+                    }
                     Some(finding) if let Some(actionability) = not_ready.as_ref() => {
                         out.push_str(&packet_closed_preview_safe_action(
                             finding,
@@ -345,7 +382,7 @@ pub(crate) fn render_human_triage(
         let remaining = triage.omitted.len() - listed;
         if remaining > 0 {
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json.\n"
+                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ));
         }
     }
@@ -408,7 +445,11 @@ pub(crate) fn canonical_next_action_for_triage(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> Result<CanonicalNextActionV1, String> {
-    let root = output.root.display().to_string();
+    // Same slash-stable spelling as the top-level check JSON `root`.
+    // Raw `Path::display()` kept argv backslashes, so
+    // `document.root != canonical_next_action.subject.root` on Windows
+    // (#7730). Restart/command routes keep native spelling separately.
+    let root = display_path(&output.root);
     let scope = check_scope_descriptor(triage, output);
     let item_id = triage
         .selected
@@ -792,6 +833,20 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     )
 }
 
+/// #7384: TypeScript named limitations are additive evidence lines of the
+/// form `typescript_limitation_why: <name> — <reason>`; they deliberately
+/// leave `static_limit_kind` unset (the #1496 slice scoped them to additive
+/// evidence). Read the real producer line back so the human safe-action
+/// surface can name the actual blocker instead of generic packet-contract
+/// jargon.
+fn typescript_named_limitation_why(finding: &Finding) -> Option<String> {
+    finding
+        .evidence
+        .iter()
+        .find_map(|line| line.strip_prefix("typescript_limitation_why: "))
+        .map(str::to_string)
+}
+
 /// #4216 row 1: Python has no structured preview packet, so the generic
 /// "complete the missing repair-packet fields" line told the operator to do
 /// something they cannot, and pilot, first-pr and status each routed back to
@@ -1118,6 +1173,49 @@ mod tests {
         Ok(())
     }
 
+    /// #7384: a TypeScript finding carrying a named limitation evidence line
+    /// must name that limitation in "Safe next action" (the surfacing Python
+    /// preview findings get for their static limitations), not fall through
+    /// to generic packet-contract jargon.
+    #[test]
+    fn typescript_named_limitation_is_named_in_safe_next_action() -> Result<(), String> {
+        let mut finding = test_finding("finding:ts-helper-gated");
+        finding.language = Some(LanguageId::TypeScript);
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.evidence.push(
+            "typescript_limitation_why: typescript_oracle_helper_gated — the test calls              assertion helper `assertPriceBoundary(...)` around owner `computePrice`; the              adapter cannot inspect the helper body or establish its oracle semantics from              the test call site"
+                .to_string(),
+        );
+        let output = test_output(vec![finding.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::PreviewLimited,
+            selected: Some(&finding),
+            omitted: Vec::new(),
+        };
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        if !out.contains("typescript_oracle_helper_gated") {
+            return Err(format!(
+                "safe next action must name the limitation, got:
+{out}"
+            ));
+        }
+        if out.contains("complete the missing repair-packet fields") {
+            return Err(format!(
+                "generic packet jargon must not shadow the named limitation, got:
+{out}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_adapter_names_scope_without_navigation() -> Result<(), String> {
         let output = test_output(Vec::new());
@@ -1153,6 +1251,117 @@ mod tests {
                 }
             }
             other => return Err(format!("scope stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #7730: `canonical_next_action.subject.root` must use the same
+    /// slash-stable renderer as the top-level JSON `root`, not raw
+    /// `Path::display()`. A backslash-typed spaced argv spelling must not
+    /// survive into the subject; a `.` root stays `.` so the JSON consumer
+    /// that matches `subject.root == "."` still holds.
+    #[test]
+    fn check_adapter_subject_root_uses_display_path_not_raw_display() -> Result<(), String> {
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+
+        let mut backslash_root = test_output(Vec::new());
+        // Join at runtime so the source does not contain a drive-letter
+        // machine path (`check-local-context`), while the constructed
+        // argv spelling still matches the #7730 Windows report.
+        backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
+        let raw = backslash_root.root.display().to_string();
+        // Independent slash-stable contract: forward-slash join of the
+        // same components, not `display_path` output.
+        let expected = ["C:", "tmp", "probe win space"].join("/");
+        if raw == expected {
+            return Err(format!(
+                "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
+            ));
+        }
+        if !raw.contains('\\') {
+            return Err(format!(
+                "fixture must keep a backslash argv spelling, got {raw:?}"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &backslash_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != expected {
+            return Err(format!(
+                "subject.root must be {expected:?}, got {:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root == raw {
+            return Err(format!("subject.root kept the raw argv spelling {raw:?}"));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != expected {
+            return Err(format!(
+                "serialized subject.root must be {expected:?}, got {}",
+                encoded["subject"]["root"]
+            ));
+        }
+
+        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
+        // shape instead of leaking `\\?\` into JSON identity.
+        let mut verbatim = test_output(Vec::new());
+        verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
+        let verbatim_raw = verbatim.root.display().to_string();
+        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        if verbatim_raw == verbatim_expected {
+            return Err(format!(
+                "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"
+            ));
+        }
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &verbatim,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != verbatim_expected {
+            return Err(format!(
+                "verbatim subject.root must be {verbatim_expected:?}, got {:?}",
+                action.subject().root
+            ));
+        }
+        if action.subject().root.contains('\\') {
+            return Err(format!(
+                "verbatim subject.root must not retain backslashes, got {:?}",
+                action.subject().root
+            ));
+        }
+
+        // A `.` root stays `.`, so consumers that treat
+        // `subject.root == "."` still match after this change.
+        let mut dot_root = test_output(Vec::new());
+        dot_root.root = PathBuf::from(".");
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &dot_root,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().root != "." {
+            return Err(format!(
+                "dot root must stay '.', got {:?}",
+                action.subject().root
+            ));
+        }
+        let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+        if encoded["subject"]["root"] != "." {
+            return Err(format!(
+                "serialized dot root must stay '.', got {}",
+                encoded["subject"]["root"]
+            ));
         }
         Ok(())
     }

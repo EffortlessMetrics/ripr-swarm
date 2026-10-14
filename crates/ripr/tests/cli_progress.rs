@@ -256,6 +256,62 @@ fn check_progress_failure_emits_failed_not_completed() -> Result<(), String> {
     Ok(())
 }
 
+/// #7352: `ripr explain` and `ripr context` re-run the full check pipeline
+/// on a fresh run; the silent window looked like a hang on a cold large
+/// repository. Both must project the same stderr-only stage lines `ripr
+/// check` promises, while machine stdout stays free of progress records.
+#[test]
+fn explain_and_context_fresh_runs_disclose_progress_on_stderr() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check(&fixture, &["--format", "json"])?;
+    assert!(
+        check.status.success(),
+        "check json failed: {}",
+        stderr_text(&check)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    for (command, extra) in [
+        ("explain", vec![finding_id.as_str()]),
+        ("context", vec!["--at", finding_id.as_str()]),
+    ] {
+        let mut args = vec![command, "--root", root.as_str(), "--diff", diff.as_str()];
+        args.extend_from_slice(&extra);
+        let output = ripr()
+            .args(&args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+        assert!(
+            output.status.success(),
+            "{command} failed: {}",
+            stderr_text(&output)
+        );
+        let stderr = stderr_text(&output);
+        assert!(
+            stderr.contains("ripr progress: loading_input [diff]"),
+            "{command} must disclose its pipeline re-run on stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("ripr progress: analyzing [diff]"),
+            "{command} must project the analyzing stage: {stderr}"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("ripr progress:"),
+            "{command} leaked progress onto stdout"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn check_help_does_not_spray_progress() -> Result<(), String> {
     let output = ripr()

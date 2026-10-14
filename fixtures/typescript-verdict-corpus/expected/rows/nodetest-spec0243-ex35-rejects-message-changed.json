@@ -1,0 +1,22 @@
+{
+  "case_id": "nodetest-spec0243-ex35-rejects-message-changed",
+  "subject_id": "authored-ts-nodetest-billing",
+  "origin": "authored",
+  "anchor": "src/chargeEx35.ts:3",
+  "behavior_family": "error_path",
+  "test_shape": "nodetest_assert_rejects_message_object_message_changed",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

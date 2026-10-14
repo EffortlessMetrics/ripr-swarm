@@ -199,6 +199,32 @@ fn canonical_next_action_for_card(
         && repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready());
     let limitation = if input.instruction.state == FixInstructionState::FixSiteReady {
         None
+    } else if input.instruction.state == FixInstructionState::Unavailable
+        && input.readiness.is_repair_ready()
+        && input.packet_eligible
+        && input.edit_cage_refusal.is_none()
+    {
+        // #7376: on a clean repository the card's witness pass is
+        // diff-scoped and names no finding, so the instruction projects
+        // Unavailable while the packet readiness authority is green and
+        // `ripr agent repair --phase before` still starts the bounded route
+        // for this seam — the same command `ripr pilot` just printed. The
+        // generic "exposes no bounded route" wording contradicts that
+        // surface (and sits unexplained beside `repair_ready=true`); name
+        // the working route and the scope mismatch instead. The route gate
+        // above is unchanged: the witness-derived assertion families stay
+        // unexposed until an analysis names the seam.
+        //
+        // The route is named without a `ripr `-prefixed command: this text
+        // renders on the same plain-text line as the stop's `see <route>`,
+        // and the printed-command paste extractor takes the first `ripr `
+        // token on a line for the bare-line fallback — a command spelling
+        // ahead of the see-route would steal that extraction and mispair
+        // the route's `(PowerShell)` form (printed_command_paste).
+        Some(format!(
+            "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id {} --phase before`, the command the pilot step printed for this seam",
+            input.subject.seam_id
+        ))
     } else {
         Some(format!(
             "instruction {} exposes no bounded route",
@@ -511,6 +537,49 @@ mod tests {
             detail_sources: Vec::new(),
             budget: RepairCardBudget::default(),
         }
+    }
+
+    /// #7376: on a clean repository the card's witness pass is diff-scoped
+    /// and names no finding, so the instruction projects Unavailable while
+    /// the readiness authority is green and `ripr agent repair --phase
+    /// before` still starts the bounded route for the seam — the stop must
+    /// name that route and the scope mismatch instead of claiming no
+    /// bounded route exists.
+    #[test]
+    fn unavailable_instruction_with_ready_seam_names_the_repair_route() -> Result<(), String> {
+        let instruction = instruction(FixInstructionState::Unavailable);
+        let readiness = ready_readiness();
+        let input = base_input(&instruction, &readiness);
+        let card = build_repair_card(&input)?;
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "the card must mint a canonical action".to_string())?;
+        match canonical.stop() {
+            Some(crate::domain::NextActionStop::Unsupported { limitation, .. }) => {
+                if limitation.contains("exposes no bounded route") {
+                    return Err(format!(
+                        "the repair-ready seam was reported as having no bounded route: {limitation}"
+                    ));
+                }
+                for expected in ["repair-ready", "--phase before", "seam:demo"] {
+                    if !limitation.contains(expected) {
+                        return Err(format!("the limitation lost `{expected}`: {limitation}"));
+                    }
+                }
+            }
+            other => {
+                return Err(format!(
+                    "an unavailable instruction must stop as unsupported: {other:?}"
+                ));
+            }
+        }
+        // The route gate is unchanged: the witness gap exposes no executable
+        // route, only the narration of the one that exists.
+        if canonical.is_executable() || canonical.command().is_some() {
+            return Err("the witness gap must not expose an executable route".to_string());
+        }
+        Ok(())
     }
 
     #[test]

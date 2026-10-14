@@ -8,7 +8,7 @@
 use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::commands_context::{
-    config_load_refusal, ensure_command_root, write_stdout_chunked,
+    analysis_outcome_exit_result, config_load_refusal, ensure_command_root, write_stdout_chunked,
 };
 use crate::cli::help;
 use crate::cli::parse::{
@@ -1295,15 +1295,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // report, including retained findings and coverage identity; appending a
     // refusal here would corrupt machine output. Genuine partial reports
     // remain advisory, so completeness or zero findings cannot own this exit.
-    if !format.is_repo_scope()
-        && output.analysis_outcome.as_ref().is_some_and(|outcome| {
-            outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
-        })
-    {
-        return Err(
-            "check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes"
-                .to_string(),
-        );
+    if !format.is_repo_scope() {
+        analysis_outcome_exit_result("check", output.analysis_outcome.as_ref())?;
     }
     if let Some(sink) = &progress {
         sink.commit_success();

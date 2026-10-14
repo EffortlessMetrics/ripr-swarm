@@ -1081,6 +1081,16 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
+    assert!(
+        json.contains(
+            "\"outputs_written\": [\n    \"pilot_summary_json\",\n    \"pilot_summary_md\"\n  ]"
+        ),
+        "timeout JSON must not vouch that unwritten siblings were produced:\n{json}"
+    );
+    assert!(
+        json.contains("\"repo_exposure_json\":"),
+        "outputs stays the packet path map; removal, not omitting keys, is the #7425 fix:\n{json}"
+    );
     assert!(json.contains(&format!(
         "ripr pilot --root {0} --out {0}/target/ripr/pilot --mode draft",
         crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
@@ -1128,6 +1138,7 @@ fn timeout_summary_md_explains_partial_status_and_retry_command() {
         "- Config: loaded `ripr.toml`",
         "## Outputs",
         "Analysis did not finish within the pilot budget",
+        "This directory does not keep leftover `repo-exposure.json`",
         "- Pilot summary JSON: `target/ripr/pilot/pilot-summary.json`",
         "## Next Command",
         "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
@@ -1196,6 +1207,7 @@ fn timeout_terminal_lists_written_files_and_retry_command() {
         "Written:",
         "target/ripr/pilot/pilot-summary.json",
         "target/ripr/pilot/pilot-summary.md",
+        "This packet directory does not keep leftover repo-exposure or seam-packet files from an earlier run.",
         "Next:",
         "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
     ] {

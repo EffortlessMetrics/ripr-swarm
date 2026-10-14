@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
+
+`ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.
+If it leaves `repo-exposure.{json,md}` and `agent-seam-packets.json` from the last
+complete run, a human or `ripr agent status --root` can read last run's seams as
+this run. Remove those unwritten siblings on timeout; do not mark them stale
+in-place. `outputs` stays the packet path map so schema `0.3` is unchanged;
+`outputs_written` remains the authority for what this run produced.
+
 ## 2026-10-13: Nested Cargo.toml keeps doctor Rust checks in scope (#7506)
 
 `detect_languages` is a shallow root scan. A `package.json` at a polyglot
@@ -29,6 +38,19 @@ large findings array can omit findings). Recovery advice must be reachable:
 so its overflow guard says there is no narrower read instead of promising a
 smaller-limit page no caller can need. Other tools name their own next read,
 or say there is no narrower MCP read.
+
+## 2026-10-13: Calibrate mutants.json-only imports still count in matched_total (#7451)
+
+`ripr calibrate cargo-mutants` accepts `mutants.json` without
+`outcomes.json`. Those records default `runtime_outcome` to `unknown` and
+still join. `matched_total` is `report.matched.len()`, so a skimmer of
+the Markdown Summary sees 1 of 1 matched with no on-page flag that zero
+runtime observations exist. Disclose on `--help` and immediately after
+the default Markdown Summary; keep the same sentence in `precision_notes`
+so JSON consumers see it. Do not change `matched_total`'s meaning or add
+a schema field — that needs `docs/OUTPUT_SCHEMA.md`. Do not fold
+producer-help (#7450), provenance (#7449), or the xtask duplicate
+renderer (#6691) into this disclosure.
 
 ## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
 

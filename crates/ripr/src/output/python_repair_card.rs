@@ -33,6 +33,11 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     {
         return None;
     }
+    // A deleted or moved line is base-side evidence, never a repair target
+    // (RIPR-SPEC-0156, #7587): the line it names is gone from the candidate.
+    if finding.source_currentness.is_base_side() {
+        return None;
+    }
 
     let gap = finding.canonical_gap.as_ref()?;
     let missing_discriminator = finding
@@ -56,7 +61,9 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     let repair_action = evidence_value(finding, "suggested_repair_action: ")
         .unwrap_or("add_or_strengthen_test")
         .to_string();
-    let related_test = strongest_related_test(finding)?;
+    // Placement already selects the first eligible runnable test. Keep the
+    // card's evidence attached to that identity rather than ranking again.
+    let related_test = crate::domain::python_suggested_related_test(finding)?;
 
     Some(PythonRepairCard {
         card_version: "python_repair_card.v1".to_string(),
@@ -403,13 +410,6 @@ fn limits() -> Vec<String> {
 
 fn receipt_guidance() -> String {
     "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.".to_string()
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {

@@ -24,9 +24,12 @@ pub(super) fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, Str
 }
 
 /// Caps like `--max-related-tests` are render knobs where zero is a valid
-/// input: the context packet then renders zero related tests, matching what
-/// a `reports.max_related_tests = 0` config already permits. Only a
-/// malformed or overflowing value is an error (#4318 review).
+/// explicit per-invocation input: the context packet then renders zero
+/// related tests (#4318 review). The `reports.max_related_tests` config key
+/// is different — a zero there used to be accepted silently and emptied
+/// every packet's evidence — and now fails closed at config parse (#7353);
+/// the explicit flag keeps its deliberate per-invocation contract. Only a
+/// malformed or overflowing value is an error here.
 pub(super) fn parse_non_negative_usize(value: &str, flag: &str) -> Result<usize, String> {
     value
         .parse::<usize>()

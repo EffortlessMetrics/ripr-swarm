@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0249-ex03-subclass-of-pinned",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/errorsSub.ts:5",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_other_branch_is_subclass",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

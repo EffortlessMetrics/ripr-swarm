@@ -1,0 +1,61 @@
+{
+  "case_id": "jest-spec0249-ex03-subclass-of-pinned",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0249-ex03-subclass-of-pinned.diff",
+  "anchor": {
+    "file": "src/errorsSub.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_other_branch_is_subclass",
+  "hard_case": "`Forbidden extends NotFound`, so a `Forbidden` passes `toBeInstanceOf(NotFound)` and the pin cannot tell the branches apart",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; the StrykerJS mutant set listed for the same `if` line in jest-mined-tobeinstanceof, hand-applied, and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "subclass status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForSub(403)` returns a `NotFound`, which is not a `Forbidden`"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `errorForSub(404)` returns a `Forbidden` instead of a `NotFound`, but `Forbidden extends NotFound`, so the 404 pin passes, and 403 still returns a `Forbidden`"
+      },
+      {
+        "replacement": "if (404 !== status) {",
+        "mutated_line": "if (404 !== status) {",
+        "outcome": "tests_failed",
+        "failing_test": "subclass status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForSub(403)` returns a `NotFound`, which is not a `Forbidden`; the 404 pin alone would pass, since the `Forbidden` it now gets is a `NotFound`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`if (status === 404)` becomes `if (404 === status)` in a module where `class Forbidden extends NotFound`. The test pins `expect(errorForSub(404)).toBeInstanceOf(NotFound)` and `expect(errorForSub(403)).toBeInstanceOf(Forbidden)`. `if (true)` and `if (404 !== status)` fail the 403 pin, but `if (false)` passes both: the 404 call gets a `Forbidden`, which is a `NotFound`. RIPR-SPEC-0249 example 3: with `Forbidden extends NotFound` the 404 pin is not credited. ripr credits only the 403 pin, which is not at the changed boundary 404, and reports `weakly_exposed`, matching the spec and the partial truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0249#3"
+  ]
+}

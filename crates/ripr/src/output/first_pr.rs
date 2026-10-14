@@ -1298,9 +1298,49 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
                 reason.push(' ');
                 reason.push_str(&note);
             }
+            // #7374: the printed regeneration chain mixes a repo-scoped
+            // repo-exposure/gap-ledger artifact with a diff-scoped
+            // review-cards artifact. On a local checkout where the work is
+            // committed on the base branch itself, the cards render from an
+            // empty base..head diff while the ledger still carries
+            // repo-scoped rows, and a bare "no actionable gap" is vacuous.
+            // Name the scope mismatch and the one flag that repairs it.
+            if !records.is_empty() && review_comments_report_empty_diff(root, options) {
+                reason.push_str(&format!(
+                    " The review cards at `{}` were rendered from an empty `{}..{}` diff, so no PR-local repair start exists, while the gap ledger carries repo-scoped rows (repo-exposure is repo-scoped by design); regenerate the cards with the real PR base, for example `ripr review-comments --root {} --base {}~1 --head {} --out {}` when the work is one local commit, then rerun first-pr with the same base, for example `ripr first-pr --root {} --base {}~1 --head {}`.",
+                    options.review_comments,
+                    options.base,
+                    options.head,
+                    shell_arg(&options.command_root()),
+                    options.head,
+                    options.head,
+                    options.anchored_arg(&options.review_comments),
+                    shell_arg(&options.command_root()),
+                    options.head,
+                    options.head
+                ));
+            }
             Selection::no_action("no_action", reason, records.len())
         }
     }
+}
+
+/// #7374: true when the current review-cards artifact was rendered from a
+/// diff-scoped `review-comments` run whose `base..head` diff was empty (the
+/// local-checkout-committed-on-base shape). `CardFallback::NoCard` is only
+/// reached after the report passed the root/base/head currentness checks, so
+/// the scope fields here describe this invocation's own artifacts.
+fn review_comments_report_empty_diff(root: &Path, options: &FirstPrOptions) -> bool {
+    let Ok(report) = read_json(&resolve_path(root, &options.review_comments)) else {
+        return false;
+    };
+    string_path(&report, &["analysis_scope", "scope"]).as_deref()
+        == Some("diff_scoped_changed_files")
+        && report
+            .get("analysis_scope")
+            .and_then(|scope| scope.get("changed_files"))
+            .and_then(Value::as_array)
+            .is_some_and(|files| files.is_empty())
 }
 
 /// Second source for a start (#3906): when the ledger yields no top gap, the
@@ -4729,9 +4769,64 @@ mod tests {
         assert!(summary.contains("Verify command: `not_applicable`"));
         assert!(markdown.contains("## Start Here"));
         assert!(markdown.contains("- State: `empty_diff`"));
+        // Default options run with preflight off, so no preflight gate
+        // applies and the plain stop line renders unchanged.
         assert!(markdown.contains("- Safe next action: stop on no-action"));
         assert!(!markdown.contains("## Blocked"));
         cleanup(&repo)
+    }
+
+    /// #7372: the no-action/empty-diff headline must not declare "stop on
+    /// no-action" while the packet's own preflight reports needs_attention
+    /// (the empty-`base..head` local-checkout case); with a ready preflight
+    /// the stop language is unchanged.
+    #[test]
+    fn no_action_headline_defers_to_needs_attention_preflight() -> Result<(), String> {
+        let packet_for = |preflight_status: &str| {
+            json!({
+                "status": "no_action",
+                "selected": {
+                    "state": "no_action",
+                    "output_state": "no_actionable_gap",
+                    "reason": "No repairable PR-local Rust gap was selected."
+                },
+                "preflight": {"status": preflight_status, "mode": "write", "checks": []}
+            })
+        };
+        let watched = render_start_here_markdown(&packet_for("needs_attention"));
+        assert!(
+            watched.contains("preflight below reports `needs_attention`"),
+            "{watched}"
+        );
+        assert!(
+            !watched.contains("- Safe next action: stop on no-action"),
+            "{watched}"
+        );
+        let summary = start_here_cli_summary(
+            &packet_for("needs_attention"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains("resolve the preflight needs-attention items"),
+            "{summary}"
+        );
+
+        let ready = render_start_here_markdown(&packet_for("ready"));
+        assert!(
+            ready.contains("- Safe next action: stop on no-action"),
+            "{ready}"
+        );
+        let ready_summary = start_here_cli_summary(
+            &packet_for("ready"),
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            ready_summary.contains("no repair action selected; inspect supporting evidence"),
+            "{ready_summary}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -5209,6 +5304,39 @@ mod tests {
         let text = packet.to_string();
         assert!(!text.contains("agent repair"), "{text}");
         assert!(!markdown.contains("Start repair"), "{markdown}");
+        Ok(())
+    }
+
+    /// #7374: when the review cards were rendered from an empty `base..head`
+    /// diff (the work committed on the base branch itself) while the gap
+    /// ledger still carries repo-scoped rows, a bare "no actionable gap" is
+    /// vacuous; the reason must name the empty diff, the repo-scope design,
+    /// and the one flag that repairs it.
+    #[test]
+    fn empty_diff_cards_with_repo_scoped_ledger_rows_name_the_real_base() -> Result<(), String> {
+        let repo = temp_repo("first-pr-empty-diff-cards")?;
+        write_no_top_gap_ledger(&repo)?;
+        let mut report = review_comments_report(Vec::new());
+        report["analysis_scope"] = json!({
+            "scope": "diff_scoped_changed_files",
+            "run_status": "limited_diff_scope",
+            "changed_files": []
+        });
+        write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), report)?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        cleanup(&repo)?;
+
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        let reason = packet["selected"]["reason"].as_str().unwrap_or_default();
+        for needle in [
+            "empty `origin/main..HEAD` diff",
+            "repo-scoped",
+            "--base HEAD~1",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!("reason must name {needle:?}, got:\n{reason}"));
+            }
+        }
         Ok(())
     }
 
@@ -6357,9 +6485,10 @@ mod tests {
             if check_id == "git_diff" {
                 assert!(
                     markdown
-                        .contains("Choose a head with changes or commit PR work before rerunning."),
+                        .contains("pass the commit before the work (for example `--base HEAD~1`"),
                     "{markdown}"
                 );
+                assert!(markdown.contains("--base HEAD~1"), "{markdown}");
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;

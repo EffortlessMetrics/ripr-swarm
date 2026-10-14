@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 14 runtime-labeled cases in a new `authored-spec-confirm`
   subject cover spec cells that had no runtime-truth case. They include
   constant-token and mixed oracle confirmation (RIPR-SPEC-0094); `log::`,

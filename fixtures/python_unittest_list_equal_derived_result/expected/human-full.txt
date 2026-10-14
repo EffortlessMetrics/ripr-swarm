@@ -1,0 +1,53 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_unittest_list_equal_derived_result/input
+config: <cwd>/fixtures/python_unittest_list_equal_derived_result/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python: 1.
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+NOTE src/labels.py:8
+  id: probe:src_labels.py:python_preview:6f48e65a
+
+Changed
+  after:      return Answer(1)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/labels.py::labels
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `labels`
+  - infection unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python infection claim.
+  - propagation unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python propagation claim.
+  - observation yes: Strongest extracted Python oracle kind: `unknown` (rank 1)
+  - discriminator unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python discriminator claim.
+  - related test tests/test_labels.py:4 test_labels uses unknown unknown oracle: self.assertListEqual(labels().fixed_list(), [1, 2])
+
+Weakness
+  - Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+
+Static limitation
+  opaque_custom_assertion_helper — A custom assertion helper hides what is checked, so ripr cannot confirm the assertion would discriminate this change.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast probe:src_labels.py:python_preview:6f48e65a
+  ripr context --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast --at probe:src_labels.py:python_preview:6f48e65a
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

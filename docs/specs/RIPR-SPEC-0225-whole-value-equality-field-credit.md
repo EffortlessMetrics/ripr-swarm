@@ -132,7 +132,7 @@ finding may read `exposed`, subject to every other stage.
 
 RIPR-SPEC-0197 rule 6 (clone field pins, #6692) consumes rules 3 and 4 for a
 field of a hand-written `Clone::clone` literal compared with its own receiver.
-The "No credit" list below, including its separate-binding bullet, governs
+The "No credit" list below, including its bounded separate-binding rule, governs
 this spec's literal comparisons; it does not govern rule 6's receiver, whose
 independence rule 6 gates itself.
 
@@ -141,9 +141,9 @@ independence rule 6 gates itself.
 The finding does not read `exposed` from whole-value equality when:
 
 - the literal omits `f` through `..base` or `..Default::default()`;
-- the expected value comes from a separate binding or a helper
-  (`let e = Config { .. }; assert_eq!(c, e)`, `assert_eq!(build(3), expected())`);
-  it stays `observation_unverified`;
+- the expected value comes from a helper, an alias, or a separate binding
+  outside decision 5's adjacent immutable literal admission; it stays
+  `observation_unverified`;
 - the compared call is not the owner;
 - the assertion is `assert_ne!`: it keeps the `whole_object_equality` kind
   but gives no field credit, because inequality with one wrong value does
@@ -206,13 +206,47 @@ rejected alternative. Any can be reversed later without touching the rest.
    this step: field credit parses the expected literal itself, so a brace
    elsewhere cannot earn it.
 
+5. **Adjacent expected literal binding (2026-10-14).** Example 5 admits
+   `let e [: T] = T { .. }; assert_eq!(c, e)` when the immutable plain
+   identifier is named exactly twice in the test body (its declaration and
+   this complete operand), the declaration is the immediately preceding
+   statement in the test's own block, and this exact assertion is established
+   as executed. The declaration has no attributes, `ref`, subpattern or
+   `let ... else`. The initializer must pass the same independent-field,
+   wrapper, type and derived-equality gates as an inline literal. Both
+   operand orders are admitted. Expected bindings in helper-loaned assertions,
+   aliases, mutable/overwritten/shadowed bindings, intervening statements and
+   unresolved flow remain refused. This is separate from #7105's refusal of
+   an actual-side field read inside braces, which remains unchanged.
+
+6. **Unwrapped `Ok`/`Some` tails and their early exits (2026-10-14).**
+   Beside an `Ok(T { .. })` tail, an early `return Err(..)` is admitted, and
+   beside a `Some(T { .. })` tail an early `return None`: each exits with the
+   variant the tail does not build, as `?` already does, so every `Ok`/`Some`
+   the owner returns is the tail literal. Any other `return` (another
+   `Ok(..)`, a call, a method chain on `Err(..)`) still refuses, and so does
+   an early exit when a workspace file may rebind `Err`/`None` (a `fn Err`,
+   a `use .. as Err`), as the tail's `Ok`/`Some` already must not be. The test may
+   then compare `owner(..).unwrap()` or `owner(..).expect("..")` (one plain
+   string-literal message), inline or through rule 1's once-used `let`, with
+   the bare literal `T { .. }`: both panic on `Err`/`None`, so a passing
+   comparison reads the `Ok`/`Some` payload, and the expected literal is
+   checked as `Ok(T { .. })`/`Some(T { .. })` against every other gate.
+   `unwrap_or*`, a computed `expect` message, an unwrapped bare-tail owner and
+   an unwrapped value compared with a wrapped literal give no credit. Rejected:
+   leaving early-`Err` owners refused, which kept the common
+   `let r = ship(..).unwrap(); assert_eq!(r, Receipt { .. })` shape a false
+   gap (ledger-receipt-remaining).
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
 - The manual-`PartialEq` control (equality ignores `retries`) does not read
   `exposed`.
-- The `..Default::default()` control, the separate-binding control and the
+- The `..Default::default()` control, dependent/overwritten expected bindings and the
   non-owner control do not read `exposed`.
+- The adjacent independent expected literal binding reads `exposed`; unchanged
+  literal `4` rejects both `retries: n + 2` and `retries: n` runtime controls.
 - A brace inside a format string in an `assert_eq!` message does not produce
   `whole_object_equality`.
 - Golden drift: every finding that gains `exposed` names a literal with the
@@ -235,10 +269,12 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 2. Same, with `impl PartialEq for Config { fn eq(&self, o: &Self) -> bool { self.name == o.name } }`:
    not `exposed`.
 3. `assert_eq!(parse("3"), Ok(Config { retries: 4, name: "x".into() }))`,
-   `parse` the owner: `exposed`.
+   `parse` the owner: `exposed`. Under decision 6, `parse` may also
+   `return Err(..)` early, and `assert_eq!(parse("3").unwrap(), Config { retries: 4, name: "x".into() })`
+   reads `exposed` too.
 4. `let c = build(3); assert_eq!(c, Config { retries: 4, name: "x".into() })`: `exposed`.
 5. `let c = build(3); let e = Config { retries: 4, name: "x".into() }; assert_eq!(c, e)`:
-   `weakly_exposed`, `observation_unverified`.
+   `exposed` under decision 5's adjacent immutable binding gates.
 6. `assert_eq!(build(3), expected())`: `weakly_exposed`.
 7. `assert_eq!(build(3), Config { name: "x".into(), ..Config::default() })`: not `exposed`.
 8. `assert_eq!(other(), Config { retries: 4, name: "x".into() })`, `other` not the owner: not `exposed`.
@@ -268,6 +304,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 
 ## Test Mapping
 
+- Public API/runtime: `crates/ripr/tests/whole_value_expected_binding.rs`
+  checks exact field/owner identity, independent literal controls, compiling
+  field mutations and dependent/shadowed/overwritten expectations.
+
 - Existing: `fixtures/observation_verified_field_construction`,
   `fixtures/observation_unverified_field_construction`,
   `fixtures/rust_field_construction_token_coincidence`.
@@ -288,9 +328,13 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   parser-backed `whole_object_equality`.
 - `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
   named field in an admitted whole-value literal.
+- `crates/ripr/src/analysis/classify/owner_pin/expected_binding.rs`: bounded
+  adjacent expected binding admission before the existing literal gates.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
   execution admission (`establish_whole_value_field`, `whole_value_tail`,
-  `WholeValueField::admits`, `bound_owner_call`).
+  `WholeValueField::admits`, `bound_owner_initializer`); decision 6 adds
+  `returns_other_variant` and `unwrapped_call`, covered by
+  `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`.
 
 ## Metrics
 

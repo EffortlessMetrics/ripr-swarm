@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/python_src_layout_package_import/input",
+  "config_path": "<cwd>/fixtures/python_src_layout_package_import/input/ripr.toml",
   "summary": {"changed_rust_files":0,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":2},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,

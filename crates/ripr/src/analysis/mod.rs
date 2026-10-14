@@ -629,6 +629,28 @@ pub enum AnalysisMode {
     Ready,
 }
 
+/// Whether a worktree analysis runs the post-analysis disclosure probes
+/// (#7716): the untracked-routed-files naming (RIPR-SPEC-0116) and the
+/// analyzed-revisions naming (#5997).
+///
+/// The probes spawn a handful of git child processes whose result only the
+/// check OUTPUT renders (GitHub annotations, JSON envelope, MCP workspace
+/// status). Consumers that never render those fields — the LSP diagnostics
+/// refresh, whose `publishDiagnostics` latency is the product — skip them:
+/// on a loaded host the probe worker loses the #7292 overlap race against
+/// the analysis thread pool and the join extends every refresh by the full
+/// probe wall time. The CLI and MCP check output keep [`DisclosureProbes::Run`],
+/// so no rendered surface loses a disclosure. Crate-internal: no library
+/// consumer selects a disclosure policy, so this is not a public contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DisclosureProbes {
+    /// Run the probes and populate the disclosure fields (CLI, MCP, tests).
+    Run,
+    /// Skip the probes; the disclosure fields stay empty. Only honest for
+    /// consumers that render neither field.
+    Skip,
+}
+
 #[derive(Clone, Debug)]
 pub struct AnalysisOptions {
     pub root: PathBuf,
@@ -954,12 +976,14 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 
@@ -968,12 +992,16 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
+    disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
+        disclosure_probes,
     )
 }
 

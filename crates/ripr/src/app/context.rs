@@ -1,4 +1,5 @@
-use super::check_workspace_with_config;
+use super::check::check_with_progress;
+use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
 use super::selector::select_finding;
 use super::{CheckInput, OutputFormat};
 use crate::config::RiprConfig;
@@ -67,15 +68,55 @@ pub(crate) fn collect_context_with_config_and_worktree(
     worktree: bool,
     mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
+    collect_context_with_config_worktree_and_progress(
+        input,
+        selector,
+        max_related_tests,
+        config,
+        worktree,
+        mode_explicit,
+        None,
+    )
+}
+
+/// [`collect_context_with_config_and_worktree`] with a progress sink on the
+/// fresh pipeline run (#7352): `explain` and `context` re-run the full
+/// check pipeline without `--from`, and on a cold large repository that
+/// work was invisible — no stage lines, heartbeats, or cost disclosure —
+/// for the same tens-of-seconds-to-minutes window `ripr check` discloses.
+/// The shared sink projects the same producer-owned stage lines `check`
+/// promises; `None` reproduces the legacy silent behavior for library
+/// callers. The `--from` artifact path runs no pipeline and takes no sink.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the CLI progress route carries the check input, selector, render knob, config, mode flags, sink, and diff source together; splitting the packet would misalign the drill-in contract"
+)]
+pub(crate) fn collect_context_with_config_worktree_and_progress(
+    input: CheckInput,
+    selector: &str,
+    max_related_tests: usize,
+    config: &RiprConfig,
+    worktree: bool,
+    mode_explicit: bool,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<String, crate::core_error::CoreError> {
     let input = CheckInput {
         format: OutputFormat::Json,
         ..input
     };
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let root = input.root.clone();
+    // See the explain fresh path: the retry binds this run's root/base and
+    // stays silent for supplied scopes (#7328 review).
+    let worktree_navigation =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
+    let retry_command = worktree_navigation.context_command(selector);
+    let worktree_list_command = worktree_navigation.list_command();
+    let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
-        super::check_workspace_worktree_with_config(input, config)?
+        check_with_progress(input, config, AnalysisProgressScope::Worktree, sink)?
     } else {
-        check_workspace_with_config(input, config)?
+        check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };
     match select_finding(&output.findings, selector) {
         Some(finding) => Ok(output::json::render_context_packet_with_explain_command(
@@ -85,7 +126,15 @@ pub(crate) fn collect_context_with_config_and_worktree(
             &output.root,
         )),
         None => Err(crate::core_error::CoreError::selector_miss(
-            super::explain::no_finding_matched(selector, &navigation.list_command()),
+            super::explain::no_finding_matched_fresh_run(
+                selector,
+                &navigation.list_command(),
+                &root,
+                worktree,
+                committed_history,
+                &retry_command,
+                &worktree_list_command,
+            ),
         )),
     }
 }
@@ -109,6 +158,7 @@ pub(crate) fn collect_context_from_artifact(
     config: &RiprConfig,
     artifact_path: &Path,
     asserted_base: Option<&str>,
+    mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
     let findings = super::check_artifact::load_findings_for_reuse_core(
         artifact_path,
@@ -118,7 +168,9 @@ pub(crate) fn collect_context_from_artifact(
     )?;
     // As in `explain --from`, the navigation names the artifact: replaying
     // it keeps the verified identity without re-running the pipeline.
-    let navigation = super::finding_navigation(&input, Some(artifact_path), false);
+    // An explicit Draft must survive replay over a non-Draft repo default,
+    // just as it does on the fresh context and artifact explain routes.
+    let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     match select_finding(&findings, selector) {
         Some(finding) => Ok(output::json::render_context_packet_with_explain_command(
             finding,

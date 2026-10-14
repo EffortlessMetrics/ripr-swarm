@@ -397,6 +397,25 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     }
 }
 
+/// Policy omission needs inspection of the policy, not a new seam listing.
+/// Shared with the card's typed remedy so prose and machine guidance agree.
+pub(super) fn policy_omitted_seam_remedy_route(root: &Path, seam_id: &str) -> String {
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.to_string_lossy(),
+    ));
+    format!(
+        "ripr agent brief --root {root} --seam-id {} --json",
+        crate::agent::loop_commands::shell_arg(seam_id)
+    )
+}
+
+pub(super) fn policy_omitted_seam_hint(root: &Path, seam_id: &str) -> String {
+    let remedy = policy_omitted_seam_remedy_route(root, seam_id);
+    format!(
+        "Inspect the agent policy with `{remedy}`; re-listing cannot change this policy decision."
+    )
+}
+
 fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, CoreError> {
     let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
     render_agent_packet_with_context(
@@ -449,11 +468,9 @@ fn render_agent_packet_for_seam_with_report(
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        // #4332: a policy-omitted seam is a dead end without the listing
-        // route; name it like the not-found refusals do.
         return Err(CoreError::from(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
-            unknown_seam_id_hint(root, seam_id)
+            policy_omitted_seam_hint(root, seam_id)
         )));
     }
 
@@ -842,10 +859,14 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             attempt_id,
             error,
             &after_refusal_reason(error, &refusal.narration),
+            refusal.terminal_finish.is_some(),
         )
     {
+        // A persistence miss here is a note, not a second failure: the
+        // refusal itself already printed with its cause and recovery, and a
+        // terminal attempt's verdict is unaffected (#7378).
         eprintln!(
-            "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
+            "ripr: note: after-phase refusal narration was not persisted on attempt `{}` for `ripr agent status`: {record_error}",
             attempt_id.as_str()
         );
     }
@@ -893,21 +914,53 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
 /// attempt whose receipt is missing. Every other recorded refusal happens
 /// while the attempt is still resumable and keeps the resumable authority and
 /// its concurrent-finish guard.
+///
+/// `observed_terminal_finish` must attest that THIS invocation reached the
+/// durable finish: the resumable authority's "already has an after verdict"
+/// tail is also the shape a losing concurrent after phase meets after a
+/// sibling phase committed the verdict under it — routing that narration to
+/// the terminal authority would attribute the loser's refusal to the winner's
+/// verdict. Only a phase whose own tail committed the verdict may record
+/// beside it (#7378 review).
 fn record_after_phase_refusal(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     error: &str,
     reason: &str,
+    observed_terminal_finish: bool,
 ) -> Result<(), String> {
     if error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL) {
         crate::app::repair_attempt::record_repair_attempt_terminal_receipt_refusal_from(
             root, store, attempt_id, reason,
         )
     } else {
-        crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+        match crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
             root, store, attempt_id, reason,
-        )
+        ) {
+            Ok(()) => Ok(()),
+            // A terminal failure — the edit cage refusing the delta, an
+            // incomparable finish — commits the after verdict before the
+            // refusal records, so the resumable authority refuses the write
+            // by design; the narration still belongs beside the verdict,
+            // where `agent status` reads it (#7378). The fallback is gated on
+            // this phase having reached that finish itself: the same tail
+            // from the resumable authority is also what a concurrent after
+            // phase that LOST the finish commit meets, and its narration must
+            // not land beside a verdict a sibling phase committed. Any other
+            // refusal is genuine and surfaces unchanged.
+            Err(record_error)
+                if observed_terminal_finish
+                    && record_error.contains(
+                        crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL,
+                    ) =>
+            {
+                crate::app::repair_attempt::record_repair_attempt_terminal_after_refusal_from(
+                    root, store, attempt_id, reason,
+                )
+            }
+            Err(record_error) => Err(record_error),
+        }
     }
 }
 
@@ -1217,7 +1270,7 @@ fn run_agent_repair_phase(
             .map_err(|error| error.to_string())?;
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -2084,7 +2137,7 @@ fn repair_after_cage_recovery_lines(
         return lines;
     }
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }
@@ -2308,11 +2361,21 @@ fn before_phase_dirty_premise_refusal(
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
 /// points at the surfaces that only offer a repair start for seams that
-/// pass this check, and points at the repair help carrying the scope
-/// boundary (#5210).
-fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+/// pass this check, names the root-pinned `agent stub` forward route for
+/// the same state (#7735 — the pick-another-seam advice is a dead end when
+/// no seam can start a repair; `--root` keeps the route usable from any
+/// directory because the before phase does not require the shell to sit at
+/// the workspace, and `--kind` pins the probe family so a line holding
+/// several gap families cannot stub another seam), states the inline-test
+/// boundary with its remedy — an ambiguous multi-module inline layout
+/// proposes no target, while one governed inline module would qualify
+/// (#5210) — and points at the repair help carrying the scope boundary.
+fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
@@ -2342,16 +2405,12 @@ pub(in crate::cli) fn before_phase_stdout(
         });
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
-            &continuation.next_command,
+            &crate::agent::human_after_phase_follow_up(&continuation.next_command),
         ));
     } else {
-        document.push_str(&format!(
-            "Next, after the test edit: {}\n",
-            continuation.next_command
-        ));
-        if let Some(form) =
-            crate::output::markdown::powershell_text_variant(&continuation.next_command)
-        {
+        let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
+        if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
         }
     }
@@ -3053,11 +3112,15 @@ mod tests {
         violated_result
     }
 
-    /// The recording dispatch routes by refusal family (#5262 review): the
-    /// trusted-surface refusal — which only ever fires after the durable
-    /// finish — records beside the committed after verdict through the
-    /// terminal authority, while every other family keeps the resumable
-    /// authority, whose concurrent-finish guard refuses beside a verdict.
+    /// The recording dispatch routes by attempt state as well as refusal
+    /// family (#5262 review, #7378): the trusted-surface refusal — which only
+    /// ever fires after the durable finish — records beside the committed
+    /// after verdict through the terminal authority. Every other family keeps
+    /// the resumable authority while the attempt is resumable; once a
+    /// terminal failure (the edit cage, an incomparable finish) has
+    /// committed the verdict, the resumable authority's guard refusal routes
+    /// the narration to the terminal authority instead of dropping it, so
+    /// `agent status` can say why the attempt ended.
     #[test]
     fn after_phase_refusal_recording_routes_trusted_surface_to_the_terminal_authority()
     -> Result<(), String> {
@@ -3098,6 +3161,7 @@ mod tests {
                 attempt_id,
                 &trusted_error,
                 "repair receipt observed repository path outside trusted edit surface: src/lib.rs. To recover: commit the production change, then start a new attempt.",
+                false,
             )?;
             let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
             let refusal = recorded
@@ -3110,13 +3174,52 @@ mod tests {
                 return Err("the terminal record moved the attempt's finish".to_string());
             }
 
+            // A terminal failure family (the edit cage's refusal is the
+            // canonical case) records beside the committed verdict too: the
+            // resumable authority's guard refusal routes it to the terminal
+            // authority, so the narration reaches `agent status` (#7378). The
+            // caller attests its own tail committed the verdict.
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            match record_after_phase_refusal(&root, None, attempt_id, other_error, "changed") {
-                Err(error) if error.contains("already has an after verdict") => {}
+            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed", true)?;
+            let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
+            match rerouted.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
                 other => {
                     return Err(format!(
-                        "the resumable authority must stay guarded beside a verdict: {other:?}"
+                        "the terminal family must record beside the verdict: {other:?}"
+                    ));
+                }
+            }
+            if rerouted.after.is_none() || rerouted.state != RepairAttemptState::ReadyToFinish {
+                return Err("the terminal record moved the attempt's finish".to_string());
+            }
+
+            // A concurrent after phase that LOST the finish commit meets the
+            // same resumable guard tail, but its tail never committed the
+            // verdict: without its own terminal finish the fallback is
+            // refused, so the loser's narration cannot attribute a refusal
+            // to the winner's verdict (#7378 review).
+            let lost = record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                other_error,
+                "losing phase narration",
+                false,
+            );
+            if lost.is_ok() {
+                return Err(
+                    "a losing phase's refusal must not record beside a verdict it did not commit"
+                        .to_string(),
+                );
+            }
+            let guarded = load_repair_attempt_manifest(&root, attempt_id)?;
+            match guarded.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
+                other => {
+                    return Err(format!(
+                        "the losing phase's narration replaced the winner's record: {other:?}"
                     ));
                 }
             }
@@ -3791,16 +3894,62 @@ mod before_phase_stdout_tests {
     }
 
     /// A packet the summary cannot read (no test file) still names where the
-    /// packet is and how to print it, rather than an empty stdout.
+    /// packet is and how to print it, rather than an empty stdout. The
+    /// trailer teaches `ripr continue` (#7879); JSON keeps the persisted
+    /// `--phase after` spelling.
     #[test]
     fn unreadable_packet_points_at_the_packet_file() -> Result<(), String> {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(
             before_phase_stdout(packet, "p", false, &continuation())?,
-            format!(
-                "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: {}\n",
-                continuation().next_command
-            )
+            "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567\n"
+        );
+        Ok(())
+    }
+
+    /// Human before-phase stdout names the ordinary `ripr continue` route
+    /// (#7879). JSON stdout keeps the persisted advanced spelling so a
+    /// driver that already consumes `--phase after` is unchanged.
+    #[test]
+    fn ordinary_human_stdout_names_ripr_continue() -> Result<(), String> {
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "Next, after the test edit: ripr continue --root . --attempt repair-attempt-0123456789abcdef01234567"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("ripr agent repair"),
+            "human stdout must not teach the advanced after spelling:\n{summary}"
+        );
+
+        let trust = BeforePhaseAttemptContinuation {
+            next_command: format!(
+                "{}{}",
+                continuation().next_command,
+                crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX
+            ),
+            ..continuation()
+        };
+        let trust_summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &trust,
+        )?;
+        assert!(
+            trust_summary.contains(&trust.next_command),
+            "trust-bound after still names the authorization flags:\n{trust_summary}"
+        );
+        assert!(
+            !trust_summary.contains("ripr continue --root"),
+            "trust-bound after must not pretend `ripr continue` can supply authorization:\n{trust_summary}"
         );
         Ok(())
     }

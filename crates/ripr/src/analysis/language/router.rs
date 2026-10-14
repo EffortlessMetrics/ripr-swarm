@@ -68,6 +68,31 @@ pub(crate) fn route(path: &Path) -> Option<LanguageId> {
     }
 }
 
+/// Runner config file names a Jest or Vitest run reads for its snapshot
+/// location or update mode (RIPR-SPEC-0258).
+const SNAPSHOT_RUNNER_CONFIG_PREFIXES: [&str; 4] = [
+    "jest.config.",
+    "vitest.config.",
+    "vite.config.",
+    "vitest.workspace.",
+];
+
+/// Whether `path` is a file the TypeScript committed-snapshot reading
+/// (RIPR-SPEC-0258) depends on although no adapter routes it: a `.snap`
+/// file, a `package.json`, or a Jest/Vitest runner config. The
+/// committed-history probe records these when they differ from `HEAD`, so
+/// the reading can refuse instead of crediting a working-tree entry.
+pub(crate) fn snapshot_input(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.ends_with(".snap")
+        || name == "package.json"
+        || SNAPSHOT_RUNNER_CONFIG_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
 /// Programming-language source extensions no ripr adapter reads, with the
 /// language name shown to users. A changed file with one of these carries
 /// behavior ripr did not analyze, unlike documentation or configuration, so

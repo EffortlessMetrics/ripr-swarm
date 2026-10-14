@@ -16,6 +16,12 @@ pub(crate) struct BaselineCreateReport {
     /// (issue #1964). Preserved so a baseline entry stays interpretable when
     /// the ledger moves; delta joins across roots are refused as stale.
     root: Option<String>,
+    /// Producing-build identity carried by the source gate-decision report's
+    /// `subject.analyzer_version` (issue #5474). Persisted so `baseline diff`
+    /// can disclose analyzer-version identity discontinuity (issue #7421)
+    /// instead of reading identities invalidated across an analyzer upgrade
+    /// as resolved debt.
+    subject_analyzer_version: Option<String>,
     entries: Vec<BaselineEntry>,
     skipped: BaselineCreateSkipped,
     warnings: Vec<String>,
@@ -111,9 +117,20 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
         .ok_or_else(|| "gate-decision JSON missing decisions array".to_string())?;
     let mode = string_field(value.get("mode")).unwrap_or_else(|| "unknown".to_string());
     let root = string_field(value.get("root"));
+    let subject_analyzer_version = string_field(value.pointer("/subject/analyzer_version"));
     let mut entries = Vec::new();
     let mut skipped = BaselineCreateSkipped::default();
     let mut warnings = Vec::new();
+    if subject_analyzer_version.is_none() {
+        // Fail-closed disclosure (issue #7421): a baseline without a recorded
+        // producing build cannot later distinguish "debt fixed" from
+        // "identity scheme changed across analyzer builds", so its absence is
+        // loud at creation time instead of silent at diff time.
+        warnings.push(
+            "source gate-decision report carries no subject.analyzer_version; the baseline records no producing-build identity, so later diffs cannot disclose analyzer-version identity discontinuity"
+                .to_string(),
+        );
+    }
 
     for decision in decisions {
         match decision.get("decision").and_then(Value::as_str) {
@@ -162,6 +179,7 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
         mode,
         reviewed: false,
         root,
+        subject_analyzer_version,
         entries,
         skipped,
         warnings,
@@ -178,6 +196,9 @@ pub(crate) fn render_baseline_create_json(report: &BaselineCreateReport) -> Resu
         "mode": report.mode,
         "reviewed": report.reviewed,
         "root": report.root,
+        "subject": {
+            "analyzer_version": report.subject_analyzer_version,
+        },
         "summary": {
             "entries": report.entries.len(),
             "included": report.entries.len(),
@@ -192,6 +213,10 @@ pub(crate) fn render_baseline_create_json(report: &BaselineCreateReport) -> Resu
 
 pub(crate) fn baseline_entry_count(report: &BaselineCreateReport) -> usize {
     report.entries.len()
+}
+
+pub(crate) fn baseline_warnings(report: &BaselineCreateReport) -> &[String] {
+    &report.warnings
 }
 
 pub(crate) use crate::output::path::display_path;
@@ -538,6 +563,73 @@ mod tests {
         assert!(rendered.contains("\"entries\": 0"));
         assert!(rendered.contains("\"malformed\": 1"));
         assert!(rendered.contains("skipped gate decision without a stable identity or fallback"));
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_create_persists_producing_analyzer_version_from_subject() -> Result<(), String> {
+        // Issue #7421: the gate decision's `subject.analyzer_version`
+        // (issue #5474) must travel into the baseline so later diffs can
+        // disclose analyzer-version identity discontinuity.
+        let json = r#"{
+          "schema_version": "0.1",
+          "mode": "visible-only",
+          "root": ".",
+          "subject": {
+            "analyzer_version": "0.11.0+a079b4d61983f4f199cd1895af581a3495847093"
+          },
+          "decisions": [
+            {
+              "decision": "advisory",
+              "id": "ripr-gate-versioned",
+              "seam_id": "versioned",
+              "static_class": "weakly_gripped",
+              "placement": {"path": "src/versioned.rs", "line": 4},
+              "evidence": {}
+            }
+          ]
+        }"#;
+
+        let report =
+            baseline_create_report_from_gate_decision_json("gate.json", "unix_ms:6", json)?;
+        let rendered = render_baseline_create_json(&report)?;
+        assert!(
+            rendered.contains(
+                "\"analyzer_version\": \"0.11.0+a079b4d61983f4f199cd1895af581a3495847093\""
+            )
+        );
+        assert!(!rendered.contains("no subject.analyzer_version"));
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_create_discloses_missing_producing_analyzer_version() -> Result<(), String> {
+        // Issue #7421: a pre-#5474 gate decision carries no subject block;
+        // the baseline records the absence as null and warns loudly, so the
+        // missing producing-build identity is a creation-time disclosure, not
+        // a silent diff-time blind spot.
+        let json = r#"{
+          "schema_version": "0.1",
+          "mode": "visible-only",
+          "decisions": [
+            {
+              "decision": "advisory",
+              "id": "ripr-gate-unversioned",
+              "seam_id": "unversioned",
+              "static_class": "weakly_gripped",
+              "placement": {"path": "src/unversioned.rs", "line": 9},
+              "evidence": {}
+            }
+          ]
+        }"#;
+
+        let report =
+            baseline_create_report_from_gate_decision_json("gate.json", "unix_ms:7", json)?;
+        let rendered = render_baseline_create_json(&report)?;
+        assert!(rendered.contains("\"analyzer_version\": null"));
+        assert!(rendered.contains(
+            "source gate-decision report carries no subject.analyzer_version; the baseline records no producing-build identity, so later diffs cannot disclose analyzer-version identity discontinuity"
+        ));
         Ok(())
     }
 

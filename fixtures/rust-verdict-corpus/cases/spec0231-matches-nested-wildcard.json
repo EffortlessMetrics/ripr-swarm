@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0231-matches-nested-wildcard",
+  "subject_id": "authored-matches-nested-wildcard",
+  "diff": "cases/spec0231-matches-nested-wildcard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_return",
+  "test_shape": "assert_any_matches_ok_wildcard",
+  "hard_case": "Measured defect (#7715): ripr reported the related test's oracle `assert!(results.iter().any(|r| matches!(r, Ok(_))))` as exact_value / strong, because any `matches!` text in the condition credited it whatever its pattern. RIPR-SPEC-0231 rule 3 (example 7 is the same `Ok(_)` pattern as the whole condition): the nested `Ok(_)` only checks the side of some element, so it pins no value and the test reads no stronger than a bare `assert!`, relational_check / weak. The line verdict stays gap; the overclaim showed in the related test's reported oracle. Since #7715's fix ripr reports relational_check / weak.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(x + 1)",
+        "mutated_line": "Ok(x + 1)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check(5) returns Ok(6); Ok(_) accepts it"
+      },
+      {
+        "replacement": "Err(E::Bad)",
+        "mutated_line": "Err(E::Bad)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_accepts_five",
+        "equivalence_review": "not equivalent: check(5) errs, so no element matches Ok(_)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert!(results.iter().any(|r| matches!(r, Ok(_)))) over [check(5)] only checks the Ok side: Ok(x + 1) passes, Err(E::Bad) fails. The nested pattern pins no value.",
+  "labeling_observation": {
+    "ripr_commit": "92e76f2e0",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#7"
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#7"
+  }
+}
