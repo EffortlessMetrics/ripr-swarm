@@ -1155,23 +1155,24 @@ pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
     // Masked, so `&&` or `||` inside a string or comment is not a connective.
     // A `||` that opens an argument or a value (`unwrap_or_else(|| x)`,
     // `= || x`) is an empty closure, not an operator.
-    // Masking blanks a literal, so `s == "a" || x` would end in `=` and pass
-    // for `= || x`: a `||` right after a literal's closing quote is an
-    // operator. Other context reads the masked text, so a comment before
-    // `||` cannot pose as an opener or an operand (#7943 review). Masking
-    // keeps byte offsets, so `at` lines up with the source.
+    // Masking blanks a literal too, so `s == "a" || x` would end in `=` and
+    // pass for `= || x`. The context text therefore keeps a quote where each
+    // live literal opens: a literal before `||` reads as an operand, while
+    // comments stay blank and cannot pose as an opener or an operand (#7943
+    // review). Masking keeps byte offsets, so `at` lines up with the source.
     let connectives = |source: &str| {
-        let text = crate::analysis::extract::mask_comments_and_strings(source);
-        let opens_closure = |at: usize| {
-            // The blanked run before `||` is a literal when it opens with
-            // one: a line comment that ends in `"` is still a comment.
-            let blanked = &source[text[..at].trim_end().len()..at];
-            if blanked.trim_end().ends_with(['"', '\'', '#'])
-                && !blanked.trim_start().starts_with("//")
-                && !blanked.trim_start().starts_with("/*")
-            {
-                return false;
+        let (mut text, char_literals) = crate::analysis::extract::mask_with_char_literals(source);
+        let opens = crate::analysis::extract::string_literal_spans(source)
+            .into_iter()
+            .map(|(open, _, _)| open)
+            .chain(char_literals.into_iter().map(|(start, _)| start))
+            .collect::<Vec<_>>();
+        for open in opens {
+            if text.get(open..=open) == Some(" ") {
+                text.replace_range(open..=open, "\"");
             }
+        }
+        let opens_closure = |at: usize| {
             let before = text[..at].trim_end();
             // `move` and `return` count only as whole keywords: `should_remove
             // || x` and the raw identifier `r#move || x` are operators
@@ -2143,6 +2144,7 @@ mod tests {
         // A name that merely ends in `move` or `return` is an operand.
         assert!(!same_connectives("100 < p", "should_remove || 100 <= p"));
         assert!(!same_connectives("100 < p", "early_return || 100 <= p"));
+        assert!(!same_connectives("100 < p", "café_move || 100 <= p"));
         assert!(!same_connectives("100 < p", "r#move || 100 <= p"));
         assert!(!same_connectives("100 < p", "r#return || 100 <= p"));
         // A literal left of `||` is an operand, not a closure opener.
@@ -2159,6 +2161,28 @@ mod tests {
         // A line comment ending in a quote is not a literal.
         assert!(same_connectives("f( // \"x\"\n || 1)", "f( // ok\n || 2)"));
         assert!(same_connectives("f( // r#\n || 1)", "f( // ok\n || 2)"));
+        // A comment beside the literal does not hide it.
+        assert!(!same_connectives(
+            "a == \"x\" /* c */",
+            "a == \"x\" /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == 'x' /* c */",
+            "a == 'x' /* c */ || b"
+        ));
+        assert!(!same_connectives(
+            "a == /* c */ \"y\"",
+            "a == /* c */ \"y\" || b"
+        ));
+        assert!(!same_connectives(
+            "a == \"x\" // c\n",
+            "a == \"x\" // c\n || b"
+        ));
+        assert!(!same_connectives("a == r#\"x\"#", "a == r#\"x\"# || b"));
+        assert!(same_connectives(
+            "f(\"a\" /*c*/, || 1)",
+            "f(\"b\" /*c*/, || 2)"
+        ));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
