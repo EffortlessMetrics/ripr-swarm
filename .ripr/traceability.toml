@@ -9107,6 +9107,10 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json",
+  "crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window",
+  "crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams",
