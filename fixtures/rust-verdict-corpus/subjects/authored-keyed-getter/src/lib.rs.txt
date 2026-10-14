@@ -61,3 +61,33 @@ mod tests {
         assert_eq!(shelf.count("BOLT"), 0);
     }
 }
+
+/// Received stock and held stock, two maps keyed by SKU.
+#[derive(Debug, Default)]
+pub struct Ledger {
+    stock: BTreeMap<String, u32>,
+    held: BTreeMap<String, u32>,
+}
+
+impl Ledger {
+    /// Records received stock for `sku`; the test reads the held map only.
+    pub fn receive(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn held(&self, sku: &str) -> u32 {
+        self.held.get(sku).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::*;
+
+    #[test]
+    fn receive_holds_nothing() {
+        let mut ledger = Ledger::default();
+        ledger.receive("BOLT", 5);
+        assert_eq!(ledger.held("BOLT"), 0);
+    }
+}

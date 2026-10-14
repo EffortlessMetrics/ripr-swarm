@@ -946,30 +946,39 @@ pub(in crate::analysis) struct KeyedFieldRead {
     pub(in crate::analysis) binding: String,
     pub(in crate::analysis) getter: String,
     pub(in crate::analysis) key: String,
+    /// The other `assert_eq!` operand: the value the read is expected to
+    /// equal.
+    pub(in crate::analysis) expected: String,
 }
 
-/// RIPR-SPEC-0228 keyed reads: the compared sides of `assertion_text` that
-/// are exactly `binding.getter(key)`, with one argument, compared with an
-/// operand that does not name the same binding. A projection of the result
-/// (`inv.on_hand("A") + 1`, `inv.on_hand("A").max(1)`) reads nothing.
+/// RIPR-SPEC-0228 keyed reads: the `assert_eq!` sides of `assertion_text`
+/// that are exactly `binding.getter(key)`, with one argument, compared with
+/// an operand that does not name the same binding. A projection of the
+/// result (`inv.on_hand("A") + 1`, `inv.on_hand("A").max(1)`) reads
+/// nothing, and neither does `assert!` or `assert_ne!`: only an equality
+/// says which value the entry must hold.
 pub(in crate::analysis) fn assertion_keyed_getter_reads(
     assertion_text: &str,
 ) -> Vec<KeyedFieldRead> {
     let subjects = compared_sides(assertion_text);
+    // Only `assert_eq!` has a second side; without one `get` gives `None`.
     subjects
         .iter()
         .enumerate()
         .filter_map(|(index, subject)| {
-            let read = subject_keyed_getter_read(subject)?;
-            let other = subjects
-                .get(1 - index.min(1))
-                .filter(|_| subjects.len() == 2);
-            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+            let (binding, getter, key) = subject_keyed_getter_read(subject)?;
+            let other = subjects.get(1 - index.min(1))?;
+            (!names_ident(other, &binding)).then(|| KeyedFieldRead {
+                binding,
+                getter,
+                key,
+                expected: other.trim().to_string(),
+            })
         })
         .collect()
 }
 
-fn subject_keyed_getter_read(subject: &str) -> Option<KeyedFieldRead> {
+fn subject_keyed_getter_read(subject: &str) -> Option<(String, String, String)> {
     let bare = subject.trim();
     let (binding, after) = bare.split_once('.')?;
     let (getter, arguments) = after.split_once('(')?;
@@ -985,11 +994,8 @@ fn subject_keyed_getter_read(subject: &str) -> Option<KeyedFieldRead> {
         return None;
     }
     let key = first_call_argument(inner)?;
-    (key == inner.trim() && !names_ident(&key, binding)).then(|| KeyedFieldRead {
-        binding: binding.to_string(),
-        getter: getter.to_string(),
-        key,
-    })
+    (key == inner.trim() && !names_ident(&key, binding))
+        .then(|| (binding.to_string(), getter.to_string(), key))
 }
 
 /// RIPR-SPEC-0228 keyed reads: the owner parameter that keys a field-path
@@ -2827,24 +2833,25 @@ mod tests {
     /// `binding.getter(key)` names its binding, getter and key.
     #[test]
     fn assertion_keyed_getter_reads_take_one_argument_calls_only() {
-        let read = |binding: &str, getter: &str, key: &str| {
+        let read = |binding: &str, getter: &str, key: &str, expected: &str| {
             vec![KeyedFieldRead {
                 binding: binding.to_string(),
                 getter: getter.to_string(),
                 key: key.to_string(),
+                expected: expected.to_string(),
             }]
         };
         assert_eq!(
             assertion_keyed_getter_reads("assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"),
-            read("inv", "on_hand", "\"BOLT-M8\"")
+            read("inv", "on_hand", "\"BOLT-M8\"", "7")
         );
         assert_eq!(
             assertion_keyed_getter_reads("assert_eq!(7, inv.on_hand(sku));"),
-            read("inv", "on_hand", "sku")
+            read("inv", "on_hand", "sku", "7")
         );
         assert_eq!(
-            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(&key(\"a,b\")), 7);"),
-            read("inv", "on_hand", "&key(\"a,b\")")
+            assertion_keyed_getter_reads("assert_eq!(inv.on_hand(&key(\"a,b\")), Some(&7));"),
+            read("inv", "on_hand", "&key(\"a,b\")", "Some(&7)")
         );
         for other in [
             // A projection of the entry, two arguments or none, a chained
@@ -2857,6 +2864,9 @@ mod tests {
             "assert_eq!(make().on_hand(\"A\"), 7);",
             "assert_eq!(inv.on_hand(inv.first()), 7);",
             "assert_eq!(inv.on_hand(\"A\"), inv.on_hand(\"B\"));",
+            // No equality: nothing says which value the entry holds.
+            "assert!(inv.on_hand(\"A\"));",
+            "assert_ne!(inv.on_hand(\"A\"), 0);",
         ] {
             assert!(assertion_keyed_getter_reads(other).is_empty(), "{other}");
         }

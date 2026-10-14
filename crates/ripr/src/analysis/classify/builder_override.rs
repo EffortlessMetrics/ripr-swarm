@@ -680,25 +680,123 @@ pub(in crate::analysis) fn getter_plainly_reads(
 /// or `.cloned()`, then optionally by `.unwrap_or_default()` or
 /// `.unwrap_or(<literal>)`. The method resolves as in
 /// [`getter_plainly_reads`]; anything else (another field, another key,
-/// arithmetic on the entry, a statement first) gives `false`.
+/// arithmetic on the entry, a statement first) gives `None`. `Some` carries
+/// what the getter returns for a key the map does not hold.
 pub(in crate::analysis) fn getter_plainly_reads_key(
     index: &RustIndex,
     impl_type: &str,
     getter: &str,
     field: &str,
-) -> bool {
-    let Some(body) = inherent_method_body(index, impl_type, getter) else {
-        return false;
-    };
-    let Some(parse) = parse_clean_source_file(body) else {
-        return false;
-    };
-    let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
-        return false;
-    };
-    let Some(parameters) = method.param_list() else {
-        return false;
-    };
+) -> Option<KeyedFallback> {
+    keyed_getter_fallback(index, impl_type, getter, field)
+}
+
+/// What a keyed getter returns for a missing key: an assertion whose
+/// expected value equals it passes whether or not the insert ran.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::analysis) enum KeyedFallback {
+    /// `self.f.get(k)` with no default: `None`.
+    Absent,
+    /// `.unwrap_or(<literal>)`.
+    Literal(String),
+    /// `.unwrap_or_default()`: zero, `""` or `false`.
+    TypeDefault,
+}
+
+impl KeyedFallback {
+    /// Whether the `assert_eq!` operand `expected` is a value the getter
+    /// cannot return for a missing key. Anything that is not a plain
+    /// literal (or `Some(..)` against [`KeyedFallback::Absent`]) cannot be
+    /// told apart and gives `false`.
+    pub(in crate::analysis) fn differs_from(&self, expected: &str) -> bool {
+        let expected = expected.trim();
+        match self {
+            Self::Absent => expected.starts_with("Some("),
+            Self::Literal(fallback) => literal_value(expected)
+                .zip(literal_value(fallback))
+                .is_some_and(|(expected, fallback)| expected != fallback),
+            Self::TypeDefault => literal_value(expected).is_some_and(|value| match value {
+                LiteralValue::Number(number) => number != 0.0,
+                LiteralValue::Text(text) => !text.is_empty(),
+                LiteralValue::Bool(value) => value,
+                LiteralValue::Char(_) => true,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum LiteralValue {
+    Number(f64),
+    Text(String),
+    Char(String),
+    Bool(bool),
+}
+
+/// The value of a plain literal ([`is_plain_literal`]), or of a negated
+/// number. A radix-prefixed or exponent number (`0x7`, `1e3`: an unknown
+/// suffix after the digits) or anything else gives `None`.
+fn literal_value(text: &str) -> Option<LiteralValue> {
+    let text = text.trim();
+    if !(is_plain_literal(text) || text.strip_prefix('-').is_some_and(is_plain_literal)) {
+        return None;
+    }
+    match text {
+        "true" => return Some(LiteralValue::Bool(true)),
+        "false" => return Some(LiteralValue::Bool(false)),
+        _ => {}
+    }
+    let inner = || text.get(1..text.len() - 1).map(str::to_string);
+    if text.starts_with('"') {
+        return inner().map(LiteralValue::Text);
+    }
+    if text.starts_with('\'') {
+        return inner().map(LiteralValue::Char);
+    }
+    let digits: String = text.chars().filter(|ch| *ch != '_').collect();
+    let number_end = digits
+        .char_indices()
+        .find(|(at, ch)| !(ch.is_ascii_digit() || *ch == '.' || (*at == 0 && *ch == '-')))
+        .map_or(digits.len(), |(at, _)| at);
+    let (number, suffix) = digits.split_at(number_end);
+    const SUFFIXES: [&str; 15] = [
+        "", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+        "f32", "f64",
+    ];
+    if !SUFFIXES.contains(&suffix) {
+        return None;
+    }
+    number.parse::<f64>().ok().map(LiteralValue::Number)
+}
+
+/// Whether a keyed read's `key` is a plain literal (`"BOLT"`, `7`), which
+/// names the same value wherever it is spelled.
+pub(in crate::analysis) fn is_literal_key(key: &str) -> bool {
+    literal_value(key).is_some()
+}
+
+/// Whether `function` (its source text) declares a return type. Fails
+/// closed: a body that does not parse counts as returning a value.
+pub(in crate::analysis) fn function_returns_value(function: &str) -> bool {
+    parse_clean_source_file(function)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .is_none_or(|method| method.ret_type().is_some())
+}
+
+fn keyed_getter_fallback(
+    index: &RustIndex,
+    impl_type: &str,
+    getter: &str,
+    field: &str,
+) -> Option<KeyedFallback> {
+    let body = inherent_method_body(index, impl_type, getter)?;
+    let parse = parse_clean_source_file(body)?;
+    let method = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let parameters = method.param_list()?;
     let shared_self = parameters
         .self_param()
         .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none());
@@ -715,17 +813,13 @@ pub(in crate::analysis) fn getter_plainly_reads_key(
         _ => None,
     };
     let (true, Some(key)) = (shared_self, key) else {
-        return false;
+        return None;
     };
-    let Some(body) = method.body().and_then(|body| body.stmt_list()) else {
-        return false;
-    };
+    let body = method.body().and_then(|body| body.stmt_list())?;
     if body.statements().next().is_some() {
-        return false;
+        return None;
     }
-    let Some(tail) = body.tail_expr() else {
-        return false;
-    };
+    let tail = body.tail_expr()?;
     let text: String = tail
         .syntax()
         .text()
@@ -733,24 +827,26 @@ pub(in crate::analysis) fn getter_plainly_reads_key(
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    let Some(rest) = [
+    let rest = [
         format!("self.{field}.get({key})"),
         format!("self.{field}.get(&{key})"),
     ]
     .iter()
-    .find_map(|lookup| text.strip_prefix(lookup.as_str())) else {
-        return false;
-    };
+    .find_map(|lookup| text.strip_prefix(lookup.as_str()))?;
     let rest = rest
         .strip_prefix(".copied()")
         .or_else(|| rest.strip_prefix(".cloned()"))
         .unwrap_or(rest);
-    rest.is_empty()
-        || rest == ".unwrap_or_default()"
-        || rest
-            .strip_prefix(".unwrap_or(")
-            .and_then(|default| default.strip_suffix(')'))
-            .is_some_and(is_plain_literal)
+    if rest.is_empty() {
+        return Some(KeyedFallback::Absent);
+    }
+    if rest == ".unwrap_or_default()" {
+        return Some(KeyedFallback::TypeDefault);
+    }
+    rest.strip_prefix(".unwrap_or(")
+        .and_then(|default| default.strip_suffix(')'))
+        .filter(|default| is_plain_literal(default))
+        .map(|default| KeyedFallback::Literal(default.to_string()))
 }
 
 /// A number, `true`/`false`, or a string or char literal without escapes:
@@ -1034,16 +1130,36 @@ mod tests {
     /// only when its body looks its own argument up in that field.
     #[test]
     fn keyed_getter_counts_only_when_it_looks_its_argument_up_in_the_field() {
-        for getter in [
-            "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
-            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) }",
-            "pub fn entry(&self, k: String) -> Option<u32> { self.attempts.get(&k).cloned() }",
-            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or_default() }",
-            "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"none\") }",
+        for (getter, fallback) in [
+            (
+                "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
+                KeyedFallback::Absent,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) }",
+                KeyedFallback::Literal("0".to_string()),
+            ),
+            (
+                "pub fn entry(&self, k: String) -> Option<u32> { self.attempts.get(&k).cloned() }",
+                KeyedFallback::Absent,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or_default() }",
+                KeyedFallback::TypeDefault,
+            ),
+            (
+                "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"none\") }",
+                KeyedFallback::Literal("\"none\"".to_string()),
+            ),
+            (
+                "pub fn entry(&self, k @ _: &str) -> Option<&u32> { self.attempts.get(k) }",
+                KeyedFallback::Absent,
+            ),
         ] {
             let index = settings_index(getter);
-            assert!(
+            assert_eq!(
                 getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                Some(fallback),
                 "{getter}"
             );
         }
@@ -1065,17 +1181,59 @@ mod tests {
             "pub fn entry(&self, k: &str) -> bool { self.attempts.contains_key(k) }",
         ] {
             let index = settings_index(getter);
-            assert!(
-                !getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+            assert_eq!(
+                getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                None,
                 "{getter}"
             );
         }
         // Another type's method of the same name proves nothing.
         let index =
             settings_index("pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }");
-        assert!(!getter_plainly_reads_key(
-            &index, "Retry", "entry", "attempts"
+        assert_eq!(
+            getter_plainly_reads_key(&index, "Retry", "entry", "attempts"),
+            None
+        );
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: an expected value the getter also
+    /// returns for a missing key cannot show the insert ran.
+    #[test]
+    fn keyed_fallback_differs_only_from_a_distinct_literal() {
+        let zero = KeyedFallback::Literal("0".to_string());
+        assert!(zero.differs_from("7"));
+        assert!(zero.differs_from("7u32"));
+        assert!(zero.differs_from("-1"));
+        for same_or_unknown in ["0", "0u32", "0_0", "0.0", "expected", "0x7", "1e3", "7 + 0"] {
+            assert!(!zero.differs_from(same_or_unknown), "{same_or_unknown}");
+        }
+        let none = KeyedFallback::Literal("\"none\"".to_string());
+        assert!(none.differs_from("\"bolt\""));
+        assert!(!none.differs_from("\"none\""));
+        assert!(KeyedFallback::Absent.differs_from("Some(&7)"));
+        assert!(!KeyedFallback::Absent.differs_from("None"));
+        assert!(!KeyedFallback::Absent.differs_from("expected"));
+        let default = KeyedFallback::TypeDefault;
+        for distinct in ["5", "\"x\"", "true", "'a'", "0.5"] {
+            assert!(default.differs_from(distinct), "{distinct}");
+        }
+        for same_or_unknown in ["0", "0usize", "\"\"", "false", "count", "-0"] {
+            assert!(!default.differs_from(same_or_unknown), "{same_or_unknown}");
+        }
+    }
+
+    #[test]
+    fn function_returns_value_reads_the_signature() {
+        assert!(function_returns_value(
+            "pub fn place(&mut self, q: u32) -> Result<(), String> { Ok(()) }"
         ));
+        assert!(!function_returns_value(
+            "pub fn restock(&mut self, sku: &str, qty: u32) { }"
+        ));
+        assert!(!function_returns_value(
+            "pub fn f<F: Fn() -> u8>(&mut self, f: F) { }"
+        ));
+        assert!(function_returns_value("not rust {"));
     }
 
     #[test]

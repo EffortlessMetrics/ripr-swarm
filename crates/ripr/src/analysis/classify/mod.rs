@@ -35,7 +35,7 @@ pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use builder_override::{
-    getter_plainly_reads, getter_plainly_reads_key, setter_plainly_writes,
+    function_returns_value, getter_plainly_reads, getter_plainly_reads_key, setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
 pub(in crate::analysis) use context::ProbeContext;

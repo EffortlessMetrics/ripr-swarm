@@ -256,19 +256,26 @@ changes `self.count += 2` to `self.count += 1`.
 18. Same write in `place`, which returns `Err` before the insert when
     `qty == 0`, test `s.place("BOLT", 0).unwrap_err();
     assert_eq!(s.count("BOLT"), 0)`: not `exposed`. A refused owner call
-    never reaches the insert. Only an owner call that is a bare statement or
-    whose result `.unwrap()`, `.expect(..)` or `?` consumes (then optionally
-    bound to one name) runs the insert for certain; `.is_err()`, `.is_ok()`,
-    `let _ = ..` and an unconsumed `let r = ..` do not count.
+    never reaches the insert. Only an owner call whose result `.unwrap()`,
+    `.expect(..)` or `?` consumes (then optionally bound to one name), or a
+    bare call to an owner that returns nothing, runs the insert for certain;
+    `.is_err()`, `.is_ok()`, `let _ = ..`, an unconsumed `let r = ..` and a
+    bare `s.place("BOLT", 0);` do not count. The expected `0` is also the
+    getter's `unwrap_or(0)` default, so it cannot show the insert ran.
+19. `self.stock.insert(sku.to_string(), qty)` in `receive`, test
+    `l.receive("BOLT", 5); assert_eq!(l.held("BOLT"), 0)` with
+    `fn held(&self, sku: &str) -> u32 { self.held.get(sku).copied().unwrap_or(0) }`:
+    not `exposed`. The same key looked up in another field map is not a read
+    of the written entry.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 17 cases `spec0228-*` in
+- Verdict corpus: 18 cases `spec0228-*` in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
-  12-18,
+  12-19,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -311,22 +318,30 @@ changes `self.count += 2` to `self.count += 1`.
   (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
   is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
   `self.f.as_slice()`.
-- Keyed reads of a field-map insert are implemented (examples 16-18):
+- Keyed reads of a field-map insert are implemented (examples 16-19):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and
   `owner_call_passes_key` in `reveal.rs`, `getter_plainly_reads_key` in
   `builder_override.rs`. The insert key must be an owner parameter or an
   owned copy of it (`sku`, `sku.to_string()`, `sku.to_owned()`,
-  `sku.clone()`, `sku.into()`, `String::from(sku)`). One compared side of
-  the assertion must be exactly `binding.getter(key)`, and `getter` must be
-  an inherent method of the owner type taking `&self` and one parameter
-  `k` whose body is `self.f.get(k)` or `self.f.get(&k)`, optionally
-  followed by `.copied()` or `.cloned()` and then `.unwrap_or_default()` or
-  `.unwrap_or(<literal>)`. An accepted owner call before the read must pass
-  the same key text (a leading `&` aside) in the insert key's argument
-  position. A call statement that names an error path (`err`, `Err`) or sits
-  inside an assertion does not count, since the owner may have returned
-  before the insert.
+  `sku.clone()`, `sku.into()`, `String::from(sku)`). One `assert_eq!`
+  operand must be exactly `binding.getter(key)`, and `getter` must be an
+  inherent method of the owner type taking `&self` and one parameter `k`
+  whose body is `self.f.get(k)` or `self.f.get(&k)`, optionally followed by
+  `.copied()` or `.cloned()` and then `.unwrap_or_default()` or
+  `.unwrap_or(<literal>)`. The other operand must be a literal the getter
+  cannot return for a missing key (`Some(..)` against a bare `get`, a
+  literal other than the `unwrap_or` default, a non-zero, non-empty or
+  `true` literal against `unwrap_or_default`): otherwise the assertion
+  passes whether or not the insert ran. `assert!` and `assert_ne!` reads
+  do not count. The test binding must be declared in the test as the owner
+  type (`let s = Shelf::new()`, `let s: Shelf = ..`, `Shelf { .. }`). An
+  accepted owner call before the read must pass the same key in the insert
+  key's argument position: a literal, or an identifier the test does not
+  name again between the call and the read. The call must run to
+  completion: a bare statement when the owner returns nothing, otherwise
+  ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
+  name.
 - Not yet implemented for these writes, all failing closed: rule 3 (no
   intervening write between the owner call and the read), as before for
   bare-receiver pushes; the `static_unknown` fallback with
