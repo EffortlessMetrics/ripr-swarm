@@ -14728,6 +14728,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_pin_exposes_a_number_owner",
   "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_pin_stays_weak_without_a_number_owner_or_whole_result",
   "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_facts_bind_the_observed_call_to_the_owner_import",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",

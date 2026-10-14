@@ -164,6 +164,12 @@ fn loose_number_literal_marks_only_weak_loose_equality() -> Result<(), String> {
                 OracleKind::RelationalCheck,
                 "{label}"
             );
+            // The literal itself is the recorded expected value.
+            assert!(
+                test.assertions[0].expected_value_or_variant.is_some(),
+                "{label}"
+            );
+            assert!(!test.assertions[0].has_dynamic_matcher_arg, "{label}");
         }
     }
     // chai's negated `expect(...).not.to.equal(1)` reads relational / weak
@@ -199,6 +205,11 @@ fn loose_number_pin_exposes_a_number_owner() -> Result<(), String> {
         (
             "typed-deep-equal-one",
             "  assert.deepEqual(lineCount([\"a\"]), 1);",
+        ),
+        ("typed-negative-zero", "  assert.equal(lineCount([]), -0);"),
+        (
+            "typed-parenthesized-as",
+            "  assert.equal(lineCount([\"a\"]), (1 as number));",
         ),
         (
             "typed-local",
@@ -376,5 +387,79 @@ fn loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner() -> Result<(),
     );
     assert_eq!(by_function, 1);
     assert_eq!(by_method, 0);
+    Ok(())
+}
+
+/// Credits for `test` against the `lineCount` function owner: related
+/// candidates, marked assertions and credited assertions.
+fn line_count_facts(label: &str, test: &str) -> Result<(usize, usize, usize), String> {
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join("src/linecount.ts"), LINE_COUNT)?;
+    ts_write_file(
+        &root.join("src/other.ts"),
+        "export function lineCount(items: string[]): boolean {\n  return items.length > 0;\n}\n",
+    )?;
+    ts_write_file(&root.join("tests/linecount.test.ts"), test)?;
+    let owner = extract_owners(Path::new("src/linecount.ts"), LINE_COUNT)
+        .into_iter()
+        .find(|owner| owner.name == "lineCount")
+        .ok_or("owner lineCount not extracted")?;
+    let tests = extract_tests(Path::new("tests/linecount.test.ts"), test);
+    let candidates =
+        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let facts = ts_typed_loose_number_facts(&owner, &candidates, None, Some(&root));
+    let marked = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .filter(|assertion| assertion.loose_number_expected)
+        .count();
+    let credited = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(move |a| (test, a)))
+        .filter(|(test, assertion)| facts.credits(&test.file, assertion))
+        .count();
+    let _ = std::fs::remove_dir_all(&root);
+    Ok((candidates.len(), marked, credited))
+}
+
+/// The observed call must reach the owner through this file's own import
+/// of it: a namespace member or a renamed import counts, a bare name the
+/// file imports from another module does not.
+#[test]
+fn loose_number_facts_bind_the_observed_call_to_the_owner_import() -> Result<(), String> {
+    let test = |imports: &str, body: &str| {
+        format!(
+            "import test from \"node:test\";\nimport assert from \"node:assert\";\n{imports}\n\ntest(\"counts\", () => {{\n{body}\n}});\n"
+        )
+    };
+    let namespace = line_count_facts(
+        "typed-bind-namespace",
+        &test(
+            "import * as counts from \"../src/linecount\";",
+            "  assert.equal(counts.lineCount([\"a\"]), 1);",
+        ),
+    )?;
+    assert_eq!(namespace, (1, 1, 1), "namespace member");
+    let renamed = line_count_facts(
+        "typed-bind-renamed",
+        &test(
+            "import { lineCount as count } from \"../src/linecount\";",
+            "  assert.equal(count([\"a\"]), 1);",
+        ),
+    )?;
+    assert_eq!(renamed, (1, 1, 1), "renamed import");
+    let foreign = line_count_facts(
+        "typed-bind-foreign-bare",
+        &test(
+            "import * as counts from \"../src/linecount\";\nimport { lineCount } from \"../src/other\";",
+            "  counts.lineCount([\"a\"]);\n  assert.equal(lineCount([\"a\"]), 1);",
+        ),
+    )?;
+    assert_eq!(
+        foreign.0, 1,
+        "foreign bare: the namespace call relates the test"
+    );
+    assert_eq!(foreign.1, 1, "foreign bare: the assertion is marked");
+    assert_eq!(foreign.2, 0, "foreign bare");
     Ok(())
 }

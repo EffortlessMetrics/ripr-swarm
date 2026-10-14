@@ -102,16 +102,18 @@ fn number_pins_loosely(value: f64) -> bool {
         && value.to_bits() != 1.0_f64.to_bits()
 }
 
-/// `true` when `expected` is a finite number literal, optionally negated,
-/// parenthesized or under `as`: `0`, `-1`, `(1 as number)`. Rule 2 leaves
-/// `0` and `1` weak because a boolean or string coerces to them; against
-/// an owner declared to return `number` they still pin the value
-/// (`ts_typed_loose_number_facts`).
-pub(crate) fn is_finite_number_literal(expected: &Argument<'_>) -> bool {
-    let Some(expression) = expected.as_expression() else {
-        return false;
-    };
-    match expression.get_inner_expression() {
+/// The text of `expected` when it is a finite number literal, optionally
+/// negated, parenthesized or under `as`: `0`, `-1`, `(1 as number)` reads
+/// `1`. Rule 2 leaves `0` and `1` weak because a boolean or string coerces
+/// to them; against an owner declared to return `number` they still pin the
+/// value (`ts_typed_loose_number_facts`), and this text is the expected
+/// value the pin records.
+pub(crate) fn finite_number_literal_text<'s>(
+    expected: &Argument<'_>,
+    source: &'s str,
+) -> Option<&'s str> {
+    let inner = expected.as_expression()?.get_inner_expression();
+    let finite = match inner {
         Expression::NumericLiteral(literal) => literal.value.is_finite(),
         Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::UnaryNegation => {
             matches!(
@@ -120,7 +122,11 @@ pub(crate) fn is_finite_number_literal(expected: &Argument<'_>) -> bool {
             )
         }
         _ => false,
-    }
+    };
+    let span = inner.span();
+    finite
+        .then(|| source.get(span.start as usize..span.end as usize))
+        .flatten()
 }
 
 /// `true` when `matcher_call` is `toMatchInlineSnapshot` with exactly one

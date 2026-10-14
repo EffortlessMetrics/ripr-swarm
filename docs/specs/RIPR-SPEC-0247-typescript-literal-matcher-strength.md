@@ -154,7 +154,12 @@ answers as `===` does, so a finite number literal the list above refuses (`0`, `
 reads `exact_value` / strong when the owner's own source declares its
 return type as exactly `number` (`function f(...): number` or an arrow
 `(...): number =>`) and the assertion observes the whole result of one
-owner call (`f(...)`, `ns.f(...)`, or a local bound once to that call).
+owner call through a binding the test file imports from the owner's
+module: `ns.f(...)` on a namespace import, `g(...)` on a renamed import
+`{ f as g }`, or, when the file imports `f` by name from that module,
+`f(...)` or a local bound once to it. A bare `f(...)` the file imports
+from another module never qualifies, even when a namespace call relates
+the test.
 A method owner, a generic, `async` or generator owner, any other
 annotation (`number | boolean`, `Promise<number>`, `number[]`) or none,
 a wrapped, compared or member-read result (`Math.min(f(x), 5)`,
@@ -394,7 +399,7 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
   `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
   `resolve_loose_literal_const` (rule 2's test-local `const`),
-  `inline_snapshot_is_literal` (rule 3), `is_finite_number_literal`
+  `inline_snapshot_is_literal` (rule 3), `finite_number_literal_text`
   (rule 2's typed owner).
 - `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
   `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`

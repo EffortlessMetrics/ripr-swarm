@@ -101,11 +101,65 @@ pub(crate) fn ts_typed_loose_number_facts(
             continue;
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        // A bare `f(...)` is the owner only when this file imports `f` by
+        // name from the owner's module: a namespace import relates the test
+        // without vouching for a bare `f` imported from elsewhere.
+        let bare_is_owner = candidate.test.imports_in_file.iter().any(|import| {
+            !import.namespace
+                && import.local == owner.name
+                && import.imported.as_deref() == Some(owner.name.as_str())
+                && import_source_matches_owner(
+                    import,
+                    &candidate.test.file,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+        });
+        let aliases = import_alias_owner_locals(candidate.test, owner, alias_map, workspace_root);
         for assertion in candidate.test.assertions.iter().filter(|a| pins(a)) {
-            if ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers) {
+            if observes_imported_owner_result(
+                candidate.test,
+                assertion,
+                owner,
+                &receivers,
+                bare_is_owner,
+                &aliases,
+            ) {
                 facts.credit(&candidate.test.file, assertion);
             }
         }
     }
     facts
+}
+
+/// `true` when `assertion` reads the whole result of one owner call through
+/// a binding this file imports from the owner's module: a namespace member
+/// `ns.f(...)`, a renamed import `g(...)`, or, when `bare_is_owner`, a bare
+/// `f(...)` or a local bound once to it.
+fn observes_imported_owner_result(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+    bare_is_owner: bool,
+    aliases: &[&str],
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let call_on = |callee: &str| {
+        observed
+            .strip_prefix(callee)
+            .is_some_and(ts_is_one_argument_list)
+    };
+    (bare_is_owner && ts_observes_whole_owner_result(test, assertion, owner, receivers))
+        || receivers
+            .iter()
+            .any(|receiver| call_on(&format!("{receiver}.{}", owner.name)))
+        || aliases.iter().any(|alias| call_on(alias))
 }
