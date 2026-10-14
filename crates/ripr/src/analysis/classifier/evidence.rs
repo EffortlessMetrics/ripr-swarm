@@ -509,7 +509,10 @@ impl ClassifiedProbeEvidence {
                 })
         };
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
-        let expansion = context.implicit_expansion.unwrap_or(&fallback_expansion);
+        let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
+            context.index,
+            context.implicit_expansion.unwrap_or(&fallback_expansion),
+        );
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -540,8 +543,7 @@ impl ClassifiedProbeEvidence {
                                     assertion,
                                     &context.probe.expression,
                                     &facts.source,
-                                    expansion,
-                                    context.index,
+                                    &expansion,
                                 )
                             })
                         })

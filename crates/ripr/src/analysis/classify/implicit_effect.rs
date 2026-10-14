@@ -3,7 +3,7 @@
 //! record-literal receiver and a prior direct loop/operator/closure dispatch.
 //! Unlocated assertions, deferred/nested execution, intervening uses and unknown
 //! field transfer refuse the kind-only exception. Reach remains independent.
-use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
+use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
@@ -76,6 +76,22 @@ pub(in crate::analysis) struct ImplicitExpansionMemo {
     surface: OnceLock<ExpansionSurface>,
 }
 
+/// The immutable source index and its run-owned safety memo travel together.
+pub(in crate::analysis) struct ImplicitExpansionContext<'a> {
+    index: &'a RustIndex,
+    memo: &'a ImplicitExpansionMemo,
+}
+
+impl<'a> ImplicitExpansionContext<'a> {
+    pub(in crate::analysis) fn new(index: &'a RustIndex, memo: &'a ImplicitExpansionMemo) -> Self {
+        Self { index, memo }
+    }
+
+    fn admits(&self, receiver: &str) -> bool {
+        self.memo.admits(self.index, receiver)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct ExpansionSurface {
     bounded: bool,
@@ -84,11 +100,7 @@ struct ExpansionSurface {
 }
 
 impl ImplicitExpansionMemo {
-    pub(in crate::analysis) fn admits(
-        &self,
-        index: &super::super::rust_index::RustIndex,
-        receiver: &str,
-    ) -> bool {
+    pub(in crate::analysis) fn admits(&self, index: &RustIndex, receiver: &str) -> bool {
         let surface = self.surface.get_or_init(|| {
             ExpansionSurface::scan(
                 index
@@ -249,10 +261,9 @@ impl ExpansionSurface {
                     .trait_()
                         .map(|t| compact(&t.syntax().text().to_string()))
                         .map(|path| path.split('<').next().unwrap_or(&path).to_string());
-                let is_drop = trait_text.as_deref().is_some_and(|name| {
+                trait_text.as_deref().is_some_and(|name| {
                     name == "Drop" || name.ends_with("::Drop")
-                });
-                is_drop
+                })
             })
             && tree
                 .syntax()
@@ -597,8 +608,7 @@ fn dispatch_statement(statement: &ast::Stmt, receiver: &str, method: &str) -> bo
 fn local_dispatch_type(
     source: &str,
     self_ty: &str,
-    expansion: &ImplicitExpansionMemo,
-    index: &super::super::rust_index::RustIndex,
+    expansion: &ImplicitExpansionContext<'_>,
 ) -> bool {
     if self_ty.is_empty()
         || !self_ty
@@ -609,7 +619,7 @@ fn local_dispatch_type(
     }
     // Keep the bounded observer proof inside source forms whose expansions
     // cannot add hidden Drop implementations.
-    if !expansion.admits(index, self_ty) {
+    if !expansion.admits(self_ty) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(source) else {
@@ -661,13 +671,12 @@ pub(super) fn assertion_observes_dispatch(
     test: &TestSummary,
     assertion: &OracleFact,
     source: &str,
-    expansion: &ImplicitExpansionMemo,
-    index: &super::super::rust_index::RustIndex,
+    expansion: &ImplicitExpansionContext<'_>,
 ) -> bool {
     let FunctionContainer::TraitImpl { self_ty, .. } = &dispatch.item.container else {
         return false;
     };
-    if !local_dispatch_type(source, self_ty, expansion, index) {
+    if !local_dispatch_type(source, self_ty, expansion) {
         return false;
     }
     let Some(field) = shared_field(dispatch, owner, expression) else {
