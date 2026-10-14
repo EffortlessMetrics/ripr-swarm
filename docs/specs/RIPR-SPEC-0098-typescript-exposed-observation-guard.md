@@ -9,6 +9,7 @@ Created: 2026-06-14
 Linked issues:
 
 - #1235
+- #7514
 
 Linked PRs:
 
@@ -86,8 +87,14 @@ which is optional metadata. A strong assertion confirms the observation
 2. Its `observed_expression` is present and contains a changed identifier token
    (length > 3, alphanumeric/underscore only) from the changed sub-expression.
 3. Its `observed_expression` is present and does NOT contain the owner name
+   or an admitted named/default import local of that free-function owner
    (i.e. it is asserting something other than the owner return value â€” may be a
    closure-local side-effect variable, a mock result, or side channel).
+
+RIPR-SPEC-0243's observation guard defines the import identity checks for
+rule 3, including mixed direct/aliased calls and method exclusions (#7514).
+This remains a raw substring check; it does not grant new credit by masking
+comments or matching only whole identifiers.
 
 **Fail-closed default (#1235 hardening)**: confirmation must be affirmatively
 established by one of the rules above. If no strong assertion qualifies â€” i.e.

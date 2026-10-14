@@ -7,16 +7,15 @@ mod name_scope;
 mod nesting;
 mod owner_pin;
 mod pattern_pin;
-#[cfg(test)]
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    constant_table_call_column, constant_table_column, empty_macro_binding_ambiguities,
-    err_return_guard_key, local_empty_macro_names, macro_binding_scan, macro_call_is_statement,
-    owner_pin_assertions, owner_reference_count, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
-    use_rebinds_crate_name,
+    constant_table_call_column, constant_table_column, empty_local_macro_invocation_ranges,
+    empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
+    macro_binding_scan, macro_call_is_statement, owner_pin_assertions, owner_reference_count,
+    returns_leave_the_function, source_binds_value_name, source_declares_value_name,
+    supported_targeted_item_context, trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};

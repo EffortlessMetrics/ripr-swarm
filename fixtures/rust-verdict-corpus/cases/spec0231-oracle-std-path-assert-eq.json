@@ -1,0 +1,60 @@
+{
+  "case_id": "spec0231-oracle-std-path-assert-eq",
+  "subject_id": "authored-spec0231-30",
+  "diff": "cases/spec0231-oracle-std-path-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "path_qualified_assert_eq",
+  "hard_case": "Measured defect: the spec reads `std::assert_eq!` as `assert_eq!`, but ripr refuses it at the owner-return admission (rust_assertion_context_unestablished: \"could not establish that it runs as the standard macro\") and reads the oracle unknown / none. The same subject with bare `assert_eq!` is credited exact_value / strong. Truth is discriminated (#7857).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + x",
+        "mutated_line": "x + x",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_three_is_nine",
+        "equivalence_review": "not equivalent: score(3) is 6"
+      },
+      {
+        "replacement": "x * x + 1",
+        "mutated_line": "x * x + 1",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_three_is_nine",
+        "equivalence_review": "not equivalent: score(3) is 10"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "std::assert_eq!(score(3), 9) is the standard equality assertion and pins the return value, so both mutants kill. Spec cells: RIPR-SPEC-0231 example 30.",
+  "labeling_observation": {
+    "ripr_commit": "78312b335",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#30"
+  ],
+  "expected_oracle": {
+    "kind": "exact_value",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#30"
+  }
+}

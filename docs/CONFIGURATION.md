@@ -115,6 +115,13 @@ ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 After writing, `init` prints `doctor` and `check` commands with the selected
 root bound explicitly. Copy those commands to inspect the same repository
 from another directory, including when `init` used a relative `--root`.
+If its supplied spelling is not lossless, `init` tries the selected directory's
+resolved filesystem path, so `--root ..` can still select a UTF-8 parent from
+a directory with non-UTF-8 bytes. Symlink traversal follows the filesystem.
+If neither spelling represents the selected root losslessly in a portable command,
+`init` keeps its completed writes and success status, omits the follow-ups,
+and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
+with non-UTF-8 bytes still provides a usable command spelling.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
@@ -760,6 +767,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | Unknown fields rejected | Catches typos. |
+| Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
 | Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
 | Expired suppressions do **not** apply | They surface as warnings on the badge so silent green-forever debt is impossible. |

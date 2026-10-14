@@ -104,7 +104,7 @@ const EXPOSURE_CLASS_LABELS: [&str; 7] = [
 pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<String>) {
     let mut entries: Vec<SuppressionEntry> = Vec::new();
     let mut violations = Vec::new();
-    let mut schema_seen = false;
+    let mut schema_line = None;
     let mut current: Option<PendingSuppression> = None;
 
     for (index, line) in text.lines().enumerate() {
@@ -129,6 +129,13 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
         let key = key.trim();
         let raw = raw.trim();
         if let Some(pending) = current.as_mut() {
+            if let Some(first_line) = pending.field_lines.get(key) {
+                violations.push(format!(
+                    "{SUPPRESSIONS_PATH}:{line_number} duplicate `[[suppressions]]` field `{key}` (first declared at line {first_line})"
+                ));
+                continue;
+            }
+            pending.field_lines.insert(key.to_string(), line_number);
             match key {
                 "kind" => assign_field(raw, line_number, &mut violations, |parsed| {
                     pending.kind = Some((parsed, line_number));
@@ -182,7 +189,13 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                 )),
             }
         } else if key == "schema_version" {
-            schema_seen = true;
+            if let Some(first_line) = schema_line {
+                violations.push(format!(
+                    "{SUPPRESSIONS_PATH}:{line_number} duplicate top-level field `schema_version` (first declared at line {first_line})"
+                ));
+                continue;
+            }
+            schema_line = Some(line_number);
             match raw.parse::<u32>() {
                 Ok(1) => {}
                 Ok(other) => violations.push(format!(
@@ -203,7 +216,7 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
         finalize_suppression(pending, &mut entries, &mut violations);
     }
 
-    if !schema_seen {
+    if schema_line.is_none() {
         violations.push(format!(
             "{SUPPRESSIONS_PATH} is missing required `schema_version = 1` header"
         ));
@@ -247,6 +260,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
 
 struct PendingSuppression {
     block_line: usize,
+    // Track assignments, including malformed ones, before parsing their values.
+    // A later valid value must not erase an earlier duplicate or invalid value.
+    field_lines: std::collections::BTreeMap<String, usize>,
     kind: Option<(String, usize)>,
     finding_id: Option<(String, usize)>,
     test: Option<(String, usize)>,
@@ -268,6 +284,7 @@ impl PendingSuppression {
     fn new(block_line: usize) -> Self {
         Self {
             block_line,
+            field_lines: std::collections::BTreeMap::new(),
             kind: None,
             finding_id: None,
             test: None,
@@ -1836,5 +1853,248 @@ owner = "repo-owner"
 
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod audit_controls {
+    use super::*;
+    const VALID: &str = "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:one\"\nowner = \"alice\"\nreason = \"accepted debt\"\nexpires = \"2026-10-01\"\n";
+    #[test]
+    fn rejects_duplicate_owner() {
+        let (entries, violations) =
+            parse_suppressions_manifest(&format!("{VALID}owner = \"bob\"\n"));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate") && v.contains("owner")),
+            "entries={entries:?}, violations={violations:?}"
+        );
+    }
+    #[test]
+    fn rejects_duplicate_expiry() {
+        let (entries, violations) =
+            parse_suppressions_manifest(&format!("{VALID}expires = \"2099-12-31\"\n"));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate") && v.contains("expires")),
+            "entries={entries:?}, violations={violations:?}"
+        );
+    }
+    #[test]
+    fn rejects_duplicate_header() {
+        let (_, violations) = parse_suppressions_manifest(&format!("schema_version = 1\n{VALID}"));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate") && v.contains("schema_version")),
+            "violations={violations:?}"
+        );
+    }
+    #[test]
+    fn valid_policy_preserves_fields() {
+        let (entries, violations) = parse_suppressions_manifest(VALID);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].owner, "alice");
+        assert_eq!(entries[0].expires.as_deref(), Some("2026-10-01"));
+    }
+    #[test]
+    fn repeated_fields_in_distinct_entries_are_valid() {
+        let policy = format!(
+            "{VALID}[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:two\"\nowner = \"bob\"\nreason = \"accepted debt\"\nexpires = \"2026-11-01\"\n"
+        );
+        let (entries, violations) = parse_suppressions_manifest(&policy);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].owner, "bob");
+    }
+
+    #[test]
+    fn every_supported_field_rejects_identical_duplicate() {
+        for (key, value) in [
+            ("kind", "exposure_gap"),
+            ("finding_id", "probe:one"),
+            ("owner", "alice"),
+            ("reason", "accepted debt"),
+            ("expires", "2026-10-01"),
+            ("path", "src/**"),
+            ("scope", "reviewed"),
+            ("created_at", "2026-01-01"),
+            ("last_seen", "2026-01-01"),
+            ("review_by", "2026-01-01"),
+            ("expected_visibility", "suppressed_visible"),
+            ("static_class", "weakly_exposed"),
+            ("language", "rust"),
+            ("language_status", "preview"),
+            ("test", "sample_test"),
+        ] {
+            let valid = if key == "test" {
+                VALID
+                    .replace("exposure_gap", "test_efficiency")
+                    .replace("finding_id = \"probe:one\"", "test = \"sample_test\"")
+            } else {
+                VALID.to_string()
+            };
+            let assignment = format!("{key} = \"{value}\"\n");
+            let single = if valid.contains(&assignment) {
+                valid
+            } else {
+                format!("{valid}{assignment}")
+            };
+            let (_, valid_violations) = parse_suppressions_manifest(&single);
+            assert!(valid_violations.is_empty(), "{key}: {valid_violations:?}");
+            let (_, violations) = parse_suppressions_manifest(&format!("{single}{assignment}"));
+            assert_eq!(violations.len(), 1, "{key}: {violations:?}");
+            assert!(
+                violations[0].contains("duplicate") && violations[0].contains(&format!("`{key}`")),
+                "{key}: {violations:?}"
+            );
+        }
+    }
+    #[test]
+    fn duplicate_error_names_both_lines_and_preserves_first_value() {
+        let (entries, violations) =
+            parse_suppressions_manifest(&format!("{VALID}owner = \"bob\"\n"));
+        assert_eq!(
+            violations,
+            [
+                ".ripr/suppressions.toml:8 duplicate `[[suppressions]]` field `owner` (first declared at line 5)"
+            ]
+        );
+        assert_eq!(entries[0].owner, "alice");
+    }
+    #[test]
+    fn blank_value_cannot_be_repaired_by_duplicate() {
+        let policy = VALID.replace("owner = \"alice\"", "owner = \"\"\nowner = \"alice\"");
+        let (entries, violations) = parse_suppressions_manifest(&policy);
+        assert!(entries.is_empty(), "{entries:?}");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate") && v.contains("owner")),
+            "{violations:?}"
+        );
+        assert!(
+            violations.iter().any(|v| v.contains("`owner` is blank")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn public_loaders_fail_closed_and_name_the_supplied_policy() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-duplicate-suppression-{}", std::process::id()));
+        std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let path = root.join("custom-policy.toml");
+        std::fs::write(&path, format!("{VALID}expires = \"2099-12-31\"\n"))
+            .map_err(|e| e.to_string())?;
+        let error = load_check_suppression_policy(&path)
+            .err()
+            .ok_or("duplicate policy must fail closed")?;
+        assert!(error.contains("custom-policy.toml:8 duplicate"), "{error}");
+        assert!(!error.contains(SUPPRESSIONS_PATH), "{error}");
+        load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
+            .err()
+            .ok_or("duplicate implicit policy must fail closed")?;
+        std::fs::write(&path, VALID).map_err(|e| e.to_string())?;
+        assert_eq!(load_check_suppression_policy(&path)?.len(), 1);
+        assert_eq!(
+            load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
+                .map_err(|e| e.join("\n"))?
+                .len(),
+            1
+        );
+        assert!(
+            load_suppressions_for_root_at(&root, Path::new("missing.toml"))
+                .map_err(|e| e.join("\n"))?
+                .is_empty()
+        );
+        load_check_suppression_policy(&root.join("missing.toml"))
+            .err()
+            .ok_or("missing explicit policy must fail closed")?;
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_empty_optional_values_are_not_silently_replaced() {
+        for key in [
+            "scope",
+            "expected_visibility",
+            "static_class",
+            "language",
+            "language_status",
+        ] {
+            let single = format!("{VALID}{key} = \"\"\n");
+            let (entries, violations) = parse_suppressions_manifest(&single);
+            assert!(violations.is_empty(), "{key}: {violations:?}");
+            assert_eq!(entries.len(), 1);
+            let (entries, violations) =
+                parse_suppressions_manifest(&format!("{single}{key} = \"reviewed\"\n"));
+            assert_eq!(
+                violations,
+                [format!(
+                    ".ripr/suppressions.toml:9 duplicate `[[suppressions]]` field `{key}` (first declared at line 8)"
+                )]
+            );
+            let retained = match key {
+                "scope" => entries[0].scope.as_deref(),
+                "expected_visibility" => entries[0].expected_visibility.as_deref(),
+                "static_class" => entries[0].static_class.as_deref(),
+                "language" => entries[0].language.as_deref(),
+                "language_status" => entries[0].language_status.as_deref(),
+                _ => None,
+            };
+            assert_eq!(retained, Some(""), "{key}");
+        }
+    }
+    #[test]
+    fn supported_quoted_values_keep_delimiters_and_empty_metadata() {
+        let policy =
+            VALID.replace("accepted debt", "reviewed # scope = pricing") + "scope = \"\"\n";
+        let (entries, violations) = parse_suppressions_manifest(&policy);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(entries[0].reason, "reviewed # scope = pricing");
+        assert_eq!(entries[0].scope.as_deref(), Some(""));
+    }
+    #[test]
+    fn unsupported_literal_values_and_quoted_keys_still_fail() {
+        for policy in [
+            VALID.replace("owner = \"alice\"", "owner = 'alice'"),
+            VALID.replace("owner = \"alice\"", "\"owner\" = \"alice\""),
+            VALID.replace("owner = \"alice\"", "'owner' = \"alice\""),
+        ] {
+            let (entries, violations) = parse_suppressions_manifest(&policy);
+            assert!(entries.is_empty(), "{entries:?}");
+            assert!(!violations.is_empty());
+        }
+    }
+    #[test]
+    fn repeated_malformed_assignment_preserves_the_original_location() {
+        let policy = VALID.replace(
+            "owner = \"alice\"",
+            "owner = 'alice'\nowner = \"alice\"\nowner = \"bob\"",
+        );
+        let (_, violations) = parse_suppressions_manifest(&policy);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains(".ripr/suppressions.toml:5 expected quoted string")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains(":6 duplicate") && v.contains("first declared at line 5")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains(":7 duplicate") && v.contains("first declared at line 5")),
+            "{violations:?}"
+        );
     }
 }

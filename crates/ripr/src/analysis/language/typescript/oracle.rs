@@ -673,6 +673,16 @@ pub(crate) fn expect_assertion_from_expression(
     } else if inline_snapshot_is_literal(matcher, outer_call) {
         // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
         (OracleKind::Snapshot, OracleStrength::Strong)
+    } else if async_modifier != Some("rejects")
+        && bindings.strict_matchers.iter().any(|name| name == matcher)
+        && outer_call.arguments.len() == 1
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(|argument| argument.as_expression().is_some())
+    {
+        // RIPR-SPEC-0262: the file's own matcher passes only on `===`.
+        (OracleKind::ExactValue, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
     };
@@ -726,6 +736,7 @@ pub(crate) fn expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call,
+        loose_number_expected: false,
     })
 }
 
@@ -793,6 +804,7 @@ pub(crate) fn ava_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: None,
+        loose_number_expected: false,
     })
 }
 
@@ -854,6 +866,9 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// `node_test_locals`; set only by `for_registration`, so any other
     /// path reads no context assert.
     node_test_runner: bool,
+    /// Custom matchers the file registers with `expect.extend` that pass
+    /// only on strict equality (RIPR-SPEC-0262).
+    strict_matchers: Vec<String>,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -1048,6 +1063,7 @@ impl TypeScriptAssertionBindings {
                 .cloned()
                 .collect(),
             node_test_runner: self.node_test_runner,
+            strict_matchers: self.strict_matchers.clone(),
         }
     }
 
@@ -1060,6 +1076,13 @@ impl TypeScriptAssertionBindings {
         bindings.node_test_runner =
             callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
         bindings
+    }
+
+    /// These bindings with the file's strict custom matchers
+    /// (RIPR-SPEC-0262).
+    pub(crate) fn with_strict_matchers(mut self, names: Vec<String>) -> Self {
+        self.strict_matchers = names;
+        self
     }
 
     /// These bindings with `expect` destructured from the Vitest test
@@ -1383,6 +1406,14 @@ fn assert_call_assertion(
         oracle_kind = OracleKind::ExactValue;
         oracle_strength = OracleStrength::Strong;
     }
+    // Rule 2's typed amendment: `0` and `1` stay weak here, and the
+    // classifier credits them against an owner declared to return `number`.
+    let loose_number_literal = call
+        .arguments
+        .get(1)
+        .filter(|_| loose_equality && matches!(oracle_kind, OracleKind::RelationalCheck))
+        .and_then(|expected| finite_number_literal_text(expected, source));
+    let loose_number_expected = loose_number_literal.is_some();
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -1395,10 +1426,11 @@ fn assert_call_assertion(
         OracleKind::ExactValue | OracleKind::RelationalCheck
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) = match resolved_const {
-        Some(literal) => (Some(literal.to_string()), false),
-        None => expected_argument_metadata(expected_arg, source),
-    };
+    let (expected_value_or_variant, has_dynamic_matcher_arg) =
+        match resolved_const.or(loose_number_literal) {
+            Some(literal) => (Some(literal.to_string()), false),
+            None => expected_argument_metadata(expected_arg, source),
+        };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
     let rendered_call = match &error_payload {
@@ -1418,6 +1450,7 @@ fn assert_call_assertion(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered_call),
+        loose_number_expected,
     })
 }
 
@@ -1712,6 +1745,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered),
+        loose_number_expected: false,
     })
 }
 

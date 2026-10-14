@@ -66,6 +66,7 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.2` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
+| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v2`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
@@ -3052,6 +3053,7 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
   "version": "2.1.0",
   "runs": [
     {
+      "columnKind": "unicodeCodePoints",
       "tool": {
         "driver": {
           "name": "ripr",
@@ -3065,6 +3067,12 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
 ```
 
 Rule IDs are stable public integration strings.
+
+Finding and repo-seam runs declare `columnKind: "unicodeCodePoints"`, matching
+the producers' 1-based Unicode scalar-value columns. A non-BMP character counts
+as one column, even though its UTF-16 encoding uses two code units. Consumers
+using UTF-16 columns must convert the coordinates before highlighting source.
+Empty analysis runs retain the declaration; refusal runs may omit it.
 
 Finding rule IDs:
 
@@ -10045,6 +10053,10 @@ JSON shape:
   "source_report": "target/ripr/reports/gate-decision.json",
   "mode": "baseline-check",
   "reviewed": false,
+  "root": null,
+  "subject": {
+    "analyzer_version": "0.11.0+9c88b96acd0f51b91c246de419946ca8692f4f8b"
+  },
   "summary": {
     "entries": 1,
     "included": 1,
@@ -10095,6 +10107,15 @@ JSON shape:
 The gate evaluator accepts this `entries[]` ledger shape in addition to the
 older lightweight `decisions[]` baseline fixture shape, so newly created
 baselines can be used by `ripr gate evaluate --baseline`.
+
+`subject.analyzer_version` records the producing build copied verbatim from
+the source gate decision's `subject` block (issue #5474). `baseline diff`
+joins this identity against the current gate decision's `subject` so an
+analyzer upgrade that changes identity derivation cannot silently read
+identity loss as resolved debt (issue #7421). It is `null` when the source
+report predates build identity, and `baseline create` warns loudly about
+that absence; baselines written before this field existed stay valid inputs
+and fail safe toward stale disclosure on later diffs.
 
 The `entries[].review` object is additive review metadata for later RIPR Zero
 reporting. New ledgers include `owner`, `created_at`, `review_after`, and
@@ -10283,7 +10304,9 @@ Field contract:
 - `baseline.valid`, `baseline.stale`, and `baseline.invalid` - baseline record
   health counts after current comparison.
 - `delta.still_present` - baseline identities present in current evidence.
-- `delta.resolved` - baseline identities absent from current evidence.
+- `delta.resolved` - baseline identities absent from current evidence whose
+  producing-build identity does not disclose an analyzer-version
+  discontinuity (see `items[].analyzer_version_discontinuity`).
 - `delta.new_policy_eligible` - current policy-eligible identities absent from
   the baseline.
 - `delta.acknowledged` - current visible findings acknowledged by label or
@@ -10292,6 +10315,10 @@ Field contract:
   severity while remaining visible in the delta report.
 - `delta.stale_baseline_entry` - baseline records that parse but cannot join
   cleanly because the identity is ambiguous, obsolete, or incompatible.
+  This bucket also carries analyzer-version identity discontinuities
+  (issue #7421): an unmatched entry whose baseline-side or current-side
+  producing build provably differs from the other side stays stale, with the
+  two versions disclosed, instead of counting as `resolved`.
 - `delta.invalid_baseline_entry` - malformed baseline records or records
   missing required identity fields.
 - `delta.missing_current_input` - records whose movement cannot be classified
@@ -10307,6 +10334,15 @@ Field contract:
   and current records.
 - `items[].repair` - focused repair context from the current gate decision and
   built-in baseline debt movement actions.
+- `items[].analyzer_version_discontinuity` - additive, present only on
+  analyzer-version identity discontinuity items (issue #7421). Carries
+  `baseline_analyzer_version` and `current_analyzer_version` verbatim; a
+  `null` side records that side predates `subject.analyzer_version`
+  persistence, and exactly one recorded side already proves the builds
+  differed. Both sides unversioned (the old-vs-old case) or both sides
+  recording the same build keep the legacy `resolved` classification. The
+  same set is exhaustive in the Markdown `Analyzer-version identity
+  discontinuities` section, and each entry also emits a warning.
 - `items[].review` - optional reviewed baseline metadata copied from the
   baseline ledger when the item is baseline-derived. It preserves
   `reviewed`, `owner`, `reason`, `created_at`, `review_after`, and `source`
@@ -17777,7 +17813,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.67",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.69",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18477,7 +18513,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.34",
+    "schema_version": "1.36",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18488,7 +18524,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.67",
+      "schema_version": "1.69",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

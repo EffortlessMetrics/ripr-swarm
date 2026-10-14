@@ -12,7 +12,9 @@ pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 
 use super::parse_clean_source_file;
-use super::ra::{LineIndex, slice_macro_call_text, slice_text};
+use super::ra::{
+    LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
+};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
@@ -30,7 +32,13 @@ type FunctionKey = (usize, usize, String);
 pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
-    module_declarations: BTreeMap<(usize, String), bool>,
+    module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ModuleDeclarationAdmission {
+    context: bool,
+    source_preserved: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -126,8 +134,17 @@ impl OwnerPinAssertions {
     pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
         self.module_declarations
             .get(&(line, declaration.to_string()))
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|admission| admission.context)
+    }
+
+    pub(crate) fn admits_targeted_module_declaration(
+        &self,
+        line: usize,
+        declaration: &str,
+    ) -> bool {
+        self.module_declarations
+            .get(&(line, declaration.to_string()))
+            .is_some_and(|admission| admission.context && admission.source_preserved)
     }
 
     /// The first gate that refuses this assertion, or `None` when it is
@@ -355,6 +372,9 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
+    // expect-test's `expect!` builds a value and cannot return; only its
+    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    "expect",
     "file",
     "format",
     "format_args",
@@ -785,10 +805,17 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
+/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
+/// value; importing it under its own name is the one binding that makes a
+/// bare `expect!` expect-test's.
+const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
+
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    if !matches!(name, "assert_eq" | "assert_ne") {
-        return false;
-    }
+    let crates = match name {
+        "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
+        "expect" => EXPECT_TEST_CRATES,
+        _ => return false,
+    };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -810,7 +837,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
-        [root, imported] if DROP_IN_ASSERTION_CRATES.contains(root) && *imported == name
+        [root, imported] if crates.contains(root) && *imported == name
     )
 }
 
@@ -1039,7 +1066,7 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 /// Discarded call-argument spans from the same bounded local resolver used by
 /// execution admission. This only removes evidence; workspace macro ambiguity
 /// still independently refuses positive assertion admission.
-pub(super) fn empty_local_macro_invocation_ranges(
+pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
     let empty = local_empty_macros(root);
@@ -1085,11 +1112,14 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
-        let admitted = supported_item_context(module.syntax());
+        let admitted = ModuleDeclarationAdmission {
+            context: supported_item_context(module.syntax()),
+            source_preserved: supported_targeted_item_context(module.syntax()),
+        };
         result
             .module_declarations
             .entry(key)
-            .and_modify(|previous| *previous = false)
+            .and_modify(|previous| *previous = ModuleDeclarationAdmission::default())
             .or_insert(admitted);
     }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
@@ -1185,6 +1215,33 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     "assert_eq" | "assert"
                 )
             }) {
+                continue;
+            }
+            let range = call.syntax().text_range();
+            let assertion = (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            );
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // #6578: an inline expect-test comparison
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
+        // a method call on the bare `expect!` value; the classify side
+        // decides which spelling pins.
+        for call in function
+            .syntax()
+            .descendants()
+            .filter_map(ast::MethodCallExpr::cast)
+        {
+            if !is_expect_test_comparison(&call)
+                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || call
+                    .name_ref()
+                    .is_none_or(|name| name.text() != "assert_eq")
+            {
                 continue;
             }
             let range = call.syntax().text_range();
@@ -1739,6 +1796,20 @@ fn insert_function(
 /// attributes include inner attributes on ItemList, not only outer attrs.
 pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
+}
+
+/// Targeted call syntax also needs container attributes to preserve source
+/// items. The selected function's own harness attributes are outside this
+/// check; its parent and the resolved module declarations supply the context.
+pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
+    supported_item_context(item)
+        && item.ancestors().all(|node| {
+            node.children().filter_map(ast::Attr::cast).all(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                    &attr.syntax().text().to_string(),
+                )
+            })
+        })
 }
 
 /// Why `item` is not a plain item reachable from the file root under test
@@ -2589,13 +2660,15 @@ fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens).any(|(name, plain)| !(plain && name == NESTED_MATCHES))
+    }) || nested_invocations(&tokens)
+        .any(|(name, plain)| !(plain && NESTED_EXPANSIONS.contains(&name)))
 }
 
-/// A bare `matches!` in a macro operand expands to one `match` over its own
-/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
-/// reads for exits; its binding is checked with the invoking macros'.
-const NESTED_MATCHES: &str = "matches";
+/// A bare `matches!` or `format!` in a macro operand expands to one `match`
+/// or call over its own operands (RIPR-SPEC-0197 literal `matches!` and
+/// rendered scalar pins), which the token scan above already reads for
+/// exits; its binding is checked with the invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
@@ -2623,16 +2696,21 @@ fn nested_invocations(
             {
                 return None;
             }
-            let qualified = at
-                .checked_sub(1)
-                .and_then(|before| tokens.get(before))
-                .is_some_and(|token| token.text() == "::");
+            // Inside a token tree `::` lexes as two `:` tokens; a single
+            // `:` is a field or type annotation, not a path.
+            let before = |back: usize| {
+                at.checked_sub(back)
+                    .and_then(|index| tokens.get(index))
+                    .map(|token| token.text())
+            };
+            let qualified =
+                before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
             Some((name.text(), !qualified))
         })
 }
 
-/// The macros `node` invokes: every macro call's path, plus a `matches!`
-/// nested in a macro operand, so the binding check covers it too.
+/// The macros `node` invokes: every macro call's path, plus every name
+/// invoked inside a macro operand, so the binding check covers it too.
 fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
     node.descendants()
         .filter_map(ast::MacroCall::cast)

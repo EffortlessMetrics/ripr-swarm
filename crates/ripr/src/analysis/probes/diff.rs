@@ -65,6 +65,10 @@ pub(crate) fn probes_for_file_with_relations(
         &changed.path,
         &changed.added_lines,
     );
+    // Old-side line numbers of this file's removed lines whose positional
+    // replacement is a guard-only arm edit, one entry per such edit: that
+    // edit's predicate already carries the old guard as `before`.
+    let mut guard_edit_counterparts = Vec::<usize>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -191,9 +195,42 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
+            // the guard's predicate finding: its boundary pairing is the
+            // discriminator the edit needs, and arm selection never
+            // evaluates guards. The arm head is dropped only when the
+            // predicate inside its guard holds the whole edit.
+            let guard_only_arm = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::MatchArm
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let removed = removed.trim();
+                        let arm = canonical_probe_text(text, shape.text);
+                        let Some(guard) = arm.find(" if ").map(|at| &arm[at + 4..]) else {
+                            return false;
+                        };
+                        canonical_shapes.iter().any(|other| {
+                            let predicate = canonical_probe_text(text, other.text);
+                            // A deleted or added conjunct (`a && 100 <= p` to
+                            // `100 < p`) is more than one comparison's edit,
+                            // so the arm head stays; an edit inside one
+                            // operand of an unchanged `&&`/`||` chain is not.
+                            other.family == ProbeFamily::Predicate
+                                && guard.contains(predicate.as_str())
+                                && removed_span_of_shape(text, &predicate, removed)
+                                    .is_some_and(|span| same_connectives(&predicate, &span))
+                        })
+                    })
+            };
+            // The positional counterpart's old-side line, not its text: an
+            // identical arm deleted elsewhere in the file keeps its probe.
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && canonical_shapes.iter().any(&guard_only_arm)
+            {
+                guard_edit_counterparts.push(removed.line);
+            }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape))
+                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
@@ -340,6 +377,12 @@ pub(crate) fn probes_for_file_with_relations(
             )
         };
         if is_test_evidence {
+            continue;
+        }
+        // A guard-only arm edit replaced this line, and its predicate holds
+        // the old guard; probing the old line again would read the same
+        // guard as deleted behavior.
+        if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -1060,6 +1103,22 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
     changed
         .replaced_line_counterpart(added_new_side_line)
         .map(|line| line.text.trim().to_string())
+}
+
+/// The two predicate texts join their operands with the same sequence of
+/// `&&` and `||`, so an edit between them stays inside one operand.
+fn same_connectives(after: &str, before: &str) -> bool {
+    // Masked, so `&&` or `||` inside a string or comment is not a connective.
+    let connectives = |text: &str| {
+        let text = crate::analysis::extract::mask_comments_and_strings(text);
+        text.match_indices("&&")
+            .chain(text.match_indices("||"))
+            .map(|(at, connective)| (at, connective.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>()
+    };
+    connectives(after) == connectives(before)
 }
 
 /// The span of `removed_line` that corresponds to `shape_text` within
@@ -1880,6 +1939,75 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// A guard-only edit is the guard's predicate finding: the arm head adds
+    /// a selection question arm selection cannot answer through a guard,
+    /// and the old line is not probed again as deleted behavior
+    /// (grid-match-guard).
+    #[test]
+    fn guard_only_edit_keeps_only_the_guard_predicate() {
+        let probes = shapes_probes(
+            "n if 0 > n => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "n if 0 > n =>"),
+                (ProbeShapeKind::Predicate, "0 > n"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+        assert_eq!(probes[0].before.as_deref(), Some("n < 0"), "{probes:?}");
+    }
+
+    /// Control: an edit that also renames the arm's binding reaches past the
+    /// guard predicate, so the arm head keeps its probe.
+    #[test]
+    fn a_pattern_and_guard_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "m if 0 > m => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "m if 0 > m =>"),
+                (ProbeShapeKind::Predicate, "0 > m"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
+    }
+
+    /// Control: a predicate edit in the arm body is not a guard edit, so the
+    /// arm head stays.
+    #[test]
+    fn a_body_predicate_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "Some(v) => v >= 4,",
+            "Some(v) => v > 4,",
+            &[
+                (ProbeShapeKind::MatchArm, "Some(v) =>"),
+                (ProbeShapeKind::Predicate, "v >= 4"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm
+                    && probe.after.as_deref() == Some("Some(v) =>")),
+            "{probes:?}"
+        );
     }
 
     #[test]
