@@ -9,7 +9,7 @@ Created: 2026-10-14
 Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392).
 
 Support-tier impact: Python preview adapter output only; no support-tier
-change.
+change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
 
 Policy impact: no dependency, network, workflow or security-policy changes.
 
