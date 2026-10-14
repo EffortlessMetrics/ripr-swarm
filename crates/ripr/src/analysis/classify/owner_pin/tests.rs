@@ -1085,6 +1085,25 @@ fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
             "lines.iter().fold(51, |acc, l| acc + l.cents)",
             "lines.iter().fold(50, |acc, l| acc + l.cents)",
         ),
+        // The changed method name, turbofish, or a deletion beside the
+        // closure.
+        (
+            "lines.iter().map(|l| l.cents).product::<u64>()",
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u32>() as u64",
+            "lines.iter().map(|l| l.cents).sum::<u64>() as u64",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>()",
+            "lines.iter().skip(1).map(|l| l.cents).sum::<u64>()",
+        ),
+        // A changed comment beside the change.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51 /* fee v2 */",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 50 /* fee v1 */",
+        ),
         // A block around the change may skip it.
         (
             "'a: { if lines.is_empty() { break 'a 0; } lines.iter().map(|l| l.cents).sum::<u64>() + 51 }",

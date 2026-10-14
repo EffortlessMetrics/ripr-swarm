@@ -1157,9 +1157,12 @@ expression and finds the smallest node covering the differing text.
    `let`, `if let`, `match` arm or `for`, which can carry the change into a
    closure that may not run), both read the whole expression as before.
 
-Limit: the old text keeps a final `return ` keyword the gate strips from
-the new one, so a final `return <tail>;` is read whole and keeps its
-refusal.
+A leading `return ` and trailing `;` are dropped from both texts. A change
+that reaches into a comment beside the tail (which parses outside it) is
+read whole. Limit: a named call outside the skipping combinators can still
+collapse the changed value (`max`, `clamp`, `saturating_sub`, an `as u8`
+cast), as it can in a tail with no closure; this rule adds no new class of
+such calls.
 
 ### Same-named module-level functions (#6544)
 

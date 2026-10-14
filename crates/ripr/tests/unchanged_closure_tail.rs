@@ -22,9 +22,13 @@ impl Scratch {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(path.join("src")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(path.join("tests")).map_err(|error| error.to_string())?;
-        Ok(Self(path))
+        // The guard owns only a directory this call created, and owns it
+        // before anything is written inside.
+        std::fs::create_dir(&path).map_err(|error| error.to_string())?;
+        let scratch = Self(path);
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+        Ok(scratch)
     }
 }
 

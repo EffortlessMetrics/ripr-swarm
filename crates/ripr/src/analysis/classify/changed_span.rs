@@ -59,6 +59,11 @@ impl ChangedSpan {
         }
         let offset = |at: usize| TextSize::try_from(WRAPPER.len() + at).ok();
         let range = TextRange::new(offset(prefix)?, offset(end)?);
+        // A comment beside the tail parses outside it, so a change that
+        // reaches into one lies outside the tail and is read whole.
+        if !tail.syntax().text_range().contains_range(range) {
+            return None;
+        }
         let covering = match tail.syntax().covering_element(range) {
             NodeOrToken::Node(node) => node,
             NodeOrToken::Token(token) => token.parent()?,
@@ -111,12 +116,12 @@ fn binds_outside_closures(node: &SyntaxNode) -> bool {
     })
 }
 
+/// Whitespace collapsed, without a trailing `;` or a leading `return `, as
+/// the return-path gate reads a final `return <tail>;`.
 fn collapse(text: &str) -> String {
-    text.trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text = text.trim().trim_end_matches(';');
+    let text = text.strip_prefix("return ").unwrap_or(text);
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -145,6 +150,11 @@ mod tests {
             "lines.iter().map(|l| l.cents + 2).sum::<u64>()",
         );
         assert_eq!(inside.as_deref(), Some("1"));
+        // A final `return` on either side is not part of the change.
+        assert_eq!(
+            covering(&format!("return {};", tail("51")), &tail("50")).as_deref(),
+            Some("51")
+        );
     }
 
     #[test]
@@ -182,6 +192,19 @@ mod tests {
         assert!(ChangedSpan::of(after, Some(after)).is_none());
         assert!(ChangedSpan::of("let x = 1", Some("let x = 2")).is_none());
         assert!(ChangedSpan::of("a + (", Some("a + 1")).is_none());
+        // A change that reaches into a comment beside the tail.
+        for (after, before) in [
+            (
+                "it.map(|l| l.cents).sum::<u64>() + 51 /* fee v2 */",
+                "it.map(|l| l.cents).sum::<u64>() + 50 /* fee v1 */",
+            ),
+            (
+                "/* v2 */ it.map(|l| l.cents).sum::<u64>() + 51",
+                "/* v1 */ it.map(|l| l.cents).sum::<u64>() + 50",
+            ),
+        ] {
+            assert!(ChangedSpan::of(after, Some(before)).is_none(), "{after}");
+        }
         // A name bound outside every closure can carry the change into one.
         for (after, before) in [
             (
@@ -195,6 +218,14 @@ mod tests {
             (
                 "if let Some(k) = Some(3) { it.map(|x| x * k).sum() } else { 0 }",
                 "if let Some(k) = Some(2) { it.map(|x| x * k).sum() } else { 0 }",
+            ),
+            (
+                "{ let mut t = 0; while let Some(k) = Some(3) { t = it.map(|x| x * k).sum(); break; } t }",
+                "{ let mut t = 0; while let Some(k) = Some(2) { t = it.map(|x| x * k).sum(); break; } t }",
+            ),
+            (
+                "{ for k in [3] { return it.map(|x| x * k).sum(); } 0 }",
+                "{ for k in [2] { return it.map(|x| x * k).sum(); } 0 }",
             ),
         ] {
             assert!(ChangedSpan::of(after, Some(before)).is_none(), "{after}");
