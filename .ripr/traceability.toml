@@ -14241,6 +14241,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_literal_without_an_independent_field_value_does_not_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::whole_value_string_from_refuses_a_workspace_string",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unwrapped_ok_tail_with_early_err_returns_pins_its_field",
   "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
 ]
 fixtures = []
