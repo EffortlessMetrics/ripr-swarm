@@ -201,8 +201,15 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `porcelain_parser_records_unrouted_snapshot_inputs` and
   `snapshot_inputs_differ_only_in_their_own_directory` pin the
   committed-history record example 6 reads.
-- `fixtures/typescript-verdict-corpus` pins example 1:
-  `jest-spec0234-ex03` reads `credited`.
+- `fixtures/typescript-verdict-corpus` labels each example with runtime
+  truth: `jest-spec0234-ex03` (example 1) and
+  `jest-spec0258-ex02-describe-title` (example 2) read `credited`;
+  `jest-spec0258-ex03-no-snapshot-file` (example 3) and
+  `jest-spec0258-ex05-update-script` (example 5) read `gap`, as their
+  runs let the edit pass; `jest-spec0258-ex04-hint` (example 4) reads
+  `gap` against a test that fails the edit; and
+  `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
+  `credited`.
 
 ## Implementation Mapping
 

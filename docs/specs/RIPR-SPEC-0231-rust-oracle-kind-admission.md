@@ -401,6 +401,37 @@ Two pattern terms are used below.
      `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
      the log format.
 
+### Reveal admission of an excluded sibling
+
+Rule 1 sets the kind and strength of an inequality; reveal still decides
+whether it observes the change. When the changed line constructs an error
+variant (`return Err(E::Big)`), RIPR-SPEC-0106 Part B refuses an assertion
+that names the enum only through sibling variants, because the shared
+qualifier is not the changed error's identity. An inequality is the
+exception (examples 19 and 20): `assert_ne!(check(20), Err(E::Bad))` or
+`assert!(!matches!(check(20), Err(E::Bad)))` excludes the sibling from the
+owner's own result, so a change that returned `E::Bad` would fail it.
+Reveal admits it as `relational_check` / weak for every family, whatever
+the classifier read, when all of these hold:
+
+- the assertion is `assert_ne!` with one of its two operands exactly a
+  bare call to the changed owner, or `assert!` whose whole condition is one negated `matches!` with
+  that call as the whole scrutinee and an unguarded pattern (message
+  arguments never count, and nothing such as `||` or `^` may sit beside
+  the `matches!`);
+- no foreign import, same-named function in the test's package, nested
+  `fn` or local binding of the owner's name makes the call ambiguous;
+- no binding visible to the test (a `macro_rules!`, an import or a
+  `macro_use`) may rebind `assert!`, `assert_ne!` or `matches!`, and the
+  test's file and module chain pass the shared assertion-context gates;
+- the other operand, or the pattern, names the changed error's enum only
+  through sibling variants.
+
+Any other sibling-only assertion stays refused, so an inequality on a value
+that is not the owner's result shares only the enum qualifier and observes
+nothing. The admitted oracle is weak, so the finding reads
+`weakly_exposed`, never `exposed`.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented
@@ -438,7 +469,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. Rejected: requiring the classifier to read that shape as
+   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
+   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   step 6's `snapshot` / medium kind, and only an owner pin that admits that
+   exact spelling raises its probe-relative strength; `insta`,
+   `expect_file!` and `assert_debug_eq` snapshots never pin
+   (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
+   Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
    in the oracle extractor. Rejected: a new kind for weak whole-object
    inequality (decision 1).
@@ -496,7 +533,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
-  exact owner pin needs a strong oracle (decision 4).
+  exact owner pin needs a strong oracle, apart from the bool-owner and
+  inline expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -691,6 +729,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   the polarity rule in every operand order and macro form, the
   `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
   name-and-receiver-only observer exemption.
+- Reveal admission of an excluded sibling (examples 19 and 20):
+  `crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_inequality_excluding_a_sibling_reads_relational_weak`
+  and its control `spec_0231_sibling_inequality_off_the_owner_call_stays_refused`.
+  Corpus: `spec0231-oracle-assert-ne-err-variant` and
+  `spec0231-oracle-negated-matches-err-variant` read `relational_check` /
+  weak in their `oracle` rows.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
@@ -713,6 +757,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
   override is a cap that never raises a classifier-weakened strength, and an
   exact owner pin needs a strong oracle (decision 4; `pin_strength_admits`).
+  `excludes_only_sibling_variant` admits an excluded sibling as
+  `relational_check` / weak.
 
 ## Metrics
 

@@ -468,6 +468,42 @@ pub(crate) struct TypeScriptAssertion {
     /// `expect(...).to.equal(...)`, #4547). `None` keeps the Jest/AVA
     /// rendering in `assertion_oracle_text`.
     pub(crate) rendered_call: Option<String>,
+    /// RIPR-SPEC-0247 rule 2 (typed amendment): loose `==` equality
+    /// (`equal`, legacy `deepEqual`) left `relational_check` / weak whose
+    /// expected argument is a finite number literal such as `0` or `1`.
+    /// Only a non-number coerces to such a literal, so the classifier
+    /// credits it against an owner declared to return `number`
+    /// (`ts_typed_loose_number_facts`).
+    pub(crate) loose_number_expected: bool,
+    /// Whether this matcher compares objects by reference identity
+    /// (`===` / `Object.is`), so RIPR-SPEC-0246 rule 1 can pin a
+    /// copy-for-identity change. Built-in `toBe`, `strictEqual`, and AVA
+    /// `is` are true. A RIPR-SPEC-0262 credited custom matcher is true
+    /// because its `pass` requires `received === expected`. `toEqual` and
+    /// other `exact_value` matchers stay false: sharing a kind is not
+    /// identity. A refused or non-strict custom matcher stays false.
+    pub(crate) compares_reference_identity: bool,
+}
+
+impl TypeScriptAssertion {
+    /// Jest/Vitest `expect(...).<name>` identity matcher. AVA `is` and
+    /// `node:assert` `strictEqual` are not included: `expect.extend` can
+    /// register those names with a non-identity body.
+    pub(crate) fn jest_expect_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "toBe"
+    }
+
+    /// Receiver assertions that compare objects by identity: AVA `t.is`
+    /// (`Object.is`) and tape / node-style `t.strictEqual` (`===`).
+    /// `t.equal` and `t.deepEqual` stay false.
+    pub(crate) fn ava_compares_reference_identity(matcher: &str) -> bool {
+        matches!(matcher, "is" | "strictEqual")
+    }
+
+    /// `node:assert` `strictEqual` compares with `===`.
+    pub(crate) fn node_assert_compares_reference_identity(matcher: &str) -> bool {
+        matcher == "strictEqual"
+    }
 }
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the

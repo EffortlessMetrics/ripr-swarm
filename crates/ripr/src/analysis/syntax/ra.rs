@@ -2246,6 +2246,39 @@ fn has_effect_text(text: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+/// The expect-test comparison methods, called on an `expect![[..]]` or
+/// `expect_file![..]` value (bare or `expect_test::` qualified).
+const EXPECT_TEST_COMPARISONS: &[&str] = &["assert_eq", "assert_debug_eq"];
+
+pub(crate) fn is_expect_test_comparison(call: &ast::MethodCallExpr) -> bool {
+    call.name_ref().is_some_and(|name| {
+        EXPECT_TEST_COMPARISONS
+            .iter()
+            .any(|known| name.text() == *known)
+    }) && expect_test_receiver(call).is_some()
+}
+
+/// The receiver macro's path (`expect`, `expect_test::expect`, `expect_file`
+/// or `expect_test::expect_file`) when an expect-test comparison's receiver
+/// is that macro's invocation.
+pub(crate) fn expect_test_receiver(call: &ast::MethodCallExpr) -> Option<String> {
+    let ast::Expr::MacroExpr(receiver) = call.receiver()? else {
+        return None;
+    };
+    let path = receiver
+        .macro_call()?
+        .path()?
+        .syntax()
+        .text()
+        .to_string()
+        .replace(' ', "");
+    matches!(
+        path.as_str(),
+        "expect" | "expect_test::expect" | "expect_file" | "expect_test::expect_file"
+    )
+    .then_some(path)
+}
+
 fn is_effect_call_name(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
@@ -2330,9 +2363,18 @@ fn extract_parser_oracles(
         else {
             continue;
         };
-        if name != "unwrap" && name != "expect" {
-            continue;
-        }
+        // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
+        // and read smoke; an `unwrap_err()` whose value is never compared
+        // panics on the `Ok` side, so it observes the `Err` side
+        // (decision 2). Its statement shape is decided by the same
+        // `uncompared_unwrap_err` the line scanner uses.
+        let (kind, strength) = match name.as_str() {
+            "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
+            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+                (OracleKind::BroadError, OracleStrength::Weak)
+            }
+            _ => continue,
+        };
         let range = method_call.syntax().text_range();
         let text = slice_text(text, range.start(), range.end())
             .trim()
@@ -2340,10 +2382,72 @@ fn extract_parser_oracles(
             .to_string();
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
-            kind: OracleKind::SmokeOnly,
-            strength: OracleStrength::Smoke,
+            kind,
+            strength,
             observed_tokens: extract_identifier_tokens(&text),
             text,
+            ok_value_observed: None,
+        });
+    }
+
+    // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
+    // is a method call on the macro's value, which the macro walk above never
+    // sees. Its whole expression is the oracle, graded `snapshot` / medium
+    // (RIPR-SPEC-0231 step 6); the line scan below must
+    // not also read the `.assert_debug_eq(..)` continuation of a multi-line
+    // expectation as an assertion of its own.
+    let mut expect_test_lines = Vec::new();
+    for method_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+        .filter(is_expect_test_comparison)
+        // Only a statement or the tail of the function's own body: nested
+        // in `ready || { .. }`, a branch or a closure it may never run,
+        // which the classifier cannot see from the call text alone. The
+        // line scan below still reads those lines as it always has.
+        .filter(|call| {
+            let Some(parent) = call.syntax().parent() else {
+                return false;
+            };
+            let list = if parent.kind() == ra_ap_syntax::SyntaxKind::EXPR_STMT {
+                parent.parent()
+            } else {
+                Some(parent)
+            };
+            list.is_some_and(|list| {
+                function
+                    .body()
+                    .and_then(|body| body.stmt_list())
+                    .is_some_and(|own| own.syntax() == &list)
+            })
+        })
+    {
+        let range = method_call.syntax().text_range();
+        let assertion_text = slice_macro_call_text(text, range.start(), range.end());
+        // The parser verified the comparison's shape, so its `snapshot` /
+        // medium grade does not depend on the substring recognizer's
+        // spelling (`expect![..]`, `expect! [[..]]`, `.assert_eq (..)`, a
+        // call split across lines). That grade is a ceiling: a weaker
+        // reading of the compared value (a tautology, a broad `is_err()`)
+        // is kept, as the line scan keeps it.
+        let classification = classify_assertion(&assertion_text);
+        let (kind, strength) = if matches!(
+            classification.strength,
+            OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
+        ) {
+            (classification.kind, classification.strength)
+        } else {
+            (OracleKind::Snapshot, OracleStrength::Medium)
+        };
+        let line = line_index.line(range.start());
+        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        assertions.push(OracleFact {
+            line,
+            kind,
+            strength,
+            observed_tokens: extract_identifier_tokens(&assertion_text),
+            text: assertion_text,
             ok_value_observed: None,
         });
     }
@@ -2386,6 +2490,11 @@ fn extract_parser_oracles(
     for oracle in extract_line_scanned_oracles(&function_text, function_start)
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
+        .filter(|oracle| {
+            !expect_test_lines
+                .iter()
+                .any(|lines| lines.contains(&oracle.line))
+        })
     {
         assertions.push(oracle);
     }
@@ -2396,6 +2505,31 @@ fn extract_parser_oracles(
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     assertions
+}
+
+/// Whether this `unwrap_err()` call is the whole value of a statement that
+/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
+/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
+/// adapters admit the same shapes.
+fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
+    let Some(statement) = method_call.syntax().parent() else {
+        return false;
+    };
+    if ast::LetStmt::cast(statement.clone()).is_none()
+        && ast::ExprStmt::cast(statement.clone()).is_none()
+    {
+        return false;
+    }
+    let range = statement.text_range();
+    let statement_text = slice_text(text, range.start(), range.end());
+    let block_end = statement
+        .parent()
+        .map_or(range.end(), |block| block.text_range().end());
+    let rest = slice_text(text, range.end(), block_end);
+    crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
+        let call = method_call.syntax().text().to_string();
+        value.split_whitespace().eq(call.split_whitespace())
+    })
 }
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
@@ -2452,6 +2586,78 @@ enum DropInScope {
     WholeFile,
     /// A re-parse of the function text alone: the file is not visible.
     Unknown,
+}
+
+/// Nonrecursive whole-file root proof for each qualified statement macro.
+/// Unknown glob roots remain unproved.
+pub(crate) fn assertion_root_binding_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+) -> bool {
+    drop_in_assertion_leaf(path).is_some()
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && node.ancestors().last().is_some_and(|file| {
+            !file
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
+}
+
+/// Qualified operand capture requires every statement macro in the same
+/// function to retain its independently established binding.
+pub(crate) fn assertion_root_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
+) -> bool {
+    let function = node.ancestors().find_map(ast::Fn::cast);
+    assertion_root_binding_is_unrebound(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
+                .filter(crate::analysis::syntax::macro_call_is_statement)
+                .all(|call| statement_bound(&call))
+        })
+}
+
+/// Initial qualified capture keeps no-implicit-prelude contexts refused.
+/// A no_std root supplies std only through an explicit unrenamed declaration.
+pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some((root, _)) = path.strip_prefix("::").unwrap_or(path).split_once("::") else {
+        return false;
+    };
+    let Some(file) = node.ancestors().last() else {
+        return false;
+    };
+    let attributes: Vec<_> = node
+        .ancestors()
+        .flat_map(|ancestor| ancestor.children().filter_map(ast::Attr::cast))
+        .collect();
+    let mentions = |name: &str| {
+        attributes.iter().any(|attribute| {
+            attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .any(|token| token.text() == name)
+                && !cfg_predicates::attribute_is_known_inactive_prelude_flags(
+                    &attribute.syntax().text().to_string(),
+                )
+        })
+    };
+    !mentions("no_implicit_prelude")
+        && (root != "std"
+            || !mentions("no_std")
+            || file
+                .children()
+                .filter_map(ast::ExternCrate::cast)
+                .any(|krate| {
+                    krate.rename().is_none()
+                        && crate::analysis::syntax::supported_targeted_item_context(krate.syntax())
+                        && krate.name_ref().is_some_and(|name| name.text() == "std")
+                }))
 }
 
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)

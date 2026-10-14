@@ -122,6 +122,18 @@
       "sha256": "6a558385599a2b7d849813df809484aade97e555860068471c17ab3f79625bff"
     },
     {
+      "path": "src/priceSnapDescribe.ts",
+      "sha256": "dcd49c78ef760caec02ba94358bdb13676088b05c2049368fa1d8b85e719f2ef"
+    },
+    {
+      "path": "src/priceSnapHint.ts",
+      "sha256": "f1dc5154dc03d7a25369eecb36e8f510c97c6b70054f358ba5d90c43e49e4d06"
+    },
+    {
+      "path": "src/priceSnapSpaced.ts",
+      "sha256": "d7d73836de4429cd357163f9a66d884953413ba210b332768f429249dbd04237"
+    },
+    {
       "path": "src/scaledTotal.ts",
       "sha256": "635d37d88c94efa22eada293e7d3841120f3a89f57ba489654a9037cfcf5a0f6"
     },
@@ -132,6 +144,18 @@
     {
       "path": "test/__snapshots__/priceEx03.test.ts.snap",
       "sha256": "4f75e28a8e86ad22ab5374cbc9dfc71d6f9bd78b134bfb71d310b81c340f6fe6"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapDescribe.test.ts.snap",
+      "sha256": "82cf47ab78c9d86db7a36d1a0a2f5d8d83f7f4efdacc635fa61bb0aaba94e6f0"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapHint.test.ts.snap",
+      "sha256": "91a47436e987241dfdd951855852c3d828d220cf554673a6d55b648da90951ed"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapSpaced.test.ts.snap",
+      "sha256": "f5b67dad084910b7c805becabb4603d05092406c37c83d08e4eac186f062822f"
     },
     {
       "path": "test/addCountsZero.test.ts",
@@ -236,6 +260,18 @@
     {
       "path": "test/priceFlat.test.ts",
       "sha256": "464d8825360d4f8547cf3c69508d59e524b970ccc65a6ec8c8ad60b8ae2508ef"
+    },
+    {
+      "path": "test/priceSnapDescribe.test.ts",
+      "sha256": "a7fc8a58676a0fa05030f1ec80925c970a9006cc9a838883a21e9bc583da4e7f"
+    },
+    {
+      "path": "test/priceSnapHint.test.ts",
+      "sha256": "b42ce7591e9b0dfefee5c6747723fbe0117f5b3f2b12c6e3a33e09a570fe043b"
+    },
+    {
+      "path": "test/priceSnapSpaced.test.ts",
+      "sha256": "c9bfb8436049892e206e1865f67d0a05459fddac6f68c420353b3b77b2b6d76e"
     },
     {
       "path": "test/scaledTotal.test.ts",

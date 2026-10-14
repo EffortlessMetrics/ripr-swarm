@@ -2135,7 +2135,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json.\n"
+                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -2143,6 +2143,81 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    #[test]
+    fn hidden_identity_completeness_requires_unbounded_json() -> Result<(), String> {
+        let findings = (0..26)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{index}");
+                finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                finding.probe.id = ProbeId(format!("probe-{index}"));
+                if index == 0 {
+                    finding.probe.expression = "x".repeat(1_000_001);
+                }
+                finding
+            })
+            .collect::<Vec<_>>();
+        let output = bounded_output_with_findings(findings);
+        let bounded: serde_json::Value =
+            serde_json::from_str(&crate::output::json::render(&output))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
+        assert_eq!(bounded["summary"]["findings"], 26);
+        assert_eq!(
+            bounded["run_limitations"][0]["downstream_consumable"],
+            false
+        );
+        let full = crate::output::json::render_with_config(
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+        );
+        let full: serde_json::Value =
+            serde_json::from_str(&full).map_err(|error| error.to_string())?;
+        assert_eq!(full["findings"].as_array().map(Vec::len), Some(26));
+        assert_eq!(full["findings"][25]["id"], "finding-25");
+        let human = render(&output);
+        assert!(
+            human.contains("25 lower-priority finding(s) omitted"),
+            "{human}"
+        );
+        assert!(human.contains("5 more omitted finding(s)"), "{human}");
+        assert!(
+            human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+            "full identity recovery must remove the JSON budget: {human}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_identity_window_discloses_only_a_real_tail() {
+        for (total, remainder) in [(0, 0), (1, 0), (21, 0), (22, 1)] {
+            let findings = (0..total)
+                .map(|index| {
+                    let mut finding = sample_finding();
+                    finding.id = format!("finding-{index}");
+                    finding.probe.id = ProbeId(format!("probe-{index}"));
+                    finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                    finding
+                })
+                .collect::<Vec<_>>();
+            let human = render(&bounded_output_with_findings(findings));
+            assert_eq!(
+                human.contains("RIPR_CHECK_FINDINGS_BYTES=0"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            assert_eq!(
+                human.contains("more omitted finding(s)"),
+                remainder > 0,
+                "total {total}: {human}"
+            );
+            if remainder > 0 {
+                assert!(human.contains("1 more omitted finding(s)"), "{human}");
+            }
+        }
     }
 
     /// #4395(b): mixed-repo remainder must name the omitted preview-language

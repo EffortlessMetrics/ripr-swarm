@@ -162,16 +162,37 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["snapshot_id", "offset", "limit"])?;
+        reject_unknown_arguments(
+            &arguments,
+            &[
+                "snapshot_id",
+                "offset",
+                "limit",
+                "file",
+                "class",
+                "language",
+                "repair_ready",
+            ],
+        )?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let limit = optional_positive_argument(&arguments, "limit")?;
+        let file = optional_nonempty_string_argument(&arguments, "file")?;
+        let class = optional_nonempty_string_argument(&arguments, "class")?;
+        let language = optional_nonempty_string_argument(&arguments, "language")?;
+        let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
             requested.as_deref(),
             workspace::GapListWindow {
                 offset: offset.unwrap_or(0),
                 limit,
+            },
+            &workspace::GapListFilter {
+                file,
+                class,
+                language,
+                repair_ready,
             },
         ) {
             Ok(document) => self.bounded_tool_result(
@@ -456,6 +477,40 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
+            None,
+        )),
+    }
+}
+
+/// A filter string (#7464): a non-empty JSON string. Empty strings stay
+/// invalid params instead of silently matching nothing or everything.
+fn optional_nonempty_string_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<String>, ErrorData> {
+    match optional_string_argument(arguments, name)? {
+        Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
+            format!("{name} must be a non-empty string"),
+            None,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// nulls stay invalid params instead of silently coercing.
+fn optional_bool_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<bool>, ErrorData> {
+    let Some(arguments) = arguments else {
+        return Ok(None);
+    };
+    match arguments.get(name) {
+        None => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_other) => Err(ErrorData::invalid_params(
+            format!("{name} must be a boolean"),
             None,
         )),
     }
