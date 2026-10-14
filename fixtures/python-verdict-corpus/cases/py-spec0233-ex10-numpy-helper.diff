@@ -1,0 +1,7 @@
+diff --git a/src/arrays.py b/src/arrays.py
+--- a/src/arrays.py
++++ b/src/arrays.py
+@@ -1,2 +1,2 @@
+ def parse(text):
+-    return [int(text) + 1]
++    return [int(text) + 2]

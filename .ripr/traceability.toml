@@ -3526,6 +3526,13 @@ tests = [
   "crates/ripr/src/analysis/seam_cache.rs::tests::classified_cache_store_limit_can_be_raised_for_large_entries",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::repo_exposure_seam_limit_parser_accepts_positive_integer_only",
   "xtask::run::tests::capture_stdout_to_file_with_timeout_streams_stdout_to_file",
+  "xtask::run::tests::stdout_file_capture_incomplete_stdout_cleans_owned_descendant",
+  "xtask::run::tests::stdout_file_capture_incomplete_stderr_cleans_owned_descendant",
+  "xtask::run::tests::stdout_file_capture_stderr_error_preserves_prior_artifact",
+  "xtask::run::tests::stdout_file_capture_timeout_retains_actual_observation",
+  "xtask::run::tests::stdout_file_capture_complete_empty_and_nonzero_are_distinct",
+  "xtask::run::tests::stdout_file_capture_empty_completion_is_not_a_drain_deadline",
+  "xtask::run::tests::stdout_file_capture_publication_failure_cleans_staging",
   "xtask::tests::lane1_evidence_audit_rejects_repo_exposure_without_seams",
   "xtask::tests::lane1_repo_exposure_file_completion_check_requires_seams_and_closing_brace",
   "xtask::tests::xtask_command_parse_preserves_compatibility_aliases",
@@ -8262,6 +8269,9 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_json_outcomes_preserve_report_and_exit_contract",
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_human_unsupported_and_usage_keep_stream_contracts",
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_outcome_exit_preserves_subject_and_coverage",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::unsupported_check_keeps_rendered_formats_and_repo_scope",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_malformed_options_remain_empty_exit_two",
@@ -8324,7 +8334,9 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_marks_missing_producer_outcome_incomplete",
 ]
 code = [
+  "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/pipeline.rs",
@@ -9132,6 +9144,10 @@ tests = [
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_files_refuse_with_disambiguation_and_no_write",
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_tied_seams_refuse_without_weakening_nested_selection",
   "crates/ripr/tests/agent_stub_compiles.rs::absent_selectors_keep_not_found_and_explicit_disclosures",
+  "crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json",
+  "crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window",
+  "crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams",
@@ -12326,6 +12342,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_rstest_fixture_feeds_the_call_but_never_the_expected_value",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",

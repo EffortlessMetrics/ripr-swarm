@@ -141,6 +141,7 @@ pub(crate) use module_health::module_health;
 pub(crate) use mutation::mutation_calibration;
 #[cfg(test)]
 pub(crate) use mutation::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     build_mutation_calibration_report, mutation_calibration_report_json,
     mutation_calibration_report_markdown, parse_mutation_calibration_args,

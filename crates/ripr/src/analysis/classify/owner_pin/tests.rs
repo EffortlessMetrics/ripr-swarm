@@ -1785,7 +1785,7 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
             cases,
             "weighs",
         ),
-        // Arguments, fixtures, value matrices and other attributes.
+        // Arguments, value matrices and other attributes.
         (
             "use rstest::rstest;",
             "#[rstest(foo)]\n#[case(4, 12)]",
@@ -1810,6 +1810,8 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
             "#[case] ref x: u32, #[case] expected: u32",
             "weighs",
         ),
+        // A row must hold one value per `#[case]` parameter; the unmarked
+        // `expected` is a fixture, so this row has one value too many.
         (
             "use rstest::rstest;",
             "#[rstest]\n#[case(4, 12)]",
@@ -1822,6 +1824,7 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
             "#[values(4, 5)] x: u32, #[case] expected: u32",
             "weighs",
         ),
+        // Fixtures may not supply the expected value.
         (
             "use rstest::rstest;",
             "#[rstest]",
@@ -1889,6 +1892,141 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
         let tests = case_test(prelude, attributes, parameters, name);
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+}
+
+/// #6578: an unmarked `#[rstest]` parameter is a fixture, filled once by
+/// the same-named `#[fixture]` before the body runs. It may be the owner's
+/// argument or receiver (typed by its annotation), never the expected value:
+/// the fixture body sits outside the test and may call the owner itself.
+#[test]
+fn an_rstest_fixture_feeds_the_call_but_never_the_expected_value() {
+    let fixture_test = |fixtures: &str, parameters: &str, body: &str| {
+        format!(
+            "use demo::weight;\nuse rstest::{{fixture, rstest}};\n{fixtures}\n#[rstest]\nfn weighs({parameters}) {{\n    {body}\n}}\n"
+        )
+    };
+    let four = "#[fixture]\nfn x() -> u32 {\n    4\n}";
+    let want = "#[fixture]\nfn want() -> u32 {\n    weight(4)\n}";
+    for (rows, parameters, body) in [
+        ("", "x: u32", "assert_eq!(weight(x), 12);"),
+        ("", "mut x: u32", "assert_eq!(weight(x), 12);"),
+        // A fixture beside `#[case]` parameters: rows bind only the cases.
+        (
+            "#[case(12)]\n",
+            "#[case] expected: u32, x: u32",
+            "assert_eq!(weight(x), expected);",
+        ),
+    ] {
+        let tests = fixture_test(four, parameters, body)
+            .replace("#[rstest]\n", &format!("#[rstest]\n{rows}"));
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for (parameters, body) in [
+        // The expected value is a fixture, directly or through a `let`.
+        ("want: u32", "assert_eq!(weight(4), want);"),
+        ("want: u32", "let w = want;\n    assert_eq!(weight(4), w);"),
+        ("want: u32", "assert_eq!(want, weight(4));"),
+        // Any body binding of an expected word fails closed beside a
+        // fixture: an assignment, a mutation, a loop or a rebound `#[case]`.
+        (
+            "want: u32",
+            "let mut w = 0;\n    w = want;\n    assert_eq!(weight(4), w);",
+        ),
+        (
+            "want: u32",
+            "let mut v = Vec::new();\n    v.push(want);\n    assert_eq!(weight(4), v[0]);",
+        ),
+        (
+            "want: u32",
+            "for w in [want] {\n        assert_eq!(weight(4), w);\n    }",
+        ),
+        ("x: u32", "let w = 12;\n    assert_eq!(weight(x), w);"),
+        // Parameter attributes that change what or how often the body runs.
+        ("#[from(want)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[with(4)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[future] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[values(4)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[by_ref] x: &u32", "assert_eq!(weight(x), 12);"),
+        // An anonymous type parameter rstest may infer from the fixture.
+        ("x: impl Into<u32>", "assert_eq!(weight(x.into()), 12);"),
+        // Patterns other than a plain binding.
+        ("ref x: u32", "assert_eq!(weight(x), 12);"),
+        ("(x, _y): (u32, u32)", "assert_eq!(weight(x), 12);"),
+    ] {
+        let tests = fixture_test(&format!("{four}\n{want}"), parameters, body);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A `mut` `#[case]` parameter the body reassigns from a fixture or the
+    // owner: an assignment binds nothing (#6578 review).
+    for (fixtures, parameters, body) in [
+        (
+            want,
+            "#[case] mut expected: u32, want: u32",
+            "expected = want;\n    assert_eq!(weight(4), expected);",
+        ),
+        (
+            "",
+            "#[case] mut expected: u32",
+            "expected = weight(4);\n    assert_eq!(weight(4), expected);",
+        ),
+    ] {
+        let tests = fixture_test(fixtures, parameters, body)
+            .replace("#[rstest]\n", "#[rstest]\n#[case(0)]\n");
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A `#[case]` parameter the body rebinds from a fixture.
+    let tests = fixture_test(
+        want,
+        "#[case] expected: u32, want: u32",
+        "let expected = want;\n    assert_eq!(weight(4), expected);",
+    )
+    .replace("#[rstest]\n", "#[rstest]\n#[case(0)]\n");
+    assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    // A generic test may infer the annotated type from the fixture.
+    for generics in ["<T: Copy>", ""] {
+        let tests = fixture_test(four, "x: u32", "assert_eq!(weight(x), 12);")
+            .replace("fn weighs(", &format!("fn weighs{generics}("));
+        let tests = if generics.is_empty() {
+            tests.replace(") {\n    assert", ") where u32: Copy {\n    assert")
+        } else {
+            tests
+        };
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+
+    // A fixture receiver is typed by its annotation, as
+    // `let c: Counter = ..;` is.
+    let counter = |parameters: &str, body: &str| {
+        let tests = format!(
+            "use demo::Counter;\nuse rstest::{{fixture, rstest}};\n#[fixture]\nfn c() -> Counter {{\n    Counter::new()\n}}\n#[rstest]\nfn counts({parameters}) {{\n    {body}\n}}\n"
+        );
+        let index = index(&[(LIB, COUNTER_LIB), (TESTS, &tests)]);
+        let pin = establish(&index, "tally", "self.n + 1");
+        assert!(pin.is_some(), "tally must establish a pin");
+        let Some(pin) = pin else { return 0 };
+        admitted_texts(&index, &pin).len()
+    };
+    assert_eq!(counter("c: Counter", "assert_eq!(c.tally(), 1);"), 1);
+    assert_eq!(counter("mut c: Counter", "assert_eq!(c.tally(), 1);"), 1);
+    // A borrowed or rebound receiver is not typed by the annotation.
+    assert_eq!(counter("c: &Counter", "assert_eq!(c.tally(), 1);"), 0);
+    // The annotation, not the fixture or the method name, types the call.
+    assert_eq!(counter("c: Other", "assert_eq!(c.tally(), 1);"), 0);
+    assert_eq!(counter("c: Counter", "assert_eq!(c.tally(), c.n + 1);"), 0);
+    assert_eq!(
+        counter(
+            "c: Counter",
+            "let c = Other::new();\n    assert_eq!(c.tally(), 1);"
+        ),
+        0
+    );
+    assert_eq!(
+        counter(
+            "c: Counter",
+            "if let Some(c) = None::<Other> {}\n    assert_eq!(c.tally(), 1);"
+        ),
+        0
+    );
 }
 
 #[test]

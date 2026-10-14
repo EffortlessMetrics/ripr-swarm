@@ -1,9 +1,12 @@
-//! `cargo xtask check-changelog-fragments` (#6341): every `changelog.d/`
-//! fragment must fold into `CHANGELOG.md` without a reader having to guess.
+//! `cargo xtask check-changelog-fragments` (#6341, #7671): every `changelog.d/`
+//! fragment must fold into `CHANGELOG.md` without a reader having to guess,
+//! and every `CHANGELOG.md` Unreleased bullet must already be traceable.
 //! A fragment with no section line, an unknown section, or no issue/PR
 //! reference used to pass every gate and then drop out of the release notes
-//! at the fold. `--release-cut` additionally fails on any fragment at all, so
-//! the fold step is a command that fails rather than a checklist line.
+//! at the fold. Unreleased entries were exempt from that reference rule, so
+//! folded history could ship untraceable. `--release-cut` additionally fails
+//! on any fragment at all, so the fold step is a command that fails rather
+//! than a checklist line.
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +16,7 @@ use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 const FRAGMENT_DIR: &str = "changelog.d";
 const README: &str = "README.md";
 const POLICY_DOC: &str = "docs/CHANGELOG_POLICY.md";
+const CHANGELOG: &str = "CHANGELOG.md";
 
 /// The section headings `docs/CHANGELOG_POLICY.md` allows. The check also
 /// fails when the policy doc stops listing one of them, so the two cannot
@@ -44,12 +48,13 @@ pub(crate) fn check_changelog_fragments_with_args(args: &[String]) -> Result<(),
         PolicyReportSpec {
             report_file: "changelog-fragments.md",
             check: "check-changelog-fragments",
-            why_it_matters: "Fragments are folded into CHANGELOG.md by hand at the release cut. A fragment with no section, an unknown section, or no issue/PR reference cannot be placed or traced, and a fragment left unfolded drops a user-facing change from the release notes.",
+            why_it_matters: "Fragments are folded into CHANGELOG.md by hand at the release cut. A fragment with no section, an unknown section, or no issue/PR reference cannot be placed or traced, a fragment left unfolded drops a user-facing change from the release notes, and an Unreleased bullet with no issue, PR, or RIPR-SPEC reference is untraceable after the cut.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Start the fragment with `<!-- section: X -->`, where X is one of the sections in docs/CHANGELOG_POLICY.md.",
                 "Write the entry as a `- ` bullet with the issue or PR reference (`#N` or a link) in it.",
                 "Name the file `<pr-or-issue>-<short-slug>.md` in lowercase kebab case.",
+                "Give each CHANGELOG.md Unreleased bullet an issue, PR (`#N` or a link), or RIPR-SPEC-N reference.",
                 "At the release cut, fold every fragment into CHANGELOG.md and delete it (changelog.d/README.md).",
             ],
             rerun_command: if release_cut {
@@ -125,6 +130,7 @@ pub(crate) fn changelog_fragment_violations(
             ));
         }
     }
+    violations.extend(unreleased_changelog_violations(root)?);
     Ok(violations)
 }
 
@@ -236,6 +242,67 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     violations
 }
 
+/// Unreleased `CHANGELOG.md` bullets that name no issue, PR, or RIPR-SPEC
+/// (#7671). Missing `CHANGELOG.md` is skipped so fragment-only fixtures stay
+/// valid; versioned sections after Unreleased are not scanned.
+fn unreleased_changelog_violations(root: &Path) -> Result<Vec<String>, String> {
+    let path = root.join(CHANGELOG);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        fs::read_to_string(&path).map_err(|err| format!("failed to read {CHANGELOG}: {err}"))?;
+    Ok(unreleased_entry_violations(&text))
+}
+
+fn unreleased_entry_violations(text: &str) -> Vec<String> {
+    let mut in_unreleased = false;
+    let mut entries: Vec<Vec<&str>> = Vec::new();
+    for line in text.lines() {
+        if line.trim() == "## Unreleased" {
+            in_unreleased = true;
+            continue;
+        }
+        if in_unreleased && line.starts_with("## ") {
+            break;
+        }
+        if !in_unreleased {
+            continue;
+        }
+        if line.starts_with("### ") {
+            continue;
+        }
+        if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
+            continue;
+        }
+        let continues = line.starts_with(char::is_whitespace) && !entries.is_empty();
+        if continues {
+            if let Some(entry) = entries.last_mut() {
+                entry.push(line);
+            }
+            continue;
+        }
+        if line.starts_with("- ") {
+            entries.push(vec![line]);
+        }
+    }
+
+    let mut violations = Vec::new();
+    for entry in &entries {
+        if !entry
+            .iter()
+            .filter(|line| !line.contains("<!--"))
+            .any(|line| has_issue_reference(line) || has_spec_reference(line))
+        {
+            violations.push(format!(
+                "{CHANGELOG}: Unreleased entry `{}` names no issue, PR, or RIPR-SPEC; add `(#N)` or a RIPR-SPEC id",
+                entry[0].trim()
+            ));
+        }
+    }
+    violations
+}
+
 /// The backticked items of the `## Sections` list in the policy doc.
 fn documented_sections(policy: &str) -> Vec<&str> {
     policy
@@ -290,6 +357,18 @@ fn has_issue_reference(line: &str) -> bool {
     }) || ["/issues/", "/pull/"].iter().any(|marker| {
         line.match_indices(marker)
             .any(|(index, _)| followed_by_digit(&line[index + marker.len()..]))
+    })
+}
+
+/// `RIPR-SPEC-12` is a traceable Unreleased reference (#7671). A trailing
+/// digit is required so a mention of the prefix alone does not count.
+fn has_spec_reference(line: &str) -> bool {
+    const MARKER: &str = "RIPR-SPEC-";
+    line.match_indices(MARKER).any(|(index, _)| {
+        line[index + MARKER.len()..]
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_digit())
     })
 }
 
@@ -517,6 +596,64 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("no longer lists section `Docs`"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unreleased_bullet_needs_a_traceable_reference() {
+        let missing = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks.\n";
+        let violations = unreleased_entry_violations(missing);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("names no issue, PR, or RIPR-SPEC"),
+            "{violations:?}"
+        );
+
+        let issue = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks (#12).\n";
+        assert_eq!(unreleased_entry_violations(issue), Vec::<String>::new());
+
+        let spec = "# Changelog\n\n## Unreleased\n\n### Added\n\n- Corpus cases, RIPR-SPEC-0219.\n";
+        assert_eq!(unreleased_entry_violations(spec), Vec::<String>::new());
+
+        let wrapped = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Faster checks\n  wrap onto the next line (#12).\n";
+        assert_eq!(unreleased_entry_violations(wrapped), Vec::<String>::new());
+
+        let prefix_only =
+            "# Changelog\n\n## Unreleased\n\n### Docs\n\n- Mentions RIPR-SPEC- without a number.\n";
+        assert_eq!(unreleased_entry_violations(prefix_only).len(), 1);
+
+        let versioned_only = "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Traced (#1).\n\n## 0.10.0\n\n### Fixed\n\n- Historical and untraced.\n";
+        assert_eq!(
+            unreleased_entry_violations(versioned_only),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn changelog_unreleased_scan_runs_through_the_fragment_check() -> Result<(), String> {
+        let root = fresh_root("changelog-unreleased-refs")?;
+        fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
+            .collect();
+        fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
+        fs::write(root.join(FRAGMENT_DIR).join(README), "# fragments\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(CHANGELOG),
+            "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- No reference here.\n",
+        )
+        .map_err(|err| err.to_string())?;
+
+        let violations = changelog_fragment_violations(&root, false);
+        let _ = fs::remove_dir_all(&root);
+        let violations = violations?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].starts_with("CHANGELOG.md: Unreleased entry"),
+            "{violations:?}"
         );
         Ok(())
     }
