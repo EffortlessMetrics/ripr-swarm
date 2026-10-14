@@ -1354,9 +1354,10 @@ and only per pinned call:
 1. The owner has plain identifier parameters (no receiver, no pattern, no
    generics), no `?` and no other `return`, and its whole tail is one
    chain joined only by `&&` or only by `||` (a mix needs precedence and
-   refuses). Each operand is any number of `!` before a `bool` parameter
+   refuses). Each operand is a `bool` parameter after any number of `!`,
    or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
-   both literals. An atom is a parameter, a plain integer, `bool` or char
+   both literals, with no leading `!` (`!x == 0` is `(!x) == 0`). An atom
+   is a parameter, a plain integer or `bool` literal, an unescaped char
    literal, or a parameter `%` or `/` a nonzero integer literal. Such an
    operand cannot call, index, overflow, divide by a variable or write, so
    skipping it changes only the value. Anything else (a call, field,

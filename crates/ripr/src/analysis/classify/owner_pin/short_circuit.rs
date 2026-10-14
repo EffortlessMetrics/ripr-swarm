@@ -11,9 +11,10 @@
 //! those runs every operand but the last takes the value that does not
 //! short-circuit (`true` for `&&`, `false` for `||`).
 //!
-//! Each operand is `!`* then one comparison of two atoms, or a bool
-//! parameter. An atom is a parameter, a plain literal, or a parameter `%`
-//! or `/` a nonzero integer literal. These operands cannot call, panic or
+//! Each operand is a bool parameter after any number of `!`, or one
+//! comparison of two atoms with no leading `!` (`!x == 0` is `(!x) == 0`).
+//! An atom is a parameter, a plain integer or bool literal, an unescaped
+//! char literal, or a parameter `%` or `/` a nonzero integer literal. These operands cannot call, panic or
 //! write, so skipping one changes nothing but the value. A chain mixing
 //! `&&` and `||`, a call, an index, a field, a cast, a parenthesis or any
 //! other text is not read (fail closed).
@@ -187,8 +188,19 @@ impl Value {
             "false" => return Some(Self::Bool(false)),
             _ => {}
         }
-        if text.starts_with('\'') {
-            return Some(Self::Char(text));
+        if let Some(body) = text
+            .strip_prefix('\'')
+            .and_then(|rest| rest.strip_suffix('\''))
+        {
+            // Only an unescaped char compares by its text: `'\n'` and a
+            // decoded escape could name one char two ways.
+            let mut chars = body.chars();
+            return match (chars.next(), chars.next()) {
+                (Some(character), None) if character != '\\' => {
+                    Some(Self::Char(character.to_string()))
+                }
+                _ => None,
+            };
         }
         if text.contains('.') {
             return None;
@@ -229,6 +241,12 @@ fn parse_operand(text: &str, parameters: &[String]) -> Option<Operand> {
     }
     for operator in COMPARISONS {
         if let Some(at) = text.find(operator) {
+            // `!x == 0` is `(!x) == 0`: the `!` binds to the atom, and on an
+            // integer it is a bitwise NOT. Only a bare bool parameter takes
+            // a leading `!`.
+            if negations > 0 {
+                return None;
+            }
             let left = parse_atom(&text[..at], parameters)?;
             let right = parse_atom(&text[at + operator.len()..], parameters)?;
             // `a == b` of two literals, or no parameter at all, reads nothing
@@ -446,6 +464,10 @@ mod tests {
             ("fn f(a: f64) -> bool {", "a > 1.5 && a < 2.0"),
             ("fn f(a: u8) -> bool {", "1 == 1 && a > 1"),
             ("fn f(a: u8) -> bool {", "a > 1 && matches!(a, 3)"),
+            // `!` binds to the atom, not the comparison.
+            ("fn f(x: i32, y: i32) -> bool {", "!x == 0 && y == 0"),
+            // An escaped char could name one char two ways.
+            ("fn f(c: char, y: u8) -> bool {", "c == '\\n' || y == 0"),
             // A receiver or a pattern parameter.
             ("fn f(self, a: u8) -> bool {", "a > 1 && a < 3"),
             ("fn f((a, b): (u8, u8)) -> bool {", "a > 1 && b < 3"),
