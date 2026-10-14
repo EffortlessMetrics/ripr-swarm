@@ -170,9 +170,8 @@ The Python corpus carries a spec-example ledger,
 ledger contract: every spec with numbered acceptance examples is in or out
 of scope, RIPR-SPEC-0238 is in scope, and cases cite the examples they label
 in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
-Example 10 of RIPR-SPEC-0238 has no case yet (the corpus `SPEC.md` says
-why), but a case could label it, so it counts as uncovered rather than
-waived. A deleted ledger fails `verdict-corpus check-all` and
+Every runnable RIPR-SPEC-0238 example has a case; example 10 is labeled in
+a numpy subject (#7819). A deleted ledger fails `verdict-corpus check-all` and
 `committed_python_corpus_is_valid_and_covers_each_test_library`: every
 corpus but Perl must carry its ledger, and only the Perl corpus scores rows
 without the coverage gate.
