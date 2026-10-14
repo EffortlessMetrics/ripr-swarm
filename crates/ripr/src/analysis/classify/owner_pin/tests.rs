@@ -6217,6 +6217,16 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
 /// may call.
 const LET_BOUND_PRELUDE: &str = "const total: u32 = 12;\nfn touch(_: &u32) {}\nfn assert_eqx() {}\nfn touch_count() -> u32 {\n    1\n}\n";
 
+/// The same unit-test file with `weight` declaring `-> Wt`, an alias the
+/// pin does not read as a primitive scalar, so the #6974 shared-handle
+/// guards apply as they do to any non-scalar result.
+fn non_scalar_unit_tests(prelude: &str, body: &str) -> String {
+    let lib = unit_tests(&format!("pub type Wt = u32;\n{prelude}"), body)
+        .replace("-> u32 {\n    x * 3", "-> Wt {\n    x * 3");
+    assert!(lib.contains("-> Wt {"), "{lib}");
+    lib
+}
+
 #[test]
 fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
     for body in [
@@ -6224,7 +6234,7 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         "let total: u32 = super::weight(4);\n        assert_eq!(12, total);",
         "let total = weight(4);\n        assert_eq!(total, 12);\n        assert_eq!(total, 12);",
     ] {
-        let lib = unit_tests("", body);
+        let lib = non_scalar_unit_tests("", body);
         let lib = if body.contains("= weight(4)") {
             lib.replace("mod tests {\n", "mod tests {\n    use super::weight;\n")
         } else {
@@ -6266,16 +6276,148 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         // before the second (#7061 round 3).
         "let total = crate::weight(4);\n        assert_eq!(total, touch_count()); touch_count(); assert_eq!(total, 12);",
     ] {
-        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let lib = non_scalar_unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        // A scalar owner drops only the next-statement guard (cell-0094):
+        // every other guard still refuses, so the binding is never pinned.
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let scalar = path_admitted(&lib, "x * 3", None);
+        assert!(
+            !scalar
+                .iter()
+                .any(|text| text.starts_with("assert_eq!(total, 12)")),
+            "{body}: {scalar:?}"
+        );
     }
     // Control: the same prelude leaves the plain form pinned, so the cases
     // above are refused by their own guards.
     let body = "let total = crate::weight(4);\n        assert_eq!(total, 12);";
     assert_eq!(
-        path_admitted(&unit_tests(LET_BOUND_PRELUDE, body), "x * 3", None),
+        path_admitted(
+            &non_scalar_unit_tests(LET_BOUND_PRELUDE, body),
+            "x * 3",
+            None
+        ),
         ["assert_eq!(total, 12);"]
     );
+}
+
+#[test]
+fn a_scalar_result_read_by_other_assertions_still_pins() {
+    // cell-0094: `weight` returns `u32`, so `total` is `Copy` with no
+    // interior mutability. Another std assertion that reads it, or a
+    // statement between the `let` and the pin, cannot change it.
+    for (body, admitted) in [
+        (
+            "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_ne!(total, 7);\n        assert_eq!(12, total);",
+            vec!["assert_eq!(12, total);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_eq!(touch_count(), 1);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(touch_count(), 1);", "assert_eq!(total, 12);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_eq!(total, 12);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);", "assert_eq!(total, 12);"],
+        ),
+        (
+            // A block between them that closes again keeps the depth.
+            "let total = crate::weight(4);\n        {\n            assert!(total > 3);\n        }\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);"],
+        ),
+    ] {
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let mut got = path_admitted(&lib, "x * 3", None);
+        got.retain(|text| text.contains("total"));
+        let want: Vec<_> = admitted
+            .into_iter()
+            .filter(|text| text.contains("total"))
+            .collect();
+        assert_eq!(got, want, "{body}");
+        // The non-scalar owner keeps the next-statement guard: only an
+        // assertion right after the `let` with no other use pins.
+        let lib = non_scalar_unit_tests(LET_BOUND_PRELUDE, body);
+        let mut got = path_admitted(&lib, "x * 3", None);
+        got.retain(|text| text.contains("total"));
+        assert!(got.len() <= 1, "{body}: {got:?}");
+        assert!(
+            !body.contains("total > 3") || got.is_empty(),
+            "{body}: {got:?}"
+        );
+    }
+    for body in [
+        // A use outside an assertion, or in a macro that is not a std
+        // assertion, may rebind or shadow the name.
+        "let total = crate::weight(4);\n        touch(&total);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        println!(\"{}\", total);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        {\n            const total: u32 = 12;\n            assert_eq!(total, 12);\n        }",
+        // Still bound once, immutably, before every use.
+        "let mut total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);",
+        "assert!(total > 3);\n        let total = crate::weight(4);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        assert!(total > 3);\n        let total = 12;\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        assert!([1].iter().all(|total| *total > 0));\n        assert_eq!(total, 12);",
+        // The pin compares the result with itself.
+        "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, total);",
+        // The `let` sits in a block the assertion is outside of, so
+        // `total` there names the module's `const` (cell-0094 review).
+        "{\n            let total = crate::weight(4);\n            assert!(total > 3);\n        }\n        assert_eq!(total, 12);",
+        "if false {\n            let total = crate::weight(4);\n        }\n        assert_eq!(total, 12);",
+        "let _f = || {\n            let total = crate::weight(4);\n        };\n        assert_eq!(total, 12);",
+        // A deeper block may import another `total` over the binding.
+        "let total = crate::weight(4);\n        {\n            use super::*;\n            assert_eq!(total, 12);\n        }",
+        "let total = crate::weight(4);\n        { use super::*;\n        assert_eq!(total, 12); }",
+        "let total = crate::weight(4);\n        assert!(total > 3); { use super::*; assert_eq!(total, 12); }",
+        // A path-qualified or crate-specific assertion macro.
+        "let total = crate::weight(4);\n        std::assert!(total > 3);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        prop_assert!(total > 3);\n        assert_eq!(total, 12);",
+    ] {
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let got = path_admitted(&lib, "x * 3", None);
+        assert!(
+            !got.iter().any(|text| text.contains("assert_eq!(total")),
+            "{body}: {got:?}"
+        );
+    }
+}
+
+#[test]
+fn a_shadowed_primitive_return_is_not_a_scalar() {
+    // A same-named item or import makes `u32` name another type, which may
+    // hold interior mutability, so the shared-handle guard comes back.
+    let body = "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);";
+    for prelude in [
+        "#[allow(non_camel_case_types)]\npub struct u32(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type u32 = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as u32;\n",
+        // #7835 review: a raw identifier declares the same name.
+        "#[allow(non_camel_case_types)]\npub struct r#u32(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type r#u32 = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as r#u32;\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert!(lib.starts_with(prelude), "{lib}");
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{prelude}");
+    }
+    // Matched controls: the same items under another name, and a cast to
+    // the primitive, leave it a scalar.
+    for prelude in [
+        "#[allow(non_camel_case_types)]\npub struct gauge(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type gauge = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as gauge;\n",
+        "#[allow(non_camel_case_types)]\npub type r#gauge = std::cell::Cell<u64>;\n",
+        "pub fn widen(x: u8) -> u64 {\n    x as u64 + 0 as u32 as u64\n}\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(
+            path_admitted(&lib, "x * 3", None),
+            ["assert_eq!(total, 12);"],
+            "{prelude}"
+        );
+    }
 }
 
 #[test]
@@ -6376,8 +6518,15 @@ fn review_holes_in_path_and_let_bound_pins_stay_closed() {
         "let same = crate::weight(4) * 1;\n        assert_eq!(crate::weight(4), same);",
         "let a = crate::weight(4);\n        let b = a;\n        assert_eq!(crate::weight(4), b);",
     ] {
-        let lib = unit_tests("fn tick() {}\n", body);
+        // `-> Wt`: a statement between a scalar's `let` and its assertion
+        // cannot change it (cell-0094), so the guard is read off a
+        // non-scalar owner.
+        let lib = non_scalar_unit_tests("fn tick() {}\n", body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        if !body.contains("tick();") {
+            let lib = unit_tests("fn tick() {}\n", body);
+            assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        }
     }
 }
 
@@ -6554,9 +6703,15 @@ fn a_bound_method_result_pins_like_the_method_call() {
         admitted("let n = c.tally();\n    assert_eq!(n, 1);"),
         ["assert_eq!(n, 1);"]
     );
+    // `tally` returns `u32`: a statement between the `let` and the pin
+    // cannot change the copied result (cell-0094).
+    assert_eq!(
+        admitted("let n = c.tally();\n    drop(c);\n    assert_eq!(n, 1);"),
+        ["assert_eq!(n, 1);"]
+    );
     for body in [
         "let mut n = c.tally();\n    n += 0;\n    assert_eq!(n, 1);",
-        "let n = c.tally();\n    drop(c);\n    assert_eq!(n, 1);",
+        "let n = c.tally();\n    touch(n);\n    assert_eq!(n, 1);",
         "let n = c.tally() + 0;\n    assert_eq!(n, 1);",
     ] {
         assert!(admitted(body).is_empty(), "{body}");
