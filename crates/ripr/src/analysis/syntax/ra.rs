@@ -2364,13 +2364,14 @@ fn extract_parser_oracles(
             continue;
         };
         // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
-        // and read smoke; an `unwrap_err()` whose value is never compared
+        // and read smoke; an `unwrap_err()` or `expect_err(..)` whose value
+        // is never compared
         // panics on the `Ok` side, so it observes the `Err` side
         // (decision 2). Its statement shape is decided by the same
         // `uncompared_unwrap_err` the line scanner uses.
         let (kind, strength) = match name.as_str() {
             "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
-            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+            "unwrap_err" | "expect_err" if uncompared_unwrap_err_statement(&method_call, text) => {
                 (OracleKind::BroadError, OracleStrength::Weak)
             }
             _ => continue,

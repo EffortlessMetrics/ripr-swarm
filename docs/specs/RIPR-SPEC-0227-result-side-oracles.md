@@ -346,14 +346,20 @@ Source: `check` as in Problem.
   assertion compares adds nothing, and a method on the error is not
   admitted). Corpus: `spec0227-check-variant-bare-unwrap-err` (example 7)
   reads `weakly_exposed` with that oracle.
-- Planned: oracle-scan unit tests for `should_panic`. A bare
-  `expect_err(..)` keeps its older `expect_` admission, which reads it as
-  `mock_expectation` / medium; #7604 tracks reading it as decision 2 does.
+- Decision 2, bare `expect_err(..)`:
+  `classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err`
+  (both adapters read it exactly as `unwrap_err()`; `.expect_err(<message>)`
+  and `expect_` text inside strings or comments no longer satisfy the
+  `expect_` mock-expectation name sniff, while a mock's own `expect_*` call,
+  including mockall's zero-argument `expect_err()`, still does) (#7604).
+  A multi-line statement reads only on the parser path (#7955).
+- Planned: oracle-scan unit tests for `should_panic`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs` and `classify.rs`: read
-  bare `unwrap_err()` and `should_panic` as result-side oracles.
+  bare `unwrap_err()`, `expect_err(..)` and `should_panic` as result-side
+  oracles.
   `scan.rs::uncompared_unwrap_err` decides which `unwrap_err()` statements
   are uncompared; the line scanner and the parser path's method-call scan
   (`syntax/ra.rs`, beside `unwrap()` / `expect()` as `smoke_only`) both admit
