@@ -307,7 +307,8 @@ Two pattern terms are used below.
    (`matches!(..).eq(&false)`, `({ matches!(..) }).then(|| false).unwrap_or(true)`;
    a method after a call or closure that takes the `matches!` is the call's,
    and an `eq`/`ne` chain against literals that keeps the pattern's polarity,
-   `matches!(..).eq(&true)`, asserts the pattern), an
+   `matches!(..).eq(&true)`, asserts the pattern when it is the whole
+   condition; asserted false, behind a call or inside a chain it caps), an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
    directly or through nested calls), or inside the condition or
