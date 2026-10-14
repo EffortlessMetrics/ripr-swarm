@@ -102,6 +102,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// ...). An immutable `let` of its result is `Copy` with no interior
     /// mutability, so no later statement can change it (cell-0094).
     returns_scalar: bool,
+    /// A [`Self::returns_scalar`] owner whose return type is a built-in
+    /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
+    /// meaning on it (trap-ceiling-wide-min-control).
+    returns_integer: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -1705,6 +1709,9 @@ impl OwnerReturnPin {
             path,
             returns_bool,
             returns_scalar: returns_primitive_scalar(owner, index),
+            returns_integer: returns_primitive_scalar(owner, index)
+                && declared_return_type(&owner.body)
+                    .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1789,6 +1796,7 @@ impl OwnerReturnPin {
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1886,6 +1894,7 @@ impl OwnerReturnPin {
             }),
             returns_bool: false,
             returns_scalar: false,
+            returns_integer: false,
             awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -1962,7 +1971,21 @@ impl OwnerReturnPin {
                             .map(|call| (call, operands[other]))
                     })
                 })
-                .flatten();
+                .flatten()
+                // trap-ceiling-wide-min-control / trap-muffle-times-one-control:
+                // a projection that keeps every value of an integer owner the
+                // literal expected value can name.
+                .or_else(|| {
+                    (self.returns_integer && matches!(self.path, ReturnPathGate::Any) && !renders)
+                        .then(|| {
+                            [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                                exact_integer_projection(operands[at], operands[other])
+                                    .and_then(|call| self.awaited_call_shape(call, &self.name))
+                                    .map(|call| (call, operands[other]))
+                            })
+                        })
+                        .flatten()
+                });
             match (
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
@@ -6793,6 +6816,58 @@ fn rendered_scalar_operand(operand: &str) -> Option<&str> {
         [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
         _ => None,
     }
+}
+
+const INTEGER_TYPES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
+
+/// trap-ceiling-wide-min-control: the call inside `operand` when the
+/// projection still pins it against the literal `expected` value `e`:
+/// `call.min(k)` with `e < k` (a result of `e` below the bound means the
+/// call returned `e`), `call.max(k)` with `e > k`, and `call * 1`,
+/// `1 * call`, `call + 0` or `0 + call`, which keep every value. Both
+/// numbers are plain decimal literals; anything else refuses.
+fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a str> {
+    let decimal = |text: &str| -> Option<u128> {
+        let text = text.trim();
+        (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+            .then(|| text.replace('_', "").parse().ok())
+            .flatten()
+    };
+    let expected = decimal(expected)?;
+    let operand = operand.trim();
+    for (method, keeps) in [
+        (
+            ".min(",
+            (|e: u128, k: u128| e < k) as fn(u128, u128) -> bool,
+        ),
+        (".max(", |e, k| e > k),
+    ] {
+        if let Some(at) = operand.rfind(method)
+            && let Some(bound) = operand[at + method.len()..].strip_suffix(')')
+            && let Some(bound) = decimal(bound)
+        {
+            return keeps(expected, bound).then_some(&operand[..at]);
+        }
+    }
+    let after = |text: &'a str, operator: char, identity: char| {
+        text.strip_suffix(identity)?
+            .trim_end()
+            .strip_suffix(operator)
+            .map(str::trim_end)
+    };
+    let before = |text: &'a str, operator: char, identity: char| {
+        text.strip_prefix(identity)?
+            .trim_start()
+            .strip_prefix(operator)
+            .map(str::trim_start)
+    };
+    after(operand, '*', '1')
+        .or_else(|| after(operand, '+', '0'))
+        .or_else(|| before(operand, '*', '1'))
+        .or_else(|| before(operand, '+', '0'))
+        .filter(|call| !call.is_empty())
 }
 
 /// A plain `"..."` string literal with no escapes or inner quotes.

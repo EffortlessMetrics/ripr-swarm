@@ -1328,6 +1328,27 @@ it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
 qualified `expect_test::expect!`, and every `insta` macro stay
 `snapshot` / medium.
 
+### Exact integer projections
+
+For an owner whose declared return type is a built-in integer under the
+cell-0094 primitive-scalar check, `assert_eq!` on these projections of the
+owner call against a plain decimal literal `e` pins the call
+(trap-ceiling-wide-min-control, trap-muffle-times-one-control):
+
+1. `call.min(k)` with `e < k`: a result below the bound is the call's own
+   value, and any other value yields either itself or `k`, both unlike `e`.
+2. `call.max(k)` with `e > k`, symmetrically.
+3. `call * 1`, `1 * call`, `call + 0` and `0 + call`, which keep every
+   value.
+
+`k` and `e` are plain decimal literals (`_` separators allowed): a
+constant, a suffix, a hex literal or a negative number refuses. The call
+is the owner call shape of rule 1 with nothing else around it; chained
+projections, `assert_ne!` and `assert!` stay refused. The trap twins stay
+gaps: `cap(2).min(1) == 1` clamps (`e == k`) and `dampen(2) * 0 == 0`
+keeps no value. Residuals: a `#![no_implicit_prelude]` file whose own trait
+supplies `min`, and a generic parameter named like the integer type.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -1742,7 +1763,8 @@ assertions. This repair shares the existing callback without that larger migrati
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
   (`a_scalar_rendering_compared_with_exact_text_pins`,
-  `each_refusal_names_the_gate_that_failed`);
+  `each_refusal_names_the_gate_that_failed`); exact integer projections
+  (`an_integer_projection_that_keeps_the_value_pins`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
   `T::name(..)` calls (#6617:
