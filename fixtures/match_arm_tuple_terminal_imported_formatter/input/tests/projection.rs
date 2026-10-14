@@ -11,5 +11,3 @@ fn terminal_projection_0() {
     assert_eq!(terminal.2, vec!["request-1".to_string()]);
     assert_eq!(terminal.3, vec!["receipt-1".to_string()]);
 }
-
-

@@ -85,4 +85,3 @@ fn terminal_proof_receipt_status(receipt: &ProofReceipt) -> Result<String> {
     }
     Ok(receipt.result.clone())
 }
-
