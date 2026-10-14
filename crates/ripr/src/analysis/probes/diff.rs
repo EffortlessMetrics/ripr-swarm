@@ -1048,44 +1048,68 @@ fn short_name_matches_added(
     !removed_short.is_empty() && removed_short == added_short
 }
 
-fn short_pairing_code(text: &str) -> &str {
-    let cut = match (text.find("//"), text.find("/*")) {
-        (Some(a), Some(b)) => a.min(b),
-        (Some(a), None) => a,
-        (None, Some(b)) => b,
-        (None, None) => return text,
-    };
-    match text.get(..cut) {
-        Some(code) => code,
-        None => text,
-    }
-}
-
 /// Identifier-like tokens of one or two characters used only when a line
 /// has no long pairing name. Keywords (`if`, `fn`, `as`, `in`) and pure
 /// digits or underscores are not names, so they cannot pair unrelated
-/// lines that merely share punctuation or literals. Comment text is not
-/// a pairing name.
+/// lines that merely share punctuation or literals. Comments and the
+/// contents of character or string literals are not pairing names; code
+/// after a block comment still is.
 fn short_pairing_tokens(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
     let mut tokens = Vec::new();
     let mut current = String::new();
-    for ch in short_pairing_code(text).chars() {
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        let next = chars.get(index + 1).copied();
+        if ch == '/' && next == Some('/') {
+            break;
+        }
+        if ch == '/' && next == Some('*') {
+            take_short_pairing_token(&mut current, &mut tokens);
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            index = index.saturating_add(2);
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            take_short_pairing_token(&mut current, &mut tokens);
+            let quote = ch;
+            index += 1;
+            while index < chars.len() {
+                if chars[index] == '\\' {
+                    index = index.saturating_add(2);
+                    continue;
+                }
+                if chars[index] == quote {
+                    index += 1;
+                    break;
+                }
+                index += 1;
+            }
+            continue;
+        }
         if ch.is_alphanumeric() || ch == '_' {
             current.push(ch);
-        } else if !current.is_empty() {
-            if is_short_pairing_token(&current) {
-                tokens.push(std::mem::take(&mut current));
-            } else {
-                current.clear();
-            }
+        } else {
+            take_short_pairing_token(&mut current, &mut tokens);
         }
+        index += 1;
     }
-    if is_short_pairing_token(&current) {
-        tokens.push(current);
-    }
+    take_short_pairing_token(&mut current, &mut tokens);
     tokens.sort();
     tokens.dedup();
     tokens
+}
+
+fn take_short_pairing_token(current: &mut String, tokens: &mut Vec<String>) {
+    if is_short_pairing_token(current) {
+        tokens.push(std::mem::take(current));
+    } else {
+        current.clear();
+    }
 }
 
 fn is_short_pairing_token(token: &str) -> bool {
@@ -3268,6 +3292,46 @@ mod tests {
             probes
                 .iter()
                 .any(|probe| probe.expression.starts_with("if y >= 0 {")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// Character-literal contents are not pairing names, so `if x == 'a' {`
+    /// to `if x == 'b' {` is still one replacement.
+    #[test]
+    fn short_name_char_literal_replacement_does_not_repeat_the_removed_predicate() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x == 'a' {", "    if x == 'b' {", 6),
+            &RustIndex::default(),
+        );
+        assert_eq!(
+            probes.len(),
+            1,
+            "char-literal replacement must keep one probe: {probes:?}"
+        );
+        assert_eq!(probes[0].family, ProbeFamily::Predicate);
+        assert_eq!(probes[0].before.as_deref(), Some("if x == 'a' {"));
+        assert_eq!(probes[0].after.as_deref(), Some("if x == 'b' {"));
+    }
+
+    /// A block comment must not hide later code names, so `y` vs `z` after
+    /// `/* */` stays a renamed binding.
+    #[test]
+    fn short_name_pairing_reads_code_after_a_block_comment() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x /* n */ && y {", "    if x /* n */ && z {", 6),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("&& y") && probe.after.is_none() }),
+            "code after a block comment must keep a renamed binding: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("&& z")),
             "the added predicate must still be probed: {probes:?}"
         );
     }
