@@ -1,0 +1,12 @@
+diff --git a/src/errorsOneLine.ts b/src/errorsOneLine.ts
+index 0000000..1111111 100644
+--- a/src/errorsOneLine.ts
++++ b/src/errorsOneLine.ts
+@@ -2,6 +2,6 @@
+ export class Forbidden extends Error {}
+ 
+ export function errorForOneLine(status: number): Error {
+-  if (status === 404) { return new NotFound("missing"); }
++  if (404 === status) { return new NotFound("missing"); }
+   return new Forbidden("denied");
+ }

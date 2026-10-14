@@ -1,0 +1,10 @@
+diff --git a/src/announceRetry.ts b/src/announceRetry.ts
+index 0000000..1111111 100644
+--- a/src/announceRetry.ts
++++ b/src/announceRetry.ts
+@@ -1,4 +1,4 @@
+ export function announceRetry(id: number, send: (message: string) => void): void {
+-  send("order " + id);
++  send("order " + (id + 1));
+   send("order " + id);
+ }
