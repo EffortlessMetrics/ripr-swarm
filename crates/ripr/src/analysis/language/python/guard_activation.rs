@@ -391,10 +391,10 @@ fn line_rebinds_parameter(line: &str, name: &str) -> bool {
         // also covers chained (`other = total = 2000`) and reversed
         // destructuring (`other, total = 2000, 0`) targets, where the name
         // is followed directly by the assignment operator.
-        if let Some(after) = rest.strip_prefix('=') {
-            if !after.starts_with('=') {
-                return true;
-            }
+        if let Some(after) = rest.strip_prefix('=')
+            && !after.starts_with('=')
+        {
+            return true;
         }
         // Augmented assignments, single- and multi-character
         // (`+=`, `**=`, `//=`, `>>=`, `|=`, ..).
