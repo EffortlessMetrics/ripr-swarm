@@ -109,7 +109,9 @@ or `Err` (or `Some` or `None`):
   reads nothing. A parenthesized group is read through, not skipped:
   `(check(x)).unwrap_err()` and `(check(x).map_err(f)).unwrap_err()` read
   the call, while `(check(x).and(Err(E::Other))).unwrap_err()` reads
-  nothing;
+  nothing. The call is on a plain path (raw identifiers such as `r#check`
+  and a `::<..>` turbofish included); a group around a comparison, range,
+  jump or tuple, or nested more than eight deep, reads nothing;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
 - `#[should_panic]` without `expected`, only when unwrapping the owner result
   with `unwrap()` or `expect()` is the sole possible panic source on the

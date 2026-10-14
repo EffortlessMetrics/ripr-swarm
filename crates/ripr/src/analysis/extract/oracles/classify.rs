@@ -1661,6 +1661,25 @@ fn ok_literal() {
                 "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
                 vec![],
             ),
+            // A group around a comparison, jump, range or tuple is not a
+            // call.
+            (
+                "grouped_comparison",
+                "(a < check(300)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_return",
+                "(return check(300)).unwrap_err();",
+                vec![],
+            ),
+            ("grouped_range", "(a..check(300)).unwrap_err();", vec![]),
+            ("grouped_tuple", "(x < y, check(300)).unwrap_err();", vec![]),
+            (
+                "turbofish_path",
+                "(Api::<A, B>::check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
             ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
             (
                 "turbofish_call",

@@ -2460,9 +2460,18 @@ fn is_call_path(callee: &str) -> bool {
                 && (index == 1 || !is_ident_byte(bytes[index - 2]))
                 && bytes
                     .get(index + 1)
-                    .is_some_and(|next| is_ident_byte(*next)))
+                    .is_some_and(|next| next.is_ascii_alphabetic() || *next == b'_'))
     });
+    // Outside a `::<..>` turbofish, a path has no spaces, commas, angle
+    // brackets or `..`: `(a < check(x))`, `(return check(x))` and
+    // `(a..check(x))` group a comparison, a jump or a range, not a call.
+    let path = callee.split("::<").next().unwrap_or(callee);
+    let plain_path = !path.contains("..")
+        && path
+            .bytes()
+            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'#'));
     raw_prefix_only
+        && plain_path
         && bytes.first().is_some_and(|b| is_ident_byte(*b))
         && bytes
             .last()
@@ -4922,5 +4931,46 @@ mod asserted_err_arm_tests {
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }
+    }
+}
+
+#[cfg(test)]
+mod call_path_tests {
+    use super::is_call_path;
+
+    #[test]
+    fn raw_identifier_prefix_must_name_a_segment() {
+        for callee in [
+            "r#check",
+            "svc.r#match",
+            "Api::<A, B>::check",
+            "check::<u8>",
+        ] {
+            assert!(is_call_path(callee), "{callee}");
+        }
+        for callee in [
+            "r#",
+            "r#123",
+            "#check",
+            "r#.check",
+            "br#check",
+            "a < check",
+            "a..check",
+        ] {
+            assert!(!is_call_path(callee), "{callee}");
+        }
+    }
+
+    #[test]
+    fn grouping_is_read_through_eight_deep_and_refused_past_it() {
+        let grouped = |depth: usize| {
+            format!(
+                "{}check(300){}.unwrap_err()",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )
+        };
+        assert!(super::receiver_keeps_call_error(&grouped(8)));
+        assert!(!super::receiver_keeps_call_error(&grouped(9)));
     }
 }
