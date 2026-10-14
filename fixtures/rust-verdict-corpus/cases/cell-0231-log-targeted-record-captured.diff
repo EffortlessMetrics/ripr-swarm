@@ -1,5 +1,5 @@
 diff --git a/src/lib.rs b/src/lib.rs
-index 5fbeb4b..a7a0c39 100644
+index 01b5b57..4a419e5 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -9,7 +9,7 @@ pub fn settle(amount: u32) {

@@ -56,4 +56,17 @@ mod tests {
         let lines = logger.0.lock().map(|l| l.clone()).unwrap_or_default();
         assert!(lines.iter().any(|l| l == "opened 8"), "{lines:?}");
     }
+
+    #[test]
+    fn quote_logs_the_raw_record() {
+        let logger = capture();
+        quote(5);
+        let lines = logger.0.lock().map(|l| l.clone()).unwrap_or_default();
+        assert!(lines.iter().any(|l| l == r#"said "quoted 10" twice"#), "{lines:?}");
+    }
+}
+
+/// Logs a record with embedded quotes; its test asserts it with a raw literal.
+pub fn quote(amount: u32) {
+    log::info!("said \"quoted {}\" twice", amount + 5);
 }
