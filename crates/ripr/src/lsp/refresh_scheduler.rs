@@ -454,6 +454,22 @@ impl RefreshScheduler {
         state.active.is_none() && state.pending_latest.is_none()
     }
 
+    /// Whether the session already holds refresh state: an active, pending,
+    /// or completed analysis. A didOpen whose buffer matches the persisted
+    /// saved bytes adds no saved-workspace input, so when this is true its
+    /// interactive refresh may skip instead of superseding the snapshot the
+    /// evidence readers cite. A fresh session answers `false` — the first
+    /// opened document must still establish the session's analysis (#7408
+    /// matrix: full seam evidence must survive opening an unchanged file).
+    /// An unreadable lock reads as `true` so the conservative route is the
+    /// interactive refresh, never a silently skipped first analysis.
+    pub(super) fn has_analysis_state(&self) -> bool {
+        let Ok(state) = self.state.lock() else {
+            return true;
+        };
+        state.active.is_some() || state.pending_latest.is_some() || state.last_completed.is_some()
+    }
+
     /// Whether `stop()` shut the scheduler down. A stopped refresh must not
     /// roll back (republish previous diagnostics): shutdown owns the terminal
     /// empty publish and a rollback after it would resurrect stale client

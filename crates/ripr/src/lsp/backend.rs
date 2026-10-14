@@ -2981,6 +2981,25 @@ impl Backend {
             .map(|mut documents| (uri, documents.open(params)))
     }
 
+    /// Whether the document opened by the just-processed `didOpen` already
+    /// matches the persisted saved bytes the store recorded for it. A failed
+    /// store lock is treated as a changed input: the conservative route is
+    /// the interactive refresh, never silently skipping it.
+    fn open_document_matches_saved_content(&self, uri: &Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .map(|documents| documents.open_matches_persisted_saved_content(uri))
+            .unwrap_or(false)
+    }
+
+    /// Whether the refresh scheduler already holds analysis state (active,
+    /// pending, or completed). A failed lock reads as state present so the
+    /// conservative route is the interactive refresh.
+    fn refresh_scheduler_has_analysis_state(&self) -> bool {
+        self.refresh_scheduler.has_analysis_state()
+    }
+
     fn change_document(
         &self,
         params: DidChangeTextDocumentParams,
@@ -5340,9 +5359,27 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.advance_workspace_revision();
+        // #1908's principle applied to open: a didOpen whose buffer already
+        // matches the persisted saved bytes recorded at open carries no new
+        // saved-workspace input (the analysis reads persisted bytes). When
+        // the session already holds refresh state, such an open neither
+        // advances the workspace revision nor schedules an interactive
+        // refresh: superseding a completed full-seam snapshot with a
+        // same-input deferred snapshot withdrew real seam evidence
+        // mid-journey and made every subsequent evidence-reading command
+        // (collectContext, rooted copies) disclose staleness (#7408 matrix).
+        // A fresh session still refreshes so the first opened document
+        // establishes the session's analysis, and a diverging recovered
+        // buffer, an unreadable saved identity, or a failed store lock all
+        // keep today's interactive refresh.
+        let open_matches_saved = self.open_document_matches_saved_content(&uri);
+        let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if open_matches_saved && session_has_analysis {
+            return;
+        }
+        self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         // Diff-scoped findings are complete; seams run on explicit refresh only.
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidOpen)

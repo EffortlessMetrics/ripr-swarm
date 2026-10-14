@@ -5,7 +5,7 @@ import * as path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
-import { assertActionTargets, assertContextPacket, RootExpectation } from '../multiRootAssertions';
+import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
 
 // Read observations from the activated controller without supplying a runtime,
 // resolver, client, root selector, status producer or diagnostic collection.
@@ -97,9 +97,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       const extension = vscode.extensions.getExtension('effortlessmetrics.ripr');
       assert.ok(extension, 'real extension must be installed in this host');
       // Load from the extension actually under test, including an extracted
-      // VSIX when the caller supplies RIPR_TEST_EXTENSION_PATH.
-      const { RiprClientController } = require(path.join(extension.extensionPath, 'out/src/client')) as typeof import('../../src/client');
-      deactivateActual = (require(path.join(extension.extensionPath, 'out/src/extension')) as typeof import('../../src/extension')).deactivate;
+      // VSIX when the caller supplies RIPR_TEST_EXTENSION_PATH. The module
+      // must be the instance the running controller was constructed from: a
+      // Windows host can spell the development path with a different
+      // drive-letter case than the activation loader used, so resolve the
+      // module cache case-insensitively before falling back to a fresh
+      // require that would observe a class the extension never uses.
+      const { RiprClientController } = requireExtensionModule(extension.extensionPath, 'out/src/client') as typeof import('../../src/client');
+      deactivateActual = (requireExtensionModule(extension.extensionPath, 'out/src/extension') as typeof import('../../src/extension')).deactivate;
       const originalShowStatus = RiprClientController.prototype.showStatus;
       RiprClientController.prototype.showStatus = function () {
         controller = this as unknown as ControllerObservation;
@@ -235,15 +240,43 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       // Interactive save refreshes deliberately defer expensive seam evidence.
       // Drive the existing public full-refresh command; it does not select roots.
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      const statusAfterRefresh = await bounded(client.sendRequest('workspace/executeCommand', {
+        command: 'ripr.collectWorkspaceStatus', arguments: [],
+      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string } };
+      const attemptAfterFirstRefresh = statusAfterRefresh.analysis_status?.attempt_id;
       const status = await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
       }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
-      assert.strictEqual(status.analysis_status?.effective_root, expected.root);
+      // The server's status projects its canonical root spelling (forward
+      // slashes on every host); identity compares separators-insensitively.
+      assert.strictEqual(status.analysis_status?.effective_root?.replace(/\\/g, '/'),
+        expected.root.replace(/\\/g, '/'));
       assert.strictEqual(status.analysis_status?.root_state, 'selected_single_root');
       const uri = vscode.Uri.file(path.join(expected.root, expected.source));
       await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'ripr'
         && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped'),
-        `nonempty real seam diagnostics at ${uri}`);
+      `nonempty real seam diagnostics at ${uri}`, 60_000, async () => {
+        // Dissect a seam timeout: run the refresh command once more directly,
+        // then report whether a subsequent explicit refresh produces the seam
+        // evidence (server path) or not (negotiation/provisioning path).
+        const before = vscode.languages.getDiagnostics(uri).filter(d => d.source === 'ripr').length;
+        await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+        await new Promise(resolve => setTimeout(resolve, 10_000));
+        const after = vscode.languages.getDiagnostics(uri).filter(d => d.source === 'ripr').map(d =>
+          `${typeof d.code === 'object' ? d.code.value : d.code}`);
+        const status = await client.sendRequest('workspace/executeCommand', {
+          command: 'ripr.collectWorkspaceStatus', arguments: [],
+        }) as { analysis_status?: Record<string, unknown> };
+        return JSON.stringify({
+          ripr_diag_before: before, ripr_diag_after_retry: after,
+          attempt_after_first_refresh: attemptAfterFirstRefresh,
+          attempt: (status.analysis_status as { attempt_id?: string })?.attempt_id,
+          run_status: (status.analysis_status as { run_status?: string })?.run_status,
+          profile: (status.analysis_status as { diagnostic_profile?: string })?.diagnostic_profile,
+          components: (status.analysis_status as { components?: Array<{ component: string; state: string; kind: string | null }> })
+            ?.components?.map(c => `${c.component}:${c.state}${c.kind ? `(${c.kind})` : ''}`),
+        });
+      });
       assertOnlyRootDiagnostics(expected.root);
       assert.strictEqual(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(other.root, other.source)))
         .filter(d => d.source === 'ripr').length, 0, 'other root must have no retained diagnostics');
@@ -266,18 +299,29 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       const related = commands.find(c => c.command === 'ripr.openRelatedTest');
       assert.ok(context && related, 'context and related-test actions must be produced by real LSP');
       const relatedTarget = related.arguments?.[0] as { uri?: string; test_name?: string };
-      assert.strictEqual(relatedTarget.uri, vscode.Uri.file(path.join(expected.root, expected.relatedTest)).toString());
+      assert.strictEqual(normalizeUriSpelling(relatedTarget.uri ?? ''),
+        vscode.Uri.file(path.join(expected.root, expected.relatedTest)).toString());
       assert.ok(expected.testNames.includes(relatedTarget.test_name ?? ''), JSON.stringify(related));
       await vscode.commands.executeCommand(related.command, ...(related.arguments ?? []));
       const editor = vscode.window.activeTextEditor;
-      assert.strictEqual(editor?.document.uri.toString(), relatedTarget.uri);
+      assert.strictEqual(editor?.document.uri.toString(), normalizeUriSpelling(relatedTarget.uri ?? ''));
       assert.strictEqual(editor!.document.getText().replace(/\r\n/g, '\n'), expected.testContents);
       assert.strictEqual(editor!.selection.active.line, 3 + 5 * expected.testNames.indexOf(relatedTarget.test_name!));
       assert.strictEqual(editor!.document.lineAt(editor!.selection.active.line).text,
         `fn ${relatedTarget.test_name}() {`, 'navigation must land on the actual expected declaration');
       await vscode.commands.executeCommand(context.command, ...(context.arguments ?? []));
       const packet = await vscode.env.clipboard.readText();
-      assertContextPacket(JSON.parse(packet), expected);
+      let parsedPacket: unknown;
+      try {
+        parsedPacket = JSON.parse(packet);
+      } catch (error) {
+        const status = await client.sendRequest('workspace/executeCommand', {
+          command: 'ripr.collectWorkspaceStatus', arguments: [],
+        }) as { analysis_status?: Record<string, unknown> };
+        throw new Error(`context copy produced non-JSON clipboard ${JSON.stringify(packet)}: ${String(error)}`
+          + ` status=${JSON.stringify(status.analysis_status)}`);
+      }
+      assertContextPacket(parsedPacket, expected);
       const rootedCommands = commands.filter(c => c.command.startsWith('ripr.copy')
         && typeof c.arguments?.[0]?.command === 'string');
       for (const command of rootedCommands) {
@@ -301,6 +345,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         'cached navigation must not open a stale root target');
     }
   });
+}
+
+function requireExtensionModule(extensionPath: string, relative: string): unknown {
+  const resolved = require.resolve(path.join(extensionPath, relative));
+  const cached = Object.keys(require.cache)
+    .find(key => key.toLowerCase() === resolved.toLowerCase());
+  const loaded = cached ? require.cache[cached]?.exports : undefined;
+  return loaded ?? require(resolved);
 }
 
 function riprDiagnostics(): Array<[vscode.Uri, vscode.Diagnostic[]]> {
@@ -365,10 +417,19 @@ async function cleanupOwnedProcess(observed: ProcessObservation): Promise<void> 
   }
 }
 
-async function waitFor(predicate: () => boolean, label: string, timeout = 60_000): Promise<void> {
+async function waitFor(predicate: () => boolean, label: string, timeout = 60_000,
+  context?: () => Promise<string> | string): Promise<void> {
   const deadline = Date.now() + timeout;
   while (!predicate()) {
-    if (Date.now() >= deadline) { throw new Error(`timed out: ${label}`); }
+    if (Date.now() >= deadline) {
+      let suffix = '';
+      try {
+        suffix = context ? ` context=${await context()}` : '';
+      } catch {
+        suffix = ' context=<unavailable>';
+      }
+      throw new Error(`timed out: ${label}${suffix}`);
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
 }

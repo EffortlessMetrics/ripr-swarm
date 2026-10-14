@@ -177,6 +177,46 @@ suite('Workspace Root Binding Controller', () => {
     } finally { await stopServerOnce(h.controller); }
   });
 
+  test('a stale seam-evidence disclosure fails closed instead of pasting a packet', async () => {
+    const h = harness();
+    const clipboard: { text?: string } = {};
+    const pasted = (): string | undefined => clipboard.text;
+    (h.runtime as { writeClipboard: (text: string) => Promise<void> }).writeClipboard =
+      async (text) => { clipboard.text = text; };
+    try {
+      await startServerOnce(h.controller);
+      // The server's typed staleness disclosure (backend lsp_seam_evidence
+      // family) is recovery guidance, not the agent-seam-packet envelope a
+      // context copy documents: it must never reach the clipboard.
+      h.setRequest(async () => ({
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'lsp_seam_evidence',
+        status: 'stale',
+        seam_id: 'cached-alpha',
+        invalidation_reason: 'the cited seam evidence belongs to an older snapshot',
+        recovery_route: 'ripr.refresh',
+        recovery_command: 'ripr.refresh'
+      }));
+      await h.controller.copyContext({ uri: vscode.Uri.file('/ws/alpha/src/alpha.rs').toString(), seam_id: 'cached-alpha' });
+      assert.strictEqual(pasted(), undefined, 'stale disclosure must not be pasted as a packet');
+      assert.match(h.infos.at(-1) ?? '', /stale/);
+      assert.match(h.infos.at(-1) ?? '', /Refresh Diagnostics/);
+
+      // Control: the current agent-seam-packet envelope still pastes.
+      h.setRequest(async () => ({
+        schema_version: '0.5',
+        scope: 'repo',
+        run_status: 'complete',
+        packets_total: 1,
+        packets: [{ file: 'src/alpha.rs' }]
+      }));
+      await h.controller.copyContext({ uri: vscode.Uri.file('/ws/alpha/src/alpha.rs').toString(), seam_id: 'cached-alpha' });
+      assert.ok(pasted()?.includes('"schema_version": "0.5"'), 'current packet must paste');
+      assert.strictEqual(h.infos.at(-1), 'Copied ripr context to clipboard.');
+    } finally { await stopServerOnce(h.controller); }
+  });
+
   test('removing another folder leaves the bound client untouched', async () => {
     const h = harness();
     try {

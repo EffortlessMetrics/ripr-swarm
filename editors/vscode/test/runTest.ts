@@ -265,6 +265,12 @@ async function main() {
         `${JSON.stringify({
           'ripr.server.path': testServerPath,
           'ripr.server.autoDownload': false,
+          // The matrix asserts real full-seam evidence (ripr-seam-weakly-gripped
+          // diagnostics, seam code actions and packets). That evidence only
+          // exists under the full diagnostic profile (RIPR-SPEC-0105 gates the
+          // seam inventory on it), so the matrix host must negotiate it
+          // explicitly instead of inheriting the actionable UI default.
+          'ripr.diagnosticProfile': 'full',
           'security.workspace.trust.enabled': false,
         }, null, 2)}\n`);
       process.env.RIPR_TEST_MULTIROOT = '1';

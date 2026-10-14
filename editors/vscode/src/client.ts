@@ -1178,7 +1178,24 @@ export class RiprClientController {
         if (!this.actionRootStillCurrent(generation, documentUri, (target) => this.copyActionRootBlocker(target))) {
           return;
         }
-        if (packet && typeof packet === 'object') {
+        if (packet && typeof packet === 'object' && !Array.isArray(packet)) {
+          // The typed seam-evidence staleness disclosure is server guidance,
+          // never clipboard content: pasting it as if it were the seam packet
+          // shipped a wrong actionable repair signal (#7408 matrix — the
+          // schema_version 0.1 `lsp_seam_evidence` family is not the
+          // agent-seam-packet 0.5 envelope the copy action documents).
+          // Fail closed instead: keep the clipboard untouched and route the
+          // user to the disclosed recovery command.
+          const disclosure = packet as Record<string, unknown>;
+          if (stringField(disclosure, 'kind') === 'lsp_seam_evidence'
+            && stringField(disclosure, 'status') === 'stale') {
+            const reason = stringField(disclosure, 'invalidation_reason')
+              ?? 'the cited seam evidence is no longer current';
+            this.runtime.showInformationMessage(
+              `ripr context is stale (${reason}). Run rippr: Refresh Diagnostics, then copy the context again.`
+            );
+            return;
+          }
           await this.runtime.writeClipboard(JSON.stringify(packet, null, 2));
           this.runtime.showInformationMessage('Copied ripr context to clipboard.');
           return;

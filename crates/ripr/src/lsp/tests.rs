@@ -9146,6 +9146,98 @@ async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
     Ok(())
 }
 
+#[tokio::test]
+async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Result<(), String> {
+    let root = unique_lsp_test_root("did-open-matching-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // The backend is deliberately authority-uninitialized: the refresh path
+    // bails before any analysis runs, keeping these revision-level
+    // assertions fast and hermetic.
+
+    // Fresh session: the first matching open must keep today's refresh path
+    // — the first opened document establishes the session's analysis — so
+    // the revision advances even though the buffer matches persisted bytes.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri.clone(),
+                "rust".to_string(),
+                1,
+                "fn persisted() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a fresh session's first matching open must keep the refresh path: revision {}",
+            backend.workspace_revision()
+        ));
+    }
+
+    // With session analysis state (a completed refresh record), the same
+    // matching open adds no saved-workspace input: it must not advance the
+    // workspace revision or supersede the snapshot evidence readers cite.
+    let state_request = backend.refresh_scheduler_for_test().request(
+        root.path().to_path_buf(),
+        crate::lsp::config::LspAnalysisConfig::default(),
+        1,
+        0,
+        RefreshScope::Full,
+        RefreshReason::ExplicitRefresh,
+    );
+    let RefreshDecision::Start(active) = state_request else {
+        return Err("fabricated state request should start".to_string());
+    };
+    backend.refresh_scheduler_for_test().finish(&active, true);
+
+    let other = root.path().join("other.rs");
+    std::fs::write(&other, "pub fn other() {}\n")
+        .map_err(|error| format!("write second fixture: {error}"))?;
+    let other_uri = crate::lsp::uri::file_uri_for_path(&other)?;
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                other_uri,
+                "rust".to_string(),
+                1,
+                "pub fn other() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 1 {
+        return Err(format!(
+            "a matching open with analysis state advanced the revision to {}",
+            backend.workspace_revision()
+        ));
+    }
+
+    // Control: a diverging (recovered dirty) buffer keeps today's
+    // interactive refresh path, including the revision advance.
+    backend
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(
+                uri,
+                "rust".to_string(),
+                2,
+                "fn diverged() {}\n".to_string(),
+            ),
+        })
+        .await;
+    if backend.workspace_revision() != 2 {
+        return Err(format!(
+            "a diverging open did not advance the revision exactly once: {}",
+            backend.workspace_revision()
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     let uri = test_uri("file:///workspace/src/lib.rs")?;

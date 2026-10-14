@@ -21,6 +21,15 @@ function object(value: unknown): ObjectValue {
   return value as ObjectValue;
 }
 
+// VS Code spells Windows drive URIs with a lowercased drive and an encoded
+// colon (`file:///f%3A/dir`), while the LSP server re-serializes the same URI
+// with an unencoded colon (`file:///f:/dir`). Both name one file, so URI
+// comparisons normalize the drive spelling instead of pinning one serializer.
+export function normalizeUriSpelling(value: string): string {
+  return value.replace(/^file:\/\/\/([A-Za-z]):\//,
+    (_match, drive: string) => `file:///${drive.toLowerCase()}%3A/`);
+}
+
 export function assertContextPacket(value: unknown, expected: RootExpectation): void {
   const envelope = object(value);
   assert.strictEqual(envelope.schema_version, '0.5');
@@ -91,7 +100,8 @@ export function assertActionTargets(commands: CommandObservation[], expected: Ro
     for (const argument of command.arguments ?? []) {
       const target = object(argument);
       if (target.uri !== undefined) {
-        assert.strictEqual(target.uri, command.command === 'ripr.openRelatedTest' ? relatedUri : sourceUri);
+        assert.strictEqual(normalizeUriSpelling(target.uri as string),
+          normalizeUriSpelling(command.command === 'ripr.openRelatedTest' ? relatedUri : sourceUri));
       }
       const artifact = commandArtifacts[command.command];
       if (artifact) {
