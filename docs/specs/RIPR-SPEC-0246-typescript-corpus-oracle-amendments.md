@@ -148,8 +148,8 @@ or drops that field. Other entries must be `key: value` pairs (a
 shorthand entry stops the rule), match in order, and hold no second
 spread and no second `k`; the object may hold no comment outside a
 string. The owner must never rebind `x` (the RIPR-SPEC-0248 rule 1
-stability check), write or delete a member of `x`, or pass `x` itself to
-a call, since the object it spreads would then not be the input the test
+stability check), write, delete or call a member of `x` (`x.reset()`
+hands `x` to the method as `this`), or pass `x` itself to a call, since the object it spreads would then not be the input the test
 wrote. An input whose `k` already holds `L` comes back equal on both
 versions, however exact the matcher is.
 
@@ -163,7 +163,8 @@ must otherwise appear only after it, as a member read, or as a whole
 argument of `expect`, of a matcher on `expect(...)` (`.toEqual(cfg)`,
 `.not.toBe(cfg)`) or of the owner call (bare, renamed or through its
 module). Any other use (a member write or `delete`, a cast, an alias, a
-helper or method call, an array or object entry, a callback or `catch`
+helper or method call, including a call of one of its members such as
+`cfg.arm()`, an array or object entry, a callback or `catch`
 parameter of the same name) makes the input unreadable, and so does an
 entry whose value is a function, which the test could call to set the
 field.

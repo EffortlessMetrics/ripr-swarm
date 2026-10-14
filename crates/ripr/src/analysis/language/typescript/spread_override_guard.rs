@@ -546,6 +546,9 @@ mod tests {
             "delete cfg.ok;",
             "Object.assign(cfg, extra);",
             "Object.defineProperty(cfg, \"ok\", d);",
+            "cfg.normalize();",
+            "cfg.items.push(1);",
+            "cfg.reset?.();",
         ] {
             assert!(written(text, false), "{text}");
         }
@@ -598,6 +601,11 @@ mod tests {
             "const cfg = { ok: true }; cfg.ok = false;",
             "const cfg = { ok: true }; cfg[\"ok\"] ||= false;",
             "const cfg = { ok: true }; delete cfg.ok;",
+            "const cfg = { name: \"bo\", arm: setOk }; cfg.arm();",
+            "const cfg = { ok: true }; cfg.list.push(1);",
+            "const cfg = { ok: true }; cfg.arm?.();",
+            "const cfg = { ok: true }; cfg.tag`x`;",
+            "const cfg = { ok: true }; foo. expect(x).toEqual(cfg);",
             "const cfg = { ok: true }; Object.assign(cfg, { ok: false });",
             // a callback parameter of the same name shadows the binding
             "const cfg = { ok: true }; [{}].forEach((cfg) => check(ready(cfg)));",

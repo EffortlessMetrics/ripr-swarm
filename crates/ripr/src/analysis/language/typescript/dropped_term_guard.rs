@@ -251,7 +251,8 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
 
 /// RIPR-SPEC-0246 rule 3: `true` when the masked text `masked` changes a
 /// member of `name` in place: it writes one (`name.k = v`, `name[k] += v`,
-/// `name.k++`), deletes one (`delete name.k`), or hands `name` to
+/// `name.k++`), deletes one (`delete name.k`), calls one (`name.k()`, which
+/// hands `name` to the callee as `this`), or hands `name` to
 /// `Object.assign` / `Object.defineProperty`. With `any_call`, passing `name`
 /// whole to any call counts too, since the callee could write a member.
 pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bool {
@@ -268,7 +269,10 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
         let after = &masked[at + name.len()..];
         if let Some(rest) = after_member_path(after) {
             let rest = rest.trim_start();
-            return rest.starts_with("++") || rest.starts_with("--") || assigns_after(rest);
+            return rest.starts_with("++")
+                || rest.starts_with("--")
+                || assigns_after(rest)
+                || calls_after(rest);
         }
         call_argument_callee(masked, at).is_some_and(|callee| {
             any_call || callee == "Object.assign" || callee == "Object.defineProperty"
@@ -279,7 +283,8 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
 /// RIPR-SPEC-0246 rule 3: `true` when the masked test body declares the
 /// test local `name` once with `const` and every other mention, all after
 /// that declaration and inside its block, only reads it: a member read
-/// (`name.k`, `name?.k`, `name[k]`, never written, incremented or deleted),
+/// (`name.k`, `name?.k`, `name[k]`, never written, incremented, deleted or
+/// called),
 /// or a whole argument of `expect`, of a matcher on `expect(...)`
 /// (`.toEqual(name)`, `.not.toBe(name)`) or of a call named exactly in
 /// `callees` (the owner, its renames and its module-qualified forms). Any
@@ -317,7 +322,10 @@ pub(crate) fn ts_local_only_read(masked: &str, name: &str, callees: &[&str]) -> 
         let after = &masked[at + name.len()..];
         if let Some(rest) = after_member_path(after) {
             let rest = rest.trim_start();
-            return !(rest.starts_with("++") || rest.starts_with("--") || assigns_after(rest));
+            return !(rest.starts_with("++")
+                || rest.starts_with("--")
+                || assigns_after(rest)
+                || calls_after(rest));
         }
         let whole = (before.ends_with('(') || before.ends_with(','))
             && after.trim_start().starts_with([',', ')']);
@@ -392,7 +400,17 @@ fn expect_matcher(masked: &str, callee: &str) -> bool {
     head[..open]
         .trim_end()
         .strip_suffix("expect")
-        .is_some_and(|before| !before.ends_with(|c: char| is_identifier_part(c) || c == '.'))
+        .is_some_and(|before| {
+            // `foo. expect(x)` is still a member call.
+            !before.ends_with(is_identifier_part) && !before.trim_end().ends_with('.')
+        })
+}
+
+/// `true` when the text after a member path calls it (`name.k()`,
+/// `name.k?.()`, `` name.k`t` ``). A method call hands `name` to the callee
+/// as `this`, so the callee can write any member of it.
+fn calls_after(rest: &str) -> bool {
+    rest.starts_with('(') || rest.starts_with("?.(") || rest.starts_with('`')
 }
 
 /// The text after a non-empty member path (`.k`, `?.k`, `[e]`, `!`, in any
@@ -403,6 +421,10 @@ fn after_member_path(after: &str) -> Option<&str> {
     loop {
         let trimmed = rest.trim_start();
         let next = if let Some(tail) = trimmed.strip_prefix("?.") {
+            if tail.trim_start().starts_with('(') {
+                // `name.k?.()` calls the member; the caller sees the call.
+                return stepped.then_some(rest);
+            }
             if tail.trim_start().starts_with('[') {
                 tail.trim_start()
             } else {
