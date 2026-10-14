@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Perl verdict corpus: 36 runtime-labeled cases across Test::More, Test2::V0
   and Test::Exception in `fixtures/perl-verdict-corpus`, each with the fact
   packet the pinned `perl-ripr-facts` producer wrote, scored by

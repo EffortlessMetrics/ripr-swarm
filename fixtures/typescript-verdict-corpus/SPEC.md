@@ -6,7 +6,7 @@ TypeScript repositories (re-authored, not copied).
 
 ## Given
 
-Eleven small authored TypeScript packages under `subjects/`, our own code
+Thirteen small authored TypeScript packages under `subjects/`, our own code
 under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
@@ -17,9 +17,13 @@ under this repository's license, grouped by test runner:
   imports, mocked and unobserved owners), `authored-ts-jest-monorepo` (a
   workspace package), `authored-ts-jest-alias` (a tsconfig `paths` alias) and
   `authored-ts-jest-mined` (default-export objects, test functions passed by
-  reference, suite factories, copy-versus-identity equality).
+  reference, suite factories, copy-versus-identity equality), plus two
+  one-test packages for RIPR-SPEC-0258's committed snapshots:
+  `authored-ts-jest-snapshot-unwritten` (no committed `.snap` file) and
+  `authored-ts-jest-snapshot-update` (a `jest -u` test script).
 - vitest: `authored-ts-vitest-orders` (vitest 5) and `authored-ts-vitest-cart`
-  (vitest 3.2).
+  (its older cases labeled under vitest 3.2.7; its `package.json` now pins
+  4.1.11).
 - mocha with chai: `authored-ts-mocha-ledger` (`expect` and `assert` styles,
   async tests, `.not`, chai `throw` with a message, `deep` equality, and a
   jest-style `toBe` swallowed by `try`/`catch`).
@@ -45,7 +49,7 @@ it as false and its reasoning names the spec example.
 Each case that labels a numbered acceptance example cites it in
 `spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-RIPR-SPEC-0252, RIPR-SPEC-0254 and RIPR-SPEC-0256. A case cites an example only when its diff and test have
+RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256 and RIPR-SPEC-0258. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
 table rather than waived. An example that lists several alternative forms or
 outcomes counts as covered when a case labels one of them; the other forms
@@ -77,7 +81,29 @@ edited package (Node 22.22.0, tsx 4.23.15, jest 30.5.2, ts-jest 29.4.14,
 typescript 5.9.3). The four `jest-mined-*-bound-local`, `-error-twice` and
 `-name-only` rewrites list, hand-applied, the mutant set StrykerJS listed
 for the same line in `jest-mined-tobeinstanceof` and
-`jest-mined-tomatchobject-field`.
+`jest-mined-tomatchobject-field`. The 37 `*-spec0246-*` to `*-spec0256-*`
+cases added after them were labeled the same way, in new source and test
+files so no older case's truth could move; the five
+`jest-spec0249-ex0[3-8]-*` rewrites list, hand-applied, the same StrykerJS
+set for their `if` line (with the block and string mutants a one-line `if`
+adds), `jest-spec0248-drop-literal-zero` lists the arithmetic mutant
+StrykerJS makes of its `+`, and the `vitest-spec0254-*` cases ran vitest
+4.1.11, the version the cart subject's `package.json` pins today; the cart's
+older cases keep the 3.2.7 labels recorded above. In `jest-spec0246-ex09-async-foreach` no test reports a failure:
+the discarded async callback's failing `expect` is an unhandled rejection
+that ends the jest process with exit code 1. The test command fails, which
+is what counts as detection, but no test is named as failing, and the case's
+`failing_test` says so rather than naming the test whose callback raised it
+(#7734).
+
+The five `jest-spec0258-*` cases came last and were labeled the same way.
+Their two own subjects exist because each one's whole-package state is the
+point: a missing snapshot fails every `jest --ci` run of the unedited
+package, so `authored-ts-jest-snapshot-unwritten` runs `jest --ci=false`,
+where each run, started from the committed package without a `.snap`
+file, writes the entry from what the code returns; and
+`authored-ts-jest-snapshot-update` is labeled through `npm test`, which runs
+its `jest -u` script and rewrites the committed entry.
 
 ## Layout
 

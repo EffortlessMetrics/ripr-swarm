@@ -18,6 +18,26 @@
       "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
     },
     {
+      "path": "src/addCountsZero.ts",
+      "sha256": "6fd0978feb00e027e650fb50691d1344ff4fbfa331dcaf41f39224a792c37e43"
+    },
+    {
+      "path": "src/capPrice.ts",
+      "sha256": "84d7c497d73298a615a0e77a98da0b3406f48f5e8aae7955840d8216cf1db1c1"
+    },
+    {
+      "path": "src/capPriceVar.ts",
+      "sha256": "61b161660563bba526bed67718706894e5f73d561041792095689870117becef"
+    },
+    {
+      "path": "src/limitMessage.ts",
+      "sha256": "a83d7b0222dc8bad2c068f3be89a62dc6bbfdb8f4dfbbd04cc73571a14c1a262"
+    },
+    {
+      "path": "src/orderSum.ts",
+      "sha256": "6b3432d12335e6f2a0df6667ea92108cd957763c9a944fb9c818c7018062d5f9"
+    },
+    {
       "path": "src/parseEx12.ts",
       "sha256": "b29e7cce4e97cdb7d6aeaa8ae7a9c967225945edf291859e9582eb710f8a348f"
     },
@@ -86,6 +106,10 @@
       "sha256": "e3ae5d32a08a3957f2bba3a3c3577087e04f45cd86e8b4e84e4606cf58b56080"
     },
     {
+      "path": "src/priceFeeSign.ts",
+      "sha256": "543b5a24f4003cfd89faacd2931aed8e3372e007fa5516ba139cfd978b5ffd1c"
+    },
+    {
       "path": "src/priceFeeTwo.ts",
       "sha256": "1a8a3e6b79a8c2548e7d355fa33b0a5de6e1f55aa4fca5508d6a43279f2d5051"
     },
@@ -98,8 +122,60 @@
       "sha256": "6a558385599a2b7d849813df809484aade97e555860068471c17ab3f79625bff"
     },
     {
+      "path": "src/priceSnapDescribe.ts",
+      "sha256": "dcd49c78ef760caec02ba94358bdb13676088b05c2049368fa1d8b85e719f2ef"
+    },
+    {
+      "path": "src/priceSnapHint.ts",
+      "sha256": "f1dc5154dc03d7a25369eecb36e8f510c97c6b70054f358ba5d90c43e49e4d06"
+    },
+    {
+      "path": "src/priceSnapSpaced.ts",
+      "sha256": "d7d73836de4429cd357163f9a66d884953413ba210b332768f429249dbd04237"
+    },
+    {
+      "path": "src/scaledTotal.ts",
+      "sha256": "635d37d88c94efa22eada293e7d3841120f3a89f57ba489654a9037cfcf5a0f6"
+    },
+    {
+      "path": "src/tickPrice.ts",
+      "sha256": "599648b0c36dbd2f98f2ae59692ba2a71459e5c8bcc1fe8e02fa338df5e544b9"
+    },
+    {
       "path": "test/__snapshots__/priceEx03.test.ts.snap",
       "sha256": "4f75e28a8e86ad22ab5374cbc9dfc71d6f9bd78b134bfb71d310b81c340f6fe6"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapDescribe.test.ts.snap",
+      "sha256": "82cf47ab78c9d86db7a36d1a0a2f5d8d83f7f4efdacc635fa61bb0aaba94e6f0"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapHint.test.ts.snap",
+      "sha256": "91a47436e987241dfdd951855852c3d828d220cf554673a6d55b648da90951ed"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapSpaced.test.ts.snap",
+      "sha256": "f5b67dad084910b7c805becabb4603d05092406c37c83d08e4eac186f062822f"
+    },
+    {
+      "path": "test/addCountsZero.test.ts",
+      "sha256": "bf87e014e00afd1127bd731bcb43f4aa8432ed108dc8ebc22ca7a2a3f7665179"
+    },
+    {
+      "path": "test/capPrice.test.ts",
+      "sha256": "0514150fb5d1b95747caee96027427611212cfd68535f7a73ce1f12d620ab24d"
+    },
+    {
+      "path": "test/capPriceVar.test.ts",
+      "sha256": "ac0482a9bbeae8a4821b61a7fad797f55fe1464dec9d60e3138ebfd72db9b021"
+    },
+    {
+      "path": "test/limitMessage.test.ts",
+      "sha256": "19b385df2939b36846303892f2e5b5b30f2751510b488eb7ed9085fd6f0c53a1"
+    },
+    {
+      "path": "test/orderSum.test.ts",
+      "sha256": "793bf36036dbc067a20995c378583ae5dfa4a3e69cf793e067dc6399a296161b"
     },
     {
       "path": "test/otherEx16.test.ts",
@@ -170,6 +246,10 @@
       "sha256": "e1e235f7055b4fb0c174e922d7f2a711b6cb2eb17487be04a2bf142a07f9e37a"
     },
     {
+      "path": "test/priceFeeSign.test.ts",
+      "sha256": "e0c7be0a18878d8f5b16304a4668ef49696bc1d88441c4c3610e3e4625a131b6"
+    },
+    {
       "path": "test/priceFeeTwo.test.ts",
       "sha256": "d42eb0f08d94967759111652dfd3cd85c6f5653c78675bc9dbb76d22e930cd21"
     },
@@ -180,6 +260,26 @@
     {
       "path": "test/priceFlat.test.ts",
       "sha256": "464d8825360d4f8547cf3c69508d59e524b970ccc65a6ec8c8ad60b8ae2508ef"
+    },
+    {
+      "path": "test/priceSnapDescribe.test.ts",
+      "sha256": "a7fc8a58676a0fa05030f1ec80925c970a9006cc9a838883a21e9bc583da4e7f"
+    },
+    {
+      "path": "test/priceSnapHint.test.ts",
+      "sha256": "b42ce7591e9b0dfefee5c6747723fbe0117f5b3f2b12c6e3a33e09a570fe043b"
+    },
+    {
+      "path": "test/priceSnapSpaced.test.ts",
+      "sha256": "c9bfb8436049892e206e1865f67d0a05459fddac6f68c420353b3b77b2b6d76e"
+    },
+    {
+      "path": "test/scaledTotal.test.ts",
+      "sha256": "0efe1c8e0172a36ec1be8b1947d44cf904c5abe804043e6110fa89d63eaf10d7"
+    },
+    {
+      "path": "test/tickPrice.test.ts",
+      "sha256": "0abc37469aa4e8fb35e4d34d16715b1d75868903ebbc15c81de1944e24f8ac6a"
     },
     {
       "path": "tsconfig.json",

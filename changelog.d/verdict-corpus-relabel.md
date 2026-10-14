@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: `cargo xtask verdict-corpus relabel` replays a case's
   mutants against its own `cargo test` command, on the toolchain it was
   labeled on, and fails when an outcome, failing test, or derived truth
