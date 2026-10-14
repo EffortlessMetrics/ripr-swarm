@@ -1247,7 +1247,9 @@ the actual side and the string literal as the expected value when:
    precision, other text in the format string, a second argument, or
    anything chained after `format!(..)` refuses. The call is the owner
    call shape of rule 1, with nothing around it.
-3. The other operand is a plain string literal with no escapes.
+3. The other operand is a plain string literal with no escapes, other
+   than `"NaN"`: every NaN payload of `f32` or `f64` renders as `NaN`, so
+   that text pins no single value (#7905).
 4. The owner's return type is a primitive scalar under the cell-0094 rule
    (declared `bool`, `char`, `f32`, `f64` or built-in integer, with no
    same-named item or import in the owner's file), and its return-path

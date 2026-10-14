@@ -7690,6 +7690,26 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         let lib = unit_tests("", body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
     }
+    // #7905: every NaN payload renders as `NaN`, so that text pins no
+    // single float value; finite float text still does.
+    let float_tests = |body: &str| {
+        let lib = unit_tests("", body).replace("-> u32 {\n    x * 3", "-> f64 {\n    x * 3");
+        assert!(lib.contains("-> f64 {"), "{lib}");
+        lib
+    };
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
+        "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+    ] {
+        assert!(
+            path_admitted(&float_tests(body), "x * 3", None).is_empty(),
+            "{body}"
+        );
+    }
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12.0\");";
+    assert_eq!(path_admitted(&float_tests(body), "x * 3", None), [body]);
     // A non-primitive return type may render many values the same way.
     let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");";
     let lib = non_scalar_unit_tests("", body);

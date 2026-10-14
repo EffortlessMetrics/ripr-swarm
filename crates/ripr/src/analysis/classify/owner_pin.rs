@@ -1801,6 +1801,8 @@ impl OwnerReturnPin {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
                         rendered_scalar_operand(operands[at])
                             .filter(|_| is_plain_string_literal(operands[other]))
+                            // #7905: every NaN payload renders as `NaN`.
+                            .filter(|_| operands[other].trim() != "\"NaN\"")
                             .and_then(|call| self.awaited_call_shape(call, &self.name))
                             .map(|call| (call, operands[other]))
                     })
@@ -6499,7 +6501,8 @@ fn let_initializer(binding: &str) -> Option<&str> {
 /// trap-shine-debug-exact-control: the call `operand` renders when it is
 /// exactly `format!("{}", call)` or `format!("{:?}", call)`. A primitive
 /// scalar's std `Display` and `Debug` text differs for every value but NaN,
-/// so comparing it with an exact string pins the value. Width, precision,
+/// so comparing it with an exact string pins the value; the text `NaN`
+/// is refused (#7905). Width, precision,
 /// alternate and hex flags, extra arguments and other wrappers are refused.
 fn rendered_scalar_operand(operand: &str) -> Option<&str> {
     let inner = operand
