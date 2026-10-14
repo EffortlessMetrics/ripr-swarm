@@ -29,6 +29,8 @@ const CASES: &[(&str, bool, bool, bool)] = &[
     ("qualified_vec", true, true, true),
     ("root_shadow", false, false, true),
     ("raw_type_alias", false, false, true),
+    ("raw_imported_vec", false, false, true),
+    ("imported_constructor", false, false, true),
 ];
 
 #[test]
@@ -114,13 +116,16 @@ fn field_projected_collection_compiling_behavioral_mutants() -> Result<(), Strin
         ] {
             let scratch = Scratch::create()?;
             let source = scratch.0.join("lib.rs");
-            let companion = fixture
-                .parent()
-                .ok_or("fixture parent missing")?
-                .join("std.rs");
-            if companion.is_file() {
-                std::fs::copy(&companion, scratch.0.join("std.rs"))
-                    .map_err(|error| error.to_string())?;
+            for companion in std::fs::read_dir(fixture.parent().ok_or("fixture parent missing")?)
+                .map_err(|error| error.to_string())?
+            {
+                let companion = companion.map_err(|error| error.to_string())?;
+                if companion.path().extension() == Some("rs".as_ref())
+                    && companion.file_name() != "lib.rs"
+                {
+                    std::fs::copy(companion.path(), scratch.0.join(companion.file_name()))
+                        .map_err(|error| error.to_string())?;
+                }
             }
             let executable = scratch
                 .0

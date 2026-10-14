@@ -7354,6 +7354,8 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
+  "fixtures/collection_argument_imported_constructor",
+  "fixtures/collection_argument_raw_imported_vec",
   "fixtures/collection_argument_raw_type_alias",
   "fixtures/collection_argument_root_shadow",
   "fixtures/collection_argument_alias",

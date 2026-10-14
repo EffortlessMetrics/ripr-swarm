@@ -4918,19 +4918,32 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     // tuple constructor. A competing local, function, constant or static
     // keeps this deliberately bounded binding unestablished.
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
-    if parse.tree().syntax().descendants().any(|node| {
-        ast::Fn::cast(node.clone())
-            .and_then(|item| item.name())
-            .is_some_and(|name| names_constructor(name.text().to_string()))
-            || ast::Const::cast(node.clone())
-                .and_then(|item| item.name())
-                .is_some_and(|name| names_constructor(name.text().to_string()))
-            || ast::Static::cast(node.clone())
-                .and_then(|item| item.name())
-                .is_some_and(|name| names_constructor(name.text().to_string()))
-            || ast::IdentPat::cast(node)
-                .and_then(|item| item.name())
-                .is_some_and(|name| names_constructor(name.text().to_string()))
+    if index.files().iter().any(|(file, facts)| {
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor) || file_renames_to(&masked, constructor) {
+            return true;
+        }
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            (file != &test.file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
     }) {
         return false;
     }
@@ -4981,10 +4994,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         (path_base_name(path) == Some("Vec")
             && INTEGER_TYPES.contains(element)
             && !index.files().values().any(|facts| {
-                declares_type(
-                    &mask_comments_and_strings(&facts.source).replace("r#", ""),
-                    element,
-                )
+                let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+                ["Vec", *element].iter().any(|name| {
+                    declares_type(&masked, name)
+                        || file_aliases_type(&masked, name)
+                        || file_renames_to(&masked, name)
+                })
             })
             && !declares_type(&declaring, "Vec")
             && !type_declared_in_workspace("Vec", index)
