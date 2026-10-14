@@ -1068,8 +1068,9 @@ fn static_literal_argument_reaches_boundary(
 /// Project a TypeScript preview finding into a `GapRecord` for validator
 /// consumption, applying all §1.2 preconditions (G-A through G-H).
 ///
-/// Returns `None` whenever ANY precondition fails — the false case requires
-/// no positive proof. Only `Ok(())` from the shared validator leads to a flip.
+/// Returns `None` when a pre-projection guard fails. Target refusals retain an
+/// ineligible diagnostic record. Only `Ok(())` from the shared validator
+/// leads to a readiness flip.
 ///
 /// # Preconditions checked (fail-closed)
 /// - G-A: `actionability_category == "incomplete_repair_packet"`
