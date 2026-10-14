@@ -6,7 +6,7 @@
 //! `cargo package -p ripr --list` plus the file that list says is included.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{FixKind, PolicyReportSpec, finish_policy_report};
 
@@ -186,12 +186,52 @@ fn command_text(line: &str) -> &str {
 }
 
 fn package_list_contains_readme(package_list: &str, readme_filename: &str) -> bool {
-    package_list.lines().any(|line| {
-        Path::new(line.trim())
-            .file_name()
-            .and_then(|name| name.to_str())
-            == Some(readme_filename)
+    let expected = packaged_readme_list_path(readme_filename);
+    package_list
+        .lines()
+        .any(|line| listed_package_path(line.trim()).is_some_and(|listed| listed == expected))
+}
+
+fn packaged_readme_list_path(readme_filename: &str) -> PathBuf {
+    let path = Path::new(readme_filename);
+    if path_escapes_crate(path) {
+        path.file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(readme_filename))
+    } else {
+        normalize_path(path)
+    }
+}
+
+fn listed_package_path(line: &str) -> Option<PathBuf> {
+    let path = normalize_path(Path::new(line));
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Normal(first))
+            if first
+                .to_str()
+                .is_some_and(|name| name.strip_prefix("ripr-").is_some_and(looks_like_version)) =>
+        {
+            Some(components.collect())
+        }
+        Some(_) => Some(path),
+        None => None,
+    }
+}
+
+fn path_escapes_crate(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
     })
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect()
 }
 
 pub(crate) fn workspace_package_version(workspace_toml: &str) -> Result<String, String> {
@@ -378,6 +418,64 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("does not include `README.md`")),
             "expected inclusion failure; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn nested_readme_in_package_list_does_not_satisfy_crate_root() {
+        let violations = packaged_readme_violations(&inputs(
+            "0.11.0",
+            "Cargo.toml\nexamples/foo/src/README.md\nsrc/lib.rs\n",
+            "README.md",
+            CURRENT_LIKE,
+        ));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("does not include `README.md`")),
+            "basename-only match must not credit a nested README.md; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn nested_crate_readme_matches_listed_nested_path() {
+        let violations = packaged_readme_violations(&inputs(
+            "0.11.0",
+            "Cargo.toml\ndocs/README.md\nsrc/lib.rs\n",
+            "docs/README.md",
+            CURRENT_LIKE,
+        ));
+        assert!(
+            !violations.iter().any(|v| v.contains("does not include")),
+            "listed docs/README.md must satisfy readme = \"docs/README.md\"; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn outside_crate_readme_matches_packaged_basename() {
+        let violations = packaged_readme_violations(&inputs(
+            "0.11.0",
+            "Cargo.toml\nREADME.md\nsrc/lib.rs\n",
+            "../../README.md",
+            CURRENT_LIKE,
+        ));
+        assert!(
+            !violations.iter().any(|v| v.contains("does not include")),
+            "cargo packages an outside-crate readme as README.md; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn prefixed_nested_readme_still_counts_as_included() {
+        let violations = packaged_readme_violations(&inputs(
+            "0.11.0",
+            "ripr-0.11.0/Cargo.toml\nripr-0.11.0/docs/README.md\nripr-0.11.0/src/lib.rs\n",
+            "docs/README.md",
+            CURRENT_LIKE,
+        ));
+        assert!(
+            !violations.iter().any(|v| v.contains("does not include")),
+            "prefixed docs/README.md must count; got {violations:?}"
         );
     }
 
