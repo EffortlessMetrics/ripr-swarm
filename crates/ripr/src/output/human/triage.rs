@@ -1274,20 +1274,17 @@ mod tests {
         // argv spelling still matches the #7730 Windows report.
         backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
-        let stable = crate::output::path::display_path(&backslash_root.root);
-        if raw == stable {
+        // Independent slash-stable contract: forward-slash join of the
+        // same components, not `display_path` output.
+        let expected = ["C:", "tmp", "probe win space"].join("/");
+        if raw == expected {
             return Err(format!(
-                "fixture lost its discriminator: raw display {raw:?} already matches display_path"
+                "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
             ));
         }
         if !raw.contains('\\') {
             return Err(format!(
                 "fixture must keep a backslash argv spelling, got {raw:?}"
-            ));
-        }
-        if stable.contains('\\') {
-            return Err(format!(
-                "display_path must not retain backslashes, got {stable:?}"
             ));
         }
         let action = canonical_next_action_for_triage(
@@ -1296,9 +1293,9 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         )?;
-        if action.subject().root != stable {
+        if action.subject().root != expected {
             return Err(format!(
-                "subject.root must match display_path, got {:?}, expected {stable:?}",
+                "subject.root must be {expected:?}, got {:?}",
                 action.subject().root
             ));
         }
@@ -1306,22 +1303,22 @@ mod tests {
             return Err(format!("subject.root kept the raw argv spelling {raw:?}"));
         }
         let encoded = serde_json::to_value(&action).map_err(|error| error.to_string())?;
-        if encoded["subject"]["root"] != stable {
+        if encoded["subject"]["root"] != expected {
             return Err(format!(
-                "serialized subject.root must match display_path, got {}",
+                "serialized subject.root must be {expected:?}, got {}",
                 encoded["subject"]["root"]
             ));
         }
 
-        // Verbatim Windows prefix: display_path unifies separators (#5996
-        // `//?/` shape) instead of leaking `\\?\` into JSON identity.
+        // Verbatim Windows prefix: separators unify to the #5996 `//?/`
+        // shape instead of leaking `\\?\` into JSON identity.
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
-        let verbatim_stable = crate::output::path::display_path(&verbatim.root);
-        if verbatim_raw == verbatim_stable {
+        let verbatim_expected = ["//?", "C:", "tmp", "probe"].join("/");
+        if verbatim_raw == verbatim_expected {
             return Err(format!(
-                "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches display_path"
+                "verbatim fixture lost its discriminator: raw {verbatim_raw:?} already matches {verbatim_expected:?}"
             ));
         }
         let action = canonical_next_action_for_triage(
@@ -1330,9 +1327,9 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         )?;
-        if action.subject().root != verbatim_stable {
+        if action.subject().root != verbatim_expected {
             return Err(format!(
-                "verbatim subject.root must match display_path, got {:?}, expected {verbatim_stable:?}",
+                "verbatim subject.root must be {verbatim_expected:?}, got {:?}",
                 action.subject().root
             ));
         }
@@ -1343,13 +1340,10 @@ mod tests {
             ));
         }
 
-        // A `.` root stays `.` under display_path, so consumers that treat
+        // A `.` root stays `.`, so consumers that treat
         // `subject.root == "."` still match after this change.
         let mut dot_root = test_output(Vec::new());
         dot_root.root = PathBuf::from(".");
-        if crate::output::path::display_path(&dot_root.root) != "." {
-            return Err("display_path of '.' must stay '.'".to_string());
-        }
         let action = canonical_next_action_for_triage(
             &triage,
             &dot_root,
