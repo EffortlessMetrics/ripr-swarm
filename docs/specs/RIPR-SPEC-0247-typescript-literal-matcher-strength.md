@@ -363,9 +363,9 @@ and the rejected alternative. Recorded on #6654.
     strong, `exposed`. The same with no return annotation,
     `: number | boolean`, `Math.min(lineCount(["a"]), 5)`,
     `lineCount(["a"]) > 0` or `lineCount(["a"]).toFixed(0)` against `1`,
-    a test-local `lineCount`, or a class method `lineCount(): number`
-    with the test calling a same-named function from another module:
-    `relational_check` / weak.
+    a test-local `lineCount`, or a class method owner
+    `lineCount(): number` (the whole-result check reads only a free call,
+    which a method's annotation does not cover): `relational_check` / weak.
 
 ## Test Mapping
 
