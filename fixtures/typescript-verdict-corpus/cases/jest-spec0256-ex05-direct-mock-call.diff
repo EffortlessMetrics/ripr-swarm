@@ -1,0 +1,12 @@
+diff --git a/src/chargeDirect.ts b/src/chargeDirect.ts
+index 0000000..1111111 100644
+--- a/src/chargeDirect.ts
++++ b/src/chargeDirect.ts
+@@ -4,6 +4,6 @@
+ 
+ export function chargeDirect(owner: string, cents: number[], notifier: DirectNotifier): number {
+   const total = cents.reduce((sum, c) => sum + c, 0);
+-  notifier.send(owner, "charged " + total);
++  notifier.send(owner, "charged " + total + " cents");
+   return total;
+ }

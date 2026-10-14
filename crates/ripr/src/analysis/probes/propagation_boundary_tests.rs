@@ -255,3 +255,133 @@ fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn paired_opening_evidence_survives_closing_canonicalization() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = "fn check(value: Option<Result<(), &str>>) -> Result<(), &str> {\n    value .ok_or(\n        \"missing\"\n    )?\n}\n";
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let mut index = RustIndex::default();
+    index.insert_file(path.clone(), facts, true);
+    for order in [[2, 4], [4, 2]] {
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: order
+                .into_iter()
+                .map(|line| {
+                    Ok(ChangedLine {
+                        line,
+                        new_side_line: line,
+                        text: source
+                            .lines()
+                            .nth(line - 1)
+                            .ok_or_else(|| format!("fixture has no line {line}"))?
+                            .to_string(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            removed_lines: vec![
+                ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "    value.ok_or(".to_string(),
+                },
+                ChangedLine {
+                    line: 4,
+                    new_side_line: 4,
+                    text: "    )".to_string(),
+                },
+            ],
+        };
+        let seeded =
+            super::diff::probes_for_file_with_relations(Path::new("."), &changed, &index, &[]);
+        let errors = seeded
+            .iter()
+            .filter(|s| s.probe.family == ProbeFamily::ErrorPath && s.propagation_origin.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1, "{seeded:?}");
+        let error = errors[0];
+        assert_eq!(
+            error.probe.before.as_deref().map(str::trim),
+            Some("value.ok_or(")
+        );
+        assert_eq!(error.probe.location.line, 2);
+        assert!(error.probe.expression.ends_with(")?"));
+        assert_eq!(
+            error
+                .propagation_origin
+                .as_ref()
+                .map(|line| line.new_side_line),
+            Some(4)
+        );
+        assert!(
+            error.parser_span.is_none(),
+            "opening span cannot represent the complete TryExpr"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn propagation_path_keeps_a_strong_oracle_without_inventing_activation() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/propagated_error_closing_early_path/input/src/lib.rs"),
+    )
+    .map_err(|error| error.to_string())?
+    .replace("check(true, None)", "check(false, None)");
+    let mut index = RustIndex::default();
+    index.insert_file(
+        path.clone(),
+        RaRustSyntaxAdapter.summarize_file(&path, &source)?,
+        true,
+    );
+    assert_eq!(index.tests().len(), 1);
+    let changed = ChangedFile {
+        path,
+        added_lines: vec![ChangedLine {
+            line: 8,
+            new_side_line: 8,
+            text: "    )?;".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    };
+    let seeded = super::diff::probes_for_file_with_relations(Path::new("."), &changed, &index, &[]);
+    let error = seeded
+        .iter()
+        .find(|seed| seed.propagation_origin.is_some())
+        .ok_or("no propagation subject")?;
+    let candidates = crate::analysis::classify::RelatedTestCandidateIndex::new(&index);
+    let finding = crate::analysis::classifier::classify_probe_with_candidate_index(
+        &error.probe,
+        &index,
+        true,
+        None,
+        &candidates,
+        error.propagation_origin.as_ref(),
+    );
+    assert_eq!(
+        finding.ripr.reveal.observe.state,
+        crate::domain::StageState::Yes
+    );
+    assert_eq!(
+        finding.ripr.reveal.discriminate.state,
+        crate::domain::StageState::Weak
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|row| row.oracle_strength == crate::domain::OracleStrength::Strong)
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("propagation_boundary_activation_unestablished")
+    );
+    Ok(())
+}

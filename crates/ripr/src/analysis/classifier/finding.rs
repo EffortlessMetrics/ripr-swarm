@@ -42,7 +42,7 @@ pub(in crate::analysis) fn build_finding(
         .summary
         .contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
     {
-        Some("Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.".to_string())
+        Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
     } else if class == ExposureClass::WeaklyExposed

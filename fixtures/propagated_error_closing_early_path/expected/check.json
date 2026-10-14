@@ -98,8 +98,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.",
-      "suggested_next_action": "Exercise the changed `?` exit and inspect whether the existing oracle constrains that path.",
+      "recommended_next_step": "Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.",
+      "suggested_next_action": "Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

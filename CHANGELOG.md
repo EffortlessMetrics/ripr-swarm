@@ -88,6 +88,419 @@ are scoped or reviewed.
   with `source_report: null` and resolves to the RIPR-SPEC-0066 `unknown`
   state instead of claiming an unwritten report.
 
+- **Breaking (JSON output).** `ripr doctor --json` schema `0.3` -> `0.4` removes
+  the top-level `sections` array. Its only mutator and only reader were
+  `#[cfg(test)]`, so every released document carried `"sections": []` and no
+  consumer could have read data from it; a client that reads `sections` (or
+  decodes into a closed struct that has one) must be updated before it accepts a
+  `0.4` document. Every `0.3` field keeps its meaning, every added field is
+  additive for a consumer that ignores unknown keys, and reverting the change
+  restores `0.3` exactly. The human `ripr doctor` screen is unchanged: same
+  wording, same ordering, same markers, same exit codes (#5214).
+- The install route is now timed as its own scoreboard metric,
+  `first_run.install_seconds` with a rise rule that needs a committed baseline sample and a nightly first-run ingest before it can fail anything (#5311, #5983). The README, quickstart
+  and install-channel notes state the measured source-build time of a 0.11
+  development build (about 11 minutes against about 2 for 0.10.0) and that no
+  prebuilt 0.11 archive exists until 0.11.0 is published.
+- Performance: cold `ripr pilot` parses each production file once for
+  new-test placement instead of twice per seam, and a run that passes the
+  default 30s deadline keeps going instead of restarting. On a 4-core Linux
+  host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
+  ripgrep and 114s to 27s on regex, with pilot artifacts byte-identical after
+  normalizing the output path. An explicit `--timeout-ms`, including
+  `--timeout-ms 30000`, remains a hard limit and gets no extension. When the
+  extended run also times out, the pilot summary reports the 270000 ms budget
+  actually spent and suggests a retry budget scaled from it. Seam inventory
+  resolves owning functions with one sorted pass per file instead of a scan
+  of every function per seam, so a generated 200k-function file that
+  previously exhausted the 270s budget completes in 112s, and a hard deadline
+  now cancels within about a second instead of waiting out the scan. A warm
+  `ripr check` scans workspace files for shadowed assertion macros on all
+  cores and stops once one file already leaves every trusted macro
+  unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
+  (8.0s to 4.4s on two cores) with identical output.
+- The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
+  and report steps now run inside one `ripr reports ci-packet` step, which
+  keeps each old step's semantics: a log group per step, advisory failures
+  logged without stopping the rest, and the job failing only when the diff
+  capture or the gate fails, or a gate input fails under a blocking
+  `RIPR_GATE_MODE`. `--step NAME` reruns one step. The comment capture and
+  publish steps stay in YAML, so the token never reaches ripr. Regenerate the
+  workflow with `ripr init --ci github --force` to pick this up (#4696).
+
+- Performance: the per-seam evidence pass behind `ripr pilot` and repo
+  exposure runs on all cores, parses each related test file once instead of
+  once per seam, and resolves each seam's owner arguments once. Cold pilot
+  on a 4-core Linux host fell from 212s to 68s on ripr-swarm, 32s to 14s on
+  regex, 23s to 8.6s on ripgrep and 3.0s to 2.1s on serde, with pilot
+  artifacts byte-identical. Crediting same-file assertion helpers parses only
+  files that hold tests, in parallel, so a warm draft-mode check of a
+  four-file ripr-swarm diff fell from 16.1s to 12.6s. The transitive-reach
+  limitation check builds its call graph once per run and walks backwards
+  from each owner, so a 22-file rust-lang/rust diff checks in 24s instead of
+  594s, with identical JSON. The evidence pass also sorts each file's
+  functions once for owner lookup and collects each owner file's fixture names
+  once, so cold pilot on a generated one-file crate with 200,000 functions
+  takes 20s instead of 416s, with identical artifacts.
+
+- CI: the `ripr init --ci github` workflow downloads the pinned ripr
+  release's prebuilt binary and checks its published SHA-256 instead of
+  compiling ripr with `cargo install` on every run, so it no longer sets up a
+  Rust toolchain or `Swatinem/rust-cache`. A checksum mismatch fails the step;
+  a runner with no prebuilt archive (Windows) or a failed download falls back
+  to `cargo install`. The workflow also restores ripr's analysis cache
+  (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
+  pushes to a pull request reuse the facts of unchanged files.
+
+- CI: the generated workflow's advisory summary step is one
+  `ripr reports ci-summary` call instead of about 1,250 lines of inline
+  bash and `jq`, so the generated workflow drops from about 2,400 lines to
+  about 1,150. The new command prints the same Markdown from the same
+  artifacts and can be run locally against a `target/ripr` tree.
+
+- Classified seam-cache publication serializes borrowed records through a
+  bounded atomic writer. Encoded bytes are the primary single-entry/shard
+  ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, default 8 MiB); record
+  count remains a secondary cap. Ordinary store no longer deep-clones a shard
+  or retains the complete encoded `Vec<u8>`. One oversized record skips with
+  `skipped_oversized_record_index_*` instead of claiming a populated cache
+  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
+  through the related-test table the loader expects. Cache load/decode bounds
+  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
+
+- LSP: the actionable-profile line-findings hover names the editor-neutral
+  `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
+  `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
+  instead of telling every client to set the VS Code-only name (#5094).
+- Git invocation timeout is a crate-internal typed `CoreError` variant. Semantic
+  consumers match the variant (including through structured context) instead of
+  the `git_invocation_timeout` Display prefix. Public wording, LSP
+  `git_invocation_timeout` kind (#2811), exit mapping, and process cleanup are
+  unchanged.
+
+- Rust finding output preserves the matched related-test/oracle count before
+  bounded packing. JSON, SARIF, and human totals agree while retained rows and
+  exposure classification remain unchanged. (#5146)
+
+- Evidence output: retained lexical and statically derived values are described
+  as source values in both human and JSON evidence paths, including values in
+  refused assertions. Typed facts, provenance, classes and admitted oracle
+  stages stay unchanged. (#5027)
+- Rust analysis: a proved-empty local macro cannot contribute discarded owner
+  calls or boundary arguments through a mixed-line call fact. A genuine far
+  assertion retains its strength and observation, while a real boundary test
+  still discriminates. Original source bytes remain authoritative; producer
+  build identity separates predecessor caches without reusing their facts. (#5027)
+- Rust analysis: ordinary turbofish calls remain eligible beside unresolved
+  property macros. Opaque declarations cannot supply owner reach, and discarded
+  property bodies cannot supply raw-scanned assertion oracles. These boundaries
+  preserve ordinary source authority without assuming macro expansion. (#5131)
+- Python: a changed source path missing from the working tree now carries an
+  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
+  It is excluded from analyzed-file counts and preview samples; available findings
+  remain visible and shared outcome/badge projections report incomplete analysis
+  instead of a complete green zero (#5110).
+
+- Human output: a selected `no_static_path` finding without a typed limitation
+  asks readers to review the unresolved static path and existing tests, rather
+  than inspect a nonexistent named limitation. State, classification, JSON and
+  typed-limitation guidance are unchanged. (#5051)
+- CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
+  --help` now print the subcommand help and exit 0; help was previously
+  recognized only as the sole argument, so any combined invocation failed
+  with a self-referential "Run `ripr cache status --help`" error. `ripr cache
+  --help <anything>` prints the family usage, matching the sibling command
+  families (#5024).
+- CLI: `ripr doctor --profile foo` now renders the accepted set with the
+  standard backticks — `unknown doctor profile \`foo\`; expected \`analysis\`
+  or \`source-build\`` — matching the gate/diff/mode enumeration errors; the
+  outcome and calibrate `--format` errors already name their accepted set via
+  the argument-error alignment pass (#5016).
+- CLI: the `ripr cache status` cleanup hint names `ripr cache clear
+  [--dry-run] [--force]` — the command an installed-binary user can actually
+  run — instead of routing to the maintainer-only `cargo xtask cache gc`
+  (#5012; the text change landed with #4411, this PR pins and verifies it).
+- CLI: the global `-v`/`--verbose` flag is now documented on the
+  `ripr help --all` reference (extra stderr pipeline diagnostics; accepted
+  in any position, never consumed as another flag's value), and one shared
+  stripping pass removes every occurrence, so `ripr -v -v <command>`
+  behaves identically for `mcp` and every other command family instead of
+  routing on one family and failing on the rest (#5009).
+- Human output: the Summary denominator is now `N of M finding(s)
+  unsuppressed` instead of `N of M finding(s) shown`; the digest renders one
+  finding and names the rest under `Hidden:`, so "shown" read as "rendered"
+  and contradicted the omitted count on the same page. The #4322 suppression
+  disclosure is unchanged. (#5017)
+- Human output: when a top gap is selected, the `Hidden:` count line now
+  names the omitted set's currentness mix instead of labeling every omission
+  lower-priority — `L lower-priority finding(s) omitted; B base-side
+  evidence, not candidate edit targets` (with an unresolved-currentness
+  clause when present), and an all-base-side or all-unresolved omitted set
+  says so directly. Pure lower-priority omitted sets keep the legacy single
+  clause. (#5021)
+- LSP: the work-done progress terminal end for a limited run no longer
+  interpolates the raw internal run-status tag (`analysis limited (run
+  status: seams_deferred)`); the end message is now the human phrase
+  `analysis completed with limited evidence`, and the run-status tag stays
+  machine-only on the typed `ripr/analysisStatus` payload (#5003).
+- MCP: the `ripr_workspace_status` tool description and the
+  `ripr://workspace/status` resource description state positively what the
+  document contains (repository-root discovery, configuration presence, and
+  launch-trust/authority facts), disavow reading `workspace_state: ready`
+  as an analysis result, and name the real evidence route (`ripr check
+  --format json` and editor diagnostics from the ripr language server)
+  (#5002).
+- LSP: identity-law tests pin that `action_id` excludes title, range,
+  message, snapshot handles, client capability, and disabled reason; build
+  and parse share one fingerprint; analysis input identity excludes
+  deadlines and position encoding; diagnostic result IDs ignore refresh
+  clock and attempt handles. (#1932)
+- TypeScript/Python adapters: capped-read refusals are now disclosed as a
+  bounded, stable-sorted sample of refused paths (at most 8 per run) plus
+  one summary entry carrying the true refused count, instead of one
+  `AnalysisLimitation` per refused file — a correctly-capped monorepo no
+  longer emits up to ~20,000 limitation entries that dwarf the findings.
+  Every refused file is still refused (fail-closed); only the disclosure is
+  sampled, and the summary states that the full per-file list is not
+  materialized in output. No JSON/SARIF schema shape changes. (#5022)
+
+- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
+  identity, including target kind/source and exact executable hash. Required
+  release controls must resolve to one owning artifact across both samples;
+  missing or ambiguous provenance is refused instead of borrowing another
+  target's pass. Log-derived report entries use bounded excerpts and section
+  counts with explicit truncation and omissions; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
+
+- The Python preview adapter now resolves a module-level named constant used
+  as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
+  `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
+  The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
+  missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
+  the imported constant now counts as observing the boundary. A name that can
+  be rebound (a second binding, `global`, walrus, star import, `exec`/`globals`/
+  `sys.modules`, a nested scope in the owner, a test-file attribute
+  assignment) or a non-literal value stays unresolved and gets no repair card
+  ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
+  Two guided-route loops on that card are closed: `ripr agent status` after a
+  pilot run that produced only a Python repair card now names the
+  `ripr first-pr` route instead of sending the user back to `ripr pilot`, and
+  `ripr first-pr` on a Python or TypeScript root reports `stale_artifact` with
+  the refresh command when the named test or changed source was edited after
+  the gap ledger was written, instead of repeating the finished repair.
+
+- `ripr doctor` now separates installed-binary analysis readiness from the
+  prerequisites for building RIPR from source. The default `analysis` profile
+  reports a missing `cargo` or `rustc`, or a workspace `rustc` older than
+  RIPR's build MSRV (1.95), as `advisory` and exits `0`, so a workspace pinned
+  to an older toolchain is no longer told it cannot be analyzed; a missing
+  `cargo` still discloses that evidence read from `cargo metadata` is
+  withheld. `--profile source-build` fails on those conditions and exits `2`.
+  Both toolchain probes run in the selected root. `ripr doctor --json` moves
+  to schema `0.3`, with top-level `profile`, `ripr_version`, and `ripr_build_msrv`
+  fields and an `advisory` check status
+  ([#3907](https://github.com/EffortlessMetrics/ripr-swarm/issues/3907)).
+
+- Test, eval-sweep, diff-load, gate, `cli_smoke` and `seam_cache` cleanup no
+  longer discards `remove_dir_all`, `remove_file`, permission-restore or
+  `set_current_dir` results with `let _ =`; a cleanup failure is still
+  ignored. `clippy-debt-0001` stays deferred, and its `blocked_by` text counts
+  the remaining `let _ =` sites
+  ([#4013](https://github.com/EffortlessMetrics/ripr-swarm/issues/4013),
+  [#4027](https://github.com/EffortlessMetrics/ripr-swarm/issues/4027),
+  [#4029](https://github.com/EffortlessMetrics/ripr-swarm/issues/4029),
+  [#4038](https://github.com/EffortlessMetrics/ripr-swarm/issues/4038),
+  [#4040](https://github.com/EffortlessMetrics/ripr-swarm/issues/4040),
+  [#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
+
+
+
+
+
+
+- `path_dependencies.rs` no longer carries `allow(dead_code)`.
+  `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
+  expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
+  moves with the getter; reverse diff-scope reachability is unchanged.
+  The `.ripr/allow-attributes.txt` row for that file is removed
+  ([#3997](https://github.com/EffortlessMetrics/ripr-swarm/issues/3997)).
+
+- `PanicAllowEntryVersioned::V2` is now `Box<PanicAllowEntryV2>`, so
+  `clippy::large_enum_variant` no longer needs an allow on that enum.
+  `policy/clippy-exceptions.toml` has no live rows;
+  `clippy-exception-0001` is retired
+  ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
+
+- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
+  every `[[planned]]` row whose `activate_when_msrv` is already met by
+  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
+  narrative `reason` does not satisfy the gate. The four current planned
+  lints copy their existing `reason` into `blocked_by` and are not promoted
+  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
+
+- `cargo xtask check-allow-attributes` now fails a
+  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
+  current source count, including a row whose suppression is gone. The
+  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
+  7 to 4, matching the four remaining suppressions. Over-budget
+  suppressions still fail
+  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
+
+- `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
+  as TOML: unique ids, required nonblank fields, optional ISO `expires`
+  dates that are not in the past, unknown fields, duplicate keys, and
+  trailing garbage. Test-valued `covered_by` resolution uses the
+  TOML-decoded command (including single-quoted strings)
+  ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
+
+- `cargo xtask check-lint-policy` now compares `[[planned]]`
+  `activate_when_msrv` to `[workspace.package] rust-version`. The four current
+  planned lints are not promoted; the remaining-blocker field is `blocked_by`
+  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990))
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
+- `cargo xtask check-lint-policy` now parses `policy/clippy-debt.toml`
+  as TOML: unique ids, required nonblank fields, ISO `target` dates that
+  are not in the past, unknown fields, duplicate keys, and debt lints
+  that are not already active, planned, or present in `Cargo.toml`.
+  `clippy-debt-0001` stays deferred
+  ([#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833)).
+
+- `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
+  and names `ci-full` as the complete local pass. The sequential cargo
+  block is labeled targeted-rerun inventory, matching `AGENTS.md` (#3775)
+  and `docs/IMPLEMENTATION_PLAN.md` (#3817)
+  ([#3830](https://github.com/EffortlessMetrics/ripr-swarm/issues/3830)).
+
+- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
+  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
+  traverse `..`, and must look like a ripr cache before any walk or delete.
+  `ripr cache status` prints a cleanup hint that exports the same
+  `RIPR_CACHE_DIR` the status process used
+  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
+
+- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
+  the exceptions ledger is empty by default. The commented example no
+  longer reuses a real id or a past `expires` date
+  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
+
+- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
+  and a matching xtask gate. The values are not verified available-since
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+
+- Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
+  current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
+  `docs/agent-context/CONTEXT_SYSTEM.md`, and
+  `plans/rust-one-shot-evidence-to-repair.md` now point at GitHub issues/PRs
+  for live selection. `.allow/spec-system/slices/` remains PR-local scope
+  (`ImplementationSliceV1`), not a second live selector, matching the repo
+  tracking model
+  ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
+
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
+  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
+  gate still counts source suppressions against `.ripr/allow-attributes.txt`
+  only; the TOML receipts remain advisory until a follow-up wires them
+  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
+
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
+  consumes `policy/clippy-debt.toml`; the gate reads it since
+  [#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833).
+  `clippy::let_underscore_must_use`
+  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
+  instead of a commented example whose target had already passed
+  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
+
+- Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
+  `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
+  `mcp`, and `provider_contract`, matching the product map. The
+  `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md`
+  ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
+- Agent and human architecture maps now name the `mcp` protocol adapter and
+  the `provider_contract` DTO surface. `cargo xtask check-agent-skills` pins
+  the required module tokens in `AGENTS.md`, `CLAUDE.md`, and
+  `docs/ARCHITECTURE.md` so the `#1943` drift class cannot recur silently
+  ([#3774](https://github.com/EffortlessMetrics/ripr-swarm/issues/3774)).
+- `AGENTS.md` local validation now leads with `cargo xtask precommit` and
+  names `ci-full` as the complete pass. The 40-command block is labeled
+  targeted-rerun inventory, not sequential required work
+  ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
+- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
+  `cargo xtask precommit` and names `ci-full` as the complete local pass.
+  The cargo command block is labeled targeted-rerun inventory, matching
+  `AGENTS.md` (#3775). Extension compile/package remains required for
+  `editors/vscode` changes; neither `precommit` nor `ci-full` covers it
+  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
+- `docs/handoffs/README.md` labels retained campaign closeouts as historical.
+  `docs/agent-context/repo-map.md` no longer names the retired active-goal
+  manifest as a live selector
+  ([#3777](https://github.com/EffortlessMetrics/ripr-swarm/issues/3777)).
+- Schema 0.3 no-panic allowlist `id` values are now unique and gated.
+  `cargo xtask check-no-panic-family` rejects a colliding `id` even when
+  the selectors differ. Four reused `panic-0051`..`panic-0054` rows for
+  the RIPR-SPEC-0112 `cli_smoke` sites were renumbered to `panic-0071`..
+  `panic-0074`
+  ([#3799](https://github.com/EffortlessMetrics/ripr-swarm/issues/3799)).
+
+- The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
+  alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
+  packet, and before/after receipt proof remains intact, but the governed
+  real-repository corpus currently contains zero eligible attempts, so route
+  yield and ordinary-user success are not established. `cargo xtask
+  check-support-tiers` now hard-caps the uniquely named canonical row at
+  `usable alpha` until one promotion decision covers both the full governed
+  corpus and the installed CLI/packaged VS Code pilot. A complete trust report
+  with real movement is necessary evidence, but cannot promote the claim by
+  itself (#3077).
+
+- `exposed` findings stay at `info` severity, as in 0.10.0: `--format github`
+  emits `::notice` and the LSP reports INFORMATION, below `weakly_exposed` and
+  `reachable_unrevealed` at `warning`. A development-only change that raised
+  the `[severity.findings] exposed` default to `warning`
+  ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)) was
+  reverted before release
+  ([#4429](https://github.com/EffortlessMetrics/ripr-swarm/pull/4429)). Set
+  `exposed = "warning"` under `[severity.findings]` in `ripr.toml` to raise it.
+
+- Generated commands now come with a PowerShell form next to the bash one.
+  The agent workflow packet, pilot summaries, agent status and review
+  summaries, PR evidence reproduction commands, and the first-pr start-here
+  packet pair each bash fence with a `powershell` fence produced by one shared
+  translator. The bash bytes are unchanged and cmd.exe stays explicitly
+  unsupported. Quoted redirect tokens keep their quoting, and multiline
+  command lists that cannot be translated safely show only the bash form
+  ([#2964](https://github.com/EffortlessMetrics/ripr-swarm/issues/2964),
+  [#3438](https://github.com/EffortlessMetrics/ripr-swarm/pull/3438),
+  [#3617](https://github.com/EffortlessMetrics/ripr-swarm/pull/3617),
+  [#3625](https://github.com/EffortlessMetrics/ripr-swarm/pull/3625),
+  [#3661](https://github.com/EffortlessMetrics/ripr-swarm/pull/3661),
+  [#3662](https://github.com/EffortlessMetrics/ripr-swarm/pull/3662)).
+
+- Rust match-arm analysis gains one bounded source of discrimination
+  evidence: when a changed arm belongs to a `match` over two direct,
+  immutable `bool` parameters (four distinct unguarded tuple arms with
+  simple string results), and a test that calls the owner directly
+  asserts equality between that exact input tuple and the arm's
+  current result, the arm can now reach `exposed` instead of staying
+  `weakly_exposed` with `observation_unverified`. The assertion must sit
+  at a conventional Cargo compilation-unit root (`src/lib.rs`,
+  `src/main.rs`, `src/bin/<target>.rs`) or the owner package's direct
+  `tests/<target>.rs`. Sibling, reordered, transformed, guarded,
+  aliased, lexical-fallback, nested or inherited-macro, custom-root, and
+  cross-package shapes stay unverified. The producer refines only the
+  discrimination stage; reach, propagation, and the final class combiner
+  are unchanged
+  ([#3767](https://github.com/EffortlessMetrics/ripr-swarm/pull/3767),
+  [ripr#1714](https://github.com/EffortlessMetrics/ripr/issues/1714)).
+
+- The published `ripr` crate now depends on `toml` 1 (was 0.9),
+  `ra_ap_syntax` 0.0.349 (was 0.0.330), and, on Windows, `winsafe`
+  0.0.29 (was 0.0.28), alongside 85 compatible lockfile updates.
+  `unicode-ident` stays held at 1.0.24, and `oxc` and `sha2` stay on
+  their current majors. MSRV is unchanged
+  ([#3827](https://github.com/EffortlessMetrics/ripr-swarm/pull/3827)).
+
 ### Added
 
 - Bounded repair states its inline-test boundary as permanent scope:
@@ -116,6 +529,560 @@ are scoped or reviewed.
   `check` findings still completing with 0, `gate evaluate` `config_error`=2
   versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
   scraping `stop_states` (#5066).
+
+- `ripr doctor --json` (schema `0.4`) now carries the environment facts the
+  human doctor screen already printed: `detected_languages` (with each
+  language's tier, whether its adapter is compiled in, and whether the effective
+  config enables it), `unanalyzed_source_languages`, `preview_language_gaps`
+  (which `[languages] enabled` entry to add for a detected-but-skipped preview
+  language), `config_defaults`, `cache`, `test_surfaces`, and `perl_preview`
+  including the exporter's typed compatibility state. An agent or CI job reading
+  the machine form no longer concludes "nothing to report" where the terminal
+  printed a dozen lines of actionable environment state, and `detected_languages`
+  is deliberately distinct from the existing `languages` array, which stays "what
+  `ripr.toml` enables" (#5214).
+- `schemas/ripr/doctor.schema.json`: the doctor document now has a published
+  JSON Schema, and `docs/OUTPUT_SCHEMA.md` documents its shape (#5214).
+- Verdict corpus: authored subjects. Three small crates written for the
+  corpus add 23 runtime-labeled cases covering the verdicts and probe
+  families the real crates left empty: field construction, call deletion,
+  side effect, error path, static unknown and non-arithmetic return values.
+  ripr now credits 6 authored lines, and 3 of those credits are false
+  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
+  cases are reported apart from upstream ones under `by_origin`, because
+  they were chosen to fill cells: the upstream rates stay 10 of 20 false
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
+- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
+  specs define and no corpus case exercised: assertions that never run
+  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
+  Result matches, `matches!` and `return Err` oracles, self-computed
+  expected values, named-constant and split-test boundaries, macro and
+  helper-chain reach, scanner and recursive helpers, cross-crate tests,
+  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
+  corpus's first silent verdict). Two changed-`let` cases exercise the
+  retarget projection. Authored rates now read 23 of 36 false actionable
+  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
+- `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
+  into a test that compiles and fails at its own labelled `todo!()` until
+  you write the expected value; `--write` places it in the existing inline
+  test module, a new one, or the producer-admitted integration file.
+  Inputs come from the changed comparison; the expected value is never
+  invented. `ripr check` prints the command under "Write a test for it:"
+  for Rust predicate, return-value, error-path and match-arm gaps, and
+  unsupported shapes refuse with a typed reason (#5355, #5357).
+- Integration-file stubs from `ripr agent stub --write` keep a crate-root
+  `pub const` comparison as a derived input, rebase `crate::` parameter
+  types to the library crate name, and compile under the printed
+  `cargo test --manifest-path … --test <stem>` command until they stop at
+  the labelled `ripr:` todo. Crate-root `pub const` items are matched from
+  the clean parse, not brace counting, so nested-module constants stay
+  fill-ins even when a string or comment holds `}`. Private, `pub(crate)`,
+  `#[cfg(test)]`, and other cfg-gated constants stay fill-ins because
+  feature and target activation is not established statically; `self::`
+  and `super::` parameter paths still refuse (#5453).
+
+- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
+  seams (schema `0.2`) now carry the parser-owned span coordinates
+  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
+  end) when span geometry is available, matching cargo-mutants span columns
+  for calibration joins. Seam IDs are unchanged; span-less entries omit the
+  fields and consumers must treat them as line-only. `agent verify`
+  requires the current `0.4` envelope, so regenerate snapshots rather than
+  hand-editing versions (#5336).
+- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
+  reported as strongly gripped with every mutant missed. Neither is credited
+  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
+  reads limited. The spot-check miss on the otel line came from a build that
+  did not compile it, so its truth comes from `--features profiling-traced`.
+  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
+  #5332, #5335).
+- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
+  scoreboards (speed, ci, trust, paste, first_run) on a pinned
+  real-repository corpus: cold pilot and warm check time and peak memory,
+  generated workflow size, false-clean and self-contradicting output, and
+  paste safety of printed commands under a hostile repository path. Targets
+  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
+  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
+  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
+  nightly `DX Scoreboard` workflow runs it.
+
+- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
+  second semver and bytesize pins), now 32 cases across 10 subjects. The
+  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
+  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
+  `no_static_path_with_related_tests` contradictions, for 10 of 20
+  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
+  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
+  later (RIPR-SPEC-0219, #5332).
+- LSP: the accepted refresh's work-done progress now consumes the shared
+  producer stage vocabulary — the blocking analysis runs through the shared
+  progress-bearing entry point and a best-effort bridge forwards
+  `loading input`, `analyzing workspace`, and `building output` as bounded
+  message-only `$/progress` reports on the existing
+  `ripr-analysis-{generation}` token. Reports never carry percentages or
+  terminal stages; cancellation, deadline, supersession, failure, and
+  disclosed limited/deferred states keep their outcome-derived terminal
+  messages, and clients without `window/workDoneProgress` see no traffic.
+  The post-analysis stage drain is bounded, so a stalled client can delay
+  diagnostics handling by at most twice the drain budget, never block it. A
+  cross-surface parity oracle pins CLI and LSP stage identity, ordering,
+  denominator honesty, and terminal disposition against one normalized
+  producer trace (RIPR-SPEC-0208, #4811).
+- CLI: `ripr pilot` now projects the shared analysis progress stream on
+  stderr — `ripr progress: <stage> [repo]` stage lines and throttled
+  `still active after <elapsed class>` heartbeats, exactly as `ripr check`
+  reports them — while its repo inventory runs, including the cold-cache
+  auto-retry, so the primary first-run command no longer sits silent for
+  minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
+  suppresses the stream (RIPR-SPEC-0185, #5019).
+- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
+  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
+  bytesize excerpts, each labeled by running mutants against the crate's own
+  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
+  actionable, false exposed or false silent and counts contradictions inside
+  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
+  (false actionable), no case is credited, and 2 of 29 findings contradict
+  themselves. It runs no mutation testing or network access.
+- Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
+  a frozen protocol names study identity, assignment, equal budgets, the named
+  RIPR evidence surface, leakage controls, retries, stopping, non-compensating
+  outcome axes, and claim ceiling before any attempt. JSON and Markdown project
+  one sealed object. This does not execute agents, grade repairs, or claim
+  intervention value (#4649).
+- Python same-class method owners that tests reach only through construction
+  or another method on that class now keep `no_static_path` but name
+  `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0201,
+  #4765). This is a named limitation, not a related-test or coverage claim.
+- LSP: the seam code actions and seam hover project the compact RepairCard
+  (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
+  versioned `repair_card.v1` document the CLI `ripr agent card` handoff
+  assembles — built from the completed snapshot's own authorities through the
+  shared `app::repair_card_handoff` projection, under the ratified default
+  budget — over the already-advertised `ripr.copyContext` command, and the
+  seam hover gains a bounded `## Repair card` section naming the canonical
+  card identity, the typed instruction state, next-action presence, and
+  per-state detail availability. Both surfaces fail closed to omission when a
+  producer fact cannot be bound and inherit the existing stale-diagnostic
+  suppression; the VS Code extension copies the `repair_card` label directly
+  without an LSP round trip. The MCP half of #4668 stays deferred on the
+  open #1898/#3089/#3090 authorities under ADR 0022.
+- Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
+  the default-field card against its canonical packet on four deterministic
+  synthetic corpus profiles (boundary without/with witness, witness with a
+  current attempt, witness with a stale attempt) and records a versioned
+  `repair_card_budget_decision_receipt` that ratifies the 16-item /
+  64 KiB / 4 KiB defaults as `ratified_synthetic_scope`. Four load-bearing
+  relations (both default bounds plus the packet-envelope boundaries) hold
+  per profile; the card-vs-packet size comparison is reported as a
+  measurement — on the single-seam profiles the compact card wire is not
+  smaller than the single-seam packet wire — and is not a ratification
+  claim. Real-attempt usability stays `pending` while the governed
+  #1702/#1579 corpus carries zero attempt cases, and the gate accepts no
+  ratification value once attempt cases appear until per-opportunity real
+  measurement lands; committed expectations and receipt artifacts are
+  re-validated by a fail-closed
+  `cargo xtask repair-card-usability-report` gate on every run.
+- CLI: `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194, #4667) makes
+  the compact `RepairCardV1` the default bounded agent handoff. The card is
+  assembled verbatim from the shared authorities — the check finding's
+  fix-instruction witness, repair-route readiness and packet eligibility, the
+  packet's own edit-cage derivation, the seam's latest repair-attempt
+  manifest, and the typed command catalog — with producer-owned portable
+  workspace identity (fail-closed, never minted from a checkout path). The
+  complete canonical packet stays behind the card's explicit detail route;
+  `ripr agent packet` is unchanged and remains the compatibility path.
+  Without `--json`, the same typed fields render as a compact human summary
+  that never re-derives, reorders, or strengthens the card.
+- Domains: `RepairCardV1` detail references (RIPR-SPEC-0193, #4666) keep the
+  default card finite: nine load-bearing evidence families (full fix
+  instruction, witness/stage evidence, related-test candidates, limitation
+  detail, canonical packet, RepairAttempt status, focused-proof receipt,
+  static movement, optional mutation calibration) ride behind typed
+  `RepairCardDetailRef` routes with sha256 content digests and measured
+  selected/omitted/complete byte accounting under a versioned provisional
+  budget (`repair-card-budget-v1`; #4669 ratifies the numbers). Stale,
+  malformed, wrong-root, missing and unavailable evidence stays visibly so;
+  budgeting never changes canonical identity, readiness, target selection or
+  actionability, and oversized compact fields or root-specific route
+  spellings fail closed instead of truncating silently.
+- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0195) is the compact
+  provider-neutral repair work object projected from the shared repair
+  authorities: fix-instruction summary, repair-route readiness, typed target
+  selection, typed command references and optional repair-attempt state. One
+  app-layer builder owns the projection; a sha256 semantic digest covers the
+  load-bearing surface, a single fail-closed gate keeps stale/limited/
+  unavailable cards from exposing a route, and `done_when` keeps five axes
+  separate. At introduction no projection consumed the card (#4663); the CLI
+  projection `ripr agent card` shipped later in this unreleased window
+  (#4667), the LSP seam handoff code action projects the same card and the
+  seam hover shows a bounded summary of it (#4668), and no MCP projection
+  emits the card yet.
+- CLI: the seven full-repo audit-path formats (`repo-seams-json`,
+  `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
+  `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
+  fully silent. Every invocation prints one stderr line naming the expected
+  cost class before the run begins, and the walk now projects the same
+  `ripr progress:` producer stages as the diff path (`loading_input`,
+  `analyzing`, `building_output`, `completed [repo]`, throttled heartbeats,
+  fail-closed `failed`/`cancelled`). The warm-rerun clause is honest per
+  format: the classified/compact-classified formats disclose seam-facts
+  cache reuse on warm reruns, while the raw `repo-seams-*` formats disclose
+  that every run pays the full walk. Stdout is unchanged; the disclosure
+  line survives `--quiet` while the progress stream does not (#4945).
+- CLI: one typed public command catalog now owns RIPR command paths, aliases,
+  and public/compatibility/advanced/internal classification, with parser and
+  typo-suggestion two-way parity. Human help, workflow discovery, and
+  `help --json` are unchanged (#4822).
+- CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
+  append one compact JSONL record so adopting consumers can populate history
+  trend fields. Generated CI still only reads those files when present and
+  never passes `--out-jsonl` (#4392).
+- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
+  receipt for merge/protection surfaces (`#4832`). Desired settings, live
+  observation, apply-route capability, and rollback identity stay separate
+  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
+  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
+  applies settings or enables a queue.
+- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
+  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
+  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
+  publication (#4631).
+- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
+  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
+  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
+  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
+  advisory under the lane contract (test/lint verdicts never gate; missing or
+  zero-subject evidence fails the job). The label-gated full suite is
+  unchanged (#4938).
+- LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
+  sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
+  unchanged save/refresh, production/related/unrelated edits, rename, config
+  change, cancellation, corrupt cache, and explicit full refresh. A stale
+  cached answer cannot satisfy a speed target, and a fast elapsed time cannot
+  hide a redundant full rescan or duplicate diagnostic publication. The
+  historical 2s/10s/30s figures remain proposals, not gates.
+- Identity: `cargo xtask check-identity-registry` enforces one governed
+  identifier catalog and generated `docs/identity` table. Vocabulary and
+  compatibility map only; it does not migrate consumers (#4804).
+- CLI: `ripr check` projects producer-owned analysis stages and throttled
+  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
+  JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
+  reveals the active stage and heartbeats; producer `completed` is held until
+  the command actually succeeds. Unknown totals stay unknown; `--quiet`
+  suppresses the stream. This does not make analysis faster (#4810).
+- `cargo xtask rust-judged-panel feedback` and `check` now retain one
+  checked feedback ledger over the frozen #3806 Rust judgments. Every
+  terminal case gets a disposition; confirmed defects stay replay-only
+  unless a producer-path fixture can keep the exact mechanism; JSON and
+  Markdown reports carry denominators without an overall analyzer score,
+  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
+  (#4796).
+
+- Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
+  `PATH` for Rust, Python, TypeScript, TSX, and JavaScript files. Zed runs
+  only language servers an extension registers, so ripr could not run in Zed
+  before. Install it with `zed: install dev extension`; it is not in the Zed
+  extension registry. Settings under `lsp.ripr.settings` answer ripr's
+  `ripr` configuration section (#4460).
+- `ripr --version` now names the commit the binary was built from, as
+  `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
+  from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
+  commit that `cargo package` recorded, so an installed candidate can be bound
+  to source without hashing it. `ripr doctor` reports the same identity with
+  the running executable and the first `ripr` on PATH, and warns, without
+  failing, when that PATH entry is a Cargo workspace build or a different
+  binary ([#4256](https://github.com/EffortlessMetrics/ripr-swarm/issues/4256)).
+
+- New repository-governed Rust test-harness registry
+  (`[analysis.test_harnesses]` in `ripr.toml`): repositories can teach
+  ripr, through exact registrations only, about bounded custom test
+  harnesses and test-producing source forms. A registered
+  `harness = false` custom target (libtest-mimic adapter) is evidence
+  role whose exact source-visible `Trial::test("name", ...)` trials with
+  stable names become the executable subjects, its inert `#[test]`
+  attributes never enter the test denominator, and one exact registered
+  test-producing attribute is classified through the shared source-role
+  authority. Subject facts carry harness kind, adapter generation,
+  provenance, subject identity, and a named-unexecuted selector
+  capability; dynamic trial names, loop-driven registration, ambiguous
+  imports, lookalike markers, stale or conflicting registrations, and
+  unknown adapter versions are named fail-closed limitations. Check JSON
+  gains a `test_harnesses` projection only when registrations exist
+  ([#3532](https://github.com/EffortlessMetrics/ripr-swarm/issues/3532)).
+
+- Registered `custom_harness` targets now validate against the parsed
+  Cargo target metadata of the declaring manifest: only a declared
+  `[[test]]` target with `harness = false` keeps file-wide evidence role,
+  helper demotion, and adapter subjects. Explicit declarations resolve
+  lexically (`..` segments collapsed) and claim their target across
+  nested and sibling manifest directories, including shared targets
+  declared via a parent-relative path; nearest-manifest resolution still
+  governs package autodiscovery, and workspace-inherited
+  (`edition.workspace = true`) editions are honored. A registration
+  whose target is missing from Cargo metadata, whose Cargo target still
+  has `harness = true`, or whose workspace manifests cannot all be read
+  and parsed records the typed limitations `target_not_declared`,
+  `harness_flag_conflict`, or `manifest_unavailable` — naming the target
+  — and degrades to per-function behavior
+  ([#3608](https://github.com/EffortlessMetrics/ripr-swarm/issues/3608)).
+
+- Registered `custom_harness` target validation now sources workspace
+  membership and the test-target inventory from `cargo metadata`
+  itself instead of a bounded manifest TOML emulation: a member's
+  workspace-inherited (`[workspace.dependencies]`) path dependency
+  validates its declarations, character-class member globs expand as
+  cargo expands them, and `[workspace.exclude]` patterns match as
+  cargo's literal path prefixes (a wildcard exclude component
+  excludes nothing; a bare directory prefix excludes its subtree). The
+  `harness` flag still comes from the owning manifest because metadata
+  output omits it, every registration batch runs one bounded offline
+  probe, and every unresolvable state - no cargo binary, a workspace
+  cargo rejects, an unreachable probe deadline - fails closed to
+  `manifest_unavailable`; the classified-seam caches bump their schema
+  generations so pre-change entries cannot serve the flipped verdicts
+  ([#3634](https://github.com/EffortlessMetrics/ripr-swarm/issues/3634)).
+
+- Registered libtest-mimic trial subjects now carry evidence parity
+  with equivalent ordinary `#[test]` functions: a bare-identifier
+  callback contributes its resolved helper's parsed body evidence one
+  level deep (calls, oracles, literals with real line attribution)
+  only when binding identity is provable — local, import, const/static,
+  and nested-module shadows fail closed; method-position `.unwrap()` /
+  `.expect()` calls register smoke oracles with receiver-ful text
+  (keyword, indexed, cast, operator, and negation receiver forms);
+  assertion macros keep their complete invocation text in every
+  delimiter and full qualified path; and dormant `macro_rules!`
+  templates in any delimiter — and commented-out code — contribute no
+  evidence while live surrounding evidence still admits. Warm caches
+  are invalidated by the changed extraction generations
+  ([#3603](https://github.com/EffortlessMetrics/ripr-swarm/issues/3603)).
+
+- The named-invocation capability claim carried by libtest-mimic trial
+  subjects is now documented as syntactic-only: a subject whose
+  `Trial::test` registration is statically reached from the registered
+  entry point is claimed as a named invocation of that trial even when
+  the surrounding construction is dead at runtime (unreachable
+  registration path) or the adapter's `run` call is absent. The claim
+  docs, adapter documentation, check-JSON schema, and spec
+  (RIPR-SPEC-0173) state this boundary explicitly, and a fixture pins
+  that dead construction does not suppress the named-invocation claim
+  ([#3604](https://github.com/EffortlessMetrics/ripr-swarm/issues/3604)).
+
+- Registered libtest-mimic trial subjects gain a bounded, fail-closed
+  reachability authority: the adapter anchors the registered run entry
+  point (`<marker>::run` or a marker-anchored `run` import) and
+  resolves its trial argument through supported forms — direct
+  `vec![]`/array literals (including trials inside macro token trees),
+  `&`/`&mut`/`local[..]` container peeling, immutable let-bound chains
+  in the same function body, and one level of builder-function
+  resolution. A trial construction provably excluded from every
+  resolved run argument — or a target with no run entry call at all —
+  keeps its subject fact and syntactic claim but no longer enters the
+  executable-test denominator, and a per-trial
+  `registration_unreachable` limitation names it. Reachability the
+  bounded resolver cannot establish keeps today's denominator behavior
+  and is disclosed by one aggregate `registration_reachability_unknown`
+  limitation naming the trials — never a fabricated per-subject field,
+  and never a silent exclusion: unknown is the bias. Classified-seam
+  cache generations bump so pre-change caches cannot serve the old
+  denominator
+  ([#3636](https://github.com/EffortlessMetrics/ripr-swarm/issues/3636)).
+
+- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
+  Model Context Protocol server that exposes exact workspace status
+  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
+  over newline-delimited JSON-RPC. Protocol errors always carry a
+  response `id` (`null` when the request id is unreadable), discovery
+  requires current-protocol `_meta`, and invalid roots fail closed
+  without leaking paths. Startup routes `ripr mcp` (and `ripr help mcp`)
+  ahead of general CLI initialization, and the global `--verbose` flag
+  works in any position without contaminating the protocol stdout stream
+  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088),
+  [#3525](https://github.com/EffortlessMetrics/ripr-swarm/pull/3525),
+  [#3587](https://github.com/EffortlessMetrics/ripr-swarm/pull/3587)).
+
+- New `ripr rerun` command: changed-test targeted re-analysis. Selects
+  ledger gaps whose guarding tests changed, invalidates stale analysis
+  by input and content fingerprints, and runs the bounded check pipeline
+  only for the impacted scope
+  ([#1520](https://github.com/EffortlessMetrics/ripr-swarm/pull/1520)).
+
+- Rust test discovery now recognizes test-case parameterized tests
+  ([#3522](https://github.com/EffortlessMetrics/ripr-swarm/pull/3522)).
+
+- Rust test discovery now recognizes explicit nonstandard test
+  attributes
+  ([#3513](https://github.com/EffortlessMetrics/ripr-swarm/pull/3513)).
+
+- TypeScript test discovery now recognizes active Jest/Vitest test
+  modifiers
+  ([#3506](https://github.com/EffortlessMetrics/ripr-swarm/pull/3506)).
+
+- The Perl preview lane no longer lets operational producer limitations
+  mask an earned exposure class: the class cap and the actionability
+  gate are now separate in the static-limit projection
+  ([#3583](https://github.com/EffortlessMetrics/ripr-swarm/pull/3583)).
+
+- New binary-first evidence and gate surface: `ripr plus` (repo-level
+  quality receipt), `ripr pr-summary` (PR readiness summary),
+  `ripr pr-evidence` (PR evidence packet), `ripr annotations` (GitHub
+  Actions annotations), and `ripr impacted-evidence` (mutation routing
+  evidence). Each is advisory output, not a merge gate
+  ([#1476](https://github.com/EffortlessMetrics/ripr-swarm/pull/1476),
+  [#1460](https://github.com/EffortlessMetrics/ripr-swarm/pull/1460),
+  [#1468](https://github.com/EffortlessMetrics/ripr-swarm/pull/1468),
+  [#1467](https://github.com/EffortlessMetrics/ripr-swarm/pull/1467),
+  [#1474](https://github.com/EffortlessMetrics/ripr-swarm/pull/1474)).
+
+- `ripr check --suppression-policy <toml>` applies path-glob finding
+  suppression from a committed policy file, and `ripr gate evaluate
+  --exception-policy <toml>` applies dated burndown exceptions from a
+  ledger. Suppressed findings stay visible as suppressed, never deleted
+  ([#1475](https://github.com/EffortlessMetrics/ripr-swarm/pull/1475),
+  [#1477](https://github.com/EffortlessMetrics/ripr-swarm/pull/1477)).
+
+- Cache management surface: `ripr cache status` reports the analysis
+  cache state per workspace, `ripr cache clear` removes it (with
+  `--dry-run` and `--force` gates), and cache and receipt writes are
+  atomic, so a crashed run can no longer leave a half-written cache
+  entry behind
+  ([#1822](https://github.com/EffortlessMetrics/ripr-swarm/pull/1822),
+  [#2865](https://github.com/EffortlessMetrics/ripr-swarm/pull/2865),
+  [#2738](https://github.com/EffortlessMetrics/ripr-swarm/pull/2738)).
+
+- LSP capability wave: pull diagnostics with stable result IDs, the
+  `ripr/listActionableItems` handler, transport framing/payload/
+  concurrency bounds, work-done progress for long refreshes, UTF-16
+  position encoding, refresh-status disclosure, and a versioned
+  diagnostic-code catalog. The server remains an experimental sidecar
+  over saved workspaces
+  ([#1669](https://github.com/EffortlessMetrics/ripr-swarm/pull/1669),
+  [#3012](https://github.com/EffortlessMetrics/ripr-swarm/pull/3012),
+  [#2185](https://github.com/EffortlessMetrics/ripr-swarm/pull/2185)).
+
+- Analysis performance: a per-file fact cache on the diff path (the
+  largest single win — unchanged files reuse their previous facts
+  instead of re-parsing), parallel index-build parsing via rayon, and
+  artifact reuse across `check`/`explain`/`context` so follow-up
+  commands do not re-run the analysis
+  ([#2039](https://github.com/EffortlessMetrics/ripr-swarm/pull/2039),
+  [#2322](https://github.com/EffortlessMetrics/ripr-swarm/pull/2322),
+  [#2250](https://github.com/EffortlessMetrics/ripr-swarm/pull/2250)).
+
+- The `ripr agent start` workflow packet now states that its generated commands
+  assume bash. `commands.md` carries a prose note above the first command block,
+  and `workflow.json` gains an additive `command_shell: "bash"` field. The
+  command strings have always used POSIX single-quote quoting and `>`
+  redirection, so copying one into cmd.exe (which treats `'` as a literal
+  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
+  rejects quoted arguments. The note names Git Bash specifically rather than
+  "bash on Windows": generated paths keep their Windows drive-letter prefix,
+  which WSL resolves as a relative path, so WSL needs each path translated to
+  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
+  command string, schema version, or existing field changed. The PowerShell
+  variants (#2964) and typed argv command specs (#1617) that this entry left
+  as separate work landed later in this release; see the entries below
+  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
+
+- Published schemas that had only a reverse-direction `schema_version` check are
+  now bound to real producer bytes by the verification-contract registry. The
+  Rust repair trust corpus of record (`metrics/rust-repair-trust/corpus.json`)
+  validates as itself rather than through a copy; the `command_spec` and
+  `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
+  validate against the `command_specs` a generated agent packet actually emits;
+  and the design-only `RepairAssuranceV1` envelope validates against the
+  assurance vocabulary corpus records that carry a `record` and are not marked
+  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
+  previously stated but nothing enforced. Patch-shaped cases and advertised
+  negatives stay outside that walk and are covered by their own tests, so the
+  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
+  `docs/verification/schema-producer-audit.md` records the producer, canonical
+  subject, negative mutation, and explicit exemption for every published schema
+  — including the `riprAgent` protocol schemas, which remain reserved and
+  routed to [#3009](https://github.com/EffortlessMetrics/ripr-swarm/issues/3009)
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
+- The contract validator now evaluates `oneOf`, `if`/`then`/`else`, `not`,
+  `minItems`, `maxItems`, `uniqueItems`, `maximum`, and `pattern`. Conditional
+  requirements and identity commitments — 40-character head SHAs, `sha256:`
+  digests, and the relative `working_directory` constraint — were declared by
+  the published schemas and enforced by nothing. `pattern` support is
+  fail-closed: an uninterpretable expression is reported as a violation instead
+  of assumed to match
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
+- `policy/release-targets.toml` records the committed release-candidate
+  membership graph, and `cargo xtask check-release-targets` validates it
+  offline. The manifest distinguishes the release goal, claim blockers,
+  qualification/proof blockers, release companions, conditional candidates, and
+  release-referenced rolling work, and records umbrella parents with an explicit
+  `counted_in` and justification so parent/leaf double counting cannot be
+  silent. Eight rules are enforced — schema, release identity, role uniqueness,
+  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
+  parent accounting, and referential closure — each with a fixture that violates
+  exactly that rule. Reports land at
+  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
+  `cargo xtask precommit` and the CI policy-check pass.
+
+  The checker deliberately does not parse release-goal issue prose. Those bodies
+  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
+  parser would silently miss the members inside a range and then report a clean
+  graph over issues it never saw. The manifest is the parsed authority; the goal
+  bodies remain human-validated documentation. This check is network-free and
+  does not compare against live GitHub milestones, does not qualify a candidate,
+  and does not represent publication
+  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
+
+- `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
+  default (`debug = "full"`). Line tables give backtraces with file:line
+  resolution without the full variable-debuginfo cost, cutting link time and
+  binary size (~9% smaller debug binaries). Full debuginfo is still available
+  via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
+  step-debugging with variable inspection (#2420).
+
+- `cargo xtask module-health` now reports a **responsibility signal** alongside
+  its line count: a heuristic count of distinct top-level concerns (distinct
+  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
+  when it exceeds a fixed threshold. This surfaces the "structurally entangled
+  even if not huge" case that a pure line count misses (e.g. a small file
+  exposing many distinct concern families). Both signals appear in the JSON and
+  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
+  responsibility signal is documented as a smell, not a measurement; the
+  advisory still always exits 0 and is never wired into CI gates.
+
+- Property-based tests (`proptest`) added for the diff parser, covering parser
+  totality (never panics on arbitrary input), structural invariants (no empty
+  paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
+  This is the first property-based testing infrastructure in the repo (#2751).
+
+- New `cargo xtask eval-sweep check` command: the typed offline validator for
+  the accepted Python eval-sweep artifacts (RIPR-SPEC-0086). It validates the
+  accepted eight-subject manifest under a deny-unknown schema (exactly eight
+  uniquely identified subjects, immutable https/sha pins, portable secret-free
+  diff paths) and retained run receipts in both owned shapes — the historical
+  0.2 report the sweep command writes and the 0.3 currentness shape (binary/
+  features/config/profile/input identity, materialization/detection/
+  corpus-selection/execution states, evidence digests, repeat-run comparison
+  identity, manifest-digest binding) — failing closed on changed denominators,
+  unknown state vocabulary, contradictory status, malformed or stale digest
+  bindings, and hand-edited aggregates that disagree with the derived rows
+  (including a supplied `gate_status` that differs from the gate the rows
+  derive and summary distributions that do not match the row-derived key set
+  exactly); missing identities are typed `incomplete`, never invented. It
+  writes the versioned `eval-sweep-check.{json,md}` reports (kind
+  `python_eval_sweep_check_report`, schema `0.1`) whose verdict vocabulary is
+  `valid` / `incomplete` / `not_run` — a structural currentness-readiness
+  verdict, never a robustness or adequacy claim
+  ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
+- `ripr feedback record` writes a local usefulness receipt bound to one
+  analysis snapshot (`--snapshot`, required) with a reason from a closed list,
+  such as `useful_actionable` or `false_actionable`, under
+  `target/ripr/feedback/`. `ripr feedback export` joins those receipts onto an
+  existing `route-quality.json`, listing receipts that match no row instead of
+  inventing movement. Recording changes no diagnostic, classification,
+  baseline, suppression, gate, or gap closure (#4684).
 
 ### Fixed
 
@@ -418,446 +1385,6 @@ are scoped or reviewed.
 - `ripr explain` and `ripr context` explain `file:line` syntax after a malformed
   location misses and retain the scoped listing command for recovery. Finding
   IDs remain opaque; selection and exit status are unchanged (#5581, #5252).
-
-### Changed
-
-- **Breaking (JSON output).** `ripr doctor --json` schema `0.3` -> `0.4` removes
-  the top-level `sections` array. Its only mutator and only reader were
-  `#[cfg(test)]`, so every released document carried `"sections": []` and no
-  consumer could have read data from it; a client that reads `sections` (or
-  decodes into a closed struct that has one) must be updated before it accepts a
-  `0.4` document. Every `0.3` field keeps its meaning, every added field is
-  additive for a consumer that ignores unknown keys, and reverting the change
-  restores `0.3` exactly. The human `ripr doctor` screen is unchanged: same
-  wording, same ordering, same markers, same exit codes (#5214).
-- The install route is now timed as its own scoreboard metric,
-  `first_run.install_seconds` with a rise rule that needs a committed baseline sample and a nightly first-run ingest before it can fail anything (#5311, #5983). The README, quickstart
-  and install-channel notes state the measured source-build time of a 0.11
-  development build (about 11 minutes against about 2 for 0.10.0) and that no
-  prebuilt 0.11 archive exists until 0.11.0 is published.
-- Performance: cold `ripr pilot` parses each production file once for
-  new-test placement instead of twice per seam, and a run that passes the
-  default 30s deadline keeps going instead of restarting. On a 4-core Linux
-  host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
-  ripgrep and 114s to 27s on regex, with pilot artifacts byte-identical after
-  normalizing the output path. An explicit `--timeout-ms`, including
-  `--timeout-ms 30000`, remains a hard limit and gets no extension. When the
-  extended run also times out, the pilot summary reports the 270000 ms budget
-  actually spent and suggests a retry budget scaled from it. Seam inventory
-  resolves owning functions with one sorted pass per file instead of a scan
-  of every function per seam, so a generated 200k-function file that
-  previously exhausted the 270s budget completes in 112s, and a hard deadline
-  now cancels within about a second instead of waiting out the scan. A warm
-  `ripr check` scans workspace files for shadowed assertion macros on all
-  cores and stops once one file already leaves every trusted macro
-  unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
-  (8.0s to 4.4s on two cores) with identical output.
-- The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
-  and report steps now run inside one `ripr reports ci-packet` step, which
-  keeps each old step's semantics: a log group per step, advisory failures
-  logged without stopping the rest, and the job failing only when the diff
-  capture or the gate fails, or a gate input fails under a blocking
-  `RIPR_GATE_MODE`. `--step NAME` reruns one step. The comment capture and
-  publish steps stay in YAML, so the token never reaches ripr. Regenerate the
-  workflow with `ripr init --ci github --force` to pick this up (#4696).
-
-- Performance: the per-seam evidence pass behind `ripr pilot` and repo
-  exposure runs on all cores, parses each related test file once instead of
-  once per seam, and resolves each seam's owner arguments once. Cold pilot
-  on a 4-core Linux host fell from 212s to 68s on ripr-swarm, 32s to 14s on
-  regex, 23s to 8.6s on ripgrep and 3.0s to 2.1s on serde, with pilot
-  artifacts byte-identical. Crediting same-file assertion helpers parses only
-  files that hold tests, in parallel, so a warm draft-mode check of a
-  four-file ripr-swarm diff fell from 16.1s to 12.6s. The transitive-reach
-  limitation check builds its call graph once per run and walks backwards
-  from each owner, so a 22-file rust-lang/rust diff checks in 24s instead of
-  594s, with identical JSON. The evidence pass also sorts each file's
-  functions once for owner lookup and collects each owner file's fixture names
-  once, so cold pilot on a generated one-file crate with 200,000 functions
-  takes 20s instead of 416s, with identical artifacts.
-
-- CI: the `ripr init --ci github` workflow downloads the pinned ripr
-  release's prebuilt binary and checks its published SHA-256 instead of
-  compiling ripr with `cargo install` on every run, so it no longer sets up a
-  Rust toolchain or `Swatinem/rust-cache`. A checksum mismatch fails the step;
-  a runner with no prebuilt archive (Windows) or a failed download falls back
-  to `cargo install`. The workflow also restores ripr's analysis cache
-  (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
-  pushes to a pull request reuse the facts of unchanged files.
-
-- CI: the generated workflow's advisory summary step is one
-  `ripr reports ci-summary` call instead of about 1,250 lines of inline
-  bash and `jq`, so the generated workflow drops from about 2,400 lines to
-  about 1,150. The new command prints the same Markdown from the same
-  artifacts and can be run locally against a `target/ripr` tree.
-
-- Classified seam-cache publication serializes borrowed records through a
-  bounded atomic writer. Encoded bytes are the primary single-entry/shard
-  ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`, default 8 MiB); record
-  count remains a secondary cap. Ordinary store no longer deep-clones a shard
-  or retains the complete encoded `Vec<u8>`. One oversized record skips with
-  `skipped_oversized_record_index_*` instead of claiming a populated cache
-  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
-  through the related-test table the loader expects. Cache load/decode bounds
-  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
-
-- LSP: the actionable-profile line-findings hover names the editor-neutral
-  `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
-  `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
-  instead of telling every client to set the VS Code-only name (#5094).
-- Git invocation timeout is a crate-internal typed `CoreError` variant. Semantic
-  consumers match the variant (including through structured context) instead of
-  the `git_invocation_timeout` Display prefix. Public wording, LSP
-  `git_invocation_timeout` kind (#2811), exit mapping, and process cleanup are
-  unchanged.
-
-- Rust finding output preserves the matched related-test/oracle count before
-  bounded packing. JSON, SARIF, and human totals agree while retained rows and
-  exposure classification remain unchanged. (#5146)
-
-- Evidence output: retained lexical and statically derived values are described
-  as source values in both human and JSON evidence paths, including values in
-  refused assertions. Typed facts, provenance, classes and admitted oracle
-  stages stay unchanged. (#5027)
-- Rust analysis: a proved-empty local macro cannot contribute discarded owner
-  calls or boundary arguments through a mixed-line call fact. A genuine far
-  assertion retains its strength and observation, while a real boundary test
-  still discriminates. Original source bytes remain authoritative; producer
-  build identity separates predecessor caches without reusing their facts. (#5027)
-- Rust analysis: ordinary turbofish calls remain eligible beside unresolved
-  property macros. Opaque declarations cannot supply owner reach, and discarded
-  property bodies cannot supply raw-scanned assertion oracles. These boundaries
-  preserve ordinary source authority without assuming macro expansion. (#5131)
-- Python: a changed source path missing from the working tree now carries an
-  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
-  It is excluded from analyzed-file counts and preview samples; available findings
-  remain visible and shared outcome/badge projections report incomplete analysis
-  instead of a complete green zero (#5110).
-
-- Human output: a selected `no_static_path` finding without a typed limitation
-  asks readers to review the unresolved static path and existing tests, rather
-  than inspect a nonexistent named limitation. State, classification, JSON and
-  typed-limitation guidance are unchanged. (#5051)
-- CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
-  --help` now print the subcommand help and exit 0; help was previously
-  recognized only as the sole argument, so any combined invocation failed
-  with a self-referential "Run `ripr cache status --help`" error. `ripr cache
-  --help <anything>` prints the family usage, matching the sibling command
-  families (#5024).
-- CLI: `ripr doctor --profile foo` now renders the accepted set with the
-  standard backticks — `unknown doctor profile \`foo\`; expected \`analysis\`
-  or \`source-build\`` — matching the gate/diff/mode enumeration errors; the
-  outcome and calibrate `--format` errors already name their accepted set via
-  the argument-error alignment pass (#5016).
-- CLI: the `ripr cache status` cleanup hint names `ripr cache clear
-  [--dry-run] [--force]` — the command an installed-binary user can actually
-  run — instead of routing to the maintainer-only `cargo xtask cache gc`
-  (#5012; the text change landed with #4411, this PR pins and verifies it).
-- CLI: the global `-v`/`--verbose` flag is now documented on the
-  `ripr help --all` reference (extra stderr pipeline diagnostics; accepted
-  in any position, never consumed as another flag's value), and one shared
-  stripping pass removes every occurrence, so `ripr -v -v <command>`
-  behaves identically for `mcp` and every other command family instead of
-  routing on one family and failing on the rest (#5009).
-- Human output: the Summary denominator is now `N of M finding(s)
-  unsuppressed` instead of `N of M finding(s) shown`; the digest renders one
-  finding and names the rest under `Hidden:`, so "shown" read as "rendered"
-  and contradicted the omitted count on the same page. The #4322 suppression
-  disclosure is unchanged. (#5017)
-- Human output: when a top gap is selected, the `Hidden:` count line now
-  names the omitted set's currentness mix instead of labeling every omission
-  lower-priority — `L lower-priority finding(s) omitted; B base-side
-  evidence, not candidate edit targets` (with an unresolved-currentness
-  clause when present), and an all-base-side or all-unresolved omitted set
-  says so directly. Pure lower-priority omitted sets keep the legacy single
-  clause. (#5021)
-- LSP: the work-done progress terminal end for a limited run no longer
-  interpolates the raw internal run-status tag (`analysis limited (run
-  status: seams_deferred)`); the end message is now the human phrase
-  `analysis completed with limited evidence`, and the run-status tag stays
-  machine-only on the typed `ripr/analysisStatus` payload (#5003).
-- MCP: the `ripr_workspace_status` tool description and the
-  `ripr://workspace/status` resource description state positively what the
-  document contains (repository-root discovery, configuration presence, and
-  launch-trust/authority facts), disavow reading `workspace_state: ready`
-  as an analysis result, and name the real evidence route (`ripr check
-  --format json` and editor diagnostics from the ripr language server)
-  (#5002).
-- LSP: identity-law tests pin that `action_id` excludes title, range,
-  message, snapshot handles, client capability, and disabled reason; build
-  and parse share one fingerprint; analysis input identity excludes
-  deadlines and position encoding; diagnostic result IDs ignore refresh
-  clock and attempt handles. (#1932)
-- TypeScript/Python adapters: capped-read refusals are now disclosed as a
-  bounded, stable-sorted sample of refused paths (at most 8 per run) plus
-  one summary entry carrying the true refused count, instead of one
-  `AnalysisLimitation` per refused file — a correctly-capped monorepo no
-  longer emits up to ~20,000 limitation entries that dwarf the findings.
-  Every refused file is still refused (fail-closed); only the disclosure is
-  sampled, and the summary states that the full per-file list is not
-  materialized in output. No JSON/SARIF schema shape changes. (#5022)
-
-- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
-  identity, including target kind/source and exact executable hash. Required
-  release controls must resolve to one owning artifact across both samples;
-  missing or ambiguous provenance is refused instead of borrowing another
-  target's pass. Log-derived report entries use bounded excerpts and section
-  counts with explicit truncation and omissions; doctest transitions are
-  explicit and never assigned an inferred package (#5043).
-
-### Added
-
-- `ripr doctor --json` (schema `0.4`) now carries the environment facts the
-  human doctor screen already printed: `detected_languages` (with each
-  language's tier, whether its adapter is compiled in, and whether the effective
-  config enables it), `unanalyzed_source_languages`, `preview_language_gaps`
-  (which `[languages] enabled` entry to add for a detected-but-skipped preview
-  language), `config_defaults`, `cache`, `test_surfaces`, and `perl_preview`
-  including the exporter's typed compatibility state. An agent or CI job reading
-  the machine form no longer concludes "nothing to report" where the terminal
-  printed a dozen lines of actionable environment state, and `detected_languages`
-  is deliberately distinct from the existing `languages` array, which stays "what
-  `ripr.toml` enables" (#5214).
-- `schemas/ripr/doctor.schema.json`: the doctor document now has a published
-  JSON Schema, and `docs/OUTPUT_SCHEMA.md` documents its shape (#5214).
-- Verdict corpus: authored subjects. Three small crates written for the
-  corpus add 23 runtime-labeled cases covering the verdicts and probe
-  families the real crates left empty: field construction, call deletion,
-  side effect, error path, static unknown and non-arithmetic return values.
-  ripr now credits 6 authored lines, and 3 of those credits are false
-  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
-  cases are reported apart from upstream ones under `by_origin`, because
-  they were chosen to fill cells: the upstream rates stay 10 of 20 false
-  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
-  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
-  current case exercises it (RIPR-SPEC-0219).
-- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
-  specs define and no corpus case exercised: assertions that never run
-  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
-  Result matches, `matches!` and `return Err` oracles, self-computed
-  expected values, named-constant and split-test boundaries, macro and
-  helper-chain reach, scanner and recursive helpers, cross-crate tests,
-  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
-  corpus's first silent verdict). Two changed-`let` cases exercise the
-  retarget projection. Authored rates now read 23 of 36 false actionable
-  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
-- `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
-  into a test that compiles and fails at its own labelled `todo!()` until
-  you write the expected value; `--write` places it in the existing inline
-  test module, a new one, or the producer-admitted integration file.
-  Inputs come from the changed comparison; the expected value is never
-  invented. `ripr check` prints the command under "Write a test for it:"
-  for Rust predicate, return-value, error-path and match-arm gaps, and
-  unsupported shapes refuse with a typed reason (#5355, #5357).
-- Integration-file stubs from `ripr agent stub --write` keep a crate-root
-  `pub const` comparison as a derived input, rebase `crate::` parameter
-  types to the library crate name, and compile under the printed
-  `cargo test --manifest-path … --test <stem>` command until they stop at
-  the labelled `ripr:` todo. Crate-root `pub const` items are matched from
-  the clean parse, not brace counting, so nested-module constants stay
-  fill-ins even when a string or comment holds `}`. Private, `pub(crate)`,
-  `#[cfg(test)]`, and other cfg-gated constants stay fill-ins because
-  feature and target activation is not established statically; `self::`
-  and `super::` parameter paths still refuse (#5453).
-
-- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
-  seams (schema `0.2`) now carry the parser-owned span coordinates
-  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
-  end) when span geometry is available, matching cargo-mutants span columns
-  for calibration joins. Seam IDs are unchanged; span-less entries omit the
-  fields and consumers must treat them as line-only. `agent verify`
-  requires the current `0.4` envelope, so regenerate snapshots rather than
-  hand-editing versions (#5336).
-- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
-  reported as strongly gripped with every mutant missed. Neither is credited
-  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
-  reads limited. The spot-check miss on the otel line came from a build that
-  did not compile it, so its truth comes from `--features profiling-traced`.
-  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
-  #5332, #5335).
-- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
-  scoreboards (speed, ci, trust, paste, first_run) on a pinned
-  real-repository corpus: cold pilot and warm check time and peak memory,
-  generated workflow size, false-clean and self-contradicting output, and
-  paste safety of printed commands under a hostile repository path. Targets
-  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
-  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
-  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
-  nightly `DX Scoreboard` workflow runs it.
-
-- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
-  second semver and bytesize pins), now 32 cases across 10 subjects. The
-  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
-  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
-  `no_static_path_with_related_tests` contradictions, for 10 of 20
-  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
-  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
-  later (RIPR-SPEC-0219, #5332).
-- LSP: the accepted refresh's work-done progress now consumes the shared
-  producer stage vocabulary — the blocking analysis runs through the shared
-  progress-bearing entry point and a best-effort bridge forwards
-  `loading input`, `analyzing workspace`, and `building output` as bounded
-  message-only `$/progress` reports on the existing
-  `ripr-analysis-{generation}` token. Reports never carry percentages or
-  terminal stages; cancellation, deadline, supersession, failure, and
-  disclosed limited/deferred states keep their outcome-derived terminal
-  messages, and clients without `window/workDoneProgress` see no traffic.
-  The post-analysis stage drain is bounded, so a stalled client can delay
-  diagnostics handling by at most twice the drain budget, never block it. A
-  cross-surface parity oracle pins CLI and LSP stage identity, ordering,
-  denominator honesty, and terminal disposition against one normalized
-  producer trace (RIPR-SPEC-0208, #4811).
-- CLI: `ripr pilot` now projects the shared analysis progress stream on
-  stderr — `ripr progress: <stage> [repo]` stage lines and throttled
-  `still active after <elapsed class>` heartbeats, exactly as `ripr check`
-  reports them — while its repo inventory runs, including the cold-cache
-  auto-retry, so the primary first-run command no longer sits silent for
-  minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
-  suppresses the stream (RIPR-SPEC-0185, #5019).
-- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
-  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
-  bytesize excerpts, each labeled by running mutants against the crate's own
-  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
-  actionable, false exposed or false silent and counts contradictions inside
-  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
-  (false actionable), no case is credited, and 2 of 29 findings contradict
-  themselves. It runs no mutation testing or network access.
-- Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
-  a frozen protocol names study identity, assignment, equal budgets, the named
-  RIPR evidence surface, leakage controls, retries, stopping, non-compensating
-  outcome axes, and claim ceiling before any attempt. JSON and Markdown project
-  one sealed object. This does not execute agents, grade repairs, or claim
-  intervention value (#4649).
-- Python same-class method owners that tests reach only through construction
-  or another method on that class now keep `no_static_path` but name
-  `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0201,
-  #4765). This is a named limitation, not a related-test or coverage claim.
-- LSP: the seam code actions and seam hover project the compact RepairCard
-  (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
-  versioned `repair_card.v1` document the CLI `ripr agent card` handoff
-  assembles — built from the completed snapshot's own authorities through the
-  shared `app::repair_card_handoff` projection, under the ratified default
-  budget — over the already-advertised `ripr.copyContext` command, and the
-  seam hover gains a bounded `## Repair card` section naming the canonical
-  card identity, the typed instruction state, next-action presence, and
-  per-state detail availability. Both surfaces fail closed to omission when a
-  producer fact cannot be bound and inherit the existing stale-diagnostic
-  suppression; the VS Code extension copies the `repair_card` label directly
-  without an LSP round trip. The MCP half of #4668 stays deferred on the
-  open #1898/#3089/#3090 authorities under ADR 0022.
-- Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
-  the default-field card against its canonical packet on four deterministic
-  synthetic corpus profiles (boundary without/with witness, witness with a
-  current attempt, witness with a stale attempt) and records a versioned
-  `repair_card_budget_decision_receipt` that ratifies the 16-item /
-  64 KiB / 4 KiB defaults as `ratified_synthetic_scope`. Four load-bearing
-  relations (both default bounds plus the packet-envelope boundaries) hold
-  per profile; the card-vs-packet size comparison is reported as a
-  measurement — on the single-seam profiles the compact card wire is not
-  smaller than the single-seam packet wire — and is not a ratification
-  claim. Real-attempt usability stays `pending` while the governed
-  #1702/#1579 corpus carries zero attempt cases, and the gate accepts no
-  ratification value once attempt cases appear until per-opportunity real
-  measurement lands; committed expectations and receipt artifacts are
-  re-validated by a fail-closed
-  `cargo xtask repair-card-usability-report` gate on every run.
-- CLI: `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194, #4667) makes
-  the compact `RepairCardV1` the default bounded agent handoff. The card is
-  assembled verbatim from the shared authorities — the check finding's
-  fix-instruction witness, repair-route readiness and packet eligibility, the
-  packet's own edit-cage derivation, the seam's latest repair-attempt
-  manifest, and the typed command catalog — with producer-owned portable
-  workspace identity (fail-closed, never minted from a checkout path). The
-  complete canonical packet stays behind the card's explicit detail route;
-  `ripr agent packet` is unchanged and remains the compatibility path.
-  Without `--json`, the same typed fields render as a compact human summary
-  that never re-derives, reorders, or strengthens the card.
-- Domains: `RepairCardV1` detail references (RIPR-SPEC-0193, #4666) keep the
-  default card finite: nine load-bearing evidence families (full fix
-  instruction, witness/stage evidence, related-test candidates, limitation
-  detail, canonical packet, RepairAttempt status, focused-proof receipt,
-  static movement, optional mutation calibration) ride behind typed
-  `RepairCardDetailRef` routes with sha256 content digests and measured
-  selected/omitted/complete byte accounting under a versioned provisional
-  budget (`repair-card-budget-v1`; #4669 ratifies the numbers). Stale,
-  malformed, wrong-root, missing and unavailable evidence stays visibly so;
-  budgeting never changes canonical identity, readiness, target selection or
-  actionability, and oversized compact fields or root-specific route
-  spellings fail closed instead of truncating silently.
-- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0195) is the compact
-  provider-neutral repair work object projected from the shared repair
-  authorities: fix-instruction summary, repair-route readiness, typed target
-  selection, typed command references and optional repair-attempt state. One
-  app-layer builder owns the projection; a sha256 semantic digest covers the
-  load-bearing surface, a single fail-closed gate keeps stale/limited/
-  unavailable cards from exposing a route, and `done_when` keeps five axes
-  separate. At introduction no projection consumed the card (#4663); the CLI
-  projection `ripr agent card` shipped later in this unreleased window
-  (#4667), the LSP seam handoff code action projects the same card and the
-  seam hover shows a bounded summary of it (#4668), and no MCP projection
-  emits the card yet.
-- CLI: the seven full-repo audit-path formats (`repo-seams-json`,
-  `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
-  `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
-  fully silent. Every invocation prints one stderr line naming the expected
-  cost class before the run begins, and the walk now projects the same
-  `ripr progress:` producer stages as the diff path (`loading_input`,
-  `analyzing`, `building_output`, `completed [repo]`, throttled heartbeats,
-  fail-closed `failed`/`cancelled`). The warm-rerun clause is honest per
-  format: the classified/compact-classified formats disclose seam-facts
-  cache reuse on warm reruns, while the raw `repo-seams-*` formats disclose
-  that every run pays the full walk. Stdout is unchanged; the disclosure
-  line survives `--quiet` while the progress stream does not (#4945).
-- CLI: one typed public command catalog now owns RIPR command paths, aliases,
-  and public/compatibility/advanced/internal classification, with parser and
-  typo-suggestion two-way parity. Human help, workflow discovery, and
-  `help --json` are unchanged (#4822).
-- CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
-  append one compact JSONL record so adopting consumers can populate history
-  trend fields. Generated CI still only reads those files when present and
-  never passes `--out-jsonl` (#4392).
-- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
-  receipt for merge/protection surfaces (`#4832`). Desired settings, live
-  observation, apply-route capability, and rollback identity stay separate
-  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
-  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
-  applies settings or enables a queue.
-- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
-  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
-  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
-  publication (#4631).
-- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
-  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
-  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
-  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
-  advisory under the lane contract (test/lint verdicts never gate; missing or
-  zero-subject evidence fails the job). The label-gated full suite is
-  unchanged (#4938).
-- LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
-  sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
-  unchanged save/refresh, production/related/unrelated edits, rename, config
-  change, cancellation, corrupt cache, and explicit full refresh. A stale
-  cached answer cannot satisfy a speed target, and a fast elapsed time cannot
-  hide a redundant full rescan or duplicate diagnostic publication. The
-  historical 2s/10s/30s figures remain proposals, not gates.
-- Identity: `cargo xtask check-identity-registry` enforces one governed
-  identifier catalog and generated `docs/identity` table. Vocabulary and
-  compatibility map only; it does not migrate consumers (#4804).
-- CLI: `ripr check` projects producer-owned analysis stages and throttled
-  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
-  JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
-  reveals the active stage and heartbeats; producer `completed` is held until
-  the command actually succeeds. Unknown totals stay unknown; `--quiet`
-  suppresses the stream. This does not make analysis faster (#4810).
-- `cargo xtask rust-judged-panel feedback` and `check` now retain one
-  checked feedback ledger over the frozen #3806 Rust judgments. Every
-  terminal case gets a disposition; confirmed defects stay replay-only
-  unless a producer-path fixture can keep the exact mechanism; JSON and
-  Markdown reports carry denominators without an overall analyzer score,
-  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
-  (#4796).
-
-### Fixed
 
 - Rust: bare equality oracles for error-path and predicate probes now share the
   existing execution/collectability/macro-binding admission (#5027). Uncalled,
@@ -2813,543 +3340,6 @@ are scoped or reviewed.
   an old receipt with an indeterminate error receipt and returns nonzero.
   See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
 
-### Added
-
-- Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
-  `PATH` for Rust, Python, TypeScript, TSX, and JavaScript files. Zed runs
-  only language servers an extension registers, so ripr could not run in Zed
-  before. Install it with `zed: install dev extension`; it is not in the Zed
-  extension registry. Settings under `lsp.ripr.settings` answer ripr's
-  `ripr` configuration section (#4460).
-- `ripr --version` now names the commit the binary was built from, as
-  `ripr <version> (<commit>)`, with `-dirty` when the sources that build it differed
-  from that commit. Packaged crates (crates.io, `cargo install ripr`) read the
-  commit that `cargo package` recorded, so an installed candidate can be bound
-  to source without hashing it. `ripr doctor` reports the same identity with
-  the running executable and the first `ripr` on PATH, and warns, without
-  failing, when that PATH entry is a Cargo workspace build or a different
-  binary ([#4256](https://github.com/EffortlessMetrics/ripr-swarm/issues/4256)).
-
-- New repository-governed Rust test-harness registry
-  (`[analysis.test_harnesses]` in `ripr.toml`): repositories can teach
-  ripr, through exact registrations only, about bounded custom test
-  harnesses and test-producing source forms. A registered
-  `harness = false` custom target (libtest-mimic adapter) is evidence
-  role whose exact source-visible `Trial::test("name", ...)` trials with
-  stable names become the executable subjects, its inert `#[test]`
-  attributes never enter the test denominator, and one exact registered
-  test-producing attribute is classified through the shared source-role
-  authority. Subject facts carry harness kind, adapter generation,
-  provenance, subject identity, and a named-unexecuted selector
-  capability; dynamic trial names, loop-driven registration, ambiguous
-  imports, lookalike markers, stale or conflicting registrations, and
-  unknown adapter versions are named fail-closed limitations. Check JSON
-  gains a `test_harnesses` projection only when registrations exist
-  ([#3532](https://github.com/EffortlessMetrics/ripr-swarm/issues/3532)).
-
-- Registered `custom_harness` targets now validate against the parsed
-  Cargo target metadata of the declaring manifest: only a declared
-  `[[test]]` target with `harness = false` keeps file-wide evidence role,
-  helper demotion, and adapter subjects. Explicit declarations resolve
-  lexically (`..` segments collapsed) and claim their target across
-  nested and sibling manifest directories, including shared targets
-  declared via a parent-relative path; nearest-manifest resolution still
-  governs package autodiscovery, and workspace-inherited
-  (`edition.workspace = true`) editions are honored. A registration
-  whose target is missing from Cargo metadata, whose Cargo target still
-  has `harness = true`, or whose workspace manifests cannot all be read
-  and parsed records the typed limitations `target_not_declared`,
-  `harness_flag_conflict`, or `manifest_unavailable` — naming the target
-  — and degrades to per-function behavior
-  ([#3608](https://github.com/EffortlessMetrics/ripr-swarm/issues/3608)).
-
-- Registered `custom_harness` target validation now sources workspace
-  membership and the test-target inventory from `cargo metadata`
-  itself instead of a bounded manifest TOML emulation: a member's
-  workspace-inherited (`[workspace.dependencies]`) path dependency
-  validates its declarations, character-class member globs expand as
-  cargo expands them, and `[workspace.exclude]` patterns match as
-  cargo's literal path prefixes (a wildcard exclude component
-  excludes nothing; a bare directory prefix excludes its subtree). The
-  `harness` flag still comes from the owning manifest because metadata
-  output omits it, every registration batch runs one bounded offline
-  probe, and every unresolvable state - no cargo binary, a workspace
-  cargo rejects, an unreachable probe deadline - fails closed to
-  `manifest_unavailable`; the classified-seam caches bump their schema
-  generations so pre-change entries cannot serve the flipped verdicts
-  ([#3634](https://github.com/EffortlessMetrics/ripr-swarm/issues/3634)).
-
-- Registered libtest-mimic trial subjects now carry evidence parity
-  with equivalent ordinary `#[test]` functions: a bare-identifier
-  callback contributes its resolved helper's parsed body evidence one
-  level deep (calls, oracles, literals with real line attribution)
-  only when binding identity is provable — local, import, const/static,
-  and nested-module shadows fail closed; method-position `.unwrap()` /
-  `.expect()` calls register smoke oracles with receiver-ful text
-  (keyword, indexed, cast, operator, and negation receiver forms);
-  assertion macros keep their complete invocation text in every
-  delimiter and full qualified path; and dormant `macro_rules!`
-  templates in any delimiter — and commented-out code — contribute no
-  evidence while live surrounding evidence still admits. Warm caches
-  are invalidated by the changed extraction generations
-  ([#3603](https://github.com/EffortlessMetrics/ripr-swarm/issues/3603)).
-
-- The named-invocation capability claim carried by libtest-mimic trial
-  subjects is now documented as syntactic-only: a subject whose
-  `Trial::test` registration is statically reached from the registered
-  entry point is claimed as a named invocation of that trial even when
-  the surrounding construction is dead at runtime (unreachable
-  registration path) or the adapter's `run` call is absent. The claim
-  docs, adapter documentation, check-JSON schema, and spec
-  (RIPR-SPEC-0173) state this boundary explicitly, and a fixture pins
-  that dead construction does not suppress the named-invocation claim
-  ([#3604](https://github.com/EffortlessMetrics/ripr-swarm/issues/3604)).
-
-- Registered libtest-mimic trial subjects gain a bounded, fail-closed
-  reachability authority: the adapter anchors the registered run entry
-  point (`<marker>::run` or a marker-anchored `run` import) and
-  resolves its trial argument through supported forms — direct
-  `vec![]`/array literals (including trials inside macro token trees),
-  `&`/`&mut`/`local[..]` container peeling, immutable let-bound chains
-  in the same function body, and one level of builder-function
-  resolution. A trial construction provably excluded from every
-  resolved run argument — or a target with no run entry call at all —
-  keeps its subject fact and syntactic claim but no longer enters the
-  executable-test denominator, and a per-trial
-  `registration_unreachable` limitation names it. Reachability the
-  bounded resolver cannot establish keeps today's denominator behavior
-  and is disclosed by one aggregate `registration_reachability_unknown`
-  limitation naming the trials — never a fabricated per-subject field,
-  and never a silent exclusion: unknown is the bias. Classified-seam
-  cache generations bump so pre-change caches cannot serve the old
-  denominator
-  ([#3636](https://github.com/EffortlessMetrics/ripr-swarm/issues/3636)).
-
-- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
-  Model Context Protocol server that exposes exact workspace status
-  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
-  over newline-delimited JSON-RPC. Protocol errors always carry a
-  response `id` (`null` when the request id is unreadable), discovery
-  requires current-protocol `_meta`, and invalid roots fail closed
-  without leaking paths. Startup routes `ripr mcp` (and `ripr help mcp`)
-  ahead of general CLI initialization, and the global `--verbose` flag
-  works in any position without contaminating the protocol stdout stream
-  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088),
-  [#3525](https://github.com/EffortlessMetrics/ripr-swarm/pull/3525),
-  [#3587](https://github.com/EffortlessMetrics/ripr-swarm/pull/3587)).
-
-- New `ripr rerun` command: changed-test targeted re-analysis. Selects
-  ledger gaps whose guarding tests changed, invalidates stale analysis
-  by input and content fingerprints, and runs the bounded check pipeline
-  only for the impacted scope
-  ([#1520](https://github.com/EffortlessMetrics/ripr-swarm/pull/1520)).
-
-- Rust test discovery now recognizes test-case parameterized tests
-  ([#3522](https://github.com/EffortlessMetrics/ripr-swarm/pull/3522)).
-
-- Rust test discovery now recognizes explicit nonstandard test
-  attributes
-  ([#3513](https://github.com/EffortlessMetrics/ripr-swarm/pull/3513)).
-
-- TypeScript test discovery now recognizes active Jest/Vitest test
-  modifiers
-  ([#3506](https://github.com/EffortlessMetrics/ripr-swarm/pull/3506)).
-
-- The Perl preview lane no longer lets operational producer limitations
-  mask an earned exposure class: the class cap and the actionability
-  gate are now separate in the static-limit projection
-  ([#3583](https://github.com/EffortlessMetrics/ripr-swarm/pull/3583)).
-
-- New binary-first evidence and gate surface: `ripr plus` (repo-level
-  quality receipt), `ripr pr-summary` (PR readiness summary),
-  `ripr pr-evidence` (PR evidence packet), `ripr annotations` (GitHub
-  Actions annotations), and `ripr impacted-evidence` (mutation routing
-  evidence). Each is advisory output, not a merge gate
-  ([#1476](https://github.com/EffortlessMetrics/ripr-swarm/pull/1476),
-  [#1460](https://github.com/EffortlessMetrics/ripr-swarm/pull/1460),
-  [#1468](https://github.com/EffortlessMetrics/ripr-swarm/pull/1468),
-  [#1467](https://github.com/EffortlessMetrics/ripr-swarm/pull/1467),
-  [#1474](https://github.com/EffortlessMetrics/ripr-swarm/pull/1474)).
-
-- `ripr check --suppression-policy <toml>` applies path-glob finding
-  suppression from a committed policy file, and `ripr gate evaluate
-  --exception-policy <toml>` applies dated burndown exceptions from a
-  ledger. Suppressed findings stay visible as suppressed, never deleted
-  ([#1475](https://github.com/EffortlessMetrics/ripr-swarm/pull/1475),
-  [#1477](https://github.com/EffortlessMetrics/ripr-swarm/pull/1477)).
-
-- Cache management surface: `ripr cache status` reports the analysis
-  cache state per workspace, `ripr cache clear` removes it (with
-  `--dry-run` and `--force` gates), and cache and receipt writes are
-  atomic, so a crashed run can no longer leave a half-written cache
-  entry behind
-  ([#1822](https://github.com/EffortlessMetrics/ripr-swarm/pull/1822),
-  [#2865](https://github.com/EffortlessMetrics/ripr-swarm/pull/2865),
-  [#2738](https://github.com/EffortlessMetrics/ripr-swarm/pull/2738)).
-
-- LSP capability wave: pull diagnostics with stable result IDs, the
-  `ripr/listActionableItems` handler, transport framing/payload/
-  concurrency bounds, work-done progress for long refreshes, UTF-16
-  position encoding, refresh-status disclosure, and a versioned
-  diagnostic-code catalog. The server remains an experimental sidecar
-  over saved workspaces
-  ([#1669](https://github.com/EffortlessMetrics/ripr-swarm/pull/1669),
-  [#3012](https://github.com/EffortlessMetrics/ripr-swarm/pull/3012),
-  [#2185](https://github.com/EffortlessMetrics/ripr-swarm/pull/2185)).
-
-- Analysis performance: a per-file fact cache on the diff path (the
-  largest single win — unchanged files reuse their previous facts
-  instead of re-parsing), parallel index-build parsing via rayon, and
-  artifact reuse across `check`/`explain`/`context` so follow-up
-  commands do not re-run the analysis
-  ([#2039](https://github.com/EffortlessMetrics/ripr-swarm/pull/2039),
-  [#2322](https://github.com/EffortlessMetrics/ripr-swarm/pull/2322),
-  [#2250](https://github.com/EffortlessMetrics/ripr-swarm/pull/2250)).
-
-- The `ripr agent start` workflow packet now states that its generated commands
-  assume bash. `commands.md` carries a prose note above the first command block,
-  and `workflow.json` gains an additive `command_shell: "bash"` field. The
-  command strings have always used POSIX single-quote quoting and `>`
-  redirection, so copying one into cmd.exe (which treats `'` as a literal
-  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
-  rejects quoted arguments. The note names Git Bash specifically rather than
-  "bash on Windows": generated paths keep their Windows drive-letter prefix,
-  which WSL resolves as a relative path, so WSL needs each path translated to
-  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
-  command string, schema version, or existing field changed. The PowerShell
-  variants (#2964) and typed argv command specs (#1617) that this entry left
-  as separate work landed later in this release; see the entries below
-  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
-
-- Published schemas that had only a reverse-direction `schema_version` check are
-  now bound to real producer bytes by the verification-contract registry. The
-  Rust repair trust corpus of record (`metrics/rust-repair-trust/corpus.json`)
-  validates as itself rather than through a copy; the `command_spec` and
-  `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
-  validate against the `command_specs` a generated agent packet actually emits;
-  and the design-only `RepairAssuranceV1` envelope validates against the
-  assurance vocabulary corpus records that carry a `record` and are not marked
-  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
-  previously stated but nothing enforced. Patch-shaped cases and advertised
-  negatives stay outside that walk and are covered by their own tests, so the
-  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
-  `docs/verification/schema-producer-audit.md` records the producer, canonical
-  subject, negative mutation, and explicit exemption for every published schema
-  — including the `riprAgent` protocol schemas, which remain reserved and
-  routed to [#3009](https://github.com/EffortlessMetrics/ripr-swarm/issues/3009)
-  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
-
-- The contract validator now evaluates `oneOf`, `if`/`then`/`else`, `not`,
-  `minItems`, `maxItems`, `uniqueItems`, `maximum`, and `pattern`. Conditional
-  requirements and identity commitments — 40-character head SHAs, `sha256:`
-  digests, and the relative `working_directory` constraint — were declared by
-  the published schemas and enforced by nothing. `pattern` support is
-  fail-closed: an uninterpretable expression is reported as a violation instead
-  of assumed to match
-  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
-
-- `policy/release-targets.toml` records the committed release-candidate
-  membership graph, and `cargo xtask check-release-targets` validates it
-  offline. The manifest distinguishes the release goal, claim blockers,
-  qualification/proof blockers, release companions, conditional candidates, and
-  release-referenced rolling work, and records umbrella parents with an explicit
-  `counted_in` and justification so parent/leaf double counting cannot be
-  silent. Eight rules are enforced — schema, release identity, role uniqueness,
-  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
-  parent accounting, and referential closure — each with a fixture that violates
-  exactly that rule. Reports land at
-  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
-  `cargo xtask precommit` and the CI policy-check pass.
-
-  The checker deliberately does not parse release-goal issue prose. Those bodies
-  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
-  parser would silently miss the members inside a range and then report a clean
-  graph over issues it never saw. The manifest is the parsed authority; the goal
-  bodies remain human-validated documentation. This check is network-free and
-  does not compare against live GitHub milestones, does not qualify a candidate,
-  and does not represent publication
-  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
-
-- `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
-  default (`debug = "full"`). Line tables give backtraces with file:line
-  resolution without the full variable-debuginfo cost, cutting link time and
-  binary size (~9% smaller debug binaries). Full debuginfo is still available
-  via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
-  step-debugging with variable inspection (#2420).
-
-- `cargo xtask module-health` now reports a **responsibility signal** alongside
-  its line count: a heuristic count of distinct top-level concerns (distinct
-  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
-  when it exceeds a fixed threshold. This surfaces the "structurally entangled
-  even if not huge" case that a pure line count misses (e.g. a small file
-  exposing many distinct concern families). Both signals appear in the JSON and
-  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
-  responsibility signal is documented as a smell, not a measurement; the
-  advisory still always exits 0 and is never wired into CI gates.
-
-- Property-based tests (`proptest`) added for the diff parser, covering parser
-  totality (never panics on arbitrary input), structural invariants (no empty
-  paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
-  This is the first property-based testing infrastructure in the repo (#2751).
-
-- New `cargo xtask eval-sweep check` command: the typed offline validator for
-  the accepted Python eval-sweep artifacts (RIPR-SPEC-0086). It validates the
-  accepted eight-subject manifest under a deny-unknown schema (exactly eight
-  uniquely identified subjects, immutable https/sha pins, portable secret-free
-  diff paths) and retained run receipts in both owned shapes — the historical
-  0.2 report the sweep command writes and the 0.3 currentness shape (binary/
-  features/config/profile/input identity, materialization/detection/
-  corpus-selection/execution states, evidence digests, repeat-run comparison
-  identity, manifest-digest binding) — failing closed on changed denominators,
-  unknown state vocabulary, contradictory status, malformed or stale digest
-  bindings, and hand-edited aggregates that disagree with the derived rows
-  (including a supplied `gate_status` that differs from the gate the rows
-  derive and summary distributions that do not match the row-derived key set
-  exactly); missing identities are typed `incomplete`, never invented. It
-  writes the versioned `eval-sweep-check.{json,md}` reports (kind
-  `python_eval_sweep_check_report`, schema `0.1`) whose verdict vocabulary is
-  `valid` / `incomplete` / `not_run` — a structural currentness-readiness
-  verdict, never a robustness or adequacy claim
-  ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
-- `ripr feedback record` writes a local usefulness receipt bound to one
-  analysis snapshot (`--snapshot`, required) with a reason from a closed list,
-  such as `useful_actionable` or `false_actionable`, under
-  `target/ripr/feedback/`. `ripr feedback export` joins those receipts onto an
-  existing `route-quality.json`, listing receipts that match no row instead of
-  inventing movement. Recording changes no diagnostic, classification,
-  baseline, suppression, gate, or gap closure (#4684).
-
-### Changed
-
-- The Python preview adapter now resolves a module-level named constant used
-  as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
-  `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
-  The boundary gets a repair card for `amount == DISCOUNT_THRESHOLD`, the
-  missing-discriminator reason names the constant's value, and a test that calls the owner with `10_000` or with
-  the imported constant now counts as observing the boundary. A name that can
-  be rebound (a second binding, `global`, walrus, star import, `exec`/`globals`/
-  `sys.modules`, a nested scope in the owner, a test-file attribute
-  assignment) or a non-literal value stays unresolved and gets no repair card
-  ([#4227](https://github.com/EffortlessMetrics/ripr-swarm/issues/4227)).
-  Two guided-route loops on that card are closed: `ripr agent status` after a
-  pilot run that produced only a Python repair card now names the
-  `ripr first-pr` route instead of sending the user back to `ripr pilot`, and
-  `ripr first-pr` on a Python or TypeScript root reports `stale_artifact` with
-  the refresh command when the named test or changed source was edited after
-  the gap ledger was written, instead of repeating the finished repair.
-
-- `ripr doctor` now separates installed-binary analysis readiness from the
-  prerequisites for building RIPR from source. The default `analysis` profile
-  reports a missing `cargo` or `rustc`, or a workspace `rustc` older than
-  RIPR's build MSRV (1.95), as `advisory` and exits `0`, so a workspace pinned
-  to an older toolchain is no longer told it cannot be analyzed; a missing
-  `cargo` still discloses that evidence read from `cargo metadata` is
-  withheld. `--profile source-build` fails on those conditions and exits `2`.
-  Both toolchain probes run in the selected root. `ripr doctor --json` moves
-  to schema `0.3`, with top-level `profile`, `ripr_version`, and `ripr_build_msrv`
-  fields and an `advisory` check status
-  ([#3907](https://github.com/EffortlessMetrics/ripr-swarm/issues/3907)).
-
-- Test, eval-sweep, diff-load, gate, `cli_smoke` and `seam_cache` cleanup no
-  longer discards `remove_dir_all`, `remove_file`, permission-restore or
-  `set_current_dir` results with `let _ =`; a cleanup failure is still
-  ignored. `clippy-debt-0001` stays deferred, and its `blocked_by` text counts
-  the remaining `let _ =` sites
-  ([#4013](https://github.com/EffortlessMetrics/ripr-swarm/issues/4013),
-  [#4027](https://github.com/EffortlessMetrics/ripr-swarm/issues/4027),
-  [#4029](https://github.com/EffortlessMetrics/ripr-swarm/issues/4029),
-  [#4038](https://github.com/EffortlessMetrics/ripr-swarm/issues/4038),
-  [#4040](https://github.com/EffortlessMetrics/ripr-swarm/issues/4040),
-  [#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
-
-
-
-
-
-
-- `path_dependencies.rs` no longer carries `allow(dead_code)`.
-  `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
-  expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
-  moves with the getter; reverse diff-scope reachability is unchanged.
-  The `.ripr/allow-attributes.txt` row for that file is removed
-  ([#3997](https://github.com/EffortlessMetrics/ripr-swarm/issues/3997)).
-
-- `PanicAllowEntryVersioned::V2` is now `Box<PanicAllowEntryV2>`, so
-  `clippy::large_enum_variant` no longer needs an allow on that enum.
-  `policy/clippy-exceptions.toml` has no live rows;
-  `clippy-exception-0001` is retired
-  ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
-
-- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
-  every `[[planned]]` row whose `activate_when_msrv` is already met by
-  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
-  narrative `reason` does not satisfy the gate. The four current planned
-  lints copy their existing `reason` into `blocked_by` and are not promoted
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
-
-- `cargo xtask check-allow-attributes` now fails a
-  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
-  current source count, including a row whose suppression is gone. The
-  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
-  7 to 4, matching the four remaining suppressions. Over-budget
-  suppressions still fail
-  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
-
-- `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
-  as TOML: unique ids, required nonblank fields, optional ISO `expires`
-  dates that are not in the past, unknown fields, duplicate keys, and
-  trailing garbage. Test-valued `covered_by` resolution uses the
-  TOML-decoded command (including single-quoted strings)
-  ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
-
-- `cargo xtask check-lint-policy` now compares `[[planned]]`
-  `activate_when_msrv` to `[workspace.package] rust-version`. The four current
-  planned lints are not promoted; the remaining-blocker field is `blocked_by`
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990))
-  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
-
-- `cargo xtask check-lint-policy` now parses `policy/clippy-debt.toml`
-  as TOML: unique ids, required nonblank fields, ISO `target` dates that
-  are not in the past, unknown fields, duplicate keys, and debt lints
-  that are not already active, planned, or present in `Cargo.toml`.
-  `clippy-debt-0001` stays deferred
-  ([#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833)).
-
-- `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
-  and names `ci-full` as the complete local pass. The sequential cargo
-  block is labeled targeted-rerun inventory, matching `AGENTS.md` (#3775)
-  and `docs/IMPLEMENTATION_PLAN.md` (#3817)
-  ([#3830](https://github.com/EffortlessMetrics/ripr-swarm/issues/3830)).
-
-- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
-  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
-  traverse `..`, and must look like a ripr cache before any walk or delete.
-  `ripr cache status` prints a cleanup hint that exports the same
-  `RIPR_CACHE_DIR` the status process used
-  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
-
-- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
-  the exceptions ledger is empty by default. The commented example no
-  longer reuses a real id or a past `expires` date
-  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
-
-- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
-  and a matching xtask gate. The values are not verified available-since
-  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
-
-- Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
-  current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
-  `docs/agent-context/CONTEXT_SYSTEM.md`, and
-  `plans/rust-one-shot-evidence-to-repair.md` now point at GitHub issues/PRs
-  for live selection. `.allow/spec-system/slices/` remains PR-local scope
-  (`ImplementationSliceV1`), not a second live selector, matching the repo
-  tracking model
-  ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
-
-- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
-  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
-  gate still counts source suppressions against `.ripr/allow-attributes.txt`
-  only; the TOML receipts remain advisory until a follow-up wires them
-  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
-
-- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
-  consumes `policy/clippy-debt.toml`; the gate reads it since
-  [#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833).
-  `clippy::let_underscore_must_use`
-  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
-  instead of a commented example whose target had already passed
-  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
-
-- Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
-  `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
-  `mcp`, and `provider_contract`, matching the product map. The
-  `check-agent-skills` pin remains on `AGENTS.md`, `CLAUDE.md`, and
-  `docs/ARCHITECTURE.md`
-  ([#3779](https://github.com/EffortlessMetrics/ripr-swarm/issues/3779)).
-- Agent and human architecture maps now name the `mcp` protocol adapter and
-  the `provider_contract` DTO surface. `cargo xtask check-agent-skills` pins
-  the required module tokens in `AGENTS.md`, `CLAUDE.md`, and
-  `docs/ARCHITECTURE.md` so the `#1943` drift class cannot recur silently
-  ([#3774](https://github.com/EffortlessMetrics/ripr-swarm/issues/3774)).
-- `AGENTS.md` local validation now leads with `cargo xtask precommit` and
-  names `ci-full` as the complete pass. The 40-command block is labeled
-  targeted-rerun inventory, not sequential required work
-  ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
-- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
-  `cargo xtask precommit` and names `ci-full` as the complete local pass.
-  The cargo command block is labeled targeted-rerun inventory, matching
-  `AGENTS.md` (#3775). Extension compile/package remains required for
-  `editors/vscode` changes; neither `precommit` nor `ci-full` covers it
-  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
-- `docs/handoffs/README.md` labels retained campaign closeouts as historical.
-  `docs/agent-context/repo-map.md` no longer names the retired active-goal
-  manifest as a live selector
-  ([#3777](https://github.com/EffortlessMetrics/ripr-swarm/issues/3777)).
-- Schema 0.3 no-panic allowlist `id` values are now unique and gated.
-  `cargo xtask check-no-panic-family` rejects a colliding `id` even when
-  the selectors differ. Four reused `panic-0051`..`panic-0054` rows for
-  the RIPR-SPEC-0112 `cli_smoke` sites were renumbered to `panic-0071`..
-  `panic-0074`
-  ([#3799](https://github.com/EffortlessMetrics/ripr-swarm/issues/3799)).
-
-- The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
-  alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
-  packet, and before/after receipt proof remains intact, but the governed
-  real-repository corpus currently contains zero eligible attempts, so route
-  yield and ordinary-user success are not established. `cargo xtask
-  check-support-tiers` now hard-caps the uniquely named canonical row at
-  `usable alpha` until one promotion decision covers both the full governed
-  corpus and the installed CLI/packaged VS Code pilot. A complete trust report
-  with real movement is necessary evidence, but cannot promote the claim by
-  itself (#3077).
-
-- `exposed` findings stay at `info` severity, as in 0.10.0: `--format github`
-  emits `::notice` and the LSP reports INFORMATION, below `weakly_exposed` and
-  `reachable_unrevealed` at `warning`. A development-only change that raised
-  the `[severity.findings] exposed` default to `warning`
-  ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)) was
-  reverted before release
-  ([#4429](https://github.com/EffortlessMetrics/ripr-swarm/pull/4429)). Set
-  `exposed = "warning"` under `[severity.findings]` in `ripr.toml` to raise it.
-
-- Generated commands now come with a PowerShell form next to the bash one.
-  The agent workflow packet, pilot summaries, agent status and review
-  summaries, PR evidence reproduction commands, and the first-pr start-here
-  packet pair each bash fence with a `powershell` fence produced by one shared
-  translator. The bash bytes are unchanged and cmd.exe stays explicitly
-  unsupported. Quoted redirect tokens keep their quoting, and multiline
-  command lists that cannot be translated safely show only the bash form
-  ([#2964](https://github.com/EffortlessMetrics/ripr-swarm/issues/2964),
-  [#3438](https://github.com/EffortlessMetrics/ripr-swarm/pull/3438),
-  [#3617](https://github.com/EffortlessMetrics/ripr-swarm/pull/3617),
-  [#3625](https://github.com/EffortlessMetrics/ripr-swarm/pull/3625),
-  [#3661](https://github.com/EffortlessMetrics/ripr-swarm/pull/3661),
-  [#3662](https://github.com/EffortlessMetrics/ripr-swarm/pull/3662)).
-
-- Rust match-arm analysis gains one bounded source of discrimination
-  evidence: when a changed arm belongs to a `match` over two direct,
-  immutable `bool` parameters (four distinct unguarded tuple arms with
-  simple string results), and a test that calls the owner directly
-  asserts equality between that exact input tuple and the arm's
-  current result, the arm can now reach `exposed` instead of staying
-  `weakly_exposed` with `observation_unverified`. The assertion must sit
-  at a conventional Cargo compilation-unit root (`src/lib.rs`,
-  `src/main.rs`, `src/bin/<target>.rs`) or the owner package's direct
-  `tests/<target>.rs`. Sibling, reordered, transformed, guarded,
-  aliased, lexical-fallback, nested or inherited-macro, custom-root, and
-  cross-package shapes stay unverified. The producer refines only the
-  discrimination stage; reach, propagation, and the final class combiner
-  are unchanged
-  ([#3767](https://github.com/EffortlessMetrics/ripr-swarm/pull/3767),
-  [ripr#1714](https://github.com/EffortlessMetrics/ripr/issues/1714)).
-
-- The published `ripr` crate now depends on `toml` 1 (was 0.9),
-  `ra_ap_syntax` 0.0.349 (was 0.0.330), and, on Windows, `winsafe`
-  0.0.29 (was 0.0.28), alongside 85 compatible lockfile updates.
-  `unicode-ident` stays held at 1.0.24, and `oxc` and `sha2` stay on
-  their current majors. MSRV is unchanged
-  ([#3827](https://github.com/EffortlessMetrics/ripr-swarm/pull/3827)).
-
 ### Docs
 
 - Documented the proposed `ripr-rs` PyPI distribution and
@@ -3388,8 +3378,6 @@ are scoped or reviewed.
   `npm run compile` before `npm run package`. Run alone in a fresh checkout,
   `npm run package` stops with `Extension entrypoint(s) missing`
   ([#4865](https://github.com/EffortlessMetrics/ripr-swarm/pull/4865)).
-
-### Docs
 
 - `docs/COMMAND_HIERARCHY.md` now names the discovery surfaces that shipped
   after #2931: the typed command metadata table validates the human help and

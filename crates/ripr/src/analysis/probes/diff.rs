@@ -39,7 +39,7 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
-    let mut probes = Vec::new();
+    let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
     // the RustIndex (built from the new file) expects (RANK-1 fix, #1222).
@@ -115,13 +115,25 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: subject.line,
                     text: subject.expression.clone(),
                 };
+                // Keep paired opening-side evidence when deduplication replaces a seed.
+                // An out-of-order closing line may precede that opening seed.
+                let before = previous
+                    .and_then(|position| probes[position].probe.before.clone())
+                    .or_else(|| {
+                        changed
+                            .added_lines
+                            .iter()
+                            .any(|line| line.new_side_line == subject.line)
+                            .then(|| replaced_line_counterpart(subject.line, changed))
+                            .flatten()
+                    });
                 // No old complete expression is invented from a closing fragment.
                 // Removed-side evidence retains its own original diff coordinate.
                 let mut probe = build_probe(
                     &build_context,
                     &canonical,
                     ProbeFamily::ErrorPath,
-                    None,
+                    before,
                     Some(subject.expression.clone()),
                 );
                 probe.location.column = subject.column;

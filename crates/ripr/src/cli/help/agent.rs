@@ -150,7 +150,7 @@ Options:
                    proposed `tests/` file. Refuses when the file changed
                    since the stub was computed or the new file exists.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.1`) with the placement, test name, exact text, the
+                   `0.2`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
