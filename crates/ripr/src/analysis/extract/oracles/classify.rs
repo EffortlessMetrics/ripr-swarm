@@ -1804,6 +1804,11 @@ fn ok_literal() {
                 "check(300).expect_err(\"mock.verify() state\");",
                 vec![(BroadError, Weak)],
             ),
+            (
+                "expect_err_nested_in_message",
+                "check(300).expect_err(&check(400).expect_err(\"x\").to_string());",
+                vec![(BroadError, Weak)],
+            ),
         ];
         assert_both_adapters_read(&cases)
     }

@@ -2508,10 +2508,14 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
     let masked = masked.trim_end();
     let receiver = masked.strip_suffix(".unwrap_err()").or_else(|| {
         // `.expect_err(<message>)` must be the last call: its argument
-        // group closes the expression.
-        let open = masked.rfind(".expect_err(")? + ".expect_err".len();
-        (balanced_group_end(masked, open)? == masked.len() - 1)
-            .then(|| &masked[..open - ".expect_err".len()])
+        // group closes the expression. The first such call is the outer
+        // one, so an `expect_err` nested in the message is not mistaken
+        // for it.
+        masked
+            .match_indices(".expect_err(")
+            .map(|(start, call)| (start, start + call.len() - 1))
+            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .map(|(start, _)| &masked[..start])
     });
     receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
 }

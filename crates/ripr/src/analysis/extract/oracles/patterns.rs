@@ -1215,11 +1215,14 @@ pub(super) fn without_expect_err(line: &str) -> String {
         let start = search + found;
         let open = start + CALL.len() - 1;
         match balanced_group_end(&masked, open) {
-            Some(close) if line[open + 1..close].trim().is_empty() => {}
+            Some(close) if line[open + 1..close].trim().is_empty() => search = open + 1,
             Some(close) => {
                 out.push_str(&line[copied..start]);
                 out.push_str(".()");
+                // Resume after the dropped message, so a nested
+                // `.expect_err(` inside it is never visited.
                 copied = close + 1;
+                search = close + 1;
             }
             None => {
                 out.push_str(&line[copied..start]);
@@ -1228,7 +1231,6 @@ pub(super) fn without_expect_err(line: &str) -> String {
                 break;
             }
         }
-        search = open + 1;
     }
     out.push_str(&line[copied..]);
     out
