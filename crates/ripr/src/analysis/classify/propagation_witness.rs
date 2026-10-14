@@ -2168,6 +2168,12 @@ mod tests {
             ("f(&|l: &dyn Fn()| l) + 51", "f(&|l: &dyn Fn()| l) + 50"),
             // A combinator decides whether the changed default runs.
             ("x.map_or(51, |v| v) + 3", "x.map_or(50, |v| v) + 3"),
+            // The change removed a closure that may have given the same
+            // value.
+            (
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+            ),
             // The changed receiver or argument flows through a closure.
             (
                 "items.iter().map(|l| l.cents).sum::<u64>() + 50",

@@ -13,6 +13,9 @@ use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxNode, TextRange, TextSize, ast};
 pub(super) struct ChangedSpan {
     pub(super) tail: SyntaxNode,
     pub(super) covering: SyntaxNode,
+    /// The old text between the same prefix and suffix: what the change
+    /// removed.
+    pub(super) removed: String,
 }
 
 const WRAPPER: &str = "fn ripr_tail() { ";
@@ -41,6 +44,9 @@ impl ChangedSpan {
             .map(|(character, _)| character.len_utf8())
             .sum::<usize>();
         let end = (after.len() - suffix).max(prefix);
+        let removed = before
+            .get(prefix..(before.len() - suffix).max(prefix))?
+            .to_string();
         let parse = parse_clean_source_file(&format!("{WRAPPER}{after} }}"))?;
         let tail = parse
             .tree()
@@ -71,6 +77,7 @@ impl ChangedSpan {
         Some(Self {
             tail: tail.syntax().clone(),
             covering,
+            removed,
         })
     }
 
@@ -116,12 +123,13 @@ fn binds_outside_closures(node: &SyntaxNode) -> bool {
     })
 }
 
-/// Whitespace collapsed, without a trailing `;` or a leading `return `, as
-/// the return-path gate reads a final `return <tail>;`.
+/// Trimmed, without a trailing `;` or a leading `return `, as the
+/// return-path gate reads a final `return <tail>;`. Inner whitespace is
+/// kept: it may sit in a string literal (`"a b"` → `"a  b"` is a change),
+/// and a reformatted line only widens the span.
 fn collapse(text: &str) -> String {
-    let text = text.trim().trim_end_matches(';');
-    let text = text.strip_prefix("return ").unwrap_or(text);
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let text = text.trim().trim_end_matches(';').trim_end();
+    text.strip_prefix("return ").unwrap_or(text).to_string()
 }
 
 #[cfg(test)]
@@ -182,6 +190,21 @@ mod tests {
             "day % 7 == 0 || day % 7 == 6",
         );
         assert!(operator.is_some_and(|span| !span.under_closure()));
+    }
+
+    #[test]
+    fn the_removed_text_and_string_whitespace_are_kept() {
+        let span = ChangedSpan::of(
+            "it.map(|l| l.cents).sum::<u64>() + 51",
+            Some("it.map(|l| l.cents).sum::<u64>() + (|| 51)()"),
+        );
+        assert_eq!(span.map(|span| span.removed).as_deref(), Some("(|| 51)()"));
+        // Whitespace inside a string literal is part of the change.
+        let strings = covering(
+            "\"a  b\".len() + it.map(|l| l.cents).sum::<usize>() + 1",
+            "\"a b\".len() + it.map(|l| l.cents).sum::<usize>() + 2",
+        );
+        assert_ne!(strings.as_deref(), Some("1"), "{strings:?}");
     }
 
     #[test]

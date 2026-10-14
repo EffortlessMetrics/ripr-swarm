@@ -1099,6 +1099,25 @@ fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
             "lines.iter().map(|l| l.cents).sum::<u64>()",
             "lines.iter().skip(1).map(|l| l.cents).sum::<u64>()",
         ),
+        // The change removed a closure, macro or block that may have given
+        // the same value.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + m!(51)",
+        ),
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + { 51 }",
+        ),
+        // String whitespace changed alongside the operand.
+        (
+            "\"a  b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 1",
+            "\"a b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 2",
+        ),
         // A changed comment beside the change.
         (
             "lines.iter().map(|l| l.cents).sum::<u64>() + 51 /* fee v2 */",

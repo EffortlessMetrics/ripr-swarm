@@ -1157,7 +1157,13 @@ expression and finds the smallest node covering the differing text.
    `let`, `if let`, `match` arm or `for`, which can carry the change into a
    closure that may not run), both read the whole expression as before.
 
-A leading `return ` and trailing `;` are dropped from both texts. A change
+The removed old text between the same prefix and suffix must be as plain
+as its replacement: a closure, block, macro, `?`, `return`, `break`,
+`async`, `unsafe`, `const`, `static`, or text the rule-3 check reads as
+conditional refuses, because it may have given the same value
+(`(|| 51)()` → `51`). A leading `return ` and trailing `;` are dropped from
+both texts; inner whitespace is kept, since it may sit in a string literal
+the change touched (`"a b"` → `"a  b"`). A change
 that reaches into a comment beside the tail (which parses outside it) is
 read whole. Limit: a named call outside the skipping combinators can still
 collapse the changed value (`max`, `clamp`, `saturating_sub`, an `as u8`

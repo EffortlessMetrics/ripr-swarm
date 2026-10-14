@@ -3663,7 +3663,9 @@ fn return_path_gate_from(
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
-    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(changed, before) {
+    // The uncollapsed expression: collapsing would also merge whitespace
+    // inside a string literal that the change touched.
+    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(expression, before) {
         return None;
     }
     let returns = whole_word_offsets(inner, "return");
@@ -3902,6 +3904,20 @@ pub(super) fn changed_part_evaluates_conditionally(changed: &str, before: Option
     let Some(span) = super::changed_span::ChangedSpan::of(changed, before) else {
         return true;
     };
+    // What the change removed may itself have been a closure, block, macro
+    // or branch that gave the same value (`(|| 51)()` → `51`), so it must
+    // be as plain as what replaced it. The removed text may start inside a
+    // string, so it is read unmasked: a quoted `|` or `if` also refuses.
+    let removed = span.removed.as_str();
+    if evaluates_conditionally(removed)
+        || removed.contains(['|', '{', '!', '?'])
+        || has_keyword(
+            removed,
+            &["return", "break", "async", "unsafe", "const", "static"],
+        )
+    {
+        return true;
+    }
     if evaluates_conditionally(&mask_comments_and_strings(
         &span.covering.text().to_string(),
     )) || span.covering.descendants().any(|node| {
@@ -3916,6 +3932,12 @@ pub(super) fn changed_part_evaluates_conditionally(changed: &str, before: Option
         .enclosing()
         .iter()
         .all(|(ancestor, _)| evaluates_every_operand(ancestor))
+}
+
+/// Whether `text` holds one of `keywords` as a whole word.
+fn has_keyword(text: &str, keywords: &[&str]) -> bool {
+    text.split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|word| keywords.contains(&word))
 }
 
 /// A `&&`/`||` or an assignment (`=`, `+=`, ..) operator.

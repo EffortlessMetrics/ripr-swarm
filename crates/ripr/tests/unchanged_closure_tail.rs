@@ -107,6 +107,16 @@ fn a_change_the_closure_decides_or_carries_stays_unrevealed() -> Result<(), Stri
             "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
             "lines[..1].iter().map(|l| l.cents).sum::<u64>() + 50",
         ),
+        // The change removed a closure that gave the same value.
+        (
+            "lines.iter().map(|l| l.cents).sum::<u64>() + (|| 51)()",
+            "lines.iter().map(|l| l.cents).sum::<u64>() + 51",
+        ),
+        // String whitespace changed alongside the operand.
+        (
+            "\"a b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 2",
+            "\"a  b\".len() as u64 + lines.iter().map(|l| l.cents).sum::<u64>() + 1",
+        ),
         // The changed initial value passes through the folding closure.
         (
             "lines.iter().fold(50, |acc, l| acc + l.cents)",

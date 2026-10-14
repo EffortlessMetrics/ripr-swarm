@@ -12454,6 +12454,7 @@ tests = [
   "crates/ripr/src/analysis/classify/changed_span.rs::the_span_is_the_smallest_node_around_the_differing_text",
   "crates/ripr/src/analysis/classify/changed_span.rs::a_closure_is_seen_only_around_or_inside_the_change",
   "crates/ripr/src/analysis/classify/changed_span.rs::no_span_without_an_old_text_or_one_tail_expression",
+  "crates/ripr/src/analysis/classify/changed_span.rs::the_removed_text_and_string_whitespace_are_kept",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unchanged_closure_leaves_the_changed_operand_unconditional",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::an_unchanged_closure_in_a_returned_tail_completes_the_witness",
   "crates/ripr/tests/unchanged_closure_tail.rs::a_changed_operand_beside_an_unchanged_closure_is_exposed",
