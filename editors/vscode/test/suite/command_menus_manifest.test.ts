@@ -38,7 +38,7 @@ interface KeybindingEntry {
 
 interface CommandMenusManifest {
   contributes?: {
-    commands?: Array<{ command?: string }>;
+    commands?: Array<{ command?: string; title?: string }>;
     menus?: {
       'editor/context'?: MenuEntry[];
     };
@@ -87,6 +87,27 @@ async function readManifest(): Promise<CommandMenusManifest> {
 }
 
 suite('Command Menus Manifest', () => {
+  test('receipt copy command titles disclose their source and match the README', async () => {
+    const manifest = await readManifest();
+    const commands = manifest.contributes?.commands ?? [];
+    const expectedTitles = [
+      { command: 'ripr.copyReceiptCommand', title: 'ripr: Copy Receipt Command (Receipt Status)' },
+      { command: 'ripr.copyTopReceiptCommand', title: 'ripr: Copy Receipt Command (Top Repair Packet)' },
+      { command: 'ripr.copyFirstPrReceiptCommand', title: 'ripr: First PR - Copy Receipt Command' },
+      { command: 'ripr.copyAgentReceiptCommand', title: 'ripr: Review Result - Copy Receipt Command' }
+    ];
+    const readme = await fs.readFile(path.resolve(__dirname, '../../../README.md'), 'utf8');
+    const actualTitles = [];
+    for (const expected of expectedTitles) {
+      const matchingCommands = commands.filter((entry) => entry.command === expected.command);
+      assert.strictEqual(matchingCommands.length, 1, `${expected.command} must be contributed exactly once`);
+      assert.strictEqual(matchingCommands[0].title, expected.title, `${expected.command} must disclose its source`);
+      actualTitles.push(matchingCommands[0].title);
+      assert.ok(readme.includes(`- \`${expected.title}\``), `${expected.command} README title must match the palette`);
+    }
+    assert.strictEqual(new Set(actualTitles).size, expectedTitles.length, 'receipt copy commands must remain distinguishable');
+  });
+
   test('editor/context surfaces the repair-loop commands gated on ripr languages', async () => {
     const manifest = await readManifest();
     const entries = manifest.contributes?.menus?.['editor/context'] ?? [];
