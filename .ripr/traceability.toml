@@ -14244,6 +14244,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::whole_value_string_from_refuses_a_workspace_string",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unwrapped_ok_tail_with_early_err_returns_pins_its_field",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_expected_helper_or_default_base_reads_as_its_literal",
   "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
 ]
 fixtures = []
@@ -14564,6 +14565,7 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern",
   "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::compound_matches_forms_read_no_stronger_than_their_pattern",
+  "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::bool_valued_operands_read_as_what_they_assert",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs::spec_0106_tests::deciding_disjunctions_are_found_past_comments_and_groups",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
@@ -14581,10 +14583,12 @@ tests = [
 fixtures = [
   "fixtures/inequality_assertion_not_exact",
   "fixtures/inequality_struct_assertion_not_exact",
+  "fixtures/bool_compared_inequality_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/extract/oracles/arguments.rs",
+  "crates/ripr/src/analysis/extract/oracles/bool_operands.rs",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",

@@ -524,7 +524,7 @@ fn is_negated_pattern_condition(condition: &str) -> bool {
         || is_complete_macro_invocation(inner, "assert_matches!")
 }
 
-fn unwrap_parentheses(mut text: &str) -> &str {
+pub(super) fn unwrap_parentheses(mut text: &str) -> &str {
     while let Some(inner) = super::arguments::parenthesized_contents(text) {
         text = inner.trim();
     }
@@ -634,7 +634,7 @@ pub(super) fn deciding_disjunction_conjunct_rest(line: &str) -> Option<String> {
 }
 
 /// Splits on `&&` outside any delimiter, string or comment.
-fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
+pub(super) fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
     let masked = mask_comments_and_strings(condition);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
@@ -752,7 +752,7 @@ fn resolve_pattern_comparison(left: &str, right: &str, not_equal: bool) -> Patte
 /// How many negations (`!` prefixes and `.not()` calls) wrap one complete
 /// `matches!` or `assert_matches!` operand, or `None` when the operand is not
 /// such a pattern.
-fn pattern_operand_negations(operand: &str) -> Option<usize> {
+pub(super) fn pattern_operand_negations(operand: &str) -> Option<usize> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negations = 0;
     loop {
@@ -768,7 +768,7 @@ fn pattern_operand_negations(operand: &str) -> Option<usize> {
 }
 
 /// The receiver of a trailing `.not()` call (`std::ops::Not`).
-fn strip_not_call(text: &str) -> Option<&str> {
+pub(super) fn strip_not_call(text: &str) -> Option<&str> {
     text.trim_end()
         .strip_suffix(')')?
         .trim_end()
@@ -781,7 +781,7 @@ fn strip_not_call(text: &str) -> Option<&str> {
 
 /// The value of a boolean literal operand, through parentheses and any
 /// number of `!` negations (`!true` is `false`).
-fn boolean_literal_value(operand: &str) -> Option<bool> {
+pub(super) fn boolean_literal_value(operand: &str) -> Option<bool> {
     let mut text = unwrap_parentheses(operand.trim());
     let mut negated = false;
     loop {
@@ -797,7 +797,7 @@ fn boolean_literal_value(operand: &str) -> Option<bool> {
 
 /// One `matches!` invocation in a masked condition: where its (possibly
 /// path-qualified) name starts and where its closing delimiter ends.
-fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
+pub(super) fn pattern_invocation_spans(text: &str) -> Vec<(usize, usize)> {
     let masked = mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -1166,7 +1166,7 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
     (equal, not_equal)
 }
 
-fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+pub(super) fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     // Comments and literals are not delimiters. Mask them before counting
     // brackets so an unmatched `}` inside a nested comment cannot hide a
     // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
