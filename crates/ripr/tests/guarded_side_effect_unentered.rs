@@ -414,7 +414,33 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
     let operator_test = test_calling(
         "    add(&mut v, 4);\n    let mut w = guarded_side_effect::W(Vec::new());\n    w += 20;",
     );
+    // A doctest on the owner passes 20 under `cargo test`.
+    let doctest = |push: &str| {
+        format!(
+            "/// ```\n/// let mut v = Vec::new();\n/// guarded_side_effect::add(&mut v, 20);\n/// assert_eq!(v, vec![20]);\n/// ```\n{}",
+            source("x > 10", push)
+        )
+    };
+    // An included file may hold a test that passes 20.
+    let included_test = format!(
+        "include!(\"cases.inc\");\n\n{}",
+        test_calling("    add(&mut v, 4);")
+    );
     let cases = [
+        (
+            "doctest",
+            doctest("v.push(x);"),
+            doctest("v.push(x * 1);"),
+            8,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "included test",
+            source("x > 10", "v.push(x);"),
+            source("x > 10", "v.push(x * 1);"),
+            3,
+            included_test,
+        ),
         (
             "closure in a static",
             stored("v.push(x);", closure_item),

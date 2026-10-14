@@ -91,7 +91,11 @@ counterpart for side effects.
    production caller, a `Drop` or operator impl, a closure in a `static`, a
    renamed import (`use crate::add as push_big;`), a stored pointer
    (`[add]`) and an argument (`apply(v, add)`). Comments and strings are
-   masked. An unrelated test that calls the owner, or a local or field
+   masked, so a doc comment that names the owner is refused separately: a
+   doctest runs under `cargo test` with whatever input it passes. A doc
+   attribute that includes a file (`#![doc = include_str!(..)]`) and any
+   `include!` are refused too, since the included code is not read. An
+   unrelated test that calls the owner, or a local, field or doc text
    sharing its name, also refuses; that is a known over-refusal.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:

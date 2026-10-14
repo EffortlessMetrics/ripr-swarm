@@ -1580,7 +1580,7 @@ fn may_reach_owner_unread(
 }
 
 /// Whether any indexed file mentions `owner` more often than the related
-/// tests in it do. Mentions in the owner's `fn` header and in plain `use`
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
 /// paths do not count ([`unread_mentions`]); every other mention must be
 /// one a related test's body holds, since only those calls are read.
 fn owner_named_outside_related_tests(
@@ -1589,12 +1589,42 @@ fn owner_named_outside_related_tests(
     related_tests: &[&TestSummary],
 ) -> bool {
     index.files().iter().any(|(path, file)| {
+        let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
             .iter()
-            .filter(|test| test.file == *path)
+            .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
             .map(|test| unread_mentions(&test.body, owner))
             .sum();
         unread_mentions(&file.source, owner) > read
+            || doc_comment_names(&file.source, owner)
+            || crate::analysis::extract::mask_comments_and_strings(&file.source)
+                .contains("include!")
+    })
+}
+
+/// Whether a doc comment in `source` names `owner`, or a doc attribute
+/// includes a file: a doctest there runs under `cargo test` with whatever
+/// input it passes, and the masked scan above cannot see it. An `include!` anywhere likewise pulls in code no
+/// file read here holds.
+fn doc_comment_names(source: &str, owner: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        let doc_attribute = line.starts_with("#[doc") || line.starts_with("#![doc");
+        // `#![doc = include_str!("../README.md")]` makes a markdown file's
+        // code blocks doctests, which no file read here holds.
+        (doc_attribute && line.contains("include_str!"))
+            || ((line.starts_with("///") || line.starts_with("//!") || doc_attribute)
+                && super::reveal::contains_as_whole_word(line, owner))
+    }) || source.split("/**").skip(1).any(|block| {
+        block
+            .split("*/")
+            .next()
+            .is_some_and(|doc| super::reveal::contains_as_whole_word(doc, owner))
+    }) || source.split("/*!").skip(1).any(|block| {
+        block
+            .split("*/")
+            .next()
+            .is_some_and(|doc| super::reveal::contains_as_whole_word(doc, owner))
     })
 }
 
