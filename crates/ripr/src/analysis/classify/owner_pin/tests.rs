@@ -7876,6 +7876,11 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
         "assert_eq!(vec![crate::weight(4),][0], 12);",
         "assert_eq!(vec![\n            crate::weight(4),\n        ][0], 12);",
         "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
+        // A `;` inside a string argument is not the repeat separator.
+        "assert_eq!(vec![crate::weight(\"a;b\".len() as u32)][0], 9);",
+        // A `vec!` in the expected value or message leaves the bare call.
+        "assert_eq!(crate::weight(4), vec![12][0]);",
+        "assert_eq!(crate::weight(4), 12, \"{:?}\", vec![1]);",
     ] {
         let lib = unit_tests("", body);
         assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
@@ -7886,6 +7891,7 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
         "assert_eq!(vec![1, crate::weight(4)][1], 12);",
         "assert_eq!(vec![crate::weight(4)][1], 12);",
         "assert_eq!(vec![crate::weight(4); 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4) ; 2][0], 12);",
         "assert_eq!(vec![crate::weight(4)][0] + 1, 13);",
         "assert_eq!(vec![crate::weight(4)].len(), 1);",
         "assert_eq!(vec![crate::weight(4)], vec![12]);",

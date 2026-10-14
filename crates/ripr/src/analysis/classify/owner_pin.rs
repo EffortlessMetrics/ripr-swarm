@@ -2007,7 +2007,9 @@ impl OwnerReturnPin {
                 rendered,
             ) {
                 (_, _, Some(pin)) if renders || indexes => pin,
-                _ if renders || indexes => return false,
+                // A `vec!` elsewhere (the expected value, the message) leaves
+                // the direct readings below.
+                _ if renders => return false,
                 (Some(call), None, _) => (call, operands[1]),
                 (None, Some(call), _) => (call, operands[0]),
                 (None, None, Some(pin)) => pin,
@@ -6977,7 +6979,8 @@ fn single_element_index(operand: &str) -> Option<&str> {
         .trim_end()
         .strip_prefix("vec![")?
         .strip_suffix(']')?;
-    if inner.contains(';') {
+    // A `;` in a string or comment is not the repeat separator.
+    if mask_comments_and_strings(inner).contains(';') {
         return None;
     }
     match split_top_level_arguments(inner)?.as_slice() {
