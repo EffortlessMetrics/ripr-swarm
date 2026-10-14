@@ -27,6 +27,9 @@ mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_absolute_root.rs"]
+mod diff_absolute_root;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -23533,8 +23536,8 @@ fn repair_route_status(root: &Path) -> Result<serde_json::Value, Box<dyn std::er
     Ok(serde_json::from_slice(&status.stdout)?)
 }
 
-/// Runs the before phase and returns the `--attempt ... --phase after`
-/// command it printed.
+/// Runs the before phase and returns the human next-step command it printed
+/// (`ripr continue --root … --attempt …` for an ordinary attempt).
 fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let root_arg = root.to_string_lossy().into_owned();
     let before = run_ripr(&[
@@ -24694,7 +24697,8 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     for needle in [
         "does not descend from",
         reset_sentence.as_str(),
-        printed.trim_start_matches("ripr "),
+        attempt_id.as_str(),
+        "--phase after",
     ] {
         assert!(reason.contains(needle), "lacks `{needle}`: {reason}");
     }

@@ -91,10 +91,20 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-1. Oracle shape. The assertion is one plain `assert_eq!` (never
-   `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
-   `*_assert_eq!`) with an exact-value, whole-object or `exact_error_variant`
-   oracle kind, on a line
+1. Oracle shape. The assertion is one plain `assert_eq!`, or that
+   `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
+   `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's
+   real file (for a generated test, the file holding the invocation) has no
+   module, import or `extern crate` rename with the root's name, no
+   item-position macro call, no `#![no_implicit_prelude]` and no glob import
+   other than `self::*` or `super::*` inside an inline module; and the root
+   passes the proof targeted call syntax uses: the package manifests bind no
+   dependency to the name, and every file on the test's module path keeps
+   the root available (no `#![no_std]` without `extern crate std`). Never
+   `assert_ne!`, `debug_assert_eq!`, another drop-in or crate-specific
+   qualified `assert_eq!` (`pretty_assertions::assert_eq!`, which needs a
+   manifest check) or a `*_assert_eq!`. Its oracle kind is exact-value,
+   whole-object or `exact_error_variant`, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
    test's outer attributes admit only `#[test]` and the `serial_test` locks
@@ -565,8 +575,9 @@ rule only for an assertion whose context was admitted.
    (`ensure !(..)`), leaves the return paths unestablished.
 4. Macro binding. The existing non-returning standard-macro vocabulary is
    reused for test bodies; any other invoked macro may hide an early exit
-   and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
-   their roots can be rebound.
+   and refuses the pin. Only bare standard names qualify, plus a
+   `std`/`core`-rooted `assert_eq!` whose root rule 1 proves unrebound;
+   other qualified paths stay unknown because their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!` or `format!` expands to one call over
@@ -1668,9 +1679,10 @@ assertions. This repair shares the existing callback without that larger migrati
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
   the lone-equality forms above, and from `assert_eq!` qualified through a
   drop-in assertion crate (`std`, `core`, `pretty_assertions`,
-  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
-  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
-  reads `assertion_not_credited`. Other qualified assertion macros, other
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches the bare
+  spelling and the `std`/`core`-rooted one (rule 1), so another qualified
+  drop-in `assert_eq!` is refused here and its row reads
+  `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
@@ -1959,3 +1971,45 @@ assertions. This repair shares the existing callback without that larger migrati
 - `owner_return_pin_false_exposed` — zero: no fixture or replay finding
   gains `exposed` through the pin unless its confirming assertion is a
   complete call that names the owner on the changed return path.
+
+
+## Literal JSON construction admission (#7776)
+
+A bare `json!` with a visible unchanged canonical `use serde_json::json`
+(or grouped import) may construct data before an equality or inside its operands.
+This supplies execution context only; owner, path activation, propagation and
+value discrimination still require their existing witnesses.
+
+The initial closed grammar accepts Rust-valid JSON string/boolean/null literals, unsuffixed i32 integers,
+finite float literals, arrays and string-keyed objects. It refuses interpolated expressions,
+calls, nested macros, raw/byte/suffixed literals, split numeric tokens, trailing
+commas and unsupported syntax. A constructor name never supplies an oracle.
+
+Registry authority is limited to serde_json 1.0.151, crates.io checksum
+`c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+whose macro expansion has no enclosing-function exit for this literal grammar.
+The analysis root must declare this dependency directly or in its workspace
+package table. Offline locked Cargo metadata must resolve one canonical package
+and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
+conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
+rule 7a's existing bounded metadata process and strict configuration snapshot;
+ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
+lock identity is rechecked and affects classified-cache reuse.
+
+Visible local, imported, cross-file namespace and workspace macro bindings
+remain subject to the shared fail-closed admission checks. An unavailable or
+unsupported receipt retains the execution/binding refusal; uncalled closures,
+shadowed assertions/owners and alternate return paths retain their existing stops.
+Ordinary Cargo executable/registry-cache integrity remains an instrument
+assumption, as in rule 7a; this does not authenticate a hostile compiler or SDK.
+
+Matched fixtures preserve the didSave #17745 literal constructor test body and
+root/nested controls. Correct and deliberately wrong callback libraries execute
+one unignored test each. The fake constructor emits `return` and lets the wrong
+callback pass; the eight ineffective fixture controls have independent honesty
+corpus entries. The documentHighlight `range()` interpolation remains unsupported.
+A nested literal is admitted for observation but remains weakly exposed when the
+existing owner-call argument pin is unavailable; this leaf does not relax that
+authority. Withheld diff-index source bindings receive the same constructor scan.
+Full frozen consumer replay is separate from fixture admission and never clears
+consumer gates, missing IDs or unrelated propagation residuals by absence.

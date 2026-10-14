@@ -689,7 +689,10 @@ identity agree and the analysis-outcome validator accepts the artifact.
 
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
-it only when the CLI render path has a declared diff provenance. An
+it only when the CLI render path has a declared diff provenance.
+`canonical_next_action.subject.root` uses the same slash-stable renderer as
+the top-level `root` (`display_path`), so one document carries one root
+identity even when `--root` was typed with native backslashes (#7730). An
 inspectable finding stays `inspect_details`; a guidance string is never
 upgraded into `run_command` without a producer-owned `CommandSpec`. JSON
 findings-array budgeting preserves this primary object and its
@@ -17813,7 +17816,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.69",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.70",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18513,7 +18516,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.36",
+    "schema_version": "1.37",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18524,7 +18527,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.69",
+      "schema_version": "1.70",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

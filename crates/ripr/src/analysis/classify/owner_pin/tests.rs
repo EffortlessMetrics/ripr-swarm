@@ -1,3 +1,5 @@
+mod json_construction;
+
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
 use crate::analysis::rust_index::summarize_file;
@@ -3117,6 +3119,200 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
     }
 }
 
+/// #7857: a `std::`/`core::`-qualified `assert_eq!` runs as the standard
+/// macro unless its root may be rebound, so it is admitted like the bare
+/// form. The proof needs the package manifests (a Cargo rename of `std`),
+/// the test's own file (a rebinding module, import or `extern crate`
+/// rename, a glob from another file, `no_implicit_prelude`, the invocation
+/// of a macro that generates the test) and the usual execution path.
+#[test]
+fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-plain",
+        &[("Cargo.toml", &manifest(""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest(
+                "std = { package = \"fake-std\", version = \"1\" }\ncore = { package = \"fake-core\", version = \"1\" }\n",
+            ),
+        )],
+    )?;
+    let test = |assertion: &str| format!("#[test]\nfn weighs() {{\n    {assertion}\n}}\n");
+    let opaque = |path: &str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::OpaqueMacro(path.to_string()),
+        ))
+    };
+    for (tests, path) in [
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("::core::assert_eq!(weight(4), 12);")
+            ),
+            "::core::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("core::assert_eq!(weight(4), 12);")
+            ),
+            "core::assert_eq",
+        ),
+        // The parser keeps the spacing of the path.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std :: assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\nmod tests {{\n    use super::*;\n{}}}\n",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            None,
+            "{tests}"
+        );
+        // Without a manifest, or with `std`/`core` bound to another package,
+        // the root is unproved.
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&aliased)),
+            opaque(path),
+            "{tests}"
+        );
+        assert_eq!(weight_refusal(&tests, &[]), opaque(path), "{tests}");
+    }
+    // The fact reader already drops a call whose root the file rebinds.
+    for prefix in [
+        "mod std {}\n",
+        "use demo as std;\n",
+        "extern crate demo as std;\n",
+    ] {
+        let tests = format!(
+            "{prefix}use demo::weight;\n{}",
+            test("std::assert_eq!(weight(4), 12);")
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert!(index.tests().at(0).assertions.is_empty(), "{tests}");
+    }
+    for (tests, refusal) in [
+        // A glob from another file may bring a `std` item.
+        (
+            format!("use demo::*;\n{}", test("std::assert_eq!(weight(4), 12);")),
+            opaque("std::assert_eq"),
+        ),
+        (
+            format!(
+                "#![no_implicit_prelude]\nuse demo::weight;\n{}",
+                test("::std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("::std::assert_eq"),
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("if weight(1) > 9 { std::assert_eq!(weight(4), 12); }")
+            ),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ConditionalPath("an `if` branch"),
+            )),
+        ),
+        // `#![no_std]` without `extern crate std` leaves no `std` root.
+        (
+            format!(
+                "#![no_std]\nuse demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("std::assert_eq"),
+        ),
+        // Other drop-in roots need their own manifest check, which this
+        // gate does not make.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("pretty_assertions::assert_eq!(weight(4), 12);")
+            ),
+            opaque("pretty_assertions::assert_eq"),
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            refusal,
+            "{tests}"
+        );
+    }
+    // An unproved qualified call anywhere in the file may expand to an early
+    // return, so a later bare assertion is refused too (#7938 review).
+    let bare_after = |root: &Path| {
+        let tests = format!(
+            "use demo::weight;\n{}",
+            test("std::assert_eq!(1, 1);\n    assert_eq!(weight(4), 12);")
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| {
+            test.assertions
+                .iter()
+                .find(|assertion| assertion.text.starts_with("assert_eq!(weight"))
+        });
+        assert!(assertion.is_some(), "{tests}");
+        OwnerPinSyntax::default().refusal(test?, assertion?, &index)
+    };
+    assert_eq!(bare_after(&plain), None);
+    assert_eq!(bare_after(&aliased), opaque("std::assert_eq"));
+    // A generated test is checked against its expansion, which shows
+    // neither the file's glob nor the generating invocation; the real file
+    // shows both. The bare form is the control: the same generated test is
+    // admitted, so the refusal is the qualified root's.
+    let generated = |assertion: &str| {
+        let tests = format!(
+            "use demo::*;\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            {assertion}\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        assert!(
+            test.is_some_and(|test| !test.assertions.is_empty()),
+            "{tests}"
+        );
+        let test = test?;
+        OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    };
+    assert_eq!(generated("assert_eq!(weight(4), 12);"), None);
+    assert_eq!(
+        generated("std::assert_eq!(weight(4), 12);"),
+        opaque("std::assert_eq")
+    );
+    Ok(())
+}
+
 #[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
@@ -3984,7 +4180,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
                 trusted_macro_binding_sites(
                     &facts.data().source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &assertion_context_macros(),
                     &|_, _| false,
                     &|_| false,
                 )
@@ -4024,7 +4220,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
-            ambiguous.len() == NON_RETURNING_MACROS.len(),
+            ambiguous.len() == assertion_context_macros().len(),
             saturated,
             "{files:?}"
         );
@@ -4038,6 +4234,9 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
 
 #[test]
 fn trusted_macro_names_are_distinct_so_a_full_set_means_saturated() {
+    assert!(!NON_RETURNING_MACROS.contains(&"json"));
+    let context = assertion_context_macros();
+    assert_eq!(context.iter().collect::<BTreeSet<_>>().len(), context.len());
     let distinct = NON_RETURNING_MACROS.iter().collect::<BTreeSet<_>>();
     assert_eq!(distinct.len(), NON_RETURNING_MACROS.len());
 }
@@ -5842,6 +6041,134 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     ] {
         assert!(!whole_value_admits(&lib, "maybe", &body), "{body}");
     }
+}
+
+/// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
+/// tail, an early `return Err(..)` exits as `?` does, and the test may
+/// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
+/// Any other early return, an unwrapped bare-tail owner, `unwrap_or_default`
+/// or a computed `expect` message does not pin.
+#[test]
+fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
+    let question = "    let n: u32 = s.parse().map_err(|_| String::from(\"bad\"))?;\n";
+    let with_exit = |exit: &str| {
+        CONFIG_LIB.replace(
+            question,
+            &format!("{question}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let guarded = with_exit("return Err(String::from(\"zero\"));");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for (body, pins) in [
+        (format!("assert_eq!(parse(\"3\"), Ok({literal}));"), true),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!({literal}, parse(\"3\").unwrap());"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(\"parses\"), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), Ok({literal}));"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap_or_default(), {literal});"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(&msg), {literal});"),
+            false,
+        ),
+        (format!("assert_eq!(parse(\"3\"), {literal});"), false),
+        (
+            format!("let mut c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+    ] {
+        assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
+    }
+    // A bare-tail owner has no wrapped value to unwrap.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3).unwrap(), {literal});")
+    ));
+    // An early exit that may hand back another `Ok` refuses the pin.
+    let tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(parse(\"3\"), Ok({literal}));\n}}\n"
+    );
+    for exit in [
+        "return Ok(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return parse(\"1\");",
+        "return Err(String::new()).or(parse(\"1\"));",
+    ] {
+        let lib = with_exit(exit);
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // A `Some(..)` tail admits an early `return None` and nothing else.
+    let maybe_tail = "pub fn maybe(n: u32) -> Option<Config> {\n";
+    let maybe_with = |exit: &str| {
+        format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}").replace(
+            maybe_tail,
+            &format!("{maybe_tail}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let unwrap_maybe = format!("assert_eq!(maybe(3).unwrap(), {literal});");
+    assert!(whole_value_admits(
+        &maybe_with("return None;"),
+        "maybe",
+        &unwrap_maybe
+    ));
+    let maybe_tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{unwrap_maybe}\n}}\n");
+    for exit in [
+        "return Some(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return maybe(1);",
+        "return FALLBACK;",
+    ] {
+        let lib = maybe_with(exit);
+        let (_, pin) = whole_value_pin(&lib, "maybe", &maybe_tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Review: an `Err` the workspace rebinds may build an `Ok`, so the early
+    // exit is not the other variant.
+    let early_literal =
+        with_exit("return Err(Config { retries: 4, name: \"x\".into(), count: Count(n) });");
+    assert!(whole_value_pin(&early_literal, "parse", &tests).1.is_some());
+    for rebinding in [
+        "#[allow(non_snake_case)]\npub fn Err(c: Config) -> Result<Config, String> {\n    Ok(c)\n}\n",
+        "use std::result::Result::Ok as Err;\n",
+    ] {
+        let lib = format!("{rebinding}{early_literal}");
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // #7940 review: a std-rooted alias inside the owner itself also rebinds.
+    let signature = "pub fn parse(s: &str) -> Result<Config, String> {\n";
+    let local = early_literal.replace(
+        signature,
+        &format!("{signature}    use std::result::Result::Ok as Err;\n"),
+    );
+    assert_ne!(local, early_literal);
+    let (_, pin) = whole_value_pin(&local, "parse", &tests);
+    assert!(pin.is_none(), "{local}");
+    // So does a rebound `None` beside a `Some` tail.
+    let none_const = format!(
+        "#[allow(non_upper_case_globals)]\npub const None: Option<u32> = Some(1);\n{}",
+        maybe_with("return None;")
+    );
+    let (_, pin) = whole_value_pin(&none_const, "maybe", &maybe_tests);
+    assert!(pin.is_none(), "{none_const}");
 }
 
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal

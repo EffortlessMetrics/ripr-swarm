@@ -7,6 +7,10 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
+mod literal_json;
+use literal_json::{
+    json_namespace_rebound, literal_json_import_visible, literal_json_tokens, literal_json_tree,
+};
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
@@ -14,6 +18,7 @@ pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 use super::parse_clean_source_file;
 use super::ra::{
     LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
+    std_macro_root_is_unrebound,
 };
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
@@ -439,9 +444,7 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        TRUSTED_MACRO_NAMES
-            .contains(&name)
-            .then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -451,6 +454,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     };
     let mut names = BTreeSet::new();
     for node in source.syntax().descendants() {
+        if json_namespace_rebound(&node) {
+            names.insert("json".to_string());
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -526,10 +532,11 @@ fn macro_binding_ambiguities(
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
-    if !source.contains("macro")
-        && !source.contains("use")
-        && !source.contains("no_implicit_prelude")
-        && !source.contains('!')
+    if !(trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!'))
     {
         return ambiguous;
     }
@@ -589,6 +596,19 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // An extern-crate alias or module in another file can defeat this
+        // import's root even when that file never mentions `json` itself.
+        if trusted.contains(&"json") && json_namespace_rebound(&node) {
+            ambiguous.push((
+                "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(&node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    crate_local: false,
+                },
+            ));
+        }
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()));
@@ -814,6 +834,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let crates = match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" => EXPECT_TEST_CRATES,
+        "json" => &["serde_json"],
         _ => return false,
     };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
@@ -1210,9 +1231,9 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             // `assert!` is collected for the bool-owner pin; the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
-                !matches!(
-                    path.syntax().text().to_string().as_str(),
-                    "assert_eq" | "assert"
+                !names_candidate_assertion(
+                    &path.syntax().text().to_string(),
+                    &["assert_eq", "assert"],
                 )
             }) {
                 continue;
@@ -1492,10 +1513,9 @@ fn local_helper_assertions(
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
-            if call
-                .path()
-                .is_none_or(|path| path.syntax().text() != "assert_eq")
-            {
+            if call.path().is_none_or(|path| {
+                !names_candidate_assertion(&path.syntax().text().to_string(), &["assert_eq"])
+            }) {
                 continue;
             }
             let range = call.syntax().text_range();
@@ -2620,15 +2640,24 @@ fn has_escape(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
-            if !is_trusted_macro(&path, trusted) {
+            if (!is_trusted_macro(&path, trusted)
+                && !is_standard_qualified_macro(&path, &call, trusted))
+                || path == "json"
+                    && (!literal_json_import_visible(call.syntax())
+                        || !call
+                            .token_tree()
+                            .is_some_and(|tree| literal_json_tree(&tree)))
+            {
                 return Some(AssertionContextRefusal::OpaqueMacro(path));
             }
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
-            if call
-                .token_tree()
-                .is_some_and(|tree| opaque_macro_operand(&tree))
-            {
+            if call.token_tree().is_some_and(|tree| {
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && literal_json_import_visible(call.syntax()),
+                )
+            }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
         }
@@ -2654,14 +2683,23 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
+    opaque_macro_operand_with_json(tree, false)
+}
+
+fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens)
-        .any(|(name, plain)| !(plain && NESTED_EXPANSIONS.contains(&name)))
+    }) || nested_invocations(&tokens).any(|(name, plain)| {
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+    }) || tokens.windows(3).enumerate().any(|(at, window)| {
+        window[0].text() == "json"
+            && window[1].text() == "!"
+            && !literal_json_tokens(&tokens[at + 2..])
+    })
 }
 
 /// A bare `matches!` or `format!` in a macro operand expands to one `match`
@@ -2735,6 +2773,32 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     // Qualified roots can themselves be rebound. Without name resolution,
     // only bare names with the workspace binding check are established.
     trusted.contains(&path)
+}
+
+/// A macro path that may be one of the `leaves` assertions: the bare name,
+/// or `assert_eq` under a `std`/`core` root (#7857). A qualified candidate
+/// is admitted only when [`has_escape`] finds its root unrebound, so a
+/// rebinding refuses the whole test with the path named.
+fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
+    let path: String = path.split_whitespace().collect();
+    let unrooted = path.strip_prefix("::").unwrap_or(&path);
+    match unrooted.split_once("::") {
+        Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
+        Some(_) => false,
+        None => leaves.contains(&unrooted),
+    }
+}
+
+/// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
+/// file can rebind runs as the standard macro, so it is no escape (#7857).
+/// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
+/// the classify side adds the workspace root proof for the credited one.
+fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
+    // The parser keeps the spacing of `std :: assert_eq`.
+    let path: String = path.split_whitespace().collect();
+    path.rsplit("::").next() == Some("assert_eq")
+        && trusted.contains(&"assert_eq")
+        && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
 /// `Ok` when the invocation runs on every execution of the test body;

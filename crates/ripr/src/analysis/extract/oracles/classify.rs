@@ -1680,6 +1680,64 @@ fn ok_literal() {
                 "(find(3).ok_or(E::Missing)).unwrap_err();",
                 vec![],
             ),
+            // A grouping is looked through: around the call itself, or
+            // around Ok-preserving adapters, it still reads the call.
+            (
+                "grouped_call",
+                "(check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_error_mapped",
+                "let _e = (check(300).map_err(Wrap)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_then_mapped",
+                "((check(300))).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "raw_identifier_call",
+                "r#check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_mapped_then_fallback",
+                "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            // A fallback inside the group is not hidden by an Ok-preserving
+            // adapter on either side of the closing paren.
+            (
+                "grouped_fallback_then_mapped",
+                "(check(300).and(Err(E::Other)).map_err(Wrap)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_fallback_mapped_outside",
+                "(check(300).and(Err(E::Other))).map_err(Wrap).unwrap_err();",
+                vec![],
+            ),
+            // A group around a comparison, jump, range or tuple is not a
+            // call.
+            (
+                "grouped_comparison",
+                "(a < check(300)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_return",
+                "(return check(300)).unwrap_err();",
+                vec![],
+            ),
+            ("grouped_range", "(a..check(300)).unwrap_err();", vec![]),
+            ("grouped_tuple", "(x < y, check(300)).unwrap_err();", vec![]),
+            (
+                "turbofish_path",
+                "(Api::<A, B>::check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
             ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
             (
                 "turbofish_call",
