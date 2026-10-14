@@ -127,6 +127,60 @@ impl MemberCrates {
         }
         names
     }
+
+    /// Whether `crate_root`, a root-relative `src/lib.rs` or `src/main.rs`,
+    /// is its package's only reading of that file as a crate root: the
+    /// manifest leaves `autolib`/`autobins` on and moves no target with a
+    /// `path` (a `[[bin]]` naming `src/main.rs` itself excepted). A moved
+    /// `[lib] path` makes `src/lib.rs` a module of another root, whose
+    /// `crate::` differs. Without manifest authority, or with an unreadable
+    /// manifest, nothing is a default root.
+    pub(crate) fn is_default_target_root(&self, crate_root: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
+            return false;
+        };
+        let Some((package, _)) = nearest_package(&root, directory) else {
+            return false;
+        };
+        if package.directory != directory {
+            return false;
+        }
+        let manifest = &package.manifest;
+        let flag_off = |key: &str| {
+            manifest
+                .get("package")
+                .and_then(|package| package.get(key))
+                .is_some_and(|value| value.as_bool() != Some(true))
+        };
+        if flag_off("autolib") || flag_off("autobins") {
+            return false;
+        }
+        let names_path = |path: &toml::Value, default: &str| {
+            path.as_str()
+                .is_some_and(|text| lexical(Path::new(text)) == Path::new("src").join(default))
+        };
+        let lib_moved = manifest
+            .get("lib")
+            .and_then(|lib| lib.get("path"))
+            .is_some_and(|path| !names_path(path, "lib.rs"));
+        let target_moved = ["bin", "test", "bench", "example"].iter().any(|kind| {
+            manifest.get(*kind).is_some_and(|targets| {
+                targets.as_array().is_none_or(|targets| {
+                    targets.iter().any(|target| {
+                        target
+                            .get("path")
+                            .is_some_and(|path| !(*kind == "bin" && names_path(path, "main.rs")))
+                    })
+                })
+            })
+        });
+        !lib_moved && !target_moved
+    }
 }
 
 /// One package manifest: its directory and parsed table.
@@ -389,6 +443,45 @@ mod tests {
 
     fn orders(dependencies: &str) -> String {
         format!("[package]\nname = \"orders\"\nversion = \"0.1.0\"\n\n{dependencies}")
+    }
+
+    fn default_root(manifest: &str, crate_root: &str) -> Result<bool, String> {
+        let root = temp_workspace("default-root", &[("pricing/Cargo.toml", manifest)])?;
+        let default = MemberCrates::new(&root).is_default_target_root(Path::new(crate_root));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(default)
+    }
+
+    #[test]
+    fn only_an_unmoved_target_root_is_a_default_root() -> Result<(), String> {
+        // #7686 review: `[lib] path = "src/real.rs"` makes `src/lib.rs` a
+        // module whose `crate::` is another file's.
+        let lib = "pricing/src/lib.rs";
+        assert!(default_root(PRICING, lib)?);
+        assert!(default_root(PRICING, "pricing/src/main.rs")?);
+        assert!(default_root(
+            &format!("{PRICING}[lib]\npath = \"src/lib.rs\"\n"),
+            lib
+        )?);
+        assert!(default_root(
+            &format!("{PRICING}[[bin]]\nname = \"p\"\npath = \"src/main.rs\"\n"),
+            lib
+        )?);
+        for moved in [
+            "[lib]\npath = \"src/real.rs\"\n",
+            "[lib]\npath = 5\n",
+            "[[bin]]\nname = \"p\"\npath = \"src/other.rs\"\n",
+            "[[example]]\nname = \"e\"\npath = \"src/lib.rs\"\n",
+        ] {
+            assert!(!default_root(&format!("{PRICING}{moved}"), lib)?, "{moved}");
+        }
+        for flag in ["autolib = false\n", "autobins = false\n"] {
+            assert!(!default_root(&format!("{PRICING}{flag}"), lib)?, "{flag}");
+        }
+        // No manifest at the package directory, or no manifest authority.
+        assert!(!default_root(PRICING, "other/src/lib.rs")?);
+        assert!(!MemberCrates::default().is_default_target_root(Path::new(lib)));
+        Ok(())
     }
 
     #[test]

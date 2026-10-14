@@ -1,0 +1,13 @@
+diff --git a/src/priceTwoFiles.ts b/src/priceTwoFiles.ts
+index 0000000..1111111 100644
+--- a/src/priceTwoFiles.ts
++++ b/src/priceTwoFiles.ts
+@@ -2,7 +2,7 @@
+ 
+ export function priceTwoFiles(amount: number): number {
+   if (amount > 100) {
+-    return fee33(amount - 10);
++    return fee33(amount - 20);
+   }
+   return amount;
+ }

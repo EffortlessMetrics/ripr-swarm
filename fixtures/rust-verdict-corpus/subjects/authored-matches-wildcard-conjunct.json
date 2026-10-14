@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-matches-wildcard-conjunct",
+  "origin": "authored",
+  "version_label": "authored 2026-10-13 for #7695 (RIPR-SPEC-0231 rule 3: a matches! conjunct keeps its pattern's reading)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "fb5d68c532555ae33ed10e2cf5e683e04b61240556b743e05c03c4e9fab970d2"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "534ddefe2b261e6a1b68b2bde83905ac9a8d4d8b03a5ae271b77d89d04a7ef3b"
+    }
+  ]
+}

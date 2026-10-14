@@ -64,6 +64,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.2` |
+| `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
@@ -450,6 +451,19 @@ directory for inspection (#5989), matching the directory `ripr check` reads
 and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
+
+`ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
+with `schema_version: "0.1"`, `cache_dir` (absolute export directory),
+`classified_entries` (available current full/compact families), `file_fact_entries`,
+`missing_file_facts`, `copied_files` (including manifests and referenced shards)
+and `logical_file_bytes` (sum of copied encoded file lengths). These lengths do
+not describe allocated bytes, directory overhead or peak disk use. Missing
+optional file facts are counted; corrupt present entries and incomplete required
+references refuse success. There is no success JSON for incomplete export. Require
+exit zero before consuming the directory. Failures after output creation name the
+retained owned partial output; preflight refusals, including unavailable Cargo
+input identity, occur before the output directory exists and create no output.
+The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 
@@ -17740,7 +17754,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.64",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.66",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18451,7 +18465,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.64",
+      "schema_version": "1.66",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

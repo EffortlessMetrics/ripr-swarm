@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 919a536..bf3ea18 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@ impl Order {
+     }
+ 
+     pub fn tag(&mut self, label: &str, weight: u32) {
+-        self.tags.push(Tag { label: label.to_uppercase(), weight });
++        self.tags.push(Tag { label: str::to_uppercase(label), weight });
+     }
+ 
+     pub fn lines(&self) -> &[Line] {

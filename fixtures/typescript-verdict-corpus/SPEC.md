@@ -27,10 +27,16 @@ under this repository's license, grouped by test runner:
   (`node:assert` strict and legacy, `assert.throws` and `assert.rejects`,
   subtests, `t.assert`).
 
-RIPR-SPEC-0243 acceptance examples 1 to 32 each have at least one case;
-example 34 is `nodetest-currency-throws-regex` and example 35 is
-`nodetest-charge-rejects-message`. Example 33 (two test files, one mocked)
-has no case yet (#7099). Case ids containing `spec0234` were named before the
+Every RIPR-SPEC-0243 acceptance example has at least one case. Example 33
+(two test files, one mocked) is `jest-spec0243-ex33-two-files-one-mocked`;
+examples 34 and 35 are `nodetest-spec0243-ex34-throws-anchored-regex` and
+`nodetest-spec0243-ex35-rejects-message-changed`, whose edits change the
+message the payload pins. Where an example's test pins the post-change value
+(examples 30, 34 and 35), the case pins the stored pre-change value instead,
+because corpus tests must pass on the stored package; the static oracle grade
+the example is about is the same. The older `nodetest-currency-throws-regex` and
+`nodetest-charge-rejects-message` keep the message unchanged and cite no
+example. Case ids containing `spec0234` were named before the
 TypeScript rules were renumbered; they refer to today's RIPR-SPEC-0243.
 Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
@@ -39,9 +45,11 @@ it as false and its reasoning names the spec example.
 Each case that labels a numbered acceptance example cites it in
 `spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-RIPR-SPEC-0252, and RIPR-SPEC-0254. A case cites an example only when its diff and test have
+RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256 and RIPR-SPEC-0258. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
-table rather than waived.
+table rather than waived. An example that lists several alternative forms or
+outcomes counts as covered when a case labels one of them; the other forms
+remain open for later cases without moving the count.
 
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
@@ -62,7 +70,14 @@ Stryker's mutant set. All 185 mutant outcomes were then replayed by
 applying each mutant by hand and running the case's test command; every one
 agreed. The `*-throw-second-replaced-line` and `*-throw-uneven-*-block`
 cases (#7524) came later and were labeled by running `npx mocha` on the
-stored and the edited package.
+stored and the edited package. The twenty spec-coverage cases added after
+the ledger (#7650) were labeled the same way: each behavior change was
+applied by hand and the case's test command run on the whole stored and
+edited package (Node 22.22.0, tsx 4.23.15, jest 30.5.2, ts-jest 29.4.14,
+typescript 5.9.3). The four `jest-mined-*-bound-local`, `-error-twice` and
+`-name-only` rewrites list, hand-applied, the mutant set StrykerJS listed
+for the same line in `jest-mined-tobeinstanceof` and
+`jest-mined-tomatchobject-field`.
 
 ## Layout
 

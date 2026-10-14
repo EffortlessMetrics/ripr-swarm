@@ -1,0 +1,11 @@
+diff --git a/src/priceFeeTwo.ts b/src/priceFeeTwo.ts
+index 0000000..1111111 100644
+--- a/src/priceFeeTwo.ts
++++ b/src/priceFeeTwo.ts
+@@ -1,5 +1,5 @@
+ export const FLAT = 499;
+ 
+ export function priceFeeTwo(subtotal: number, fee: number): number {
+-  return subtotal + fee + FLAT;
++  return subtotal + FLAT;
+ }

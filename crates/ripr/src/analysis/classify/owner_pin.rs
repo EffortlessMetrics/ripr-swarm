@@ -67,7 +67,7 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -96,6 +96,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
     /// return value to `true` and `assert!(!owner(..))` to `false`.
     returns_bool: bool,
+    /// The owner is an `async fn`, so a test reads its return value as
+    /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
+    awaited: bool,
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
     trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
@@ -1381,6 +1384,33 @@ enum PinCall {
         receivers: Vec<ReceiverType>,
         trait_scope: Option<TraitScope>,
     },
+    /// `T::name(..)` (#6617, RIPR-SPEC-0172): the owner is an associated
+    /// function (no `self`) of an inherent `impl T`, and the test must name
+    /// the owner's own `T` through a direct import of the owner's library.
+    /// A bare `name(..)` never takes it: that call names a module-level
+    /// function, never an associated one.
+    Associated { type_name: String },
+}
+
+/// Which call syntax [`other_definition_competes`] judges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallKind {
+    /// `name(..)` or a module path `a::b::name(..)`.
+    Bare,
+    /// `recv.name(..)`.
+    Method,
+    /// `T::name(..)` on an inherent associated function (#6617).
+    Associated,
+}
+
+impl PinCall {
+    fn kind(&self) -> CallKind {
+        match self {
+            Self::Bare => CallKind::Bare,
+            Self::Method { .. } => CallKind::Method,
+            Self::Associated { .. } => CallKind::Associated,
+        }
+    }
 }
 
 /// A trait method is callable with method syntax only while its trait is
@@ -1400,8 +1430,15 @@ enum ReceiverType {
 enum ReturnPathGate {
     /// The changed expression is the owner's only exit.
     Any,
-    /// The pinned value must start with this constructor.
+    /// The pinned value must start with this constructor. `Head("Err")`
+    /// comes only from an early `return Err(..)`, and like `EarlyHead` it
+    /// refuses an owner file that binds `Ok` or `Err` as a value.
     Head(&'static str),
+    /// #7581: a changed early `return Some(..)` / `return Ok(..)` beside
+    /// exits that build only `None` / `Err(..)`. Admits like `Head`; the
+    /// owner's file must not bind `None`, `Some`, `Ok` or `Err`, since a
+    /// rebound opposite name could build a second `Some` / `Ok` exit.
+    EarlyHead(&'static str),
     /// The pinned value must be exactly this unit variant (`None`).
     Exact(&'static str),
     /// #6692: a field of a hand-written `Clone::clone`'s returned struct
@@ -1441,7 +1478,8 @@ struct WholeValueField {
 }
 
 impl OwnerReturnPin {
-    /// The owner-side gates: `None` when the probe is not a return value,
+    /// The owner-side gates: `None` when the probe is not a return value
+    /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
     /// another workspace definition could take a call by the owner's name.
     pub(in crate::analysis) fn establish(
@@ -1465,7 +1503,7 @@ impl OwnerReturnPin {
         // A predicate that is a bool owner's whole tail is the owner's return
         // value, so the same pin observes it.
         match probe.family {
-            ProbeFamily::ReturnValue => {}
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath => {}
             ProbeFamily::Predicate if returns_bool => {}
             _ => return None,
         }
@@ -1479,17 +1517,27 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
+        // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
+        // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
+        // `fn Ok` in the owner's file can build a second source of the
+        // changed value under that spelling (#7581 and #7712 reviews).
+        if path.prelude_names().iter().any(|name| {
+            index
+                .files()
+                .get(&owner.file)
+                .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+        }) {
+            return None;
+        }
         let call = pin_call(owner, index)?;
-        let method = matches!(call, PinCall::Method { .. });
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
-        let identity = if method {
-            None
-        } else {
-            OwnerCallIdentity::new(owner, index.functions().iter(), index)
+        let identity = match call.kind() {
+            CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+            CallKind::Method | CallKind::Associated => None,
         };
-        if other_definition_competes(owner, index, method, identity.as_ref()) {
+        if other_definition_competes(owner, index, call.kind(), identity.as_ref()) {
             return None;
         }
         Some(Self {
@@ -1497,6 +1545,7 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1565,7 +1614,7 @@ impl OwnerReturnPin {
             || !field_compares_with_derived_equality(type_name, field, index)
             || derives_clone(type_name, index)
             || workspace_declares_trait(index, "Clone")
-            || other_definition_competes(owner, index, true, None)
+            || other_definition_competes(owner, index, CallKind::Method, None)
         {
             return None;
         }
@@ -1579,6 +1628,7 @@ impl OwnerReturnPin {
             },
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1654,7 +1704,11 @@ impl OwnerReturnPin {
             })
         });
         let call = pin_call(owner, index)?;
-        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. }), None) {
+        // #6617 keeps the associated-function pin to a return value: a
+        // `T::new()` whole-value field pin is a separate claim.
+        if matches!(call, PinCall::Associated { .. })
+            || other_definition_competes(owner, index, call.kind(), None)
+        {
             return None;
         }
         Some(Self {
@@ -1670,6 +1724,7 @@ impl OwnerReturnPin {
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
             returns_bool: false,
+            awaited: declares_async(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
@@ -1679,6 +1734,20 @@ impl OwnerReturnPin {
 
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
+    /// [`owner_call_shape`], reading an `async` owner's result through one
+    /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
+    /// awaits a future it returns, whose output its return expression does
+    /// not hold, so that stays refused.
+    fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
+        let operand = operand.trim();
+        // An async owner's bare call is its future, not its return value.
+        match (self.awaited, operand.strip_suffix(".await")) {
+            (true, Some(call)) => owner_call_shape(call.trim_end(), name),
+            (true, None) => None,
+            (false, _) => owner_call_shape(operand, name),
+        }
+    }
+
     pub(in crate::analysis) fn admits(
         &self,
         test: &TestSummary,
@@ -1698,6 +1767,7 @@ impl OwnerReturnPin {
             return false;
         }
         let condition;
+        let matches_operands: [String; 2];
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -1714,8 +1784,8 @@ impl OwnerReturnPin {
                 return false;
             };
             match (
-                owner_call_shape(operands[0], &self.name),
-                owner_call_shape(operands[1], &self.name),
+                self.awaited_call_shape(operands[0], &self.name),
+                self.awaited_call_shape(operands[1], &self.name),
             ) {
                 (Some(call), None) => (call, operands[1]),
                 (None, Some(call)) => (call, operands[0]),
@@ -1730,7 +1800,7 @@ impl OwnerReturnPin {
                 {
                     let bound = |at: usize| {
                         let_bound_owner_call(test, assertion, operands[at], &self.name)
-                            .and_then(|call| owner_call_shape(call, &self.name))
+                            .and_then(|call| self.awaited_call_shape(call, &self.name))
                     };
                     match (bound(0), bound(1)) {
                         (Some(call), None) => (call, operands[1]),
@@ -1754,13 +1824,39 @@ impl OwnerReturnPin {
             }
         } else if let Some([left, right]) = &equality {
             match (
-                owner_call_shape(left, &self.name),
-                owner_call_shape(right, &self.name),
+                self.awaited_call_shape(left, &self.name),
+                self.awaited_call_shape(right, &self.name),
             ) {
                 (Some(call), None) => (call, right.as_str()),
                 (None, Some(call)) => (call, left.as_str()),
                 _ => return false,
             }
+        } else if !is_guard
+            && is_plain_assert_of_matches(&assertion.text)
+            && let Some(operands) = outer_assertion_condition(&assertion.text)
+                .as_deref()
+                .and_then(literal_matches_operands)
+        {
+            // RIPR-SPEC-0197 literal `matches!` pins: `assert!(matches!(owner(..), Ok(5)))`
+            // with a literal-only pattern pins the value as
+            // `assert_eq!(owner(..), Ok(5))` does.
+            matches_operands = operands;
+            let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
+                return false;
+            };
+            // A pattern resolves `None` or `Some(..)` in the test's scope, so
+            // a `const None` there matches some other value (#7581 review).
+            let pattern = &matches_operands[1];
+            if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                contains_as_whole_word(pattern, name)
+                    && index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+            }) {
+                return false;
+            }
+            (call, matches_operands[1].as_str())
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
@@ -1774,7 +1870,7 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            let Some(call) = owner_call_shape(operand, &self.name) else {
+            let Some(call) = self.awaited_call_shape(operand, &self.name) else {
                 return false;
             };
             (call, expected)
@@ -1815,7 +1911,7 @@ impl OwnerReturnPin {
                         matches!(receiver_type, ReceiverType::Named(type_name)
                             if clone_receiver_is_independent(test, receiver, type_name, index))
                     }),
-                    PinCall::Bare => false,
+                    PinCall::Bare | PinCall::Associated { .. } => false,
                 };
                 if expected.trim() != receiver
                     || imports_foreign(&test.file, "Clone")
@@ -1824,9 +1920,26 @@ impl OwnerReturnPin {
                     return false;
                 }
             }
-            (ReturnPathGate::CloneReceiver, CallShape::Bare | CallShape::Path(_)) => return false,
+            (
+                ReturnPathGate::CloneReceiver,
+                CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_),
+            ) => return false,
             (path, _) => {
                 if !path.admits(expected) {
+                    return false;
+                }
+                // The expected `Err(..)` / `Ok(..)` / `Some(..)` / `None`
+                // resolves in the test's scope: a test-local `fn Err`
+                // returning `Ok` passes the pin without the changed return
+                // (#7712 review). Opaque globs do not count here; see
+                // `source_declares_value_name`.
+                if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                    starts_with_word(expected.trim(), name)
+                        && index
+                            .files()
+                            .get(&test.file)
+                            .is_none_or(|facts| source_declares_value_name(&facts.source, name))
+                }) {
                     return false;
                 }
             }
@@ -1928,7 +2041,7 @@ impl OwnerReturnPin {
                         owner_scope,
                         syntax,
                     ),
-                    CallShape::Bare | CallShape::Path(_) => None,
+                    CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
                 };
                 let Some(receiver_type) = receiver_type else {
                     return false;
@@ -1945,6 +2058,35 @@ impl OwnerReturnPin {
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
                         self.trait_in_scope(test, test_source, &scope.trait_name, index)
+                    })
+            }
+            // #6617: `T::name(..)` names the owner only through the owner's
+            // own `T`. A module path `a::b::name(..)` is `CallShape::Path`
+            // (its segments are never CamelCase), so it never reaches here.
+            //
+            // A cfg on the owner, its `impl`, an enclosing module or its file
+            // may drop it from the build, and `T::name` then reaches a trait
+            // default the index never sees (#7082, #7724).
+            (PinCall::Associated { type_name }, CallShape::Associated(named)) => {
+                helper.is_none()
+                    && named == type_name
+                    && index
+                        .files()
+                        .get(&self.owner_file)
+                        .and_then(|facts| {
+                            item_nesting_with_impl(
+                                &facts.source,
+                                &self.name,
+                                self.owner_start_line,
+                                true,
+                            )
+                        })
+                        .is_some_and(|owner| !owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
+                    && !bound_by_macro(&masked_body, type_name)
+                    && !body_rebinds_type(&masked_body, type_name)
+                    && test_source.is_some_and(|source| {
+                        self.associated_type_reaches_owner(type_name, test, source, index, syntax)
                     })
             }
             _ => false,
@@ -1980,6 +2122,90 @@ impl OwnerReturnPin {
     ) -> bool {
         self.binding()
             .bare_call_reaches_owner(test, test_source, index, syntax)
+    }
+
+    /// #6617 (RIPR-SPEC-0172): whether a top-level test's `T::name(..)`
+    /// names the owner's own `T`. The owner-side gate already made `T` the
+    /// one workspace type of that name, with no `mod`, `trait` or `type` of
+    /// it and no competing path-callable `fn name`. Here the test's file
+    /// must import `T` directly, `use <krate>::T;`, at file level,
+    /// where `<krate>` names the owner's library from the test's crate (the
+    /// RIPR-SPEC-0197 manifest authority) and nothing in the test's crate
+    /// binds it, and the library must not export another `T`. Every `use`
+    /// of the file that names `T` must be such an import: an alias (`as`),
+    /// a glob, a brace list or another root refuses, and so does a
+    /// declaration of `T` in the test's file. Any doubt refuses.
+    fn associated_type_reaches_owner(
+        &self,
+        type_name: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        // Only file-level imports reach a test at the file's top level.
+        if syntax
+            .item_nesting(index, &test.file, &test.name, test.start_line)
+            .is_none_or(|nesting| !nesting.modules.is_empty())
+        {
+            return false;
+        }
+        if file_renames_to(test_source, type_name) || file_aliases_type(test_source, type_name) {
+            return false;
+        }
+        let masked = mask_comments_and_strings(test_source);
+        let declares_name = ["struct", "enum", "union", "trait", "mod"]
+            .iter()
+            .any(|keyword| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), type_name)
+                    })
+            });
+        if declares_name {
+            return false;
+        }
+        let file_level = file_use_statements(&super::related_tests::file_level_use_text(&masked));
+        if !file_level
+            .iter()
+            .any(|statement| contains_as_whole_word(statement, type_name))
+        {
+            return false;
+        }
+        let binding = self.binding();
+        let imports_owner_type = |statement: &String| {
+            let Some(path) = statement.trim_start().strip_prefix("use") else {
+                return false;
+            };
+            let path = path.trim();
+            let path = path.strip_prefix("::").map_or(path, str::trim_start);
+            if path.contains(['{', '}', '*']) || !whole_word_offsets(path, "as").is_empty() {
+                return false;
+            }
+            // Only `use <krate>::T;`: a middle segment can be a `pub use`
+            // of another crate (`pub use other as fs;`), whose own `T` this
+            // check cannot place.
+            let segments: Vec<&str> = path.split("::").map(str::trim).collect();
+            let [root, last] = segments[..] else {
+                return false;
+            };
+            last == type_name
+                && is_plain_identifier(root)
+                && binding.krate_root_names_owner_crate(root, &test.file, test_source, index)
+                && !test_crate_binds_root(test, root, index, syntax)
+        };
+        if !file_use_statements(test_source)
+            .iter()
+            .filter(|statement| contains_as_whole_word(statement, type_name))
+            .all(imports_owner_type)
+        {
+            return false;
+        }
+        syntax
+            .target_roots(index)
+            .root(&self.owner_file, index)
+            .is_some_and(|owner_root| !library_may_export_other(index, &owner_root, type_name))
     }
 
     fn trait_in_scope(
@@ -2151,28 +2377,7 @@ impl FreeOwnerBinding<'_> {
         {
             return false;
         }
-        let Some(test_root) = roots.root(&test.file, index) else {
-            return false;
-        };
-        let binds_key = (test_root, root.to_string());
-        let known = syntax
-            .path_memo
-            .borrow()
-            .test_crate_binds
-            .get(&binds_key)
-            .copied();
-        let binds = known.unwrap_or_else(|| {
-            let binds = workspace_renames_to(index, root)
-                || workspace_mentions_raw(index, root)
-                || test_crate_may_bind(&binds_key.0, root, index, roots);
-            syntax
-                .path_memo
-                .borrow_mut()
-                .test_crate_binds
-                .insert(binds_key.clone(), binds);
-            binds
-        });
-        !binds
+        !test_crate_binds_root(test, root, index, syntax)
     }
 
     /// #7097: whether the test's bare `name(..)` can only reach the
@@ -2532,11 +2737,16 @@ fn whole_word_count(text: &str, name: &str) -> usize {
 }
 
 /// How a test calls `owner`: a bare call for a free function, a method call
-/// on a receiver of one of the owner's `impl` types otherwise. `None` for a
-/// shape no pin reads (an associated function, a free fn with `self`).
+/// on a receiver of one of the owner's `impl` types, or `T::name(..)` for an
+/// associated function of an inherent `impl T` (#6617). `None` for a shape
+/// no pin reads (a trait or trait-impl associated function, a generic or
+/// ambiguous self type, a free fn with `self`).
 fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
     Some(match (&owner.item.container, owner.item.has_self_param) {
         (FunctionContainer::Free, false) => PinCall::Bare,
+        (FunctionContainer::Inherent { self_ty }, false) => PinCall::Associated {
+            type_name: associated_owner_type(self_ty, index)?,
+        },
         (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
             receivers: vec![declared_receiver(self_ty, index)?],
             trait_scope: None,
@@ -2570,10 +2780,21 @@ fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
 }
 
 impl ReturnPathGate {
+    /// The prelude variant names this gate's exit reasoning relies on.
+    fn prelude_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::EarlyHead("Some") => &["Some", "None"],
+            Self::EarlyHead(_) | Self::Head("Err") => &["Ok", "Err"],
+            _ => &[],
+        }
+    }
+
     fn admits(&self, expected: &str) -> bool {
         match self {
             Self::Any => true,
-            Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::Head(head) | Self::EarlyHead(head) => {
+                constructor_call_span(expected.trim(), head).is_some()
+            }
             Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
@@ -2599,6 +2820,54 @@ enum CallShape<'a> {
     /// `a::b::name(..)`: a free-function call through a module path of
     /// plain identifiers; holds the path before `::name` (#6974).
     Path(&'a str),
+    /// `T::name(..)` with one CamelCase identifier `T` (#6617): an
+    /// associated-function call; holds `T`. A module path never has a
+    /// CamelCase segment ([`path_call_prefix`]), so the two never overlap.
+    Associated(&'a str),
+}
+
+/// Whether `owner` is declared `async fn`, read from the parsed `async`
+/// token of the one `fn <name>` item whose span holds the owner's start
+/// line. No parse, or no single match, reads as sync: an async owner then
+/// gets no `.await` credit, and its bare call (a future) does not compile.
+fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let source: &str = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        let at = (u32::from(offset) as usize).min(source.len());
+        source.as_bytes()[..at]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1
+    };
+    let mut matches = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name.as_str())
+        })
+        .filter(|function| {
+            let Some(fn_token) = function.fn_token() else {
+                return false;
+            };
+            (line_of(function.syntax().text_range().start())
+                ..=line_of(fn_token.text_range().start()))
+                .contains(&owner.start_line)
+        });
+    match (matches.next(), matches.next()) {
+        (Some(function), None) => function.async_token().is_some(),
+        _ => false,
+    }
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -2625,6 +2894,15 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
             .trim()
             .is_empty()
             .then_some(CallShape::Path(prefix));
+    }
+    if let Some(type_name) = associated_call_type(operand, name) {
+        let opening = type_name.len() + "::".len() + name.len();
+        let masked = mask_comments_and_strings(operand);
+        let closing = matching_close(&masked, opening, b'(', b')')?;
+        return operand[closing + 1..]
+            .trim()
+            .is_empty()
+            .then_some(CallShape::Associated(type_name));
     }
     let call_start = if operand.starts_with(name) {
         0
@@ -2721,6 +2999,39 @@ fn bound_owner_call<'a>(
     };
     let initializer = test.body.get(equals + 1..end)?;
     owner_call_shape(initializer, owner)
+}
+
+/// #6974: whether `test`'s crate (or the workspace) may bind `root` before
+/// the extern prelude does: a rename to it, a raw twin, or a `mod`, `use`,
+/// type or glob in the test's crate. An unplaced test crate binds.
+fn test_crate_binds_root(
+    test: &TestSummary,
+    root: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let roots = syntax.target_roots(index);
+    let Some(test_root) = roots.root(&test.file, index) else {
+        return true;
+    };
+    let binds_key = (test_root, root.to_string());
+    let known = syntax
+        .path_memo
+        .borrow()
+        .test_crate_binds
+        .get(&binds_key)
+        .copied();
+    known.unwrap_or_else(|| {
+        let binds = workspace_renames_to(index, root)
+            || workspace_mentions_raw(index, root)
+            || test_crate_may_bind(&binds_key.0, root, index, roots);
+        syntax
+            .path_memo
+            .borrow_mut()
+            .test_crate_binds
+            .insert(binds_key.clone(), binds);
+        binds
+    })
 }
 
 /// #6974 review: whether the test's own crate may bind `root` before the
@@ -2973,6 +3284,19 @@ fn path_call_prefix<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
+/// #6617: `T` when `operand` starts `T::name(` with `T` one CamelCase
+/// identifier other than `Self`.
+fn associated_call_type<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
+    let (head, tail) = operand.split_once("::")?;
+    (is_plain_identifier(head)
+        && head != "Self"
+        && head.starts_with(|character: char| character.is_ascii_uppercase())
+        && tail
+            .strip_prefix(name)
+            .is_some_and(|after| after.starts_with('(')))
+    .then_some(head)
+}
+
 /// The value expression of `unsafe { <expr> }` when `operand` is exactly that
 /// block and the block holds one expression and no statement. Calling an
 /// `unsafe fn` needs the block, and the block's value is the call's value.
@@ -3125,6 +3449,11 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
 /// produce a second `None` / `Err`. A pin expecting that value then observes
 /// the changed return. A second return of the same value, a `?`, or any
 /// other exit shape leaves the source ambiguous.
+///
+/// RIPR-SPEC-0231 example 23: the mirror holds for an early
+/// `return Some(..);` / `return Ok(..);` when every other `return` and the
+/// tail are exactly `None` / one `Err(..)` call. A `?` there builds only the
+/// opposite constructor, so it does not compete.
 fn early_return_gate(
     body: &str,
     inner: &str,
@@ -3132,16 +3461,28 @@ fn early_return_gate(
     changed: &str,
     spans_changed_line: &dyn Fn(usize, usize) -> bool,
 ) -> Option<ReturnPathGate> {
-    let (gate, other, head) = if changed == "None" {
-        (ReturnPathGate::Exact("None"), "None", "Some")
-    } else if constructor_call_span(changed, "Err").is_some() {
-        (ReturnPathGate::Head("Err"), "Err", "Ok")
-    } else {
-        return None;
-    };
+    let some_call = |value: &str| constructor_call_span(value, "Some").is_some();
+    let ok_call = |value: &str| constructor_call_span(value, "Ok").is_some();
+    let err_call = |value: &str| constructor_call_span(value, "Err").is_some();
+    let is_none = |value: &str| value == "None";
+    // `other` names the changed value's constructor; `opposite` is the only
+    // shape every other exit may build. A `?` builds `None` / `Err`, so it
+    // is a second source of those but never of `Some(..)` / `Ok(..)`.
+    let (gate, other, opposite, question_mark_agrees): (_, _, &dyn Fn(&str) -> bool, _) =
+        if changed == "None" {
+            (ReturnPathGate::Exact("None"), "None", &some_call, false)
+        } else if err_call(changed) {
+            (ReturnPathGate::Head("Err"), "Err", &ok_call, false)
+        } else if some_call(changed) {
+            (ReturnPathGate::EarlyHead("Some"), "Some", &is_none, true)
+        } else if ok_call(changed) {
+            (ReturnPathGate::EarlyHead("Ok"), "Ok", &err_call, true)
+        } else {
+            return None;
+        };
     // `return Err(if .. { A } else { B })`: a pin on `A` never evaluates a
     // changed `B`, as on the tail path.
-    if inner.contains('?')
+    if (inner.contains('?') && !question_mark_agrees)
         || !returns_leave_the_function(body)
         || evaluates_conditionally(&mask_comments_and_strings(changed))
     {
@@ -3158,7 +3499,7 @@ fn early_return_gate(
                 return None;
             }
             changed_returns += 1;
-        } else if constructor_call_span(value, head).is_none() {
+        } else if !opposite(value) {
             return None;
         }
     }
@@ -3167,8 +3508,7 @@ fn early_return_gate(
     let tail = tail.trim();
     // The tail must itself build the opposite constructor: an empty tail
     // after a trailing `if .. { .. } else { None }` hides a second source.
-    let tail_builds_head = constructor_call_span(tail, head).is_some();
-    (changed_returns == 1 && tail_builds_head).then_some(gate)
+    (changed_returns == 1 && opposite(tail)).then_some(gate)
 }
 
 /// Whether `text` starts with the whole word `word`.
@@ -4713,7 +5053,7 @@ pub(in crate::analysis) fn targeted_free_call_reaches_owner(
 ) -> bool {
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
-        || other_definition_competes(owner, index, false, None)
+        || other_definition_competes(owner, index, CallKind::Bare, None)
         || index
             .files()
             .get(&owner.file)
@@ -5353,12 +5693,20 @@ fn resolve_module_path(
 /// dispatches to the same method on the pointee. A definition whose item
 /// container is unknown (lexical fallback) always competes, and so does a
 /// `fn name` the parser never indexed (inside a `macro_rules!` body).
+///
+/// An associated `T::name(..)` call (#6617, RIPR-SPEC-0172) competes with
+/// every other definition of the name that is not a module-level or local
+/// function: inherent and trait-impl functions of any type, trait items,
+/// unknown containers, and every unindexed `fn name`. A free function
+/// cannot be the target of a type path, so it never competes.
 fn other_definition_competes(
     owner: &FunctionSummary,
     index: &RustIndex,
-    method: bool,
+    kind: CallKind,
     settled_per_test: Option<&OwnerCallIdentity>,
 ) -> bool {
+    let method = kind == CallKind::Method;
+    let associated = kind == CallKind::Associated;
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
     let indexed_competes = index.functions().iter().any(|function| {
@@ -5369,8 +5717,11 @@ fn other_definition_competes(
             FunctionContainer::Unknown => true,
             FunctionContainer::Local => false,
             FunctionContainer::Free => {
-                !method && !settled_per_test.is_some_and(|identity| identity.settles(function))
+                !method
+                    && !associated
+                    && !settled_per_test.is_some_and(|identity| identity.settles(function))
             }
+            _ if associated => true,
             _ => {
                 method
                     && function.item.has_self_param
@@ -5404,6 +5755,11 @@ fn other_definition_competes(
                     || is_owner(path, line);
                 if indexed {
                     return false;
+                }
+                // An unindexed definition cannot be placed: it may be an
+                // associated function of any type.
+                if associated {
+                    return true;
                 }
                 let Some(definition) = unindexed_definition(&facts.source, &masked, offset) else {
                     return true;
@@ -5533,8 +5889,18 @@ pub(in crate::analysis) fn pin_scope_needs(
     if !owner.item.has_body {
         return needs;
     }
-    let method = match (&owner.item.container, owner.item.has_self_param) {
-        (FunctionContainer::Free, false) => false,
+    let kind = match (&owner.item.container, owner.item.has_self_param) {
+        (FunctionContainer::Free, false) => CallKind::Bare,
+        // #6617: another file's declaration of `T` (or a `mod`, `trait` or
+        // `type` of its name) changes `associated_owner_type`, so the type
+        // is always a need, declared yet or not.
+        (FunctionContainer::Inherent { self_ty }, false) => {
+            if !is_associated_type_name(self_ty) {
+                return needs;
+            }
+            needs.receiver_type = Some(self_ty.clone());
+            CallKind::Associated
+        }
         (FunctionContainer::Inherent { self_ty }, true)
         | (FunctionContainer::TraitImpl { self_ty, .. }, true) => {
             needs.constructor_type = path_base_name(self_ty).map(str::to_string);
@@ -5549,24 +5915,87 @@ pub(in crate::analysis) fn pin_scope_needs(
                 };
                 needs.receiver_type = Some(base.to_string());
             }
-            true
+            CallKind::Method
         }
         (FunctionContainer::Trait { trait_name }, true) => {
             needs.trait_impls = Some(trait_name.clone());
-            true
+            CallKind::Method
         }
         _ => return needs,
     };
     // Same rivals `establish` settles per test (#6544): once indexed they no
     // longer refuse, but files that define more of them still widen scope.
-    let identity = if method {
-        None
-    } else {
-        OwnerCallIdentity::new(owner, index.functions().iter(), index)
+    let identity = match kind {
+        CallKind::Bare => OwnerCallIdentity::new(owner, index.functions().iter(), index),
+        CallKind::Method | CallKind::Associated => None,
     };
-    needs.competing_definitions =
-        !other_definition_competes(owner, index, method, identity.as_ref());
+    needs.competing_definitions = !other_definition_competes(owner, index, kind, identity.as_ref());
     needs
+}
+
+/// #6617: a self type an associated-function pin can name: one CamelCase
+/// identifier (no generics, path, reference or `Self`).
+fn is_associated_type_name(self_ty: &str) -> bool {
+    is_plain_identifier(self_ty)
+        && self_ty != "Self"
+        && self_ty.starts_with(|character: char| character.is_ascii_uppercase())
+}
+
+/// #6617: the type an associated-function owner's `T::name(..)` call must
+/// name. `T` must be one CamelCase identifier that exactly one `struct`,
+/// `enum` or `union` in the index declares, and no indexed file may give
+/// the name to a `mod`, `trait` or `type` alias: a module `T` would turn
+/// `T::name(..)` into a free-function path, and a second declaration or an
+/// alias could be the `T` a test imports. Anything else refuses.
+fn associated_owner_type(self_ty: &str, index: &RustIndex) -> Option<String> {
+    if !is_associated_type_name(self_ty) {
+        return None;
+    }
+    let mut declarations = 0usize;
+    for facts in index.files().values() {
+        if whole_word_offsets(&facts.source, self_ty).is_empty() {
+            continue;
+        }
+        let masked = mask_comments_and_strings(&facts.source);
+        declarations += ["struct", "enum", "union"]
+            .iter()
+            .map(|keyword| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .filter(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), self_ty)
+                    })
+                    .count()
+            })
+            .sum::<usize>();
+        let names_other_item = ["mod", "trait", "type"].iter().any(|keyword| {
+            whole_word_offsets(&masked, keyword)
+                .into_iter()
+                .any(|offset| {
+                    starts_with_word(masked[offset + keyword.len()..].trim_start(), self_ty)
+                })
+        });
+        if names_other_item || declarations > 1 {
+            return None;
+        }
+    }
+    (declarations == 1).then(|| self_ty.to_string())
+}
+
+/// #6617: whether a test body may rebind `type_name` itself: any nested
+/// `use`, or a `struct`/`enum`/`union`/`type`/`trait`/`mod` item of that
+/// name.
+fn body_rebinds_type(masked: &str, type_name: &str) -> bool {
+    !whole_word_offsets(masked, "use").is_empty()
+        || ["struct", "enum", "union", "type", "trait", "mod"]
+            .iter()
+            .any(|keyword| {
+                whole_word_offsets(masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), type_name)
+                    })
+            })
 }
 
 /// The receiver type an `impl` block's self type names, when it is one this
@@ -7300,6 +7729,175 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Whether `text` is one unqualified `assert!` whose only nested macro is a
+/// `matches!`, as [`is_plain_macro`] reads a lone `assert!`.
+fn is_plain_assert_of_matches(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [("assert", _), ("matches", _)] = invocations.as_slice() else {
+        return false;
+    };
+    masked
+        .find("assert")
+        .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+        && masked
+            .find("matches")
+            .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
+/// RIPR-SPEC-0197 literal `matches!` pins: the scrutinee and the pinned value of a
+/// `matches!(scrutinee, pattern)` condition whose pattern is literal-only, so
+/// that matching it is equality with one value. Anything else refuses: a
+/// guard, an or-pattern, a wildcard, a rest or range, a reference or slice
+/// pattern, a binding without a literal subpattern, and every path or
+/// constant, since the line cannot tell a constant from a binding or check
+/// that a path names the std `Option`/`Result` variants.
+fn literal_matches_operands(condition: &str) -> Option<[String; 2]> {
+    let rest = condition.trim().strip_prefix("matches!")?.trim_start();
+    let masked = mask_comments_and_strings(rest);
+    let close = matching_close(&masked, 0, b'(', b')')?;
+    if close + 1 != rest.len() {
+        return None;
+    }
+    let inner = masked.get(1..close)?;
+    let mut depth = 0usize;
+    let mut commas = Vec::new();
+    for (offset, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b',' if depth == 0 => commas.push(offset),
+            _ => {}
+        }
+    }
+    // `matches!` accepts one trailing comma after the pattern.
+    let (comma, end) = match commas.as_slice() {
+        [comma] => (*comma, inner.len()),
+        [comma, trailing] if inner.get(trailing + 1..)?.trim().is_empty() => (*comma, *trailing),
+        _ => return None,
+    };
+    let scrutinee = rest.get(1..comma + 1)?.trim();
+    let pattern = literal_value_pattern(rest.get(comma + 2..end + 1)?)?;
+    (!scrutinee.is_empty()).then(|| [scrutinee.to_string(), pattern])
+}
+
+/// A literal-only pattern rewritten as the value it matches: `Some(x @ 3)`
+/// becomes `Some(3)`. Only `Some`, `Ok` and `Err` around a payload, `None`,
+/// `true`, `false`, a numeric literal (optionally negated) and a plain string
+/// literal are admitted.
+fn literal_value_pattern(pattern: &str) -> Option<String> {
+    let chars: Vec<char> = pattern.trim().chars().collect();
+    let mut value = String::new();
+    let mut at = 0;
+    let mut depth = 0usize;
+    // Whether the next token starts a subpattern (after `(`, `,` or `@`).
+    let mut expects_pattern = true;
+    while let Some(&ch) = chars.get(at) {
+        if ch.is_whitespace() {
+            at += 1;
+            continue;
+        }
+        if ch == '"' {
+            if !expects_pattern {
+                return None;
+            }
+            let start = at;
+            at += 1;
+            loop {
+                match chars.get(at)? {
+                    '\\' => at += 2,
+                    '"' => break,
+                    _ => at += 1,
+                }
+            }
+            at += 1;
+            value.extend(&chars[start..at]);
+            expects_pattern = false;
+            continue;
+        }
+        if ch.is_ascii_digit() || (ch == '-' && expects_pattern) {
+            if !expects_pattern {
+                return None;
+            }
+            let start = at;
+            at += 1;
+            while chars
+                .get(at)
+                .is_some_and(|next| next.is_ascii_alphanumeric() || matches!(next, '_' | '.'))
+            {
+                at += 1;
+            }
+            let literal: String = chars[start..at].iter().collect();
+            let digits = literal.strip_prefix('-').unwrap_or(&literal);
+            if !digits.starts_with(|first: char| first.is_ascii_digit()) || literal.contains("..") {
+                return None;
+            }
+            value.push_str(&literal);
+            expects_pattern = false;
+            continue;
+        }
+        if ch.is_alphabetic() || ch == '_' {
+            let start = at;
+            while chars
+                .get(at)
+                .is_some_and(|next| next.is_alphanumeric() || *next == '_')
+            {
+                at += 1;
+            }
+            let word: String = chars[start..at].iter().collect();
+            let mut next = at;
+            while chars.get(next).is_some_and(|next| next.is_whitespace()) {
+                next += 1;
+            }
+            if !expects_pattern {
+                return None;
+            }
+            match (word.as_str(), chars.get(next)) {
+                ("Some" | "Ok" | "Err", Some('(')) => {
+                    value.push_str(&word);
+                    value.push('(');
+                    depth += 1;
+                    at = next + 1;
+                }
+                ("None" | "true" | "false", _) => {
+                    value.push_str(&word);
+                    expects_pattern = false;
+                }
+                // `name @ literal`: the binding names the value it matched.
+                (_, Some('@'))
+                    if word != "_"
+                        && word.starts_with(|first: char| first.is_lowercase() || first == '_')
+                        && !matches!(word.as_str(), "ref" | "mut") =>
+                {
+                    at = next + 1;
+                }
+                _ => return None,
+            }
+            continue;
+        }
+        match ch {
+            ')' if depth > 0 && !expects_pattern => {
+                depth -= 1;
+                value.push(')');
+            }
+            // `Some(3,)`: one trailing comma before the constructor closes.
+            ')' if depth > 0 && expects_pattern && value.ends_with(", ") => {
+                depth -= 1;
+                value.truncate(value.len() - ", ".len());
+                value.push(')');
+                expects_pattern = false;
+            }
+            ',' if depth > 0 && !expects_pattern => {
+                value.push_str(", ");
+                expects_pattern = true;
+            }
+            _ => return None,
+        }
+        at += 1;
+    }
+    (depth == 0 && !expects_pattern).then_some(value)
 }
 
 /// The offset of the bracket closing the one at `opening`, in masked text.

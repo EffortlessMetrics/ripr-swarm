@@ -21,10 +21,10 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
-/// Test-only: lets output-layer unit tests construct an enabled-language set
-/// directly, because `load_for_root` intentionally refuses preview languages
-/// a feature-less binary cannot analyze.
-#[cfg(test)]
+/// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
+/// pipeline and check entry points thread the per-language config (including
+/// `handwritten_files`) into diff-mode discovery, so production paths name the
+/// type, not only output-layer unit tests.
 pub(crate) use model::LanguagesConfig;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
@@ -33,18 +33,21 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
+
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
-    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, detect_python_project,
-    is_detectable_excluded_python_path, is_detectable_generated_python_path,
-    is_detectable_python_source_name, is_python_dir_pruned_from_repo_discovery,
-    is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+    detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
+    is_detectable_generated_python_path, is_detectable_python_source_name,
+    is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+    python_project_marker_name, python_source_dir_marker_name,
     source_dir_contains_detectable_python,
 };
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
+    declared_typescript_handwritten_under, is_declared_handwritten_typescript_path,
     is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
     is_typescript_dir_pruned_from_discovery,
 };
@@ -606,8 +609,33 @@ impl RiprConfig {
                         parse_generated_file_patterns(&patterns)?;
                 }
                 if let Some(paths) = rust.handwritten_files {
-                    config.languages.rust.handwritten_files = parse_handwritten_files(&paths)?;
+                    config.languages.rust.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.rust.handwritten_files",
+                        "a Rust `.rs` file",
+                        |extension| extension == "rs",
+                    )?;
                 }
+            }
+            if let Some(python) = languages.python
+                && let Some(paths) = python.handwritten_files
+            {
+                config.languages.python.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.python.handwritten_files",
+                    "a Python `.py` file",
+                    |extension| extension == "py",
+                )?;
+            }
+            if let Some(typescript) = languages.typescript
+                && let Some(paths) = typescript.handwritten_files
+            {
+                config.languages.typescript.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.typescript.handwritten_files",
+                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                    crate::analysis::is_ts_js_source_extension,
+                )?;
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -700,8 +728,12 @@ fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, Strin
     Ok(parsed)
 }
 
-fn parse_handwritten_files(values: &[String]) -> Result<Vec<String>, String> {
-    let field = "languages.rust.handwritten_files";
+fn parse_handwritten_files(
+    values: &[String],
+    field: &str,
+    extension_desc: &str,
+    extension_ok: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
@@ -713,8 +745,12 @@ fn parse_handwritten_files(values: &[String]) -> Result<Vec<String>, String> {
             ));
         }
         let path = parse_relative_path(field, value)?;
-        if path.extension().is_none_or(|extension| extension != "rs") {
-            return Err(format!("{field} must identify a Rust `.rs` file"));
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_none_or(|extension| !extension_ok(extension))
+        {
+            return Err(format!("{field} must identify {extension_desc}"));
         }
         let normalized = path.to_string_lossy().replace('\\', "/");
         if parsed.contains(&normalized) {
@@ -788,12 +824,26 @@ struct RawTypescriptConfig {
 struct RawLanguagesConfig {
     enabled: Option<Vec<String>>,
     rust: Option<RawRustLanguageConfig>,
+    python: Option<RawPythonLanguageConfig>,
+    typescript: Option<RawTypescriptLanguageConfig>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawRustLanguageConfig {
     generated_file_patterns: Option<Vec<String>>,
+    handwritten_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawPythonLanguageConfig {
+    handwritten_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTypescriptLanguageConfig {
     handwritten_files: Option<Vec<String>>,
 }
 
