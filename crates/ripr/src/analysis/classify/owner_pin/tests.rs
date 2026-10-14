@@ -4465,10 +4465,20 @@ fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
             with("#[import(std::num::Wrapping as u32)]\npub fn f() {}\n"),
             false,
         ),
+        // A Unicode macro name expands its arguments too.
+        (with("δ!(std::num::Wrapping as u32);\n"), false),
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert_eq!(pin.is_some(), credits, "{lib}");
     }
+    // A non-ASCII identifier before a macro `!` must not split a character.
+    let (_, pin) = clone_field_pin(
+        &with(
+            "pub fn größe() -> u32 {\n    let maß = 3;\n    maß as u32\n}\nmacro_rules! größe_m { () => {} }\npub fn g() { größe_m!(); }\n",
+        ),
+        WINDOW_TESTS,
+    );
+    assert!(pin.is_some());
     // Another workspace file: `use super::*;` reaches the workspace-wide
     // re-export scan, which reads every file's renames but not its casts.
     let lib = format!("{WINDOW_LIB}{glob_tests}");
