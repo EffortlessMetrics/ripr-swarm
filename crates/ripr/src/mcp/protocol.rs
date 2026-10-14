@@ -68,7 +68,7 @@ const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session sta
 
 const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff through RIPR's shared check authority and commit the completed snapshot into this server's session. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. Use `ripr check --committed` for committed input, or `ripr check --worktree --format json` for staged and unstaged tracked edits outside MCP. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (a concurrent attempt is running; poll ripr_workspace_status), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: the workspace's own ripr.toml is honored through the same resolution the CLI uses (a loaded config, built-in defaults with marker-based language auto-enable when none resolves, draft mode); a configuration that cannot be read or resolved fails the attempt closed with config_invalid. This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), config_invalid (resolve the workspace configuration error the failure names), plus reserved codes (workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; and one small summary per selected item (canonical_id, exposure class, language, file, line). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities. offset and limit page over the selected items in snapshot order; when the whole selection cannot fit one wire response, the call returns the first wire-fitting page and discloses the window through page.has_more and page.next_offset, so walk next_offset to read the rest — the continuation routes are the next page and ripr_get_gap. Before the first successful ripr_refresh on a usable root this tool fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`; while an attempt runs it reports analysis_in_flight; only a document that cannot fit even one page fails with result_too_large. Summaries carry no evidence detail; read one item with ripr_get_gap.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, filtered, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; the echoed filters; and one small summary per selected item (canonical_id, exposure class, language, file, line, plus the commit-time repair_packet_ready projection with its typed repair_ineligibility reason, null when ready; ripr_get_gap carries the same ready fact with the human reason sentence instead of the typed code). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities. Optional file, class, language, and repair_ready narrow the stored selection over already-projected commit-time facts before paging (conjunctive; file matches exact, prefix, or trailing-segment paths after `./` normalization), so offset and limit page the narrowed set — one bounded call answers which items touch one file or which are repair-ready, with no per-item ripr_get_gap walk. offset and limit page over the narrowed items in snapshot order; when the whole narrowed set cannot fit one wire response, the call returns the first wire-fitting page and discloses the window through page.has_more and page.next_offset, so walk next_offset to read the rest — the continuation routes are the next page (with the filters pinned) and ripr_get_gap. Before the first successful ripr_refresh on a usable root this tool fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`; while an attempt runs it reports analysis_in_flight; only a document that cannot fit even one page fails with result_too_large. Summaries carry no evidence detail beyond the readiness projection; read one item with ripr_get_gap for complete evidence.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded evidence from the current completed snapshot (optional snapshot_id must match the current snapshot or the call fails closed with stale_snapshot). The document binds the item to its snapshot identity and contains: identity and location; the changed behavior (expression, before/after, delta kind, probe family); causal attribution (canonical gap owner, behavior kind, probe kind, normalized discriminator); discriminator availability and the producer's observed/missing evidence; related tests with oracle kind and strength; readiness, whose repair_packet_ready now reports the committed producer repair-readiness facts (candidate actionability, an established discriminator, and a strong directly-related test fix site on a test surface) with the typed first-failing-gate reason when not ready — this evidence never authorizes an edit by itself; a repair boundary of none_declared until ripr_prepare_repair binds a transaction; and links to the snapshot resource and — once a session transaction exists for this item — the repair-attempt resource. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large and recovery to ripr check --committed --format json outside MCP — a bounded summary of the committed diff whose related tests cap per finding and whose findings array can omit findings — because retrying ripr_get_gap cannot shrink the item. Before the first successful ripr_refresh on a usable root this tool fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`; while an attempt runs it reports analysis_in_flight. Equivalent evidence reads: the tool ripr_get_gap and the resource ripr://gap/{canonical_id} return the same document.";
 
@@ -453,12 +453,31 @@ fn list_gaps_tool_descriptor() -> Value {
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Start index within the selected items, in snapshot order. Default 0."
+                    "description": "Start index within the narrowed items, in snapshot order. Default 0."
                 },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Maximum selected-item summaries to return in this page."
+                    "description": "Maximum narrowed-item summaries to return in this page."
+                },
+                "file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or trailing-matches this path (one leading `./` is ignored on both sides)."
+                },
+                "class": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Narrow to one exposure-class wire token (for example `exposed` or `weakly_exposed`)."
+                },
+                "language": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Narrow to one language wire string (for example `rust` or `python`)."
+                },
+                "repair_ready": {
+                    "type": "boolean",
+                    "description": "Narrow to repair-ready items (true) or not-ready items (false), using the commit-time readiness projection."
                 }
             },
             "additionalProperties": false
@@ -1027,6 +1046,18 @@ fn gap_list_output_schema() -> Value {
                     "total": { "type": "integer", "minimum": 0 },
                     "eligible": { "type": "integer", "minimum": 0 },
                     "selected": { "type": "integer", "minimum": 0 },
+                    "filtered": { "type": "integer", "minimum": 0 },
+                    "filters": {
+                        "type": "object",
+                        "properties": {
+                            "file": { "type": ["string", "null"] },
+                            "class": { "type": ["string", "null"] },
+                            "language": { "type": ["string", "null"] },
+                            "repair_ready": { "type": ["boolean", "null"] }
+                        },
+                        "required": ["file", "class", "language", "repair_ready"],
+                        "additionalProperties": false
+                    },
                     "omitted": { "type": "integer", "minimum": 0 },
                     "selected_bytes": { "type": "integer", "minimum": 0 },
                     "complete_bytes": { "type": "integer", "minimum": 0 },
@@ -1081,6 +1112,8 @@ fn gap_list_output_schema() -> Value {
                     "total",
                     "eligible",
                     "selected",
+                    "filtered",
+                    "filters",
                     "omitted",
                     "selected_bytes",
                     "complete_bytes",
@@ -1281,7 +1314,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v1",
+                "schema_version": "ripr-mcp-gap-list-v2",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1321,7 +1354,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v1")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v2")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 

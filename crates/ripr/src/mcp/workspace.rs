@@ -84,6 +84,113 @@ pub(crate) struct GapListWindow {
     pub(crate) limit: Option<usize>,
 }
 
+/// Caller-narrowed filters over already-projected commit-time facts
+/// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
+/// normalization), `class` (exposure-class wire token), `language` (language
+/// wire string), and `repair_ready` (the commit-time repair-readiness
+/// projection). Filters combine by conjunction and apply between the stored
+/// budget selection and page fill, so `offset`/`limit` page the narrowed set.
+/// Filtering re-reads stored projection facts; it never re-runs analysis,
+/// re-ranks, or widens the selection past the budget.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct GapListFilter {
+    pub(crate) file: Option<String>,
+    pub(crate) class: Option<String>,
+    pub(crate) language: Option<String>,
+    pub(crate) repair_ready: Option<bool>,
+}
+
+impl GapListFilter {
+    fn matches(&self, item: &GapItem) -> bool {
+        if let Some(class) = self.class.as_deref()
+            && item.class() != class
+        {
+            return false;
+        }
+        if let Some(language) = self.language.as_deref()
+            && item.language() != Some(language)
+        {
+            return false;
+        }
+        if let Some(ready) = self.repair_ready
+            && item.repair_ready() != ready
+        {
+            return false;
+        }
+        if let Some(file) = self.file.as_deref()
+            && !gap_file_matches(item.file.as_str(), file)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Echo of the caller-narrowed filters for the list document: each
+    /// dimension carries its requested value or null when unfiltered.
+    fn document(&self) -> Value {
+        json!({
+            "file": self.file,
+            "class": self.class,
+            "language": self.language,
+            "repair_ready": self.repair_ready,
+        })
+    }
+
+    /// Filter arguments for the bound `next_page` continuation, so walking
+    /// the narrowed set resumes with the same filters pinned.
+    fn arguments(&self) -> Value {
+        let mut arguments = serde_json::Map::new();
+        if let Some(file) = self.file.as_deref() {
+            arguments.insert("file".to_string(), Value::from(file));
+        }
+        if let Some(class) = self.class.as_deref() {
+            arguments.insert("class".to_string(), Value::from(class));
+        }
+        if let Some(language) = self.language.as_deref() {
+            arguments.insert("language".to_string(), Value::from(language));
+        }
+        if let Some(ready) = self.repair_ready {
+            arguments.insert("repair_ready".to_string(), Value::from(ready));
+        }
+        Value::Object(arguments)
+    }
+}
+
+/// File-filter matching over workspace-relative item files (#7464). Both
+/// sides shed one leading `./` (the shared finding-location owner renders
+/// `./`-prefixed paths while callers usually pass bare ones). A filter then
+/// matches when it equals the item file, prefixes it at a `/` boundary, or
+/// suffixes it at a `/` boundary (a bare `checkout.rs` or `src/checkout.rs`
+/// still narrows to that path without scanning every page).
+fn gap_file_matches(item_file: &str, filter: &str) -> bool {
+    let item = item_file.strip_prefix("./").unwrap_or(item_file);
+    let filter = filter.strip_prefix("./").unwrap_or(filter);
+    if filter.is_empty() {
+        return false;
+    }
+    item == filter
+        || item.strip_prefix(filter).is_some_and(|rest| {
+            // A prefix matches at a segment boundary: either the next item
+            // character is `/`, or the filter itself ends there (so `src/`
+            // narrows to everything under it). A partial segment such as
+            // `src/check` never matches.
+            rest.starts_with('/') || filter.ends_with('/')
+        })
+        || item
+            .strip_suffix(filter)
+            .is_some_and(|prefix| prefix.ends_with('/'))
+}
+
+/// The narrowed-list scope one gap-list document discloses: the stored
+/// budget selection, the caller-named snapshot binding, the echoed filter,
+/// and the narrowed-set count the page walks (#7464).
+struct GapListScope<'a> {
+    selection: &'a DiagnosticBudgetResult,
+    requested: Option<&'a str>,
+    filter: &'a GapListFilter,
+    filtered: usize,
+}
+
 /// The disclosed page window inside a gap-list document: what the caller
 /// asked for (`offset`, `limit` when set), what shipped, and how to
 /// continue. A page never lies about the selection: `selected` stays the
@@ -493,15 +600,17 @@ impl WorkspaceSession {
 
     /// Bounded working set for the current (or named) snapshot. Selection is
     /// the snapshot's stored shared-budget result; this function never
-    /// re-runs ranking. `window` pages over the selected items in snapshot
-    /// order (#6021); an unset limit byte-fills the page to
-    /// [`super::MAX_TOOL_DOCUMENT_BYTES`] so a listing that outgrows one
-    /// wire response degrades to disclosed pages instead of failing after
-    /// budget approval.
+    /// re-runs ranking. `filter` narrows the stored selection over
+    /// already-projected commit-time facts (#7464) before `window` pages over
+    /// the narrowed items in snapshot order (#6021); an unset limit
+    /// byte-fills the page to [`super::MAX_TOOL_DOCUMENT_BYTES`] so a
+    /// listing that outgrows one wire response degrades to disclosed pages
+    /// instead of failing after budget approval.
     pub(crate) fn list_gaps(
         &self,
         requested: Option<&str>,
         window: GapListWindow,
+        filter: &GapListFilter,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let selection = &snapshot.selection;
@@ -512,20 +621,26 @@ impl WorkspaceSession {
             .items
             .iter()
             .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
+            .filter(|item| filter.matches(item))
             .collect::<Vec<_>>();
+        // `filtered` counts the narrowed set the page walks; the budget-level
+        // `selected` count stays the full stored selection so the document
+        // never lies about what filtering removed.
+        let filtered = selected_items.len();
 
         // The document shell carries every disclosure except the page of
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
         let shell_bytes = {
-            let shell = self.gap_list_document(
-                snapshot,
+            let scope = GapListScope {
                 selection,
                 requested,
-                Vec::new(),
-                &GapPage::default(),
-            )?;
+                filter,
+                filtered,
+            };
+            let shell =
+                self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?;
             document_bytes(&shell)?
         };
         // Reserve covers the array syntax around the summaries and the
@@ -572,10 +687,15 @@ impl WorkspaceSession {
         };
         if !items.is_empty() {
             let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
-                let probe = self.gap_list_document(
-                    snapshot,
+                let scope = GapListScope {
                     selection,
                     requested,
+                    filter,
+                    filtered,
+                };
+                let probe = self.gap_list_document(
+                    snapshot,
+                    &scope,
                     items[..count].to_vec(),
                     &page_fields(count),
                 )?;
@@ -620,7 +740,13 @@ impl WorkspaceSession {
 
         let page = page_fields(items.len());
 
-        let document = self.gap_list_document(snapshot, selection, requested, items, &page)?;
+        let scope = GapListScope {
+            selection,
+            requested,
+            filter,
+            filtered,
+        };
+        let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
         // disclosure alone) outgrows the ceiling cannot be narrowed by
         // paging; fail closed naming the identity route (#6021).
@@ -640,35 +766,47 @@ impl WorkspaceSession {
     }
 
     /// Assemble the gap-list document around a page of item summaries.
+    /// The scope carries the caller-narrowed filter echoed verbatim and the
+    /// narrowed-set count the page walks, while `selected` stays the full
+    /// stored-selection count so the document never lies about what
+    /// filtering removed (#7464).
     fn gap_list_document(
         &self,
         snapshot: &Snapshot,
-        selection: &DiagnosticBudgetResult,
-        requested: Option<&str>,
+        scope: &GapListScope<'_>,
         items: Vec<Value>,
         page: &GapPage,
     ) -> Result<Value, AttemptFailure> {
+        let selection = scope.selection;
+        let filter = scope.filter;
         let mut continuation = json!({
             "tool": "ripr_get_gap",
             "resource_template": "ripr://gap/{canonical_id}",
         });
         if let Some(next_offset) = page.next_offset {
-            // The generated route pins the snapshot identity: a refresh
-            // between pages fails closed with stale_snapshot instead of
-            // silently resuming at the old offset over a new selection
-            // (#6021 review).
+            // The generated route pins the snapshot identity and the caller
+            // filters: a refresh between pages fails closed with
+            // stale_snapshot instead of silently mixing snapshots, and the
+            // narrowed walk resumes narrowed (#6021 review, #7464).
+            let mut arguments = json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "offset": next_offset,
+            });
+            for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
+                arguments[name] = value;
+            }
+            if let Some(limit) = page.limit {
+                arguments["limit"] = json!(limit);
+            }
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
-                "arguments": {
-                    "snapshot_id": snapshot.snapshot_id,
-                    "offset": next_offset,
-                },
+                "arguments": arguments,
             });
         }
         Ok(json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
-            "requested_snapshot_id": requested,
+            "requested_snapshot_id": scope.requested,
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -680,6 +818,8 @@ impl WorkspaceSession {
             "total": selection.total_canonical_items,
             "eligible": selection.eligible_items,
             "selected": selection.selected.len(),
+            "filtered": scope.filtered,
+            "filters": filter.document(),
             "omitted": selection.omitted.len(),
             "selected_bytes": selection.selected_bytes,
             "complete_bytes": selection.complete_bytes,
@@ -706,9 +846,9 @@ impl WorkspaceSession {
                 }))
                 .collect::<Vec<_>>(),
             "continuation": continuation,
-            "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred.",
+            "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred. Filters narrow the stored selection over commit-time facts before paging; they never widen it.",
             "limitations": [
-                "summaries do not contain evidence detail; read one item with ripr_get_gap or ripr://gap/{canonical_id}",
+                "summaries carry identity, location, and the commit-time repair-readiness projection only; read one item with ripr_get_gap or ripr://gap/{canonical_id} for complete evidence",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
         }))
@@ -1325,10 +1465,10 @@ mod tests {
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
-            .list_gaps(None, GapListWindow::default())
+            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
             .map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete
-            .list_gaps(None, GapListWindow::default())
+            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
             .map_err(|failure| failure.detail)?;
         let complete_snapshot = complete
             .last_good
@@ -1378,7 +1518,7 @@ mod tests {
     fn list_get_snapshot_before_any_refresh_fail_closed() -> Result<(), String> {
         let session = WorkspaceSession::default();
         expect_code(
-            session.list_gaps(None, GapListWindow::default()),
+            session.list_gaps(None, GapListWindow::default(), &GapListFilter::default()),
             CODE_NO_SNAPSHOT,
         )?;
         expect_code(session.get_gap("gap:any", None), CODE_NO_SNAPSHOT)?;
@@ -1400,7 +1540,7 @@ mod tests {
             ..Default::default()
         };
         expect_code(
-            session.list_gaps(None, GapListWindow::default()),
+            session.list_gaps(None, GapListWindow::default(), &GapListFilter::default()),
             CODE_ANALYSIS_IN_FLIGHT,
         )?;
         expect_code(session.get_gap("gap:any", None), CODE_ANALYSIS_IN_FLIGHT)?;
@@ -1424,7 +1564,11 @@ mod tests {
             .ok_or_else(|| "missing snapshot".to_string())?
             .snapshot_id
             .clone();
-        match session.list_gaps(Some("snapshot:sha256:old"), GapListWindow::default()) {
+        match session.list_gaps(
+            Some("snapshot:sha256:old"),
+            GapListWindow::default(),
+            &GapListFilter::default(),
+        ) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
                 Err(format!("unexpected failure code: {}", failure.code))
@@ -1502,6 +1646,410 @@ mod tests {
         })
     }
 
+    /// A session with four deterministically varied canonical items for the
+    /// #7464 filter proof: distinct files, classes, languages, and
+    /// commit-time repair readiness. No analysis runs.
+    fn session_with_varied_findings() -> Result<WorkspaceSession, String> {
+        let mut ready = gaps::test_finding()?;
+        ready.id = "finding:test:ready".to_string();
+        if let Some(gap) = ready.canonical_gap.as_mut() {
+            gap.id = "gap:test:ready".to_string();
+        }
+        ready.probe.id = crate::domain::ProbeId("probe:test:ready".to_string());
+        ready.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", 12, 5);
+
+        let mut exposed_python = gaps::test_finding()?;
+        exposed_python.id = "finding:test:exposed-python".to_string();
+        if let Some(gap) = exposed_python.canonical_gap.as_mut() {
+            gap.id = "gap:test:exposed-python".to_string();
+        }
+        exposed_python.probe.id = crate::domain::ProbeId("probe:test:exposed-python".to_string());
+        exposed_python.probe.location = crate::domain::SourceLocation::new("src/cart.py", 7, 1);
+        exposed_python.class = crate::domain::ExposureClass::Exposed;
+        exposed_python.language = Some(crate::domain::LanguageId::Python);
+
+        let mut unready = gaps::test_finding()?;
+        unready.id = "finding:test:unready".to_string();
+        unready.canonical_gap = None;
+        unready.probe.id = crate::domain::ProbeId("probe:test:unready".to_string());
+        unready.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", 30, 1);
+        unready.class = crate::domain::ExposureClass::ReachableUnrevealed;
+
+        let mut unlocalized = gaps::test_finding()?;
+        unlocalized.id = "finding:test:unlocalized".to_string();
+        if let Some(gap) = unlocalized.canonical_gap.as_mut() {
+            gap.id = "gap:test:unlocalized".to_string();
+        }
+        unlocalized.probe.id = crate::domain::ProbeId("probe:test:unlocalized".to_string());
+        unlocalized.probe.location = crate::domain::SourceLocation::new("src/limits.rs", 3, 1);
+        unlocalized.class = crate::domain::ExposureClass::NoStaticPath;
+        unlocalized.language = None;
+
+        let findings = vec![ready, exposed_python, unready, unlocalized];
+        let output = crate::app::CheckOutput {
+            schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            harness_projections: Vec::new(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Draft,
+            root: PathBuf::from("."),
+            base: None,
+            analysis_outcome: Some(outcome(
+                AnalysisOutcomeKind::CompleteWithFindings,
+                findings.len() as u64,
+                Vec::new(),
+            )?),
+            summary: crate::domain::Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        Ok(WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            workspace_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        })
+    }
+
+    fn gap_ids(document: &Value) -> Result<Vec<String>, String> {
+        document
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "list lost its items array".to_string())?
+            .iter()
+            .map(|item| {
+                item.pointer("/canonical_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| "item summary lost its identity".to_string())
+            })
+            .collect()
+    }
+
+    /// #7464: every list summary projects the commit-time repair-readiness
+    /// fact, and the projected `repair_packet_ready` bit matches the same
+    /// item's `ripr_get_gap` readiness block — so agents can sort actionable
+    /// items without one evidence call per candidate.
+    #[test]
+    fn gap_list_summaries_project_readiness_matching_get_gap() -> Result<(), String> {
+        let session = session_with_varied_findings()?;
+        let document = session
+            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
+            .map_err(|failure| failure.detail)?;
+        if document.pointer("/selected").and_then(Value::as_u64) != Some(4) {
+            return Err(format!("varied fixture must select four items: {document}"));
+        }
+        let items = document
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "list lost its items array".to_string())?;
+        for item in items {
+            let id = item
+                .pointer("/canonical_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "item summary lost its identity".to_string())?;
+            let summary_ready = item
+                .pointer("/repair_packet_ready")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| format!("summary {id} lost its readiness projection"))?;
+            let ineligibility = item
+                .get("repair_ineligibility")
+                .ok_or_else(|| format!("summary {id} lost its ineligibility projection"))?;
+            if summary_ready != ineligibility.is_null() {
+                return Err(format!(
+                    "summary {id} must carry a null ineligibility exactly when ready: {item}"
+                ));
+            }
+            let gap = session
+                .get_gap(id, None)
+                .map_err(|failure| failure.detail)?;
+            let gap_ready = gap
+                .pointer("/item/readiness/repair_packet_ready")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| format!("gap {id} lost its readiness block"))?;
+            if summary_ready != gap_ready {
+                return Err(format!(
+                    "summary readiness ({summary_ready}) must match get_gap ({gap_ready}) for {id}"
+                ));
+            }
+        }
+        let by_id = |id: &str| {
+            items
+                .iter()
+                .find(|item| item.pointer("/canonical_id").and_then(Value::as_str) == Some(id))
+                .ok_or_else(|| format!("missing summary {id}"))
+        };
+        if by_id("gap:test:ready")?.pointer("/repair_packet_ready") != Some(&Value::Bool(true))
+            || by_id("gap:test:ready")?.get("repair_ineligibility") != Some(&Value::Null)
+        {
+            return Err(
+                "the established finding must project ready with null ineligibility".to_string(),
+            );
+        }
+        if by_id("finding:test:unready")?.pointer("/repair_packet_ready")
+            != Some(&Value::Bool(false))
+            || by_id("finding:test:unready")?
+                .pointer("/repair_ineligibility")
+                .and_then(Value::as_str)
+                != Some("discriminator_not_populated_for_language")
+        {
+            return Err(format!(
+                "the gapless finding must project the typed refusal: {}",
+                by_id("finding:test:unready")?
+            ));
+        }
+        Ok(())
+    }
+
+    /// #7464: each filter dimension narrows the stored selection on its own,
+    /// dimensions combine conjunctively, and `offset`/`limit` page the
+    /// narrowed set — while `selected` stays the full stored-selection count
+    /// and `filters` echoes the request.
+    #[test]
+    fn gap_list_filters_narrow_each_dimension_then_combine_before_paging() -> Result<(), String> {
+        let session = session_with_varied_findings()?;
+        let filtered = |filter: &GapListFilter| {
+            session
+                .list_gaps(None, GapListWindow::default(), filter)
+                .map_err(|failure| failure.detail)
+        };
+        let file = |value: &str| GapListFilter {
+            file: Some(value.to_string()),
+            ..Default::default()
+        };
+        let class = |value: &str| GapListFilter {
+            class: Some(value.to_string()),
+            ..Default::default()
+        };
+        let language = |value: &str| GapListFilter {
+            language: Some(value.to_string()),
+            ..Default::default()
+        };
+        let ready = |value: bool| GapListFilter {
+            repair_ready: Some(value),
+            ..Default::default()
+        };
+
+        // One dimension at a time.
+        let cases: &[(&str, GapListFilter, &[&str])] = &[
+            ("class", class("exposed"), &["gap:test:exposed-python"]),
+            ("language", language("python"), &["gap:test:exposed-python"]),
+            (
+                "language rust",
+                language("rust"),
+                &["gap:test:ready", "finding:test:unready"],
+            ),
+            (
+                "file exact",
+                file("./src/checkout.rs"),
+                &["gap:test:ready", "finding:test:unready"],
+            ),
+            (
+                "file bare",
+                file("src/checkout.rs"),
+                &["gap:test:ready", "finding:test:unready"],
+            ),
+            (
+                "file basename",
+                file("checkout.rs"),
+                &["gap:test:ready", "finding:test:unready"],
+            ),
+            (
+                "file prefix",
+                file("src/"),
+                &[
+                    "gap:test:ready",
+                    "gap:test:exposed-python",
+                    "finding:test:unready",
+                    "gap:test:unlocalized",
+                ],
+            ),
+            (
+                "ready true",
+                ready(true),
+                &[
+                    "gap:test:ready",
+                    "gap:test:exposed-python",
+                    "gap:test:unlocalized",
+                ],
+            ),
+            ("ready false", ready(false), &["finding:test:unready"]),
+        ];
+        for (name, filter, expected) in cases {
+            let document = filtered(filter)?;
+            let mut ids = gap_ids(&document)?;
+            ids.sort();
+            let mut expected = expected.to_vec();
+            expected.sort();
+            if ids != expected {
+                return Err(format!("{name} narrowed to {ids:?}, expected {expected:?}"));
+            }
+            if document.pointer("/filtered").and_then(Value::as_u64) != Some(expected.len() as u64)
+            {
+                return Err(format!("{name} lost its filtered count: {document}"));
+            }
+            if document.pointer("/selected").and_then(Value::as_u64) != Some(4) {
+                return Err(format!(
+                    "{name} must not rewrite the stored-selection count: {document}"
+                ));
+            }
+        }
+
+        // `selected` stays the budget count while `filtered` counts the
+        // narrowed set, and the request is echoed for audit.
+        let document = filtered(&file("src/checkout.rs"))?;
+        if document.pointer("/filters/file").and_then(Value::as_str) != Some("src/checkout.rs")
+            || document.pointer("/filters/class") != Some(&Value::Null)
+            || document.pointer("/filters/language") != Some(&Value::Null)
+            || document.pointer("/filters/repair_ready") != Some(&Value::Null)
+        {
+            return Err(format!("narrowed list must echo its filters: {document}"));
+        }
+
+        // Dimensions combine conjunctively.
+        let combined = filtered(&GapListFilter {
+            file: Some("src/checkout.rs".to_string()),
+            repair_ready: Some(false),
+            ..Default::default()
+        })?;
+        if gap_ids(&combined)? != vec!["finding:test:unready".to_string()] {
+            return Err(format!("combined filters must conjoin: {combined}"));
+        }
+        let combined = filtered(&GapListFilter {
+            class: Some("weakly_exposed".to_string()),
+            repair_ready: Some(true),
+            ..Default::default()
+        })?;
+        if gap_ids(&combined)? != vec!["gap:test:ready".to_string()] {
+            return Err(format!("combined filters must conjoin: {combined}"));
+        }
+
+        // An unknown value narrows to an empty disclosed page, not an error.
+        let empty = filtered(&class("bogus"))?;
+        if !gap_ids(&empty)?.is_empty()
+            || empty.pointer("/filtered").and_then(Value::as_u64) != Some(0)
+            || empty.pointer("/page/returned").and_then(Value::as_u64) != Some(0)
+            || empty.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+            || empty.pointer("/selected").and_then(Value::as_u64) != Some(4)
+        {
+            return Err(format!(
+                "unknown filter value must be an empty disclosed page: {empty}"
+            ));
+        }
+
+        // Filter-then-page: the window walks the narrowed set, and the bound
+        // continuation resumes narrowed.
+        let first = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 0,
+                    limit: Some(1),
+                },
+                &file("src/checkout.rs"),
+            )
+            .map_err(|failure| failure.detail)?;
+        if first.pointer("/page/returned").and_then(Value::as_u64) != Some(1)
+            || first.pointer("/page/has_more").and_then(Value::as_bool) != Some(true)
+            || first.pointer("/page/next_offset").and_then(Value::as_u64) != Some(1)
+            || first.pointer("/filtered").and_then(Value::as_u64) != Some(2)
+        {
+            return Err(format!(
+                "first narrowed page must disclose its window: {first}"
+            ));
+        }
+        if first
+            .pointer("/continuation/next_page/arguments/file")
+            .and_then(Value::as_str)
+            != Some("src/checkout.rs")
+            || first
+                .pointer("/continuation/next_page/arguments/offset")
+                .and_then(Value::as_u64)
+                != Some(1)
+            || first
+                .pointer("/continuation/next_page/arguments/limit")
+                .and_then(Value::as_u64)
+                != Some(1)
+        {
+            return Err(format!(
+                "the bound continuation must pin the narrowed walk: {first}"
+            ));
+        }
+        let second = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 1,
+                    limit: Some(1),
+                },
+                &file("src/checkout.rs"),
+            )
+            .map_err(|failure| failure.detail)?;
+        if second.pointer("/page/has_more").and_then(Value::as_bool) != Some(false) {
+            return Err(format!("second narrowed page must terminate: {second}"));
+        }
+        let mut walked = gap_ids(&first)?;
+        walked.extend(gap_ids(&second)?);
+        walked.sort();
+        if walked
+            != vec![
+                "finding:test:unready".to_string(),
+                "gap:test:ready".to_string(),
+            ]
+        {
+            return Err(format!(
+                "paged walk must cover the narrowed set once: {walked:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #7464: the file matcher accepts exact, prefix, and trailing-segment
+    /// spellings across the `./` boundary, and refuses partial-segment
+    /// prefixes and empty filters.
+    #[test]
+    fn gap_file_filter_matching_is_segment_bounded() {
+        for filter in [
+            "./src/checkout.rs",
+            "src/checkout.rs",
+            "checkout.rs",
+            "./src",
+            "src",
+            "src/",
+        ] {
+            assert!(
+                gap_file_matches("./src/checkout.rs", filter),
+                "{filter} must match ./src/checkout.rs"
+            );
+        }
+        for filter in [
+            "src/check",
+            "src/checkout",
+            "checkout.r",
+            "src/other.rs",
+            "src/checkout.rs/",
+            "",
+        ] {
+            assert!(
+                !gap_file_matches("./src/checkout.rs", filter),
+                "{filter} must not match ./src/checkout.rs"
+            );
+        }
+        assert!(!gap_file_matches("./src/checkout.rs", "./src/checkout.rs/"));
+    }
+
     /// #7462: the single-item read is already the narrow MCP route. An item
     /// that does not fit must not tell the caller to call `ripr_get_gap` again.
     /// The routed exercise lives in `server_tests.rs`
@@ -1539,7 +2087,7 @@ mod tests {
     -> Result<(), String> {
         let session = session_with_findings(700)?;
         let document = session
-            .list_gaps(None, GapListWindow::default())
+            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
             .map_err(|failure| failure.detail)?;
 
         // The page itself must fit the wire envelope end to end, with the
@@ -1640,6 +2188,7 @@ mod tests {
                         offset,
                         limit: None,
                     },
+                    &GapListFilter::default(),
                 )
                 .map_err(|failure| failure.detail)?;
             let ids = document
@@ -1689,6 +2238,7 @@ mod tests {
                     offset: 0,
                     limit: Some(1),
                 },
+                &GapListFilter::default(),
             )
             .map_err(|failure| failure.detail)?;
         if limited.pointer("/page/limit").and_then(Value::as_u64) != Some(1)
@@ -1710,6 +2260,7 @@ mod tests {
                     offset: requested_offset,
                     limit: None,
                 },
+                &GapListFilter::default(),
             )
             .map_err(|failure| failure.detail)?;
         if beyond
@@ -1736,7 +2287,7 @@ mod tests {
     fn fitting_listing_ships_whole_with_a_closed_page_window() -> Result<(), String> {
         let session = session_with_findings(3)?;
         let document = session
-            .list_gaps(None, GapListWindow::default())
+            .list_gaps(None, GapListWindow::default(), &GapListFilter::default())
             .map_err(|failure| failure.detail)?;
         if document.pointer("/selected").and_then(Value::as_u64) != Some(3)
             || document
