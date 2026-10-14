@@ -2,12 +2,13 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED,
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
-    body_contains_owner_call, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, fallible_check_receipt, fallible_literal_witness,
-    getter_plainly_reads, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    body_contains_owner_call, call_parameter_names, callee_is_unique,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
+    fallible_literal_witness, getter_plainly_reads, getter_plainly_reads_key,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
@@ -452,6 +453,10 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_parameter_names)
             .unwrap_or_default();
+        let owner_argument_names = context
+            .owner_fn
+            .map(call_parameter_names)
+            .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
         // computed once per owner per run through the attached memo and only
         // when an assertion asks. The memo answers under its borrow without
@@ -557,6 +562,10 @@ impl ClassifiedProbeEvidence {
                 getter_reads_field: &|impl_type, getter, field| {
                     getter_plainly_reads(context.index, impl_type, getter, field)
                 },
+                getter_reads_key: &|impl_type, getter, field| {
+                    getter_plainly_reads_key(context.index, impl_type, getter, field)
+                },
+                owner_argument_names: &owner_argument_names,
             },
             arm_selector.as_ref(),
         );

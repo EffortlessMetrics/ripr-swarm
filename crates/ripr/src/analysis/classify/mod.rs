@@ -26,14 +26,17 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
-    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
-pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
+pub(in crate::analysis) use builder_override::{
+    getter_plainly_reads, getter_plainly_reads_key, setter_plainly_writes,
+};
 pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{

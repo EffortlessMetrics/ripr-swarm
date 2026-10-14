@@ -8,8 +8,9 @@ use super::builder_override::{
     OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
 };
 use super::propagation_witness::{
-    assertion_field_collection_reads, assertion_observes_direct_collection,
-    direct_collection_mutation_receiver, field_collection_write_path,
+    assertion_field_collection_reads, assertion_keyed_getter_reads,
+    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+    field_collection_insert_key, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
@@ -61,6 +62,14 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// (`builder_override::getter_plainly_reads`). Only a verified getter
     /// lets a read through a method confirm a field-path collection write.
     pub(in crate::analysis) getter_reads_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 keyed getter credit: whether the owner type's method
+    /// `(type, getter, field)` looks its one argument up in that field path
+    /// (`builder_override::getter_plainly_reads_key`).
+    pub(in crate::analysis) getter_reads_key: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// The owner's call parameters in order, receiver excluded; a
+    /// destructured parameter is an empty name. A keyed read confirms a
+    /// map insert only through the argument the insert's key comes from.
+    pub(in crate::analysis) owner_argument_names: &'a [String],
 }
 
 #[cfg(test)]
@@ -85,6 +94,8 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             getter_reads_field: &|_, _, _| false,
+            getter_reads_key: &|_, _, _| false,
+            owner_argument_names: &[],
         },
         None,
     );
@@ -390,6 +401,45 @@ fn field_collection_observer_confirms(
         })
 }
 
+/// RIPR-SPEC-0228 keyed reads: whether `assertion` reads back the entry the
+/// owner inserted into the field map `path` under its argument number
+/// `key_index`. One compared side must be `binding.getter(key)` on the
+/// binding the test called the owner on; `getter` must resolve to an
+/// inherent method of the owner type that looks its argument up in `path`
+/// (`getter_reads_key`); and an accepted owner call before the read must
+/// pass `key` in that argument position. `inv.on_hand("A")` after
+/// `inv.ship("A", 3)` reads the entry `self.stock.insert(sku, ..)` wrote;
+/// `inv.on_hand("B")` does not.
+fn keyed_field_read_confirms(
+    path: &str,
+    key_index: usize,
+    owner: Option<OwnerCall<'_>>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    getter_reads_key: &dyn Fn(&str, &str, &str) -> bool,
+) -> bool {
+    let Some(owner) = owner else {
+        return false;
+    };
+    let Some(impl_type) = owner.impl_type() else {
+        return false;
+    };
+    assertion_keyed_getter_reads(&assertion.text)
+        .into_iter()
+        .any(|read| {
+            getter_reads_key(impl_type, &read.getter, path)
+                && owner_call_passes_key(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    owner.name(),
+                    assertion.line,
+                    key_index,
+                    &read.key,
+                )
+        })
+}
+
 /// Whether `body`, whose first line is file line `start_line`, calls
 /// `binding.method(..)` on a line before `read_line` without rebinding
 /// `binding` (`let binding = ..`) between that call and the read. Comments
@@ -401,6 +451,18 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     method: &str,
     read_line: usize,
 ) -> bool {
+    !owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+}
+
+/// The offsets in `body` of the `binding.method(..)` calls that
+/// [`owner_call_precedes_read`] accepts.
+fn owner_calls_before_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> Vec<usize> {
     let masked = mask_comments_and_strings(body);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
@@ -439,11 +501,55 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     masked
         .match_indices(&call)
         .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&masked, *at))
-        .any(|(at, _)| {
-            line_at(at) < read_line
+        .map(|(at, _)| at)
+        .filter(|at| {
+            line_at(*at) < read_line
                 && !rebindings
                     .iter()
-                    .any(|rebound| *rebound > at && line_at(*rebound) <= read_line)
+                    .any(|rebound| *rebound > *at && line_at(*rebound) <= read_line)
+        })
+        .collect()
+}
+
+/// RIPR-SPEC-0228 keyed reads: whether some owner call that
+/// [`owner_call_precedes_read`] accepts passes `key` as its argument number
+/// `index` (receiver excluded), so the entry the owner inserted under that
+/// parameter is the one the test reads back. The call must be a bare
+/// statement (`inv.ship("A", 3);`), optionally ending in `.unwrap()`,
+/// `.expect(..)` or `?`, or bind its result only after one of those
+/// (`let r = inv.ship("A", 3).unwrap();`): an owner that returned before the
+/// insert would then have failed the test. A result kept or projected
+/// unconsumed (`let r = inv.ship(..)`, `let _ = ..`, `.unwrap_err()`,
+/// `.is_err()`, `.is_ok()`) or a call inside an assertion does not count.
+/// Fails closed on anything it cannot read.
+fn owner_call_passes_key(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+    index: usize,
+    key: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let normalize = |text: &str| text.trim().trim_start_matches('&').trim().to_string();
+    let key = normalize(key);
+    let name = format!("{binding}.{method}");
+    owner_calls_before_read(body, start_line, binding, method, read_line)
+        .into_iter()
+        .any(|at| {
+            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+            let Some((_, consumed)) = call_statement_tail(&masked, at, name.len() + 1) else {
+                return false;
+            };
+            let prefix = masked[statement_start..at].trim();
+            if !(prefix.is_empty() || (consumed && is_plain_let_binding(prefix))) {
+                return false;
+            }
+            body.get(at..)
+                .and_then(|call| super::activation::call_arguments(call, &name))
+                .and_then(|arguments| arguments.get(index).map(|argument| normalize(argument)))
+                .is_some_and(|argument| argument == key)
         })
 }
 
@@ -547,6 +653,12 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
 /// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
 /// consume its result, so a returned `&mut Self` is never written.
 fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+    call_statement_tail(code, call_at, call_len).map(|(end, _)| end)
+}
+
+/// [`bare_call_end`]'s end offset, with whether `.unwrap()`, `.expect(..)`
+/// or `?` consumed the call's result before the `;`.
+fn call_statement_tail(code: &str, call_at: usize, call_len: usize) -> Option<(usize, bool)> {
     let args_at = call_at + call_len;
     let mut depth = 0usize;
     let mut close = None;
@@ -561,7 +673,8 @@ fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
             _ => {}
         }
     }
-    let mut tail = code[close? + 1..].trim_start();
+    let after_call = code.get(close? + 1..)?.trim_start();
+    let mut tail = after_call;
     loop {
         if let Some(rest) = tail.strip_prefix(".unwrap()") {
             tail = rest.trim_start();
@@ -577,7 +690,27 @@ fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
             break;
         }
     }
-    tail.starts_with(';').then(|| code.len() - tail.len() + 1)
+    tail.starts_with(';')
+        .then(|| (code.len() - tail.len() + 1, tail.len() < after_call.len()))
+}
+
+/// `let NAME =` or `let mut NAME =` with one plain identifier: the bound
+/// value is the consumed result, not a guard or a projection of it.
+fn is_plain_let_binding(prefix: &str) -> bool {
+    let Some(rest) = prefix
+        .strip_prefix("let ")
+        .and_then(|rest| rest.strip_suffix('='))
+    else {
+        return false;
+    };
+    let rest = rest.trim();
+    let name = rest.strip_prefix("mut ").map_or(rest, str::trim);
+    name != "_"
+        && name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
 /// Whether a masked `statement` (no trailing `;`) leaves `binding` alone:
@@ -921,6 +1054,12 @@ fn analyze_related_assertions(
     // RIPR-SPEC-0228: a field-path collection write (`self.log.push(..)`) is
     // observed by a read of that field, never by a shared name alone.
     let field_write = field_collection_write_path(&probe.expression);
+    let insert_key_index = field_collection_insert_key(&probe.expression).and_then(|key| {
+        return_admission
+            .owner_argument_names
+            .iter()
+            .position(|name| *name == key)
+    });
     let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
@@ -1176,6 +1315,22 @@ fn analyze_related_assertions(
                     return_admission.getter_reads_field,
                 )
             });
+            // A keyed getter read (`inv.on_hand("A")`) of a map entry the
+            // owner inserted under the same argument (`self.stock.insert(sku,
+            // ..)` with `inv.ship("A", ..)`).
+            let keyed_read = field_write
+                .zip(insert_key_index)
+                .is_some_and(|(path, index)| {
+                    keyed_field_read_confirms(
+                        path,
+                        index,
+                        override_owner,
+                        test,
+                        assertion,
+                        return_admission.getter_reads_key,
+                    )
+                });
+            let field_collection_read = field_collection_read || keyed_read;
             let matched = matched || field_collection_read;
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
@@ -3917,6 +4072,55 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0228 keyed reads: the owner call must pass the read key in
+    /// the insert key's argument position and must not end on an error path.
+    #[test]
+    fn owner_call_passes_key_matches_the_key_argument_position() {
+        // The body starts at file line 10; the read sits on line 13.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let passes = |lines: &str, index: usize, key: &str| {
+            owner_call_passes_key(&body(lines), 10, "inv", "ship", 13, index, key)
+        };
+        let shipped = "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);";
+        assert!(passes(shipped, 0, "\"BOLT-M8\""));
+        // A `&` on either side is the same key.
+        assert!(passes(shipped, 0, "&\"BOLT-M8\""));
+        assert!(passes(
+            "    let receipt = inv.ship(sku, 3).unwrap();\n    let _ = receipt;\n    assert_eq!(inv.on_hand(&sku), 7);",
+            0,
+            "&sku"
+        ));
+        // `?`, `.expect(..)` and a bare call also run the owner to completion.
+        for consumed in [
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3)?;\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::new(2);\n    let mut r = inv.ship(\"BOLT-M8\", 3).expect(\"ships\");\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+        ] {
+            assert!(passes(consumed, 0, "\"BOLT-M8\""), "{consumed}");
+        }
+        // Another key, another position, a key past the argument list.
+        assert!(!passes(shipped, 0, "\"NUT-M8\""));
+        assert!(!passes(shipped, 1, "\"BOLT-M8\""));
+        assert!(!passes(shipped, 2, "\"BOLT-M8\""));
+        for refused in [
+            // The owner may have returned before the insert.
+            "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 30).unwrap_err();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let e = inv.ship(\"BOLT-M8\", 30).expect_err(\"refused\");\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert!(inv.ship(\"BOLT-M8\", 30).is_err());\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            // A result kept, discarded or projected without being consumed.
+            "    let mut inv = Inventory::new(2);\n    let r = inv.ship(\"BOLT-M8\", 30);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let _ = inv.ship(\"BOLT-M8\", 30).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let ok = inv.ship(\"BOLT-M8\", 30).is_ok();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert!(!inv.ship(\"BOLT-M8\", 30).is_ok());\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    let (a, b) = inv.ship(\"BOLT-M8\", 30).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            // A call that may never run, or no call before the read.
+            "    let mut inv = Inventory::new(2);\n    if false { inv.ship(\"BOLT-M8\", 3).unwrap(); }\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);",
+            "    let mut inv = Inventory::new(2);\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 10);\n    inv.ship(\"BOLT-M8\", 3).unwrap();",
+        ] {
+            assert!(!passes(refused, 0, "\"BOLT-M8\""), "{refused}");
+        }
+    }
+
     #[test]
     fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
         // The body starts at file line 10; the read sits on line 13.
@@ -4278,6 +4482,8 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| false,
+                    owner_argument_names: &[],
                 },
                 None,
             )
@@ -4374,6 +4580,8 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| false,
+                    owner_argument_names: &[],
                 },
                 None,
             )
@@ -4727,6 +4935,8 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -4799,6 +5009,8 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6443,6 +6655,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6500,6 +6714,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6528,6 +6744,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6575,6 +6793,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6624,6 +6844,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6798,6 +7020,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -6829,6 +7053,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -7219,6 +7445,8 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| false,
+                    owner_argument_names: &[],
                 },
                 None,
             )
@@ -7496,6 +7724,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -7588,6 +7818,8 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     getter_reads_field: &|_, _, _| false,
+                    getter_reads_key: &|_, _, _| false,
+                    owner_argument_names: &[],
                 },
                 None,
             );
@@ -7623,6 +7855,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -7976,6 +8210,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );
@@ -8276,6 +8512,8 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| false,
+                owner_argument_names: &[],
             },
             None,
         );

@@ -673,6 +673,106 @@ pub(in crate::analysis) fn getter_plainly_reads(
     .contains(&text)
 }
 
+/// RIPR-SPEC-0228 keyed getter credit: whether `impl_type`'s method
+/// `getter` takes `&self` and one parameter `k` and its body is one tail
+/// expression that looks `k` up in the field path `field`:
+/// `self.f.get(k)` or `self.f.get(&k)`, optionally followed by `.copied()`
+/// or `.cloned()`, then optionally by `.unwrap_or_default()` or
+/// `.unwrap_or(<literal>)`. The method resolves as in
+/// [`getter_plainly_reads`]; anything else (another field, another key,
+/// arithmetic on the entry, a statement first) gives `false`.
+pub(in crate::analysis) fn getter_plainly_reads_key(
+    index: &RustIndex,
+    impl_type: &str,
+    getter: &str,
+    field: &str,
+) -> bool {
+    let Some(body) = inherent_method_body(index, impl_type, getter) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(body) else {
+        return false;
+    };
+    let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(parameters) = method.param_list() else {
+        return false;
+    };
+    let shared_self = parameters
+        .self_param()
+        .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none());
+    let mut params = parameters.params();
+    let key = match (params.next(), params.next()) {
+        (Some(param), None) => match param.pat() {
+            Some(ast::Pat::IdentPat(pat))
+                if pat.ref_token().is_none() && pat.mut_token().is_none() =>
+            {
+                pat.name().map(|name| name.text().to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let (true, Some(key)) = (shared_self, key) else {
+        return false;
+    };
+    let Some(body) = method.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if body.statements().next().is_some() {
+        return false;
+    }
+    let Some(tail) = body.tail_expr() else {
+        return false;
+    };
+    let text: String = tail
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let Some(rest) = [
+        format!("self.{field}.get({key})"),
+        format!("self.{field}.get(&{key})"),
+    ]
+    .iter()
+    .find_map(|lookup| text.strip_prefix(lookup.as_str())) else {
+        return false;
+    };
+    let rest = rest
+        .strip_prefix(".copied()")
+        .or_else(|| rest.strip_prefix(".cloned()"))
+        .unwrap_or(rest);
+    rest.is_empty()
+        || rest == ".unwrap_or_default()"
+        || rest
+            .strip_prefix(".unwrap_or(")
+            .and_then(|default| default.strip_suffix(')'))
+            .is_some_and(is_plain_literal)
+}
+
+/// A number, `true`/`false`, or a string or char literal without escapes:
+/// a default that cannot read the receiver or the key.
+fn is_plain_literal(text: &str) -> bool {
+    let quoted = |quote: char| {
+        text.len() >= 2
+            && text.starts_with(quote)
+            && text.ends_with(quote)
+            && text
+                .get(1..text.len() - 1)
+                .is_some_and(|inner| !inner.contains([quote, '\\']))
+    };
+    matches!(text, "true" | "false")
+        || quoted('"')
+        || quoted('\'')
+        || (text.starts_with(|ch: char| ch.is_ascii_digit())
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+}
+
 fn is_path_named(expression: &ast::Expr, name: &str) -> bool {
     matches!(expression, ast::Expr::PathExpr(path)
         if single_identifier(path).as_deref() == Some(name))
@@ -927,6 +1027,54 @@ mod tests {
             "RetryBuilder",
             "entries",
             "attempts"
+        ));
+    }
+
+    /// RIPR-SPEC-0228 keyed reads: a getter reads one entry of a field map
+    /// only when its body looks its own argument up in that field.
+    #[test]
+    fn keyed_getter_counts_only_when_it_looks_its_argument_up_in_the_field() {
+        for getter in [
+            "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) }",
+            "pub fn entry(&self, k: String) -> Option<u32> { self.attempts.get(&k).cloned() }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or_default() }",
+            "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"none\") }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                "{getter}"
+            );
+        }
+        for getter in [
+            // Another field, another key, arithmetic on the entry, a default
+            // that reads state, a statement first, two arguments, no
+            // argument, a destructured or `mut` argument, `&mut self`.
+            "pub fn entry(&self, k: &str) -> Option<&u64> { self.delay_ms.get(k) }",
+            "pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(\"x\") }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(0) + 1 }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().unwrap_or(self.base) }",
+            "pub fn entry(&self, k: &str) -> u32 { self.attempts.get(k).copied().map(|n| n + 1).unwrap_or(0) }",
+            "pub fn entry(&self, k: &str) -> Option<&u32> { let k = k.trim(); self.attempts.get(k) }",
+            "pub fn entry(&self, k: &str, j: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self) -> Option<&u32> { self.attempts.get(\"x\") }",
+            "pub fn entry(&self, (k, _): (&str, u8)) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self, mut k: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&mut self, k: &str) -> Option<&u32> { self.attempts.get(k) }",
+            "pub fn entry(&self, k: &str) -> bool { self.attempts.contains_key(k) }",
+        ] {
+            let index = settings_index(getter);
+            assert!(
+                !getter_plainly_reads_key(&index, "RetryBuilder", "entry", "attempts"),
+                "{getter}"
+            );
+        }
+        // Another type's method of the same name proves nothing.
+        let index =
+            settings_index("pub fn entry(&self, k: &str) -> Option<&u32> { self.attempts.get(k) }");
+        assert!(!getter_plainly_reads_key(
+            &index, "Retry", "entry", "attempts"
         ));
     }
 
