@@ -163,6 +163,20 @@ fn throws_primitive(throw: &[LineToken]) -> bool {
                     if word.chars().next().is_some_and(|c| c.is_ascii_digit()))))
 }
 
+/// Whether a `throw ...` / `Promise.reject(...)` token run throws or
+/// rejects a primitive: its operand opens with a literal or a number.
+fn rejects_primitive(throw: &[LineToken]) -> bool {
+    let operand = match throw.get(1) {
+        Some(LineToken::Other(open)) if open == "(" => throw.get(2),
+        other => other,
+    };
+    match operand {
+        Some(LineToken::Literal(_) | LineToken::Template { .. }) => true,
+        Some(LineToken::Other(word)) => word.chars().next().is_some_and(|c| c.is_ascii_digit()),
+        None => false,
+    }
+}
+
 /// Whether a `throw ...` token run throws a built-in error class
 /// (`new TypeError(...)` or `Error(...)`), which is an `Error`.
 fn throws_builtin_error(throw: &[LineToken]) -> bool {
@@ -228,6 +242,12 @@ pub(crate) struct ErrorChangeFacts {
     pub(crate) old_string_form: Option<String>,
     /// The new side's `String(err)`, read the same way.
     pub(crate) new_string_form: Option<String>,
+    /// The old side throws or rejects a primitive (`throw "bad"`,
+    /// `Promise.reject("bad")`), so the rejected reason is the message
+    /// itself rather than an `Error` carrying it.
+    pub(crate) old_primitive: bool,
+    /// The new side's [`Self::old_primitive`].
+    pub(crate) new_primitive: bool,
 }
 
 impl ErrorChangeFacts {
@@ -280,6 +300,8 @@ impl ErrorChangeFacts {
             primitive_throw_flips,
             old_string_form,
             new_string_form,
+            old_primitive: old_split.is_some_and(|(_, throw)| rejects_primitive(throw)),
+            new_primitive: new_split.is_some_and(|(_, throw)| rejects_primitive(throw)),
         }
     }
 
@@ -317,14 +339,20 @@ impl ErrorChangeFacts {
 /// produces observes a different throw site, not this change. The matcher
 /// is an equality (`toBe`, `toEqual`, `toStrictEqual`), so the reason must
 /// equal a message: a substring of one passes on neither version.
+///
+/// An equality against a string can only pass for a primitive reason: a
+/// rejected `Error` never equals the string, whatever its message, so a
+/// side that throws an `Error` gives no credit (#7944).
 pub(crate) fn literal_rejection_credits(pinned: Option<&str>, facts: &ErrorChangeFacts) -> bool {
     let Some(value) = pinned.and_then(string_literal_value) else {
         return false;
     };
     if facts.message_only {
-        return facts.separates(|message| message == value);
+        return facts.old_primitive
+            && facts.new_primitive
+            && facts.separates(|message| message == value);
     }
-    facts.new_message.as_deref() == Some(value.as_str())
+    facts.new_primitive && facts.new_message.as_deref() == Some(value.as_str())
 }
 
 /// Whether the two thrown expressions differ only in literal values, and in
@@ -493,7 +521,7 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
     }
     let mut message = String::new();
     let mut expect_operand = true;
-    for token in rest {
+    for (index, token) in rest.iter().enumerate() {
         if expect_operand {
             message.push_str(literal_value(token)?);
             expect_operand = false;
@@ -501,7 +529,19 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
         }
         match token {
             LineToken::Other(op) if op == "+" => expect_operand = true,
-            LineToken::Other(end) if end == ")" || end == ";" => break,
+            // Only closers and `;` may follow: `throw ("a") + "b"` or
+            // `new Error("a").stack` throws more than the literal read.
+            LineToken::Other(end) if end == ")" => {
+                let tail = rest.get(index + 1..).unwrap_or_default();
+                if !tail
+                    .iter()
+                    .all(|t| matches!(t, LineToken::Other(c) if c == ")" || c == ";"))
+                {
+                    return None;
+                }
+                break;
+            }
+            LineToken::Other(end) if end == ";" => break,
             // Outside a call a comma is the sequence operator (`throw "x",
             // e`), and the thrown value is a later operand.
             LineToken::Other(comma) if comma == "," && called => break,
@@ -794,6 +834,20 @@ mod tests {
             ErrorChangeFacts::read(Some(r#"throw make<A>("a");"#), r#"throw make<A>("b");"#);
         assert!(generic_read.message_only);
         assert_eq!(generic_read.old_message.as_deref(), Some("a"));
+        // An operand that continues past the message's closing `)` throws
+        // more than the literal read, so no message is read.
+        for (old, new) in [
+            (r#"throw ("a" + "b") + "ab";"#, r#"throw ("cd") + "ab";"#),
+            (r#"throw ("a") + "b";"#, r#"throw ("ab") + "b";"#),
+            (r#"throw new Error("a").x;"#, r#"throw new Error("b").x;"#),
+        ] {
+            let facts = ErrorChangeFacts::read(Some(old), new);
+            assert_eq!(
+                (facts.old_message, facts.new_message),
+                (None, None),
+                "{old}"
+            );
+        }
         // A sequence throws its last operand, so no message is read from
         // an earlier one.
         for (old, new) in [
@@ -920,6 +974,17 @@ mod tests {
         assert!(literal_rejection_credits(Some(r#""bad ""#), &shortened));
         assert!(!literal_rejection_credits(Some(r#""input""#), &shortened));
         assert!(!literal_rejection_credits(Some(r#""bad""#), &shortened));
+        // A rejected `Error` never equals a string, whatever its message
+        // (#7944): no credit on either path.
+        let error_reason = ErrorChangeFacts::read(
+            Some(r#"throw new Error("a" + "b");"#),
+            r#"throw new Error("a");"#,
+        );
+        assert!(error_reason.message_only);
+        assert!(!literal_rejection_credits(Some(r#""ab""#), &error_reason));
+        assert!(!literal_rejection_credits(Some(r#""a""#), &error_reason));
+        let added_error = ErrorChangeFacts::read(None, r#"throw new Error("bad");"#);
+        assert!(!literal_rejection_credits(Some(r#""bad""#), &added_error));
         // Off the message-only path (here an added line) the reason must
         // equal the new message.
         let unrelated = ErrorChangeFacts::read(None, r#"return Promise.reject("bad input");"#);

@@ -10604,7 +10604,13 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             oracle_kind: OracleKind::ExactErrorVariant,
             oracle_strength: OracleStrength::Strong,
             mock_payload: None,
-            error_payload: None,
+            // A real `toThrow('...')` carries its payload; a payload-less
+            // exact error variant is the literal rejection-equality shape,
+            // which credits only a primitive reason (#7944).
+            error_payload: Some(TypeScriptErrorPayload {
+                expected: "'Invalid amount'".to_string(),
+                kind: TypeScriptErrorPayloadKind::ThrowsLiteral,
+            }),
             observed_expression: None,
             expected_value_or_variant: Some("'Invalid amount'".to_string()),
             has_dynamic_matcher_arg: false,

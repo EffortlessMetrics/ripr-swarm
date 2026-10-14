@@ -259,10 +259,13 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 `.rejects.toStrictEqual` with exactly one concrete literal argument instead
 read `exact_error_variant` / strong: they compare the rejected reason, so
 they match an error path and cannot credit a normal return value (#7315).
-The pinned reason credits a changed throw only when it equals that line's
-thrown message; on a message-only change (rule 4) it must equal exactly one
-of the old and new messages. A substring of a message passes on neither
-version, so it is not credit (2026-10-14).
+The pinned reason credits a changed throw only when that line throws or
+rejects a primitive (`throw "bad"`, `Promise.reject("bad")`) and the reason
+equals its thrown message; on a message-only change (rule 4) both sides must
+be primitive and the reason must equal exactly one of the old and new
+messages. A substring of a message passes on neither version, and a rejected
+`Error` never equals a string whatever its message, so neither is credit
+(2026-10-14, #7944).
 The existing literal admission also accepts safe all-literal objects.
 Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
 bindings and implicit globals retain the existing table and limitations;
@@ -311,7 +314,9 @@ optional type arguments (`new errors.ParseError(...)`, `errors.make(...)`,
 `make<T>(...)`). Otherwise it is the whole thrown or rejected operand: a
 literal, a name, a ternary, a sequence (`throw (log(e), e)`) or an
 unclosed line. No message is read from a sequence, since it throws its
-last operand. A shape the reader cannot split falls back to the whole
+last operand, nor from an operand that continues past the message's
+closing parenthesis (`throw ("a") + "b"`, `new Error("a").stack`). A
+shape the reader cannot split falls back to the whole
 operand rather than refusing, because a refused split leaves the
 ladder's credit in place, and a shape it cannot read may only remove
 credit. A changed string literal, a changed `${...}`
@@ -325,9 +330,12 @@ operand that does not open with a call (a ternary choosing between two
 `new` expressions) is part of the operand, so such a change counts, which
 only removes credit. A respelling whose literals join to the same
 message on both sides (`"unsupported currency"` against
-`"unsupported " + "currency"`) does not count either; the exception
-applies only when the changed tokens lie inside the message argument, so
-a changed literal in a later argument still counts and gains no credit; a respelling that
+`"unsupported " + "currency"`) does not count either. That exception
+applies only when the changed tokens lie inside the message argument. A
+change whose differing tokens are all literals anywhere in the thrown
+expression (a later argument such as `cause: "x"` against `cause: "y"`)
+is conservatively treated as message-only, so a payload on an unchanged
+message gains no credit. A respelling that
 needs runtime values to compare (two interpolations) is not recognised
 and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
 before that, only changed string literals counted). On such a change a
