@@ -23960,8 +23960,13 @@ fn framed_advance_while_quarantined_republishes_the_withdrawal() -> Result<(), S
             );
         }
         let params = &second[0];
-        if !params["diagnostics"].as_array().is_none_or(Vec::is_empty) {
-            return Err(format!("the republish must clear, not serve: {params:?}"));
+        let diagnostics = params["diagnostics"].as_array();
+        if diagnostics.is_none_or(|items| {
+            items.len() != 1 || items[0]["code"] != "ripr-diagnostic-quarantine-withdrawn"
+        }) {
+            return Err(format!(
+                "the republish must serve the withdrawal marker, not saved-state findings: {params:?}"
+            ));
         }
         if params.get("version").and_then(serde_json::Value::as_i64) != Some(10) {
             return Err(format!("the republish must bind version 10: {params:?}"));
