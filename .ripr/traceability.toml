@@ -883,6 +883,19 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_header",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::valid_policy_preserves_fields",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::repeated_fields_in_distinct_entries_are_valid",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::every_supported_field_rejects_identical_duplicate",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::duplicate_error_names_both_lines_and_preserves_first_value",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::blank_value_cannot_be_repaired_by_duplicate",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::public_loaders_fail_closed_and_name_the_supplied_policy",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::duplicate_empty_optional_values_are_not_silently_replaced",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::supported_quoted_values_keep_delimiters_and_empty_metadata",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::unsupported_literal_values_and_quoted_keys_still_fail",
+  "crates/ripr/src/output/suppressions.rs::audit_controls::repeated_malformed_assignment_preserves_the_original_location",
   "crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults",
   "crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults",

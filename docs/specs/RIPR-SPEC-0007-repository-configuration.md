@@ -65,6 +65,27 @@ so initialization options become the compatibility fallback for keys the pull
 did not return. In the push-fallback and initialization-only modes the
 precedence above is unchanged.
 
+### Suppression manifest declarations
+
+The configured suppression file and explicit `--suppression-policy` input share
+`parse_suppressions_manifest`. Repeated top-level `schema_version` headers and
+repeated field names within one `[[suppressions]]` entry are invalid, including
+identical values and empty or malformed first values. Each duplicate diagnostic
+names the field, repeated declaration line, and original declaration line;
+third declarations still cite the first line. Later declarations do not overwrite the
+first parsed value or declaration identity. Both loaders reject the manifest
+when violations are present.
+The explicit loader names the supplied policy path in its error.
+
+Declaration tracking resets for each entry, so field names may be reused in
+separate entries. This is distinct from the existing duplicate exact-selector
+rule across entries: repeating a `finding_id` or `(test, path)` selector is
+invalid. Duplicate path-glob selectors are outside that exact-selector check.
+
+Supported bare keys, double-quoted entry string values, and the integer schema
+header retain their existing syntax. Single-quoted string values and quoted
+keys remain unsupported. This repair adds no broader TOML or calendar support.
+
 ## Required Evidence
 
 Repository configuration evidence should cover:
@@ -77,6 +98,10 @@ Repository configuration evidence should cover:
 - explicit LSP initialization options overriding config values;
 - malformed values returning actionable errors;
 - unknown keys failing closed;
+- duplicate suppression headers and same-entry fields naming both declaration
+  lines and failing closed through the implicit and explicit loaders;
+- empty or malformed first values and third declarations retaining the original
+  declaration identity, with valid field-name reuse across separate entries;
 - unsafe relative-path shapes being rejected where paths are configurable;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
@@ -155,6 +180,26 @@ and initialization options supply only the keys the pull did not return.
 Given ripr.toml contains an unknown key or invalid value,
 when ripr loads the config,
 then the user-facing error names the config path and parse problem.
+```
+
+### Duplicate suppression declarations fail closed
+
+```text
+Given one suppression entry declares expires twice,
+when either suppression loader reads the policy,
+then the policy is rejected with the repeated and original declaration lines;
+and an explicit --suppression-policy error names the supplied file.
+
+Given the top-level schema_version header is declared twice,
+when the policy is loaded,
+then duplicate-header diagnostics name both declaration lines and loading fails.
+
+Given two suppression entries reuse owner, reason, and expires field names
+with distinct exact selectors,
+when the policy is loaded,
+then those field-name declarations remain valid;
+and repeating an exact finding_id or (test, path) selector across entries still
+fails under the separate exact-selector rule.
 ```
 
 ### Doctor makes config state inspectable
@@ -254,6 +299,19 @@ cargo-only).
 
 Current tests:
 
+- `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_owner`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_expiry`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::rejects_duplicate_header`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::valid_policy_preserves_fields`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::repeated_fields_in_distinct_entries_are_valid`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::every_supported_field_rejects_identical_duplicate`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::duplicate_error_names_both_lines_and_preserves_first_value`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::blank_value_cannot_be_repaired_by_duplicate`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::public_loaders_fail_closed_and_name_the_supplied_policy`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::duplicate_empty_optional_values_are_not_silently_replaced`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::supported_quoted_values_keep_delimiters_and_empty_metadata`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::unsupported_literal_values_and_quoted_keys_still_fail`
+- `crates/ripr/src/output/suppressions.rs::audit_controls::repeated_malformed_assignment_preserves_the_original_location`
 - `crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults`
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
@@ -369,8 +427,10 @@ Current implementation:
 - `crates/ripr/src/output/human.rs`, `crates/ripr/src/output/human/`,
   `crates/ripr/src/output/json/report.rs`, and
   `crates/ripr/src/output/github.rs` apply configured finding severity.
-- `crates/ripr/src/output/suppressions.rs` loads the configured suppressions
-  path for badge reports.
+- `crates/ripr/src/output/suppressions.rs` owns suppression declaration parsing
+  and both loaders: the configured path for badge reports and the explicit
+  check policy. Declaration-line tracking is local to each pending entry;
+  both loaders fail closed on parser violations, with explicit-path renaming.
 - `ripr.toml.example` documents the supported v1 shape.
 
 ## Metrics
