@@ -122,6 +122,7 @@ struct CommandResult {
 #[derive(Debug, Clone, Serialize)]
 struct PrecommitReport {
     schema_version: &'static str,
+    composition: &'static str,
     status: String,
     failure_kind: Option<PrecommitFailureKind>,
     repository_root: String,
@@ -171,9 +172,22 @@ struct PackageRoot {
 }
 
 pub(super) fn run() -> Result<(), String> {
+    run_composition(false)
+}
+
+pub(super) fn run_policy() -> Result<(), String> {
+    run_composition(true)
+}
+
+fn run_composition(ci_policy: bool) -> Result<(), String> {
     let root = repository_root().map_err(|error| error.message)?;
     let mut report = PrecommitReport {
         schema_version: "0.2",
+        composition: if ci_policy {
+            "ci_policy"
+        } else {
+            "local_precommit"
+        },
         status: "running".to_string(),
         failure_kind: None,
         repository_root: "$REPO".to_string(),
@@ -275,7 +289,12 @@ pub(super) fn run() -> Result<(), String> {
     };
     report.impact_plan = build_impact_plan(&report.change_set, &package_roots);
 
-    if let Err(error) = crate::precommit() {
+    let policy_result = if ci_policy {
+        crate::precommit_policy(true)
+    } else {
+        crate::precommit()
+    };
+    if let Err(error) = policy_result {
         return fail_with_report(
             &root,
             &mut report,
@@ -314,7 +333,11 @@ pub(super) fn run() -> Result<(), String> {
         }
     }
 
-    if report.impact_plan.workspace_clippy {
+    if ci_policy {
+        report.skipped.push(
+            "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation".to_string(),
+        );
+    } else if report.impact_plan.workspace_clippy {
         let args = workspace_clippy_args(&root);
         run_clippy(&root, &mut report, args, &[])?;
     } else if report.impact_plan.impacted_packages.is_empty() {
@@ -997,8 +1020,16 @@ fn write_report(root: &Path, report: &PrecommitReport) -> Result<(), String> {
         .map_err(|error| format!("serialize precommit JSON: {error}"))?
         + "\n";
     let markdown = report_markdown(&canonical);
-    atomic_write(&root.join(REPORT_JSON), &json)?;
-    atomic_write(&root.join(REPORT_MARKDOWN), &markdown)
+    let (json_path, markdown_path) = if report.composition == "ci_policy" {
+        (
+            "target/ripr/reports/ci-policy.json",
+            "target/ripr/reports/ci-policy.md",
+        )
+    } else {
+        (REPORT_JSON, REPORT_MARKDOWN)
+    };
+    atomic_write(&root.join(json_path), &json)?;
+    atomic_write(&root.join(markdown_path), &markdown)
 }
 
 fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
@@ -1055,6 +1086,7 @@ fn report_markdown(report: &PrecommitReport) -> String {
         report.change_set.changes.len(),
         report.report_digest
     );
+    out.push_str(&format!("- Composition: `{}`\n\n", report.composition));
     out.push_str("## Changed files\n\n");
     if report.change_set.changes.is_empty() {
         out.push_str("- none\n");
@@ -1154,6 +1186,7 @@ mod tests {
     fn sample_report(status: &str) -> PrecommitReport {
         PrecommitReport {
             schema_version: "0.2",
+            composition: "local_precommit",
             status: status.to_string(),
             failure_kind: None,
             repository_root: "$REPO".to_string(),

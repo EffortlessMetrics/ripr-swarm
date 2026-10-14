@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-withdraw-throws-message",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-withdraw-throws-message.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "testexception_throws_ok_regex",
+  "hard_case": "throws_ok with a message regex pins the exception text, but the producer maps every throws_ok to a weak broad exception observer.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"insufficient balance: \" . \"need $amount\\n\" if $amount > $balance;",
+        "mutated_line": "die \"insufficient balance: \" . \"need $amount\\n\" if $amount > $balance;",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: overdrawing names the reason",
+        "equivalence_review": "not equivalent: the message no longer says funds"
+      },
+      {
+        "replacement": "die \"insufficient funds: \" . \"need $amount\\n\" if $amount > $balance * 3;",
+        "mutated_line": "die \"insufficient funds: \" . \"need $amount\\n\" if $amount > $balance * 3;",
+        "outcome": "tests_failed",
+        "failing_test": "t/account.t: overdrawing names the reason",
+        "equivalence_review": "not equivalent: overdrawing 20 from 10 no longer dies"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "throws_ok { withdraw(10, 20) } qr/insufficient funds/ fails if the message changes or the overdraw stops dying. Spec cells: RIPR-SPEC-0064 Test::Exception throws_ok.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-withdraw-throws-message.json",
+    "sha256": "24b04e553c05e534c77132f1af5689f3800f5e2a841a033258ffd5aedf90992d",
+    "provenance": "producer"
+  }
+}

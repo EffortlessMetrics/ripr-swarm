@@ -76,7 +76,8 @@ their sha256. Retained files are byte-identical to the upstream commit and
 include its license files.
 
 An `authored` subject is a small crate written for this corpus to fill a
-verdict or probe-family cell the upstream cases leave empty. Its id starts
+verdict, probe-family, test-shape or test-library oracle cell the upstream
+cases leave empty. Its id starts
 with `authored-` (an upstream id may not), it carries no upstream URL,
 commit, or shared-corpus reference, its license is this repository's
 (`MIT OR Apache-2.0`), it retains no license file of its own, and the whole
@@ -151,7 +152,17 @@ fully).
 Contradictions are internal to ripr's output and need no label:
 `reach_yes_without_related_tests`, `no_static_path_with_related_tests`,
 `exposed_without_discriminator`, `related_tests_listed_exceed_total`, and
-summary counts that disagree with the findings list.
+summary counts that disagree with the findings list. Since #5424 a
+`no_static_path` finding lists every test it examined with why each misses,
+so `no_static_path_with_related_tests` counts only a listed test whose
+relation ripr's reach stage treats as reaching the owner
+(`RelationReason::establishes_reach`, #5335): `direct_owner_call`,
+`helper_owner_call`, `re_export_chain_followed`, and
+`assertion_target_affinity`, which diff mode emits only for owners without a
+function. Proximity, name, import, fixture, and seam-callee relations do not
+reach. A relation string ripr does not recognize counts as reaching. The rule
+reads the listed rows (at most eight, highest relation confidence first), so
+a reaching row ranked below the window goes uncounted.
 
 `cargo xtask verdict-corpus` has seven subcommands:
 
@@ -351,6 +362,115 @@ Decisions:
   scoped spec (which lowers the rate) passes while removing a citation
   fails.
 
+### Oracle accuracy
+
+The verdict score cannot see a wrong related-test oracle that leaves the
+line verdict unchanged: on RIPR-SPEC-0231 cases ripr reads `assert_ne!` as
+`exact_value` / strong and the line still scores `ideal` (#6640). Oracle
+accuracy measures that claim on its own axis.
+
+A case may carry an optional `expected_oracle`:
+
+```json
+{ "kind": "relational_check", "strength": "weak", "test": "score_is_not_zero", "spec": "RIPR-SPEC-0231#1" }
+```
+
+`kind` is one of ripr's `oracle_kind` values (`exact_value`,
+`exact_error_variant`, `whole_object_equality`, `snapshot`,
+`relational_check`, `broad_error`, `smoke_only`, `mock_expectation`,
+`guarded_result_match`, `unknown`); `strength` is `strong`, `medium`,
+`weak` or `smoke`; `test` names the related test as ripr reports it (a
+`module::` path prefix is accepted) and may be omitted only when the
+subject has one asserting test, in which case every related test counts;
+`spec` is the `RIPR-SPEC-NNNN#K` example that states the value. `validate`
+rejects any other kind or strength, an empty `test`, an id that is not
+`RIPR-SPEC-NNNN#K`, an example that is not a numbered acceptance example in
+`docs/specs`, and unknown fields.
+
+Observed: every distinct (test, `oracle_kind`, `oracle_strength`) entry in
+`related_tests[]` of the case's anchored findings (the same findings the
+verdict reads) for the labeled test. The scored claim is the entry with the
+strongest strength; among entries of that strength the expected kind wins
+when present, otherwise the first in sorted order. The row lists every
+entry as `observed_all`. Scoring refuses, rather than scores, a label
+that matches more than one reported test (by name, file and line), and a
+label missing from findings whose `related_tests` the JSON capped below
+`related_tests_total`: the first would score another test's reading and
+the second a false `unobserved`.
+
+Strength ranks `smoke` < `weak` < `medium` < `strong`; ripr's observed
+`unknown` and `none` rank below `smoke`. Outcomes:
+
+| Outcome | When |
+| --- | --- |
+| `match` | same strength and same kind |
+| `overclaim` | observed strength ranks above expected, whatever the kind |
+| `underclaim` | observed strength ranks below expected, whatever the kind |
+| `kind_mismatch` | same strength, different kind |
+| `unobserved` | no related-test entry for the labeled test |
+
+The report's `oracle_accuracy` section gives `labeled`, `by_outcome`,
+`oracle_accuracy` (match over labeled), `oracle_overclaim_rate` (overclaim
+over labeled), and the committed `match_floor` and `overclaim_ceiling`;
+each labeled row carries an `oracle` object (expected, `observed_kind`,
+`observed_strength`, `observed_all`, `outcome`). These never enter
+`false_verdict_rate` or any verdict rate.
+
+The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
+`overclaim_ceiling`. `validate` requires the table once any case is
+labeled and refuses a floor or ceiling above the labeled count. `check`
+runs ripr, writes the report, then fails when matches fall below
+`match_floor` or overclaims rise above `overclaim_ceiling`, naming the fix;
+when matches rise or overclaims fall it passes and prints the tighter
+number to commit. A `--case` subset reports its oracle rows but is never
+gated on whole-corpus counts. A corpus without `spec-coverage.toml` has
+nothing to gate a label with, so `validate` refuses `expected_oracle`
+there. When the gate and the row comparison both fail, `check` reports
+both. The summary's `oracle_accuracy` is derived
+from the committed rows, as the verdict rates are, so the scoreboard reads
+it without a committed summary file.
+
+Decisions:
+
+- The scored claim is the strongest entry because that is the reading a
+  consumer sees: the "Strong oracle found" summary and the #5416
+  unknown-not-a-gap rule both read the strongest related oracle. A custom
+  helper that reports the call (strong) and its body (weak) for one test is
+  therefore an overclaim. Rejected: score every entry, which would count
+  one test twice.
+- Strength decides before kind, so a stronger reading under another kind
+  is an overclaim, not a kind mismatch: the strength grants credit.
+- The rates are kept apart from the verdict rates because a correct
+  verdict reached through a wrong oracle is still correct for the line,
+  and an oracle error must not hide inside a verdict rate or inflate it.
+- The gate sits in the existing ledger as an `[oracle]` table, since that
+  file already holds the corpus's committed counts and its parser takes an
+  optional table without a schema change. It protects counts (a floor and
+  a ceiling) rather than rates, so labeling a new case that ripr gets wrong
+  needs a reviewed ceiling edit, while a regression on an existing label
+  fails.
+- An observed `unknown` / `none` entry (ripr relates the test but reads no
+  oracle) is an `underclaim`, not `unobserved`: ripr did report the test.
+- RIPR-SPEC-0231 labels: the 28 `spec0231-*` cases carry the value each
+  acceptance example adopts; the "(unchanged)" controls expect today's
+  value. Example 8 states only "not `mock_expectation`" for
+  `assert!(is_present())`; with step 9 closed by rule 5, no earlier step
+  admits it (today's reading proves steps 1 to 8 do not), steps 10 to 12
+  are for custom helpers and `.any()` membership, and step 13 reads a bare
+  `assert!` as `relational_check` / weak, so that is the label. Like the
+  RIPR-SPEC-0227 labels below, its `spec` cites the example the label
+  measures; the spec's rules, not the example text, fix the value.
+- RIPR-SPEC-0227 labels: it states `is_err()` and `Err(_)` are
+  `broad_error` / weak, and its decision 2 reads a bare `unwrap_err()` as a
+  weak `Err`-side oracle. Labeled are the `is_err()`-only tests outside the
+  rule 3 and 3b side-flip credit (examples 3, 4, 5, 11 and 13, each naming
+  the `is_err()` test) and the bare `unwrap_err()` test (example 7).
+  `Ok`-side tests (examples 6, 8, 12) are left unlabeled because the spec
+  calls them both `smoke_only` / smoke and "weak", and examples 1, 2 and 9
+  because rule 3 and 3b exempt them from "weak" without stating a strength.
+  Other specs' examples do not state a related-test kind and strength, so
+  their cases stay unlabeled.
+
 ## Required Evidence
 
 - The committed corpus validates and contains both a `discriminated` and a
@@ -378,6 +498,14 @@ Decisions:
   passes at, and invites a raise above the floor.
 - The committed ledger validates against `docs/specs` and its floor equals
   the covered count.
+- Oracle outcome classification yields each of the five outcomes, the
+  claim is the strongest entry, validation rejects unknown kinds and
+  strengths and malformed labels, the oracle gate fails below the floor and
+  above the ceiling and invites tightening, and oracle scores leave the
+  verdict rates unchanged.
+- Every `spec0231-*` case carries `expected_oracle`, and the expected
+  report's match and overclaim counts equal the committed floor and
+  ceiling.
 
 ## Non-Goals
 
@@ -453,8 +581,9 @@ Decisions:
   line, read `exposed` (#6731). Both now read `exposed` and score `ideal`, so
   the pair guards against the verdict depending on formatting again.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
-  `no_static_path` while naming related tests, recorded as
-  `no_static_path_with_related_tests`. semver `op()` at 1.0.23
+  `no_static_path` and lists the same-file tests it examined, each with
+  `no_call_path`; no listed test calls `as_kb`, so the row records no
+  contradiction (#6580). semver `op()` at 1.0.23
   (`src/parse.rs:272`) carried `reach_yes_without_related_tests` until #5424
   named every examined test; its row now records no contradiction.
 
@@ -546,6 +675,23 @@ Spec-example coverage tests live in
 - `spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec`
 - `spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject`
 
+Oracle-accuracy tests live in
+`xtask/src/reports/verdict_corpus_oracle_tests.rs`:
+
+- `classify_names_each_of_the_five_outcomes`
+- `strength_ranks_smoke_below_weak_below_medium_below_strong`
+- `the_claim_is_the_strongest_entry_and_prefers_the_expected_kind_on_a_tie`
+- `observed_oracles_read_the_labeled_test_across_every_anchored_finding`
+- `validation_rejects_unknown_kinds_strengths_and_malformed_labels`
+- `ledger_needs_a_gate_within_the_labeled_count_and_real_spec_examples`
+- `gate_fails_below_the_floor_or_above_the_ceiling_and_invites_tightening`
+- `oracle_scores_stay_out_of_the_verdict_rates`
+- `committed_labels_are_valid_and_the_expected_report_meets_the_gate`
+- `the_gate_arms_only_for_a_whole_corpus_run_with_an_oracle_table`
+- `a_corpus_without_a_ledger_refuses_oracle_labels`
+- `a_label_that_could_be_elided_or_names_two_tests_is_refused`
+- `the_coverage_board_refuses_labels_without_an_oracle_table`
+
 ## Implementation Mapping
 
 - `xtask/src/reports/verdict_corpus.rs` owns validation, materialization,
@@ -556,6 +702,11 @@ Spec-example coverage tests live in
 - `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger.
 - `xtask/src/reports/verdict_corpus_relabel.rs` owns replaying runtime
   truth.
+- `xtask/src/reports/verdict_corpus_oracle.rs` owns `expected_oracle`
+  label law, the observed-oracle read, outcome classification, the
+  `oracle_accuracy` section and the oracle gate.
+- `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger,
+  including the `[oracle]` gate table.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
   authored subjects, case diffs, and the expected report.
 
@@ -567,3 +718,7 @@ Spec-example coverage tests live in
 - `verdict_corpus_spec_example_coverage` (dx-scoreboard
   `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
   margin 0)
+- `verdict_corpus_oracle_accuracy` (dx-scoreboard
+  `trust.verdict_corpus_oracle_accuracy`, target 1.0, higher is better)
+- `verdict_corpus_oracle_overclaim_rate` (dx-scoreboard
+  `trust.verdict_corpus_oracle_overclaim_rate`, target 0, lower is better)

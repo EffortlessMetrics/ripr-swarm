@@ -180,3 +180,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (15)
+
+Reason:
+RIPR-SPEC-0001: #7593 pure proximity reach prompts inspection before assertion changes; exposure evidence is unchanged
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

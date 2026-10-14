@@ -72,6 +72,12 @@ Each finding should carry:
 - recommended next step
 - stop reason for unknowns
 
+Exhaustive human Changed source fragments preserve the complete source and wrap
+printable Unicode by display cells between extended grapheme clusters. The
+fixed payload budget, oversized-cluster exception, ASCII/multiline compatibility
+and literal consumer controls are specified by
+`fixtures/rust_long_expression_display_bound/SPEC.md` (#7595).
+
 ## Inputs
 
 - Rust/Cargo workspace root
@@ -103,6 +109,13 @@ Static findings may use only these exposure classes:
 captured call, a helper chain, or assertion affinity. A test linked only by
 sharing the changed file, module, or a name token stays listed as the likely
 place to add a test, but reach is `weak` and the finding cannot be `exposed`.
+When a `weakly_exposed` finding has weak reach and every related row is a
+canonical proximity relation, its next step asks the reader to inspect existing
+tests, doctests and examples before changing assertions. Proximity does not
+establish that an assertion is broad or that a test is missing. Exact-sink
+advice suppression, assertion-shaped owner guidance and specific wrapper-error
+limitations retain their existing precedence. This guidance does not index or
+credit documentation examples, change classifications, or admit a repair.
 For a predicate probe, `exposed` also requires one test that both feeds a
 boundary input to the owner and holds a discriminating oracle on that call's
 result; otherwise the finding is at most `weakly_exposed` and names
@@ -306,6 +319,50 @@ literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
 
+One bounded cardinality family reads a direct immutable slice parameter's
+`.len()` compared with a plain decimal integer. Every reach-bearing related
+test must make one binding-resolved ordinary owner call through an eager,
+nonempty immutable constant-row table. Each argument row must be an immutable
+reference to a literal array, and the complete index must contain no non-test
+caller of the owner. Tables have at most 64 rows and 256 scalar literal
+elements per slice (4 KiB source per slice). Cardinality comes from the array
+shape, never its elements or neighboring assertions: `[0, 0]` has length two.
+The existing assertion-context authority must admit the table's assertion
+macros. Equality keeps the matching call's source and line; otherwise all
+observed lengths support the missing equality. Computed rows, extra calls,
+helper or alias reach, opaque macros, mutable or shadowed bindings, skipped
+loops, asynchronous owners and custom `.len()` receivers remain outside this
+family. Other ordinary calls, method calls, closure invocation, suspension and
+yielding, explicit `loop` and `while` constructs remain outside the family. Standard assertion operands are parsed too:
+only the direct immutable result binding and intrinsic `iter().min()` /
+`iter().max()` observations rooted at the exact
+immutable slice column are admitted. Their `unwrap()` requires every row to be
+nonempty; `unwrap_or(&literal)` also admits empty slices. Same-named methods on
+other receivers and unresolved calls inside assertion operands are refused.
+Owners must be nongeneric with a primitive scalar result. User-defined types,
+traits, implementations, type aliases and imports other than `use super::*`
+in the indexed files withhold this family; it does not resolve operator dispatch
+or primitive-name aliases. Other assertion value paths and local operand
+bindings remain unsupported.
+A try expression anywhere in the test function withholds this producer:
+a discarded fallible closure can exit before the call or skip later rows, and
+this family does not resolve that control flow. The refusal also applies when
+no assertion invokes the independent assertion-context authority. Every source
+use of the owner's identifier must be accounted for by its declaration and the
+admitted direct calls; recursion, function pointers, explicit imports and opaque
+uses withhold this bounded producer. Documentation
+references, explicit `doc` attributes, documentation code blocks, workspace
+macro expansion, possible standard-macro rebinding and attributes other than
+ordinary test and `cfg(test)` withhold this producer too. Plain documentation
+comments remain eligible subject to reference accounting. It reuses
+existing unseen-reach, macro operand and binding authorities only as refusals;
+it does not resolve expansion or award evidence from it. Unreadable
+inputs never disappear from an absence claim (#7553). This producer records
+activation, while existing oracle and same-test pairing gates retain their
+limitations; it does not independently qualify strong direct-table exposure.
+This does not evaluate buffer arithmetic or similarity algorithms and does
+not change classification precedence or unresolved macro/dispatch authority.
+
 The human report's "Why unknown" line for `infection_unknown` says the change
 "reaches a sink" only when the propagation stage is `yes`; otherwise it says
 no sink the change reaches was established.
@@ -357,6 +414,10 @@ owner's own source file through the shared named-constant lookup in
 
 Fixture coverage:
 
+- `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
+- `weak_direct_owner_assertion_keeps_exact_value_advice`
+- `wrapper_error_retains_specific_guidance_for_proximity_reach`
+- `assertion_helper_retains_oracle_inspection_guidance`
 - `fixtures/boundary_gap` (baseline)
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
@@ -406,6 +467,24 @@ Fixture coverage:
 - `method_call_builder_argument_is_not_credited_end_to_end`
 - `all_dropped_boundary_literals_read_the_no_literal_boundary_reason`
 - `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
+- `retained_property_table_names_the_missing_empty_slice`
+- `slice_elements_are_not_slice_lengths_and_empty_rows_are_observed`
+- `unreadable_or_skippable_slice_tables_withhold_missing_empty_claims`
+- `helpers_aliases_and_opaque_macros_cannot_supply_partial_slice_evidence`
+- `equality_keeps_the_matching_table_witness`
+- `recursive_empty_input_cannot_disappear_from_cardinality_evidence`
+- `production_function_pointer_input_cannot_disappear`
+- `hidden_documentation_inputs_withhold_missing_empty_claims`
+- `unrelated_documentation_does_not_hide_known_table_inputs`
+- `workspace_expansion_limits_withhold_partial_slice_evidence`
+- `ignored_fallible_closure_cannot_credit_skipped_slice_rows`
+- `fully_executed_slice_table_needs_no_assertion_for_activation`
+- `unresolved_calls_cannot_credit_skipped_slice_rows`
+- `fallible_slice_observations_cannot_credit_later_rows`
+- `fixtures/rust_slice_table_boundary`
+- `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_slice_table_try_exit`
+- `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`

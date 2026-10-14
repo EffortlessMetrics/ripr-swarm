@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 76d7894..214dc1e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@
+ }
+ 
+ pub fn find_index(xs: &[i32], t: i32) -> Option<usize> {
+-    xs.iter().position(|&x| x == t)
++    xs.iter().position(|x| *x == t)
+ }
+ 
+ pub fn capacity_for(n: usize) -> usize {

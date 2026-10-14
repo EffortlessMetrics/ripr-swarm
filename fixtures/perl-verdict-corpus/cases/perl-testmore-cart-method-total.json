@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testmore-cart-method-total",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-cart-method-total.diff",
+  "anchor": {
+    "file": "lib/Shop/Cart.pm",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testmore_is_method_call",
+  "hard_case": "The test reaches the changed code through an instance method call; the producer does not prove method receivers.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
+        "mutated_line": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
+        "outcome": "tests_failed",
+        "failing_test": "t/cart.t: total multiplies price by quantity",
+        "equivalence_review": "not equivalent: total becomes 18"
+      },
+      {
+        "replacement": "$total += $_->{price} for @{ $self->{items} };",
+        "mutated_line": "$total += $_->{price} for @{ $self->{items} };",
+        "outcome": "tests_failed",
+        "failing_test": "t/cart.t: total multiplies price by quantity",
+        "equivalence_review": "not equivalent: quantity is ignored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is($cart->total, 25) pins price times quantity over two lines, so either mutant fails. Spec cells: RIPR-SPEC-0064 method_receiver.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-cart-method-total.json",
+    "sha256": "115cb43dd2bc9773a9142db697071398d75786920175d04379610c83161e06c6",
+    "provenance": "producer"
+  }
+}

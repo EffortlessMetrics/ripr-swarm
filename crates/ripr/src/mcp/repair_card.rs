@@ -24,7 +24,8 @@
 use super::gaps::GapItem;
 use super::workspace::{
     AttemptFailure, CODE_ANALYSIS_FAILED, CODE_ITEM_NOT_FOUND, CODE_NO_SNAPSHOT,
-    CODE_WORKSPACE_UNAVAILABLE, Snapshot, WorkspaceSession, bounded_document,
+    CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot, WorkspaceSession,
+    bounded_document,
 };
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
@@ -481,7 +482,7 @@ impl WorkspaceSession {
                 "receipt": receipt,
             },
         });
-        bounded_document(document)
+        bounded_document(document, RECOVERY_REPAIR_TOO_LARGE)
     }
 }
 

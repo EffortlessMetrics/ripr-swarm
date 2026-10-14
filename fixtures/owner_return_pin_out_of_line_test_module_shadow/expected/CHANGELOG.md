@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (4)
+
+Reason:
+RIPR-SPEC-0001: #7593 pure proximity reach prompts inspection before assertion changes; exposure evidence is unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

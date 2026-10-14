@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "test_total_includes_tax compares total_with_tax(1000) with `1000 + tax_cents(1000)`, an expected value computed through the changed function, so a 9 percent rate passes. RIPR-SPEC-0004 and RIPR-SPEC-0035 say a self-computed expected value is not a strong oracle; ripr credits the line exposed, a false exposed verdict.",
+  "reasoning": "test_total_includes_tax compares total_with_tax(1000) with `1000 + tax_cents(1000)`, an expected value computed through the changed function, so a 9 percent rate passes. RIPR-SPEC-0004 and RIPR-SPEC-0035 say a self-computed expected value is not a strong oracle; ripr credits the line exposed, a false exposed verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",

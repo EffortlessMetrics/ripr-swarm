@@ -1,6 +1,6 @@
 use super::HOVER_TEXT;
 use super::position::line_span_range;
-use super::state::{AnalysisSnapshot, format_duration};
+use super::state::{AnalysisAttemptState, AnalysisHealth, AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -140,6 +140,35 @@ pub(super) fn classified_seam_hover_response(
         }),
         range: Some(hover_range(diagnostic.range)),
     }
+}
+
+pub(super) fn hover_with_analysis_health(
+    hover: Hover,
+    snapshot: &AnalysisSnapshot,
+    health: &AnalysisHealth,
+) -> Hover {
+    let mut hover = hover_with_snapshot_status(hover, snapshot);
+    if !health.allows_current_repairs()
+        && let HoverContents::Markup(content) = &mut hover.contents
+    {
+        let recovery = if matches!(
+            health.state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            "Wait for saved-workspace analysis to complete."
+        } else {
+            "Resolve any reported analysis failure, then run `ripr.refresh` to obtain current saved-workspace evidence."
+        };
+        content.value = format!(
+            "**ripr retained evidence is not current** (latest attempt: `{}`, run status: `{}`). \
+             Inspect this snapshot only; do not use its repair or verification commands as current guidance. \
+             {recovery}\n\n{}",
+            health.state.as_str(),
+            health.run_status(),
+            content.value
+        );
+    }
+    hover
 }
 
 pub(super) fn hover_with_snapshot_status(mut hover: Hover, snapshot: &AnalysisSnapshot) -> Hover {

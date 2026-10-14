@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-test-case-args-body-assert-eq",
+  "subject_id": "authored-lib-test-case",
+  "diff": "cases/lib-test-case-args-body-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_case_args_body_assert_eq",
+  "hard_case": "The test fn carries #[test_case] instead of #[test] and takes its expected value as a parameter, so ripr does not establish the body assert_eq as an assertion context (rust_assertion_context_unestablished) and reports reachable_unrevealed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n * (n - 1) / 2",
+        "mutated_line": "n * (n - 1) / 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::triangles::test_case_1_3_6_expects",
+        "equivalence_review": "not equivalent: triangle(3) = 3 instead of 6"
+      },
+      {
+        "replacement": "n * n / 2",
+        "mutated_line": "n * n / 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::triangles::test_case_1_3_6_expects",
+        "equivalence_review": "not equivalent: triangle(3) = 4 instead of 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Each #[test_case(n, expected)] feeds assert_eq!(triangle(n), expected) in the body with concrete values (3,6),(4,10), killing both mutants.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

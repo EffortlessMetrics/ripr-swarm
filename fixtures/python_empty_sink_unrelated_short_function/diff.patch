@@ -1,0 +1,10 @@
+diff --git a/src/constants.py b/src/constants.py
+index ad0e358..eaa7e52 100644
+--- a/src/constants.py
++++ b/src/constants.py
+@@ -2,4 +2,4 @@ y = 2
+ 
+ 
+ def f():
+-    return 0
++    return 1

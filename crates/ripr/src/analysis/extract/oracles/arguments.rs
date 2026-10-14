@@ -53,6 +53,67 @@ pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
     delimited_contents_at(line, open).map(|contents| split_top_level_commas(&contents))
 }
 
+/// The macro name and condition operand of a boolean assertion macro
+/// (`assert!`, `debug_assert!`, `prop_assert!` or `ensure!`), without its
+/// diagnostic arguments.
+pub(super) fn boolean_assertion_macro_condition(line: &str) -> Option<(&'static str, String)> {
+    ["debug_assert!", "assert!", "prop_assert!", "ensure!"]
+        .into_iter()
+        .find_map(|macro_name| {
+            let condition = macro_invocation_arguments(line, macro_name)?
+                .into_iter()
+                .next()?;
+            Some((macro_name, condition))
+        })
+}
+
+/// The comparison an assertion macro states, for RIPR-SPEC-0231 rule 1's
+/// `matches!` polarity: the two operands of an equality macro with whether it
+/// asserts `!=`, or the condition of a boolean assertion macro.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum AssertionComparison {
+    Operands {
+        not_equal: bool,
+        left: String,
+        right: String,
+    },
+    Condition(String),
+}
+
+/// The outermost (earliest) equality or boolean assertion macro in `line`,
+/// including the `debug_` and `prop_` spellings.
+pub(super) fn assertion_comparison(line: &str) -> Option<AssertionComparison> {
+    let masked = mask_comments_and_strings(line);
+    [
+        ("assert_eq!", Some(false)),
+        ("debug_assert_eq!", Some(false)),
+        ("prop_assert_eq!", Some(false)),
+        ("assert_ne!", Some(true)),
+        ("debug_assert_ne!", Some(true)),
+        ("prop_assert_ne!", Some(true)),
+        ("assert!", None),
+        ("debug_assert!", None),
+        ("prop_assert!", None),
+        ("ensure!", None),
+    ]
+    .into_iter()
+    .filter_map(|(name, not_equal)| {
+        let (offset, arguments) = macro_invocation_arguments_at(line, &masked, name)?;
+        let mut arguments = arguments.into_iter();
+        let comparison = match not_equal {
+            Some(not_equal) => AssertionComparison::Operands {
+                not_equal,
+                left: arguments.next()?,
+                right: arguments.next()?,
+            },
+            None => AssertionComparison::Condition(arguments.next()?),
+        };
+        Some((offset, comparison))
+    })
+    .min_by_key(|(offset, _)| *offset)
+    .map(|(_, comparison)| comparison)
+}
+
 pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
     macro_invocation_arguments(line, "ensure!")
 }
@@ -96,7 +157,12 @@ fn is_wildcard_pattern(pattern: &str) -> bool {
     pattern == "_"
 }
 
-fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
+/// Whether `text` is exactly one complete invocation of `macro_name`.
+pub(super) fn is_complete_macro_invocation(text: &str, macro_name: &str) -> bool {
+    complete_macro_arguments(text, macro_name).is_some()
+}
+
+pub(super) fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
     let open = macro_argument_open(text, macro_name)?;
@@ -349,7 +415,7 @@ pub(super) fn delimited_contents_at(text: &str, open_index: usize) -> Option<Str
     None
 }
 
-fn split_top_level_commas(text: &str) -> Vec<String> {
+pub(super) fn split_top_level_commas(text: &str) -> Vec<String> {
     let masked = mask_comments_and_strings(text);
     let mut args = Vec::new();
     let mut start = 0usize;

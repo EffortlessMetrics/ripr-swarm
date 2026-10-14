@@ -1,6 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/harness_dead_construction_no_exposed_credit/input
+config: <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input/ripr.toml
 
 Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 3 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
 

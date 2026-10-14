@@ -14,7 +14,7 @@ import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFail
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
-import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction } from './statusRender';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 import {
   validateFirstPrPacket,
@@ -73,6 +73,15 @@ const ATTEMPT_SELECTION_STATE_KEY = 'ripr.activeAttemptSelection.v1';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function disabledStatus(): RiprStatusState {
+  return {
+    kind: 'disabled',
+    summary: 'ripr editor analysis is disabled by configuration.',
+    detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
+    nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
+  };
 }
 
 /**
@@ -545,18 +554,18 @@ export class RiprClientController {
     const config = this.runtime.getConfig(
       this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
     );
-    await this.refreshSetupStatusFiles();
 
     if (!config.enabled) {
-      this.updateStatus({
-        kind: 'disabled',
-        summary: 'ripr editor analysis is disabled by configuration.',
-        detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
-        nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
-      });
+      // Hide before the async setup-file read so a disable restart does not
+      // leave `ripr: stopped` (or the constructor's initial stopped item)
+      // visible while those reads complete.
+      this.updateStatus(disabledStatus());
       this.output.appendLine('ripr editor analysis is disabled by configuration.');
+      await this.refreshSetupStatusFiles();
       return;
     }
+
+    await this.refreshSetupStatusFiles();
 
     if (this.workspaceRootState.kind === 'ambiguousMultiRoot') {
       this.updateStatus({
@@ -903,6 +912,18 @@ export class RiprClientController {
     // ownership of a client that may have started successfully. (#2822)
     this.startGeneration++;
 
+    // Config is already the new value when onDidChangeConfiguration restarts.
+    // Hide the opt-out immediately so a stalled waitForLifecycle or
+    // client.stop() cannot keep the previous item visible. Reuse this
+    // snapshot for the final status so a disable transition never renders
+    // visible `stopped`.
+    const config = this.runtime.getConfig(
+      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+    );
+    if (!config.enabled) {
+      this.updateStatus(disabledStatus());
+    }
+
     if (starting) {
       const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
       await waitForLifecycle(
@@ -932,12 +953,14 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
-    this.updateStatus({
-      kind: 'stopped',
-      summary: 'ripr server has stopped.',
-      detail: 'Run ripr: Restart Server to start analysis again.',
-      nextStep: 'Run ripr: Restart Server.'
-    });
+    this.updateStatus(config.enabled
+      ? {
+          kind: 'stopped',
+          summary: 'ripr server has stopped.',
+          detail: 'Run ripr: Restart Server to start analysis again.',
+          nextStep: 'Run ripr: Restart Server.'
+        }
+      : disabledStatus());
     return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 
@@ -1771,6 +1794,18 @@ export class RiprClientController {
   }
 
   private updateStatus(status: RiprStatusState): void {
+    // A disable restart hides immediately, then awaits client.stop(). Session
+    // notifications can still fire in that window and would otherwise replace
+    // `disabled` with a visible analysis kind. While ripr.enabled is false,
+    // only an explicit disabled paint may occupy the main item.
+    if (status.kind !== 'disabled') {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      if (!enabled) {
+        return;
+      }
+    }
     this.status = status;
     this.renderStatusBar();
   }
@@ -1791,7 +1826,11 @@ export class RiprClientController {
     const colors = statusBarColors(this.status.kind);
     this.statusBar.backgroundColor = colors?.background;
     this.statusBar.color = colors?.foreground;
-    this.statusBar.show();
+    if (shouldShowMainStatusBar(this.status.kind)) {
+      this.statusBar.show();
+    } else {
+      this.statusBar.hide();
+    }
   }
 
   private async showStatusAsync(): Promise<void> {
@@ -4423,8 +4462,12 @@ function validateActionableGapQueue(
         detail: 'actionable-gaps packet path is outside the workspace'
       };
     }
-    for (const command of actionableGapQueuePacketCommands(packetObject)) {
-      if (!actionableGapQueueCommandIsSafe(command, redirectRoots)) {
+    const relatedVerifyIsBounded = actionableGapQueueRelatedVerifyIsBounded(packetObject);
+    for (const { command, role } of actionableGapQueuePacketCommands(packetObject)) {
+      if (
+        !actionableGapQueueCommandIsSafe(command, redirectRoots)
+        && !(role === 'verify' && relatedVerifyIsBounded)
+      ) {
         return {
           ...base,
           state: 'unsafeCommand',
@@ -4433,6 +4476,37 @@ function validateActionableGapQueue(
       }
     }
     if (stringField(packetObject, 'gap_state') === 'actionable') {
+      const exclusions = packetObject.projection_exclusion_reasons;
+      if (
+        stringField(packetObject, 'repair_route_source') !== 'canonical_item.repair_route'
+        || !(stringField(packetObject, 'verify_command_source') === 'canonical_item.verify_command' || relatedVerifyIsBounded)
+        || packetObject.public_projection_eligible !== true
+        || !Array.isArray(exclusions)
+        || !exclusions.every(reason => typeof reason === 'string')
+        || exclusions.length > 0
+      ) {
+        return {
+          ...base, state: 'blocked',
+          detail: Array.isArray(exclusions) && exclusions.length > 0
+            && exclusions.every(reason => typeof reason === 'string')
+            ? `producer excluded packet from projection: ${exclusions.join(', ')}`
+            : 'producer did not mark every actionable packet safe for public projection'
+        };
+      }
+      if (!stringField(packetObject, 'canonical_gap_id')) {
+        return {
+          ...base,
+          state: 'blocked',
+          detail: 'actionable packet is missing canonical_gap_id'
+        };
+      }
+      if (!stringField(packetObject, 'verify_command') || !stringField(packetObject, 'receipt_command_or_path')) {
+        return {
+          ...base,
+          state: 'malformed',
+          detail: 'actionable packet is missing verify or receipt payload'
+        };
+      }
       topActionable ??= packetObject;
     } else if (packetIsStaticLimitOnly(packetObject)) {
       staticLimitOnlyGaps += 1;
@@ -4481,38 +4555,9 @@ function validateActionableGapQueue(
     };
   }
 
-  const projectionReasons = stringArrayField(topActionable, 'projection_exclusion_reasons');
-  if (
-    stringField(topActionable, 'repair_route_source') !== 'canonical_item.repair_route' ||
-    stringField(topActionable, 'verify_command_source') !== 'canonical_item.verify_command' ||
-    topActionable['public_projection_eligible'] !== true ||
-    projectionReasons.length > 0
-  ) {
-    return {
-      ...base,
-      state: 'blocked',
-      detail: projectionReasons.length > 0
-        ? `producer excluded packet from projection: ${projectionReasons.join(', ')}`
-        : 'producer did not mark the actionable packet safe for public projection'
-    };
-  }
   const verifyCommand = stringField(topActionable, 'verify_command');
   const receiptCommandOrPath = stringField(topActionable, 'receipt_command_or_path');
   const canonicalGapId = stringField(topActionable, 'canonical_gap_id');
-  if (!canonicalGapId) {
-    return {
-      ...base,
-      state: 'blocked',
-      detail: 'actionable packet is missing canonical_gap_id'
-    };
-  }
-  if (!verifyCommand || !receiptCommandOrPath) {
-    return {
-      ...base,
-      state: 'malformed',
-      detail: 'actionable packet is missing verify or receipt payload'
-    };
-  }
   return {
     ...base,
     state: 'topActionableGap',
@@ -4641,13 +4686,25 @@ function actionableGapQueuePacketPaths(packet: Record<string, unknown>): string[
   ].filter((value): value is string => value !== undefined);
 }
 
-function actionableGapQueuePacketCommands(packet: Record<string, unknown>): string[] {
-  const commands = [stringField(packet, 'verify_command')];
-  const receipt = stringField(packet, 'receipt_command_or_path');
-  if (receipt && looksLikeActionableQueueCommand(receipt)) {
-    commands.push(receipt);
+function actionableGapQueuePacketCommands(packet: Record<string, unknown>): Array<{
+  command: string; role: 'verify' | 'receipt';
+}> {
+  // Preserve raw bytes for the safety check; trimming first could hide a
+  // leading/trailing line break in a copied shell command.
+  const rawString = (field: string): string | undefined => {
+    const value = packet[field];
+    return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+  };
+  const commands: Array<{ command: string; role: 'verify' | 'receipt' }> = [];
+  const verify = rawString('verify_command');
+  if (verify) {
+    commands.push({ command: verify, role: 'verify' });
   }
-  return commands.filter((value): value is string => value !== undefined);
+  const receipt = rawString('receipt_command_or_path');
+  if (receipt && looksLikeActionableQueueCommand(receipt)) {
+    commands.push({ command: receipt, role: 'receipt' });
+  }
+  return commands;
 }
 
 function actionableGapQueueReceiptPath(packet: Record<string, unknown>): string | undefined {
@@ -4728,14 +4785,47 @@ function firstRawFindingString(packet: Record<string, unknown>, field: string): 
 }
 
 function actionableGapQueueCommandIsSafe(command: string, redirectRoots: readonly string[]): boolean {
+  if (hasUnsafeShellMetacharacter(command)) {
+    return false;
+  }
   const normalized = command.trim().replace(/\s+/g, ' ');
+  // Decode the single-quoted words permitted by the existing passive safety
+  // grammar, including quoted fragments of flags. This is display admission,
+  // not a shell evaluator or command-execution authority.
+  const words = (command.match(/(?:'[^']*'|[^\s'])+/g) ?? []).map(word => word.replace(/'/g, ''));
+  const decoded = words.join(' ').replace(/\\/g, '/');
+  const broadSnapshot = decoded.includes('ripr agent verify')
+    && decoded.includes('--before') && decoded.includes('--after')
+    && decoded.includes('repo-exposure.json');
   return normalized !== ''
-    && !hasUnsafeShellMetacharacter(normalized)
+    && !broadSnapshot
     && !testRunnerCommandLeavesScope(normalized)
     && redirectStaysInWorkspace(normalized, redirectRoots)
     && ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES.some((prefix) =>
       normalized === prefix || normalized.startsWith(`${prefix} `)
     );
+}
+
+function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown>): boolean {
+  if (stringField(packet, 'verify_command_source') !== 'related_test_or_observer.name') {
+    return false;
+  }
+  const related = objectField(packet, 'related_test_or_observer');
+  const file = related ? stringField(related, 'file') : undefined;
+  const name = related ? stringField(related, 'name') : undefined;
+  const command = packet.verify_command;
+  if (!file || !name || typeof command !== 'string' || hasUnsafeShellMetacharacter(command)) {
+    return false;
+  }
+  // RIPR-SPEC-0057's existing typed-target fallback: the projector derives
+  // exactly this package/filter pair from its related target. Do not broaden
+  // the command-prefix list to all Cargo tests or infer another proof route.
+  const target = file.replace(/\\/g, '/');
+  const packageName = target.startsWith('crates/') ? target.split('/')[1]
+    : target.startsWith('xtask/') ? 'xtask' : undefined;
+  return Boolean(packageName && /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(packageName)
+    && /^[A-Za-z0-9_][A-Za-z0-9_:-]*$/.test(name)
+    && command.trim() === `cargo test -p ${packageName} ${name}`);
 }
 
 const ACTIONABLE_QUEUE_SAFE_COMMAND_PREFIXES = [

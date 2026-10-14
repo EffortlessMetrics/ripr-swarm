@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/same_name_use_imported_owner/input
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+INFO ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:7408a668
+
+Changed
+  before: (v + 5) / 10 * 10
+  after:  (5 + v) / 10 * 10
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::celsius::snap
+  canonical gap: gap:rust:src/lib.rs:celsius::snap:return_value:return_value:5+v/10*10
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach snap: snap_seventeen_to_twenty
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: (5 + v) / 10 * 10
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: (5 + v) / 10 * 10 (line 3)
+  - related test src/lib.rs:18 snap_seventeen_to_twenty uses strong exact value oracle: assert_eq!(snap(17), 20);
+  - source assertion argument value 20 at line 19
+  - source function argument value v = 17 at line 19
+Drill in:
+  ripr explain --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:return_value:7408a668
+  ripr context --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:return_value:7408a668

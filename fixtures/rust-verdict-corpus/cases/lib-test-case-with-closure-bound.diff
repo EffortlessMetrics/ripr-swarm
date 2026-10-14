@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 529e5e3..a554d17 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,7 @@
+ }
+ 
+ pub fn clamp_pct(x: u32) -> u32 {
+-    if x > 100 { 100 } else { x }
++    x.min(100)
+ }
+ 
+ #[cfg(test)]

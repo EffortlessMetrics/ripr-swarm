@@ -324,7 +324,7 @@ pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, s
 # Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),
 # so these describe those cells, not real-world code. One more wrong case
-# out of 32 discriminated (0.031) or 31 not fully discriminated (0.032)
+# out of 33 discriminated (0.030) or 32 not fully discriminated (0.031)
 # exceeds the floor and regresses.
 
 [[metric]]
@@ -365,6 +365,108 @@ regression_floor = 0
 runner_dependent = false
 source = "verdict-corpus:fixtures/python-verdict-corpus#false_silent_rate"
 pending_reason = "the rates are derived from fixtures/python-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_verdict"
+board = "trust"
+title = "Wrong Perl verdicts on the hand-checked Perl verdict corpus (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+# Perl metrics read producer-packet cases only: edited packets carry facts the
+# pinned producer does not emit, so they say nothing about what a Perl user
+# gets today. Floors are 0 because each Perl case is a large share of 27.
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_verdict_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_actionable"
+board = "trust"
+title = "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_exposed"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr credits as caught (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_silent"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr reports as fine (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.false_silent_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_abstention"
+board = "trust"
+title = "Hand-checked Perl edits where ripr gives no specific verdict (producer packets)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.producer.abstention_rate"
+pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_oracle_accuracy"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports the same oracle kind and strength"
+unit = "ratio"
+direction = "higher_is_better"
+# Scored apart from the verdict rates: a wrong oracle that leaves the line
+# verdict unchanged still scores ideal there. `verdict-corpus check`
+# separately fails when matches fall below `[oracle] match_floor` in
+# spec-coverage.toml. Labeling a case ripr gets wrong lowers this rate on
+# purpose: the advisory regression shows new known work.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_accuracy"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_oracle_overclaim_rate"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports a stronger oracle than the spec adopts"
+unit = "ratio"
+direction = "lower_is_better"
+# An overclaim grants credit the assertion does not earn ("Strong oracle
+# found", #5416 withholding a gap as static_unknown). `verdict-corpus check`
+# fails when overclaims rise above `[oracle] overclaim_ceiling`.
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_overclaim_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

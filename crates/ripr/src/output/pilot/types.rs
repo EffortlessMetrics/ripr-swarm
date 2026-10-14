@@ -14,6 +14,18 @@ pub(crate) struct PilotArtifacts {
     pub(crate) pilot_summary_md: PathBuf,
 }
 
+impl PilotArtifacts {
+    /// Files a timeout run does not rewrite. A prior complete run may have
+    /// left them in the same packet directory (#7425).
+    pub(crate) fn unwritten_timeout_siblings(&self) -> [&Path; 3] {
+        [
+            self.repo_exposure_json.as_path(),
+            self.repo_exposure_md.as_path(),
+            self.agent_seam_packets_json.as_path(),
+        ]
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PilotSummaryContext<'a> {
     pub(crate) root: &'a Path,

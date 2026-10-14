@@ -39,6 +39,7 @@ use super::seams::{
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -211,7 +212,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
-    // holds a mapping for the current (path, mtime, size, ctime on unix)
+    // holds a mapping for the current (path, mtime, size, ctime, device, inode on unix)
     // signature, the cache key is rebuilt without reading any file contents.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         trace_latency_phase(
@@ -361,7 +362,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
-        corpus_key: Some(key),
+        corpus_key: key.is_reusable().then_some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -384,10 +385,12 @@ pub(crate) fn workspace_cache_key_at_with_config(
     if let Some(key) =
         fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
     {
+        key.require_reusable()?;
         return Ok(key);
     }
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
+    key.require_reusable()?;
     store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
@@ -1468,6 +1471,13 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The current change's classified seams and canonical missing-file coverage.
+#[derive(Debug)]
+pub(crate) struct ClassifiedChangeReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) absent_file_limitations: Vec<AnalysisLimitation>,
+}
+
 /// Classify the seams in `changed_files` (root-relative) for which
 /// `on_change` holds, and only those: the other seams in those files get no
 /// evidence. No owner names are passed, so no caller files join the scope.
@@ -1481,7 +1491,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     config: &RiprConfig,
     changed_files: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
-) -> Result<Vec<ClassifiedSeam>, String> {
+) -> Result<ClassifiedChangeReport, String> {
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1495,7 +1505,18 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .map(|inventory| inventory.classified)
+    .and_then(|inventory| {
+        // The supplement keeps its classified seams: an absent-file name the
+        // portable limitation path refuses (a drive-like name on Unix, say)
+        // degrades to the bounded path-less disclosure instead of failing
+        // the whole report (#6976).
+        let absent_file_limitations =
+            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
+        Ok(ClassifiedChangeReport {
+            classified: inventory.classified,
+            absent_file_limitations,
+        })
+    })
 }
 
 /// The changed Rust files (root-relative) that diff analysis covers but the
@@ -2352,6 +2373,37 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
+}
+
+/// Read-only selection for current-input export. Use the ordinary corpus and
+/// key authorities, but never update the live fingerprint cache during export.
+pub(crate) fn current_cache_keys_at(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<
+    (
+        RepoSeamCacheKey,
+        Vec<super::seam_cache::RepoFileFactCacheKey>,
+    ),
+    String,
+> {
+    repo_exposure_seam_limit()?;
+    let mut files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+    files.sort();
+    let inputs = workspace_key_inputs(root, config);
+    let mut builder = FilesContentHashBuilder::new();
+    let mut keys = Vec::with_capacity(files.len());
+    for path in files {
+        cancellation::checkpoint()?;
+        let bytes = std::fs::read(root.join(&path))
+            .map_err(|error| format!("read {} for cache export: {error}", path.display()))?;
+        let key = super::seam_cache::RepoFileFactCacheKey::new(&path, &bytes);
+        builder.push_digest(&path, key.content_hash());
+        keys.push(key);
+    }
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
 }
 
 impl WorkspaceKeyInputs {

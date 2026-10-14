@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "Shaped on RIPR-SPEC-0238 example 14, with a message edit instead of a class edit: pytest.raises(KeyError, match=\"empty\") fails when the message becomes 'blank'. ripr reports weakly_exposed, a false actionable verdict; the spec's example (class change) expects exposed through changed_sink_token.",
+  "reasoning": "Shaped on RIPR-SPEC-0238 example 14, with a message edit instead of a class edit: pytest.raises(KeyError, match=\"empty\") fails when the message becomes 'blank'. ripr reports weakly_exposed, a false actionable verdict; the spec's example (class change) expects exposed through changed_sink_token. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

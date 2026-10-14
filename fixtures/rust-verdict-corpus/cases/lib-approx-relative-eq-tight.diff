@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2192590..beb38b2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ use std::f64::consts::PI;
+ 
+ pub fn circle_area(r: f64) -> f64 {
+-    PI * r * r
++    r * PI * r
+ }
+ 
+ pub fn fahrenheit(c: f64) -> f64 {

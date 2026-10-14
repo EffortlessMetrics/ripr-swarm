@@ -1,0 +1,64 @@
+schema_version = "2.0"
+id = "ripr.slice.check-config-path-disclosure.v1"
+generation = 1
+
+source_issue = "issue:7536"
+design_reference = "RIPR-SPEC-0255"
+change_class = "spec_or_contract_change"
+
+claim_boundary = """
+`ripr check` discloses the `ripr.toml` that governed the run: the human
+header prints `config: <path>` after `root:` and check JSON carries a
+top-level `config_path` after `root`, each exactly when a config file was
+actually loaded. Built-in defaults stay an explicit absence on both
+surfaces — no member, no line, no fake path. Both renderers read the loaded
+config's `source_path` through the render-time config, so a bound
+`--candidate-tree` subject (which ignores the worktree config) discloses
+no path. That omission does not imply a null `config_identity`: a tree
+carrying its own `ripr.toml` has its text fingerprinted in
+`identity.config_identity`, while a tree without one is a defaults-only
+run whose `config_identity` stays null. Additive in check
+schema 0.2 with no version bump; `schemas/ripr/check.schema.json` gains the
+optional member. Claims no change to which file loads, to analysis
+behavior, or to finding content.
+"""
+
+non_goals = [
+  "changing which config file check loads (per-crate overlay stays #2671/#2965)",
+  "rebinding doctor/pilot root resolution",
+  "disclosing the path in SARIF, GitHub, badge, or diff-report formats",
+  "populating config_path for defaults-only or candidate-tree runs",
+]
+
+return_conditions = [
+  "Return to root if a defaults-only run names a config path on either surface.",
+  "Return to root if the named path is not the file that governed the run.",
+  "Return to root if disclosure changes which config file check loads.",
+]
+
+owned_seams = [
+  "seam:ripr:output:check-config-path-disclosure",
+]
+
+shared_seams = [
+  "seam:ripr:docs:output-schema",
+  "seam:ripr:config:loaded-config-identity",
+]
+
+forbidden_seams = [
+  "seam:ripr:analysis:exposure-classification",
+  "seam:ripr:app:check-artifact-reuse-gate",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0255"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

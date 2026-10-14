@@ -18,5 +18,22 @@
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "smoke_only",
+      "strength": "smoke",
+      "spec": "RIPR-SPEC-0231#15"
+    },
+    "observed_kind": "smoke_only",
+    "observed_strength": "smoke",
+    "observed_all": [
+      {
+        "test": "lookup_one_exceeds_one",
+        "kind": "smoke_only",
+        "strength": "smoke"
+      }
+    ],
+    "outcome": "match"
+  }
 }

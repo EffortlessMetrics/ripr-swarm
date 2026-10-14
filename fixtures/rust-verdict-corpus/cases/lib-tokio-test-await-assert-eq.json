@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-tokio-test-await-assert-eq",
+  "subject_id": "authored-lib-tokio",
+  "diff": "cases/lib-tokio-test-await-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "tokio_test_await_assert_eq",
+  "hard_case": "`assert_eq!(total(&[1, 2]).await, 8)` in a #[tokio::test] is read as unknown/none, so a pinned async return is only weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "prices.iter().sum::<u32>() + 6",
+        "mutated_line": "prices.iter().sum::<u32>() + 6",
+        "outcome": "tests_failed",
+        "failing_test": "tests::total_adds_shipping",
+        "equivalence_review": "not equivalent: total(&[1,2]) = 9 instead of 8"
+      },
+      {
+        "replacement": "prices.iter().max().copied().unwrap_or(0) + 5",
+        "mutated_line": "prices.iter().max().copied().unwrap_or(0) + 5",
+        "outcome": "tests_failed",
+        "failing_test": "tests::total_adds_shipping",
+        "equivalence_review": "not equivalent: total(&[1,2]) = 7 instead of 8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The #[tokio::test] awaits the owner and assert_eq! pins the exact value 8.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

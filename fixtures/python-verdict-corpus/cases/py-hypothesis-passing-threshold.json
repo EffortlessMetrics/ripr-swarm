@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_passing_threshold runs @given(integers(0, 100)) with @example(49) and @example(50) and asserts `is_passing(score) == (score >= 50)`, so both boundary shifts fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit with a misnamed kind.",
+  "reasoning": "test_passing_threshold runs @given(integers(0, 100)) with @example(49) and @example(50) and asserts `is_passing(score) == (score >= 50)`, so both boundary shifts fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit with a misnamed kind. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "limited",

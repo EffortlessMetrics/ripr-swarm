@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5ca0592..5369c1d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@
+ pub const GRACE_DAYS: u32 = 30;
+ 
+ pub fn remind(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+-    if overdue_days > GRACE_DAYS {
++    if GRACE_DAYS < overdue_days {
+         let body = format!("{user}, your book is {overdue_days} days late");
+         return mailer.send(user, &body);
+     }

@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-test2-summary-deep-is-count",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-summary-deep-is-count.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: two amounts count as three"
+      },
+      {
+        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: total doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Test2's is() compares the whole hash deeply, so changing count or total fails it. Spec cells: RIPR-SPEC-0064 Test2::V0 is().",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-summary-deep-is-count.json",
+    "sha256": "4a3e5482ee9b03e15d0b243bb028429deb28c846c5e1055bca9f43d4c4dc005f",
+    "provenance": "producer"
+  }
+}

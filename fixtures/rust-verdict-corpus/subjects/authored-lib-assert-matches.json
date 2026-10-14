@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-assert-matches",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against assert_matches 1.5.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "d6d24b096466e024ba24cfd96a9886870c449a8b5ca1ecbe3d67bfd724bd0e29"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "fa3d8ddae5eda9a29aaf7136b8fbd11f011b2a54d34e7088bca3e8b684d869fb"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "d0105ca11c73b84c05baae0fc09fafefa4329d004864badbc0efe7f2d42c4ab1"
+    }
+  ]
+}

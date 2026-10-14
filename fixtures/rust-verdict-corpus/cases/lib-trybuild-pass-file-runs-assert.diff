@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1202571..ec7cf43 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ //! `.stderr` output. There are no unit tests.
+ 
+ pub fn parity_bit(word: u32) -> u8 {
+-    (word.count_ones() % 2) as u8
++    (word.count_ones() & 1) as u8
+ }
+ 
+ pub fn default_port(scheme: &str) -> u16 {

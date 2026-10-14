@@ -47,7 +47,7 @@ it("records literal status", () => {
 
 it("records audit status", () => {
   const record = vi.fn();
-  notifyAudit({ record });
+  const sink = { record }; notifyAudit(sink);
   expect(record).toHaveBeenCalledWith("audit");
 });
 

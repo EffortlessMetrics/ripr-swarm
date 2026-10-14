@@ -30,6 +30,33 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// statements live at module level, outside the test function body the
     /// test summary carries (#3619 review).
     pub(in crate::analysis) index: &'a RustIndex,
+    /// Nearest-manifest identities of the packages with at least one
+    /// analyzable Rust file the index does not hold (#6617). Empty when the
+    /// index spans the workspace. A narrowed (Draft/Fast) index can still
+    /// carry the whole owner package, which is all the inherent type-path
+    /// admit needs; every other admit keeps the whole-workspace
+    /// precondition.
+    pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+}
+
+/// #6617: the nearest-manifest identity of every package that has an
+/// analyzable Rust file outside `indexed_files`. A file no discovered
+/// manifest covers names no package and is skipped: it cannot belong to the
+/// owner package the consumer asks about.
+pub(in crate::analysis) fn manifests_with_unindexed_files(
+    manifest_dir_prefixes: &[String],
+    analyzable_files: &[std::path::PathBuf],
+    indexed_files: &[std::path::PathBuf],
+) -> BTreeSet<String> {
+    let indexed: BTreeSet<String> = indexed_files
+        .iter()
+        .map(|file| normalize_path(file))
+        .collect();
+    analyzable_files
+        .iter()
+        .filter(|file| !indexed.contains(&normalize_path(file)))
+        .filter_map(|file| nearest_manifest_identity(manifest_dir_prefixes, file))
+        .collect()
 }
 
 /// Minimum token length for the `assertions_reference_owner` signal.
@@ -66,6 +93,10 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     owner_pin_syntax: super::OwnerPinSyntax,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
+    /// The analysis root that probe paths are joined onto, while index and
+    /// test paths stay relative to it (#6791). `None` when the caller did not
+    /// name one; same-file matching then infers the changed file's path.
+    analysis_root: Option<std::path::PathBuf>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -125,6 +156,11 @@ impl RelatedTestCandidateIndex {
             {
                 push_index(&mut candidates.by_test_stem, stem, test_index);
             }
+            if let Some(stem) = module_stem(&test.file)
+                && cross_host_stem(&test.file).as_ref() != Some(&stem)
+            {
+                push_index(&mut candidates.by_test_stem, stem, test_index);
+            }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
 
@@ -139,6 +175,14 @@ impl RelatedTestCandidateIndex {
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {
         &self.owner_pin_syntax
+    }
+
+    /// Record the root that probe paths are joined onto, so same-file
+    /// matching strips it exactly instead of inferring the changed file from
+    /// indexed path tails (#6791).
+    pub(in crate::analysis) fn with_analysis_root(mut self, root: &Path) -> Self {
+        self.analysis_root = Some(root.to_path_buf());
+        self
     }
 
     /// Fold in the macro bindings of files a narrowed diff index withheld
@@ -217,8 +261,16 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if let Some(probe_stem) = cross_host_stem(&probe.location.file)
-            && !probe_stem.is_empty()
+        // The raw stem and the module stem (`serialize` for `serialize/mod.rs`)
+        // both feed the prefilter, which only narrows and must stay a superset
+        // of what `find_related_tests` matches.
+        for probe_stem in [
+            cross_host_stem(&probe.location.file),
+            module_stem(&probe.location.file),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|stem| !stem.is_empty())
         {
             for stem in [
                 probe_stem.clone(),
@@ -232,10 +284,13 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if !file_name.is_empty()
-            && !extend_substring_bucket(&mut selected, &self.by_path_trigram, file_name.as_bytes())
-        {
-            scan_all = true;
+        let module_name = module_stem(&probe.location.file).unwrap_or_default();
+        for name in [&file_name, &module_name] {
+            if !name.is_empty()
+                && !extend_substring_bucket(&mut selected, &self.by_path_trigram, name.as_bytes())
+            {
+                scan_all = true;
+            }
         }
 
         for token in probe_tokens.iter().filter(|token| token.len() > 2) {
@@ -574,7 +629,17 @@ fn find_related_tests_with_candidates<'a>(
     // whose captured calls name it relates weakly (SeamCalleeCall) even when
     // no name-affinity signal fires.
     let seam_callee = wrapper_seam_callee(probe);
-    let file_name = normalized_file_stem(&probe.location.file);
+    // Module identity, not the bare file stem: `serialize/mod.rs` is module
+    // `serialize`, and a crate root (`lib.rs`, `main.rs`) names no module, so
+    // `tokenizer/mod.rs` tests are not related to a `serialize/mod.rs` change
+    // through the shared stem `mod` (#5395).
+    let file_name = module_stem(&probe.location.file).unwrap_or_default();
+    let analysis_root = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.analysis_root.as_deref(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => None,
+    };
+    let probe_path = probe_index_path(&probe.location.file, analysis_root, owner_fn, index);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -609,7 +674,11 @@ fn find_related_tests_with_candidates<'a>(
     // #4558: the definitions themselves, so a type-path call `T::name(` can
     // set aside those defined outside any impl of `T`.
     let mut same_name_definitions: Vec<&FunctionSummary> = Vec::new();
-    if workspace_complete && !owner_name.is_empty() {
+    // #6617: a narrowed index still scans when a dependency-edge context
+    // exists, for the inherent type-path admit's competitor check. The
+    // uniqueness bypass and the bare-call admit stay gated on
+    // `workspace_complete` below, so a partial count never feeds them.
+    if (workspace_complete || dependency_edges.is_some()) && !owner_name.is_empty() {
         let mut record_same_name = |function: &'a FunctionSummary| {
             same_name_function_count += 1;
             same_name_definitions.push(function);
@@ -661,6 +730,26 @@ fn find_related_tests_with_candidates<'a>(
                 .collect(),
         }
     };
+
+    // #6292/#6537: a module-level owner with same-named module-level rivals
+    // in its package is told apart by the call's spelled path. A test whose
+    // every call of the name settles on a rival relates through no signal.
+    let call_identity = owner_fn
+        .filter(|_| indexed_same_name_ids.len() > 1)
+        .and_then(|owner| match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => super::OwnerCallIdentity::new(
+                owner,
+                candidate_index
+                    .function_indices(owner_name)
+                    .iter()
+                    .map(|&function_index| index.functions().at(function_index)),
+                index,
+            ),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => {
+                super::OwnerCallIdentity::new(owner, index.functions().iter(), index)
+            }
+        });
 
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
@@ -848,6 +937,15 @@ fn find_related_tests_with_candidates<'a>(
             })
         });
 
+        if calls_owner
+            && !calls_helper_entry
+            && call_identity.as_ref().is_some_and(|identity| {
+                identity.resolve_test(test, index) == super::CallTarget::Other
+            })
+        {
+            continue;
+        }
+
         // Token text discarded by a property macro cannot re-enter through
         // raw-body, test-name or file-name affinity. An independent ordinary
         // helper/seam route remains eligible and is judged by its usual owner.
@@ -872,7 +970,6 @@ fn find_related_tests_with_candidates<'a>(
             && !(calls_owner && owner_name_is_unique)
             && !calls_helper_entry
             && !(calls_owner
-                && workspace_complete
                 && owner_fn.is_some_and(|owner| {
                     dependency_edges.is_some_and(|context| {
                         dependency_edge_admits_owner_call(
@@ -884,6 +981,7 @@ fn find_related_tests_with_candidates<'a>(
                                 unattributed: same_name_unattributed_definition,
                                 definitions: &same_name_definitions,
                             },
+                            workspace_complete,
                         )
                     })
                 }))
@@ -922,7 +1020,8 @@ fn find_related_tests_with_candidates<'a>(
             });
 
         let test_name = test.name.to_ascii_lowercase();
-        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        let same_test_file =
+            same_test_file(&probe.location.file, probe_path.as_deref(), &test.file);
         // Keep the broad path-token association available to callers, but do
         // not publish it as file identity.  A short source stem such as
         // `config` can occur in unrelated test paths (for example
@@ -1104,11 +1203,15 @@ struct SameNameDefinitions<'s> {
 /// - a type-path call `T::name(` (#4558) is admitted before the shadow
 ///   checks when `T` is the owner's impl self type and is imported from
 ///   the owner's crate: see `type_path_call_admits_owner`.
+/// - the index must span the workspace (`workspace_complete`), except for
+///   the type-path route on an inherent-impl owner whose whole package is
+///   indexed (#6617): see `type_path_index_covers_competitors`.
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
     test: &TestSummary,
     same_name: &SameNameDefinitions<'_>,
+    workspace_complete: bool,
 ) -> bool {
     let owner_name = owner.name.as_str();
     if context.adjacency.status() != PathDependencyGraphStatus::Complete {
@@ -1159,16 +1262,23 @@ fn dependency_edge_admits_owner_call(
     let file_level_imports = file_level_use_text(&stripped_file);
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
-    if type_path_call_admits_owner(
-        context,
-        &owner_manifest,
-        owner,
-        test,
-        &callable_dependency_names,
-        &file_level_imports,
-        same_name.definitions,
-    ) {
+    if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
+        && type_path_call_admits_owner(
+            context,
+            &owner_manifest,
+            owner,
+            test,
+            &callable_dependency_names,
+            &file_level_imports,
+            same_name.definitions,
+        )
+    {
         return true;
+    }
+    // The bare-call route counts same-named definitions across the
+    // workspace: a narrowed index cannot refute an unindexed competitor.
+    if !workspace_complete {
+        return false;
     }
     if body_binds_owner_name(&test.body, owner_name) {
         return false;
@@ -1212,6 +1322,33 @@ fn dependency_edge_admits_owner_call(
         bare_call_captured
             && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
     })
+}
+
+/// #6617: whether a narrowed index still holds every definition that could
+/// compete with an inherent owner for a `T::name(` call, so the type-path
+/// admit needs no whole-workspace index.
+///
+/// Path resolution of `T::name` prefers inherent associated items over
+/// trait items, so for an owner declared in an inherent `impl T` block the
+/// only possible other target is another inherent `name` on a type named
+/// `T`. Inherent impls live in the type's own crate, and whether
+/// `dep::...::T` is the owner's type or a type the owner's crate imports is
+/// read from the owner's crate (`owner_crate_imports_type_name`): both need
+/// the whole owner package indexed, and nothing else. A trait-impl owner
+/// keeps the whole-workspace precondition, since a trait default or blanket
+/// impl in any crate the test can name could share the path.
+fn type_path_index_covers_competitors(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
+    owner: &FunctionSummary,
+) -> bool {
+    // Both parser facts describe the owner's nearest enclosing impl: a
+    // lexical-fallback owner carries `Unknown` for either and never passes.
+    let inherent_owner = matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) && matches!(owner.impl_context, FunctionImplContext::Impl { .. });
+    inherent_owner && !context.unindexed_manifests.contains(owner_manifest)
 }
 
 /// #4558: a captured call spelled `T::name(` where `T` is the owner's impl
@@ -1681,32 +1818,109 @@ fn strip_comments_and_strings(source: &str) -> String {
     out
 }
 
-/// Return whether `test_file` is the canonical companion test file for
-/// `probe_file`.  This intentionally mirrors the stronger test-grip
-/// authority: only the source stem itself and its `_test`/`_tests` variants
-/// count as file identity.  Paths are compared by stem, so host-specific
-/// separators do not affect the result.
-fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    // Merge resolution (#3545 x PR-3547): keep the PR's `cross_host_stem`
-    // authority — it normalizes both separator flavors (main's #3545 intent)
-    // AND fails closed on non-UTF-8 paths, where lossy conversion could
-    // collapse distinct names into one stem (#3545 review).  Keep main's
-    // empty-stem guard so degenerate stems never count as file identity.
-    let Some(probe_stem) = cross_host_stem(probe_file) else {
+/// Return whether `test_file` is the changed file itself or its canonical
+/// companion test file. `probe_path` is the changed file's root-relative
+/// path from [`probe_index_path`]. Companions compare Rust module identity
+/// ([`module_stem`]): the module's own name and its `_test`/`_tests`
+/// variants. The test-grip relation (`test_grip_evidence/related_tests.rs`)
+/// keys `SameTestFile` on the same module identity.
+fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path) -> bool {
+    // Inline tests in the changed file are its own tests, whatever the file is
+    // called. Non-UTF-8 paths fail closed (#3545): lossy conversion could fake
+    // a match.
+    let Some(test_text) = test_file.to_str() else {
         return false;
     };
-    if probe_stem.is_empty() {
-        return false;
+    if probe_path.is_some_and(|probe_path| {
+        !probe_path.is_empty() && normalize_path(Path::new(test_text)) == probe_path
+    }) {
+        return true;
     }
-    let Some(test_stem) = cross_host_stem(test_file) else {
+    // Compare module identity (#5395): `mod.rs` takes its directory's name and
+    // a crate root has none, so `serialize/mod.rs` and `tokenizer/mod.rs` (or
+    // two crates' `lib.rs`) no longer pair through a shared bare stem.
+    let (Some(probe_stem), Some(test_stem)) = (module_stem(probe_file), module_stem(test_file))
+    else {
         return false;
     };
-    if test_stem.is_empty() {
-        return false;
-    }
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
+}
+
+/// The changed file's path in the index's root-relative form (#6791).
+///
+/// Probe locations are joined onto the analysis root (`--root`), while index
+/// and test paths are root-relative. With the root known, stripping it is
+/// exact. Without it (callers that build their own candidate index), the
+/// changed file is inferred: the longest indexed
+/// path that the probe path ends with on a segment boundary; the owner's file
+/// counts as indexed. A shorter match is a different file that only shares a
+/// tail, such as the root crate's `src/lib.rs` for a member crate's
+/// `crates/a/src/lib.rs`. The owner's file is exact; without an owner this
+/// relies on the changed file being indexed. A changed file the workspace
+/// walk skips (an ignored directory such as `fixtures/`) is not indexed, and
+/// an ownerless probe in it can still resolve to a shorter indexed tail. A
+/// probe with no indexed tail keeps its own path, so it can only match a
+/// test path exactly. Non-UTF-8 paths fail closed (#3545).
+fn probe_index_path(
+    probe_file: &Path,
+    analysis_root: Option<&Path>,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+) -> Option<String> {
+    let probe_text = probe_file.to_str()?;
+    // The analysis root is exact: strip it and the rest is the changed
+    // file's root-relative path.
+    if let Some(relative) = analysis_root.and_then(|root| probe_file.strip_prefix(root).ok()) {
+        let relative = normalize_path(Path::new(relative.to_str()?));
+        if !relative.is_empty() {
+            return Some(relative);
+        }
+    }
+    let probe_path = normalize_path(Path::new(probe_text));
+    let owner_path = owner_fn
+        .and_then(|owner| owner.file.to_str())
+        .map(|file| normalize_path(Path::new(file)));
+    // Longest first: the whole path, then each tail after a `/`. One map
+    // lookup per path segment, not a scan of every indexed file.
+    let tails = std::iter::once(probe_path.as_str()).chain(
+        probe_path
+            .match_indices('/')
+            .map(|(slash, _)| &probe_path[slash + 1..]),
+    );
+    let mut tails = tails.filter(|tail| !tail.is_empty());
+    // The owner's file is the exact root-relative path, so it wins over an
+    // indexed tail that reaches into the root's own segments (root `app`
+    // holding both `src/main.rs` and a member `app/src/main.rs`).
+    if let Some(owner_path) = owner_path
+        && tails.clone().any(|tail| tail == owner_path)
+    {
+        return Some(owner_path);
+    }
+    let indexed = tails.find(|tail| index.files().get(Path::new(tail)).is_some());
+    Some(indexed.map_or_else(|| probe_path.clone(), str::to_string))
+}
+
+/// The Rust module a source path names: its file stem, except that `mod.rs`
+/// takes the name of its directory and a crate root (`lib.rs`, `main.rs`)
+/// names no module (#5395). `None` when no module identity exists, including
+/// non-UTF-8 paths, which fail closed like [`cross_host_stem`].
+pub(in crate::analysis) fn module_stem(path: &Path) -> Option<String> {
+    let stem = cross_host_stem(path)?;
+    match stem.as_str() {
+        "" | "lib" | "main" => None,
+        "mod" => {
+            let text = path.to_str()?.replace('\\', "/");
+            let mut parts = text.rsplit('/');
+            let _file = parts.next();
+            parts
+                .next()
+                .filter(|dir| !dir.is_empty() && *dir != "." && *dir != ".." && *dir != "src")
+                .map(str::to_string)
+        }
+        _ => Some(stem),
+    }
 }
 
 /// Extract the file stem on any host: split on both separator flavors
@@ -1726,7 +1940,7 @@ fn cross_host_stem(path: &Path) -> Option<String> {
     Some(stem.to_string())
 }
 
-fn normalize_path(path: &Path) -> String {
+pub(super) fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
@@ -1990,7 +2204,7 @@ fn normalized_file_stem(path: &Path) -> String {
 /// without a `crates/` segment) and the package guards in
 /// `find_related_tests`, which fail closed when both sides of a candidate
 /// relation are unscopable absolute paths.
-fn path_is_absolute_form(path: &Path) -> bool {
+pub(super) fn path_is_absolute_form(path: &Path) -> bool {
     let normalized = normalize_path(path);
     let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
     path.is_absolute() || normalized.starts_with('/') || has_drive_prefix
@@ -4042,6 +4256,7 @@ mod tests {
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4080,6 +4295,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4132,6 +4348,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -6540,10 +6757,12 @@ mod tests {
         manifest_dir_prefixes: &'a [String],
         index: &'a RustIndex,
     ) -> DependencyEdgeContext<'a> {
+        static NONE_UNINDEXED: BTreeSet<String> = BTreeSet::new();
         DependencyEdgeContext {
             adjacency,
             manifest_dir_prefixes,
             index,
+            unindexed_manifests: &NONE_UNINDEXED,
         }
     }
 
@@ -7672,6 +7891,255 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn mod_and_crate_root_stems_carry_module_identity_not_bare_stem() {
+        // #5395: `serialize/mod.rs` and `tokenizer/mod.rs` share only the stem
+        // `mod`; two crate roots share only `lib`.
+        // An empty index: the probe path stands for itself.
+        let index = RustIndex::default();
+        let same = |probe: &str, test: &str| {
+            let probe_path = super::probe_index_path(Path::new(probe), None, None, &index);
+            super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
+        };
+        assert!(!same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/tokenizer/mod.rs"
+        ));
+        assert!(!same("crates/a/src/lib.rs", "crates/b/src/lib.rs"));
+        assert!(!same("crates/a/src/main.rs", "crates/a/tests/main.rs"));
+        // `mod.rs` is its directory's module, so its companions still pair.
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/tests/serialize.rs"
+        ));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize_tests.rs"
+        ));
+        assert!(same("src/serialize.rs", "tests/serialize/mod.rs"));
+        // Inline tests in the changed file are its own, crate root included.
+        assert!(same("crates/a/src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize/mod.rs"
+        ));
+        // A path tail is not the same file: without an indexed path to
+        // resolve against, only an exact (normalized) path matches.
+        assert!(same("./src/lib.rs", "src/lib.rs"));
+        assert!(!same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
+        assert!(!same("crates/a/src/lib.rs", "src/lib.rs"));
+        // A root-relative probe never claims a member crate's crate root.
+        assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(!same("src/main.rs", "crates/x/src/main.rs"));
+        // An unnormalized `..` parent names no module.
+        assert!(!same("a/../mod.rs", "b/../mod.rs"));
+    }
+
+    #[test]
+    fn mod_rs_change_does_not_relate_another_modules_inline_tests() {
+        // #5395 (html5ever pin): a change in `serialize/mod.rs` listed the
+        // inline tests of `tokenizer/mod.rs` as `same_test_file`.
+        let owner = function("html5ever/src/serialize/mod.rs", "write_escaped");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "html5ever/src/tokenizer/mod.rs",
+                    "check_lines",
+                    "assert!(true);",
+                ),
+                test(
+                    "html5ever/src/serialize/mod.rs",
+                    "escapes_text",
+                    "assert!(true);",
+                ),
+                // The module's companion file relates by module identity,
+                // which only the candidate index's module-stem buckets
+                // select; the cfg(test) full-scan parity check fails if
+                // they are missing.
+                test(
+                    "html5ever/tests/serialize.rs",
+                    "companion_smoke",
+                    "assert!(true);",
+                ),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("html5ever/src/serialize/mod.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        let mut names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["companion_smoke", "escapes_text"]);
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
+    }
+
+    #[test]
+    fn root_prefixed_probe_resolves_to_its_indexed_path() {
+        // #6791: under `--root` the probe path is joined onto the root while
+        // index paths are root-relative. The changed file is the longest
+        // indexed tail, never a shorter one that a different file shares.
+        let mut index = RustIndex::default();
+        for file in ["src/lib.rs", "crates/a/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let resolve = |probe: &str| super::probe_index_path(Path::new(probe), None, None, &index);
+        assert_eq!(
+            resolve("ws/crates/a/src/lib.rs").as_deref(),
+            Some("crates/a/src/lib.rs")
+        );
+        assert_eq!(resolve("ws/src/lib.rs").as_deref(), Some("src/lib.rs"));
+        assert_eq!(resolve("./src/lib.rs").as_deref(), Some("src/lib.rs"));
+        // A tail that only shares characters, not a segment, is no match.
+        assert_eq!(resolve("ws/xsrc/lib.rs").as_deref(), Some("ws/xsrc/lib.rs"));
+        // The owner's file wins over a longer indexed tail that reaches into
+        // the root's own segments: under root `app`, the root package's
+        // `app/src/lib.rs` probe is not the member `app/src/lib.rs`.
+        let mut rooted = RustIndex::default();
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            rooted.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root_owner = function("src/lib.rs", "f");
+        assert_eq!(
+            super::probe_index_path(
+                Path::new("app/src/lib.rs"),
+                None,
+                Some(&root_owner),
+                &rooted
+            )
+            .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &rooted).as_deref(),
+            Some("app/src/lib.rs")
+        );
+        // No indexed tail: the probe keeps its own path.
+        assert_eq!(
+            resolve("ws/crates/b/src/main.rs").as_deref(),
+            Some("ws/crates/b/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn member_crate_root_change_does_not_claim_the_root_crates_inline_tests() {
+        // #6791: a module-level change (no owner function) in member crate
+        // `member/src/lib.rs` under an absolute root, as the editor sidecar
+        // passes, listed the workspace root crate's `src/lib.rs` inline
+        // tests as `same_test_file` because the probe path ends with
+        // `src/lib.rs`. An absolute path outside `crates/` derives no package
+        // prefix, so no package guard filters them.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("member/src/lib.rs", "own_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "member/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let mut probe = probe("/abs/ws/member/src/lib.rs", "marker");
+        probe.owner = None;
+
+        let related = find_related_tests(&probe, None, &index, true, None, None);
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["own_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
+    fn analysis_root_resolves_an_ownerless_probe_exactly() {
+        // #6791 review: under root `/tmp/app`, an ownerless change in the
+        // root package's `src/lib.rs` has the probe path `/tmp/app/src/lib.rs`,
+        // whose longer tail `app/src/lib.rs` is a member's file. Tail
+        // inference picks the member; the known root picks the right file.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("app/src/lib.rs", "member_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "app/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let root = Path::new("/tmp/app");
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), Some(root), None, &index)
+                .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("/tmp/app/src/lib.rs"), None, None, &index)
+                .as_deref(),
+            Some("app/src/lib.rs")
+        );
+        // A relative root strips the same way: under `--root app` the root
+        // package's `app/src/lib.rs` is `src/lib.rs`, although the whole
+        // probe path is itself an indexed member path.
+        assert_eq!(
+            super::probe_index_path(
+                Path::new("app/src/lib.rs"),
+                Some(Path::new("app")),
+                None,
+                &index
+            )
+            .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &index).as_deref(),
+            Some("app/src/lib.rs")
+        );
+
+        let mut probe = probe("/tmp/app/src/lib.rs", "marker");
+        probe.owner = None;
+        let candidates = RelatedTestCandidateIndex::new(&index).with_analysis_root(root);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &candidates,
+        );
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["root_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
     fn foreign_separator_probe_still_resolves_the_canonical_companion() {
         // The probe path was recorded with Windows separators; the stem
         // extraction must split on both flavors so `config_tests` stays a
@@ -7707,7 +8175,14 @@ fn crate_c_score_test() {
         let test_file = std::path::PathBuf::from(std::ffi::OsString::from_vec(
             b"crates/core/tests/foo\x81_tests.rs".to_vec(),
         ));
-        assert!(!super::same_test_file(&probe_file, &test_file));
+        let index = RustIndex::default();
+        let probe_path = super::probe_index_path(&probe_file, None, None, &index);
+        assert_eq!(probe_path, None);
+        assert!(!super::same_test_file(
+            &probe_file,
+            probe_path.as_deref(),
+            &test_file
+        ));
     }
 
     #[test]
@@ -8272,6 +8747,219 @@ fn crate_c_score_test() {
         let mut index = level_filter_index(imported, Vec::new());
         *index.function_at_mut(0) = unknown_owner.clone();
         assert!(level_filter_related(&index, &unknown_owner).is_empty());
+    }
+
+    // --- #6617: the inherent type-path admit on a package-narrowed index ---
+
+    /// `impl Gauge { fn reading() }` in `crate_a`, as the parser records an
+    /// inherent method.
+    fn inherent_gauge_reading() -> FunctionSummary {
+        let mut owner = impl_method("crates/crate_a/src/lib.rs", "Gauge", "reading");
+        owner.item.container = crate::analysis::facts::FunctionContainer::Inherent {
+            self_ty: "Gauge".to_string(),
+        };
+        owner
+    }
+
+    /// The Draft-mode shape of the old-deps corpus subject: `crate_a` (the
+    /// changed owner package) and `crate_c` (its dependent, whose test calls
+    /// the owner) are indexed; `crate_b`, which `crate_c` also depends on and
+    /// which defines a free `reading`, is not. `extra` adds indexed
+    /// definitions; `unindexed` names the packages the index left partial.
+    fn narrowed_gauge_related(
+        owner: &FunctionSummary,
+        test_body: &str,
+        extra: Vec<FunctionSummary>,
+        unindexed: &[&str],
+        workspace_complete: bool,
+    ) -> Vec<RelationReason> {
+        let mut functions = vec![owner.clone()];
+        functions.extend(extra);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test_with_call(
+                "crates/crate_c/tests/direct.rs",
+                "gauge_reads_forty_two",
+                test_body,
+                "reading",
+            )],
+            ..Default::default()
+        });
+        let adjacency = adjacency_with(
+            "complete",
+            &[
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_a",
+                    PathDependencySection::Dependencies,
+                    "crate_a",
+                ),
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_b",
+                    PathDependencySection::Dependencies,
+                    "crate_b",
+                ),
+            ],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let unindexed_manifests: BTreeSet<String> = unindexed
+            .iter()
+            .map(|manifest| (*manifest).to_string())
+            .collect();
+        let context = DependencyEdgeContext {
+            adjacency: &adjacency,
+            manifest_dir_prefixes: &prefixes,
+            index: &index,
+            unindexed_manifests: &unindexed_manifests,
+        };
+        let probe = probe("crates/crate_a/src/lib.rs", "42");
+        find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            workspace_complete,
+            None,
+            Some(&context),
+        )
+        .into_iter()
+        .map(|(_, reason)| reason)
+        .collect()
+    }
+
+    const DIRECT_IMPORT: &str = "use crate_a::Gauge; assert_eq!(Gauge::reading(), 42)";
+    const SPARE: &str = "crates/crate_b/Cargo.toml";
+
+    /// #6617 positive: inherent `T::name` resolution prefers inherent items,
+    /// so with the owner's whole package indexed no unindexed crate can hold
+    /// a competing target; the dependent crate's test relates although the
+    /// index does not span the workspace.
+    #[test]
+    fn inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package() {
+        let owner = inherent_gauge_reading();
+        assert_eq!(
+            narrowed_gauge_related(&owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // An indexed free `reading` in the sibling crate cannot be the
+        // target of `Gauge::reading()` either.
+        assert_eq!(
+            narrowed_gauge_related(
+                &owner,
+                DIRECT_IMPORT,
+                vec![free_function("crates/crate_b/src/lib.rs", "reading")],
+                &[],
+                false,
+            ),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    /// #6617 negatives: the narrowed-index route keeps every #4558 import
+    /// boundary and refuses whenever its own premise does not hold.
+    #[test]
+    fn inherent_type_path_call_on_narrowed_index_fails_closed() {
+        let owner = inherent_gauge_reading();
+        let rows: Vec<(&str, &str, Vec<FunctionSummary>, Vec<&str>)> = vec![
+            (
+                "aliased import",
+                "use crate_a::Gauge as Knob; assert_eq!(Knob::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "glob import",
+                "use crate_a::*; assert_eq!(Gauge::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "same type name from the other dependency",
+                "use crate_b::Gauge; assert_eq!(Gauge::reading(), 42)",
+                Vec::new(),
+                vec![SPARE],
+            ),
+            (
+                "owner package only partly indexed",
+                DIRECT_IMPORT,
+                Vec::new(),
+                vec![SPARE, "crates/crate_a/Cargo.toml"],
+            ),
+            (
+                "another indexed impl of a type with the same name",
+                DIRECT_IMPORT,
+                vec![impl_method(
+                    "crates/crate_c/src/gauge.rs",
+                    "Gauge",
+                    "reading",
+                )],
+                vec![SPARE],
+            ),
+        ];
+        for (label, body, extra, unindexed) in rows {
+            assert!(
+                narrowed_gauge_related(&owner, body, extra, &unindexed, false).is_empty(),
+                "{label}: must not relate"
+            );
+        }
+        // A trait-impl owner can share `T::name` with a trait default or a
+        // blanket impl in an unindexed crate: only the complete index admits.
+        let mut trait_owner = owner.clone();
+        trait_owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+            trait_path: "Read".to_string(),
+            self_ty: "Gauge".to_string(),
+        };
+        assert!(
+            narrowed_gauge_related(&trait_owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false)
+                .is_empty()
+        );
+        assert_eq!(
+            narrowed_gauge_related(&trait_owner, DIRECT_IMPORT, Vec::new(), &[], true),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // A bare call keeps the whole-workspace precondition.
+        let mut free_owner = free_function("crates/crate_a/src/lib.rs", "reading");
+        free_owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        assert!(
+            narrowed_gauge_related(
+                &free_owner,
+                "use crate_a::reading; assert_eq!(reading(), 42)",
+                Vec::new(),
+                &[SPARE],
+                false,
+            )
+            .is_empty()
+        );
+    }
+
+    /// #6617: the partial-package inventory names exactly the packages with
+    /// an analyzable file outside the index; unattributable files name none.
+    #[test]
+    fn manifests_with_unindexed_files_names_partial_packages() {
+        let prefixes = owned_prefixes(&["crates/crate_a/", "crates/crate_b/", "crates/crate_c/"]);
+        let analyzable: Vec<PathBuf> = [
+            "crates/crate_a/src/lib.rs",
+            "crates/crate_b/src/lib.rs",
+            "crates/crate_c/src/lib.rs",
+            "crates/crate_c/tests/direct.rs",
+            "scripts/loose.rs",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        let indexed: Vec<PathBuf> = ["crates/crate_a/src/lib.rs", "crates/crate_c/src/lib.rs"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        assert_eq!(
+            manifests_with_unindexed_files(&prefixes, &analyzable, &indexed),
+            BTreeSet::from([
+                "crates/crate_b/Cargo.toml".to_string(),
+                "crates/crate_c/Cargo.toml".to_string(),
+            ])
+        );
+        assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {
@@ -9945,6 +10633,52 @@ quickcheck! {
             names.is_empty(),
             "opaque macros must not mint tests: {names:?}"
         );
+        Ok(())
+    }
+
+    /// #6537: two files each define `delay` and test it from their own
+    /// `mod tests { use super::*; .. }`. The coolers test's bare `delay(..)`
+    /// binds `coolers::delay`, so it neither relates to nor reaches the
+    /// changed `heaters::delay`; the heaters test still relates directly.
+    #[test]
+    fn a_sibling_files_same_named_function_test_does_not_relate() -> Result<(), String> {
+        let heaters = "pub fn delay(warm: bool) -> u32 {\n    if warm { 5 } else { 50 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn cold_delay() {\n        assert_eq!(delay(false), 50);\n    }\n}\n";
+        let coolers = heaters.replace("cold_delay", "warm_delay");
+        let mut functions = Vec::new();
+        let mut tests = Vec::new();
+        let mut files = std::collections::BTreeMap::new();
+        for (path, source) in [
+            ("src/heaters.rs", heaters),
+            ("src/coolers.rs", coolers.as_str()),
+        ] {
+            let facts =
+                crate::analysis::syntax::ra::summarize_file_with_parser(Path::new(path), source)
+                    .map_err(|error| error.to_string())?;
+            functions.extend(facts.functions.iter().cloned());
+            tests.extend(facts.tests.iter().cloned());
+            files.insert(PathBuf::from(path), facts);
+        }
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0 == "src/heaters.rs::delay")
+            .cloned()
+            .ok_or("heaters::delay owner")?;
+        let mut changed = probe("src/heaters.rs", "if warm { 5 } else { 50 }");
+        changed.owner = Some(owner.id.clone());
+
+        let related = find_related_tests(&changed, Some(&owner), &index, true, None, None);
+        let names = related
+            .iter()
+            .map(|(test, reason)| (test.name.as_str(), *reason))
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![("cold_delay", RelationReason::DirectOwnerCall)]);
         Ok(())
     }
 

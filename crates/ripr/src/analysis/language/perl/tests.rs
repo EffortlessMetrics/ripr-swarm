@@ -2844,6 +2844,69 @@ fn h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap() -> Resu
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 5 and example 28: sink alignment uses the same oracle
+/// binding as classification. An oracle whose `test_id` is not the relation's
+/// test is absent for that relation, so an aligned sink in another test's
+/// oracle must not make the change `Exposed`.
+#[test]
+fn h2_aligned_sink_on_another_tests_oracle_does_not_promote() -> Result<(), String> {
+    let aligned = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"$amount / 2\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"$amount / 2\",",
+        );
+    // Control: the same packet with the oracle bound to the relation's test
+    // is Exposed, so the cross-test packet below differs only in the binding.
+    let control = findings_from_packet(&aligned)?;
+    assert_eq!(
+        control.first().map(|finding| &finding.class),
+        Some(&crate::domain::ExposureClass::Exposed),
+        "control: an aligned sink on the relation's own test is Exposed"
+    );
+    let oracle_test = "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/app.t:test_discount_threshold\",";
+    if !aligned.contains(oracle_test) {
+        return Err("fixture drifted: oracle test_id line not found".to_string());
+    }
+    let cross_test = aligned.replace(
+        oracle_test,
+        "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/other.t:test_other\",",
+    );
+    let findings = findings_from_packet(&cross_test)?;
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::ReachableUnrevealed,
+        "another test's oracle is absent for the relation"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "a cross-test oracle must not emit already-discriminated evidence"
+    );
+    let related = finding
+        .related_tests
+        .first()
+        .ok_or_else(|| "expected the relation's related test".to_string())?;
+    assert_eq!(
+        related.oracle, None,
+        "another test's assertion is not displayed as this test's oracle"
+    );
+    assert_eq!(
+        related.oracle_strength,
+        crate::domain::OracleStrength::Unknown,
+        "another test's oracle strength is not credited to this test"
+    );
+    Ok(())
+}
+
 /// A strong-exact oracle whose `observed_sink` does NOT match the change's
 /// `changed_observable` must NOT classify Exposed. Owner-target identity is
 /// not sink observation — this is the cardinal false-exposed guard.
@@ -3509,7 +3572,7 @@ fn h1_boundary_check_is_ordering_independent_across_related_tests() -> Result<()
     Ok(())
 }
 
-const EXACT_RETURN_PACKET: &str = r#"{
+pub(crate) const EXACT_RETURN_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",
   "packet_id": "perl-facts:repo:exact-return",
   "packet_status": "complete",
@@ -4124,6 +4187,119 @@ fn streamed_file_digest_matches_in_memory_digest() -> Result<(), String> {
             super::hex_sha256_file(&path).map_err(|err| format!("hash {name}: {err}"))?;
         assert_eq!(streamed, super::hex_sha256(&contents), "{name}");
     }
+    Ok(())
+}
+
+fn real_producer_packet() -> Result<PerlFactPacket, String> {
+    let packet_text = include_str!(
+        "../../../../../../fixtures/perl_packet_contract_migration/producer-packets/v1/ordinary_discount.json"
+    );
+    let mut options = packet_test_options();
+    options.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/perl_packet_contract_migration/producer-inputs/ordinary_discount");
+    PerlAdapter.consume_fact_packet(packet_text, &options)
+}
+
+fn diff_adding(path: &str, lines: &[usize]) -> crate::analysis::diff::ChangedFile {
+    crate::analysis::diff::ChangedFile {
+        path: std::path::PathBuf::from(path),
+        added_lines: lines
+            .iter()
+            .map(|&line| crate::analysis::diff::ChangedLine {
+                line,
+                text: String::new(),
+                new_side_line: line,
+            })
+            .collect(),
+        removed_lines: Vec::new(),
+    }
+}
+
+/// The real producer's change sits on zero-based line 8; the diff adds
+/// one-based line 9. The finding moves from the owner's declaration to the
+/// changed line, and its probe id keeps the owner-based identity.
+#[test]
+fn perl_finding_lands_on_the_changed_line_the_diff_confirms() -> Result<(), String> {
+    let packet = real_producer_packet()?;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]);
+    assert_eq!(lines.get(change_id), Some(&9));
+    let located = packet_to_findings_with_currentness(&packet, &lines, |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    });
+    let unlocated = packet_to_findings(&packet);
+    assert_eq!(located.len(), 1);
+    assert_eq!(located[0].probe.location.line, 9);
+    assert_eq!(
+        unlocated[0].probe.location.line, 5,
+        "owner declaration fallback"
+    );
+    assert_eq!(located[0].probe.id, unlocated[0].probe.id);
+
+    // A one-based producer reading: the diff adds line 8 instead.
+    let one_based = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]);
+    assert_eq!(one_based.get(change_id), Some(&8));
+    Ok(())
+}
+
+/// Fail closed: when both readings are added lines, neither is, or the diff
+/// does not name the file, the change gets no line and its finding stays on
+/// the owner's declaration.
+#[test]
+fn perl_finding_line_stays_on_the_owner_when_the_diff_cannot_settle_it() -> Result<(), String> {
+    let packet = real_producer_packet()?;
+    for diff in [
+        vec![diff_adding("lib/App/Discount.pm", &[8, 9])],
+        vec![diff_adding("lib/App/Discount.pm", &[20])],
+        vec![diff_adding("lib/App/Other.pm", &[9])],
+        Vec::new(),
+    ] {
+        let lines = change_lines_from_diff(&packet, &diff);
+        assert!(lines.is_empty(), "{diff:?} must not settle a line");
+        assert_eq!(
+            packet_to_findings_with_currentness(&packet, &lines, |_, _| {
+                crate::domain::SourceCurrentness::UnresolvedSubject
+            })[0]
+                .probe
+                .location
+                .line,
+            5
+        );
+    }
+    Ok(())
+}
+
+/// One producer writes the whole packet, so when two changes settle on
+/// different bases neither reading is trusted and both stay on the owner. A
+/// start line at the top of the range is skipped rather than overflowing.
+#[test]
+fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    let mut other = packet
+        .changes
+        .first()
+        .cloned()
+        .ok_or("real packet has no change")?;
+    other.change_id = "change:file:lib/App/Discount.pm:15:15".to_string();
+    other.range.start_line = 15;
+    packet.changes.push(other);
+    // The first change settles zero-based (adds 9); the second one-based (adds 15).
+    let mixed = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9, 15])]);
+    assert!(mixed.is_empty(), "{mixed:?}");
+    // Both zero-based: 9 and 16.
+    let agreed = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9, 16])]);
+    assert_eq!(agreed.len(), 2, "{agreed:?}");
+    assert_eq!(
+        agreed.get("change:file:lib/App/Discount.pm:15:15"),
+        Some(&16)
+    );
+
+    let mut top = real_producer_packet()?;
+    if let Some(change) = top.changes.first_mut() {
+        change.range.start_line = usize::MAX;
+    }
+    assert!(change_lines_from_diff(&top, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty());
     Ok(())
 }
 
@@ -4897,7 +5073,7 @@ fn all_fact_arrays() -> [&'static str; 8] {
 }
 
 /// Replace the change's digest with a concrete, finding-wide discriminator.
-fn with_concrete_discriminator(text: String) -> String {
+pub(crate) fn with_concrete_discriminator(text: String) -> String {
     text.replace(
         "\"changed_text_digest\": \"sha256:return\"",
         "\"changed_text_digest\": \"discriminator:$amount == 100\"",
@@ -4925,7 +5101,7 @@ fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<Related
     rows
 }
 
-fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
+pub(crate) fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
     let mut findings = findings_from_packet(text)?;
     if findings.len() != 1 {
         return Err(format!("expected one finding, got {}", findings.len()));
@@ -5158,10 +5334,9 @@ fn perl_unconfirmed_miss_follows_row_identity_not_position() -> Result<(), Strin
 /// Cases 16 and 17: shuffled fact arrays with stable IDs and edited metadata
 /// outside the packet identity keep the same fingerprint, finding identity,
 /// rows, tokens and the inputs the shared sentence is rendered from. Rows are compared by test name: row order, and
-/// the suggested test and verify command read from the first row, follow the
-/// packet's relation order (RIPR-SPEC-0064 asks producers to sort arrays by
-/// ID; the consumer does not re-sort), so they are not asserted under
-/// reordering.
+/// guidance is excluded from this reason-only projection. The independent
+/// recommendation_tests controls require stable direct-test guidance under
+/// reordering, including canonical arrays whose first row is advisory (#6734).
 #[test]
 fn perl_packet_array_order_and_metadata_do_not_move_reasons() -> Result<(), String> {
     fn projection(
@@ -5287,3 +5462,9 @@ fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), Stri
     assert_eq!(explained_rows, 5);
     Ok(())
 }
+
+#[path = "recommendation_tests.rs"]
+mod recommendation_tests;
+
+#[path = "composition_tests.rs"]
+mod composition_tests;

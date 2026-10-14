@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-claims-assert-some-side-only",
+  "subject_id": "authored-lib-claims",
+  "diff": "cases/lib-claims-assert-some-side-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "claims_assert_some_side_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.iter().rposition(|&x| x == t)",
+        "mutated_line": "xs.iter().rposition(|&x| x == t)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: find_index(&[5,3,3],3) = Some(2) instead of Some(1)"
+      },
+      {
+        "replacement": "xs.iter().position(|&x| x <= t)",
+        "mutated_line": "xs.iter().position(|&x| x <= t)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: find_index(&[1,3],3) = Some(0) instead of Some(1)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert_some! only checks that an index was found, so returning a different index goes undetected.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

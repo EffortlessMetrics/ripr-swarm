@@ -111,6 +111,48 @@ thread, `authored-ts-nodetest-pricing` and `authored-ts-vitest-cart`,
 mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+The TypeScript corpus carries the same kind of ledger,
+`fixtures/typescript-verdict-corpus/spec-coverage.toml`: RIPR-SPEC-0243, its
+amendments RIPR-SPEC-0246 to RIPR-SPEC-0252, and RIPR-SPEC-0254 are in scope,
+and cases cite the examples they label in `spec_examples`. Examples a case
+could label but none does yet stay uncovered rather than waived. A deleted
+ledger fails `check-all` and
+`committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`.
+
+### Perl corpus
+
+ripr does not read Perl; it reads a `ripr-perl-facts-v1` packet
+(RIPR-SPEC-0064). So `fixtures/perl-verdict-corpus/corpus.json` names its
+producer once, in `fact_producer` (`name`, `repository`, a 40-character
+lowercase hex `commit`, `command`), and every Perl case carries
+`perl_facts`: a `packet` under `packets/`, its `sha256`, and a `provenance`.
+`producer` means the bytes the pinned producer wrote for that case's diff.
+`edited_producer` means a producer packet edited to carry a fact the producer
+does not emit yet (a RIPR-SPEC-0235 example); it must say what was edited in
+`edits`, and its packet fingerprint is recomputed. The validator refuses a
+Perl case without a packet, a packet outside `packets/` or off its pin, an
+edited packet without edits, a producer packet with edits, a Perl corpus
+without a producer, and a producer or packet in any other corpus.
+
+`check` runs a case that carries a packet on the `lang-perl` build with
+`--perl-facts <packet>`; `check-all` builds it once per run, only when a
+corpus has such a case. A packet case whose run reports the Perl adapter
+`unavailable` is an error naming the run's reason, never a silent row. ripr marks a Perl finding `candidate_current` only
+when a diff line falls inside the packet's change range read one-based
+(#6586), and the pinned producer writes zero-based lines (#3221), so its
+findings stay `unresolved_subject`. A packet case therefore also counts
+`unresolved_subject` findings on its anchor; no other case does. Each Perl
+row names its packet provenance, and the derived summary adds
+`by_packet_provenance` rates, so only producer rates describe what a Perl
+user gets now. Rows without a packet carry no provenance field. The Perl
+scoreboard metrics read the producer rates only.
+
+Subjects are authored Perl distributions (`authored-perl-<library>-<name>`)
+covering Test::More, Test2::V0 and Test::Exception. Truth is hand-written
+mutants of the rewritten line run under `prove -l t`, because no Perl
+mutation tool drives all three libraries; each mutant names its mutated
+line, the failing test file and assertion, and carries an equivalence review.
+
 ### Python corpus
 
 Subjects are authored projects (`authored-py-<library>-<name>`) with a
@@ -128,11 +170,11 @@ The Python corpus carries a spec-example ledger,
 ledger contract: every spec with numbered acceptance examples is in or out
 of scope, RIPR-SPEC-0238 is in scope, and cases cite the examples they label
 in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
-Examples 9 and 10 of RIPR-SPEC-0238 have no case yet (the corpus
-`SPEC.md` says why), but a case could label either, so they count as
-uncovered rather than waived. A deleted ledger fails
-`committed_python_corpus_is_valid_and_covers_each_test_library`, since a
-ledgerless non-Rust corpus otherwise scores rows without the coverage gate.
+Every runnable RIPR-SPEC-0238 example has a case; example 10 is labeled in
+a numpy subject (#7819). A deleted ledger fails `verdict-corpus check-all` and
+`committed_python_corpus_is_valid_and_covers_each_test_library`: every
+corpus but Perl must carry its ledger, and only the Perl corpus scores rows
+without the coverage gate.
 
 ## Required Evidence
 
@@ -146,6 +188,13 @@ ledgerless non-Rust corpus otherwise scores rows without the coverage gate.
   spaces and commas, and still refuses a multi-line, padded or empty title.
 - Each committed non-Rust corpus validates, contains both truth directions,
   and its expected rows agree with its labels row by row.
+- A Perl case is refused without a pinned packet under `packets/`, and an
+  edited packet is refused without its edits; a packet or producer outside
+  the Perl corpus is refused.
+- A packet case counts `unresolved_subject` findings on its anchor; a case
+  without a packet does not.
+- Producer and edited-packet rates are reported apart, and a summary rebuilt
+  from the rows keeps them.
 
 ## Non-Goals
 
@@ -167,6 +216,9 @@ ledgerless non-Rust corpus otherwise scores rows without the coverage gate.
   has no corpus.json.
 - `check-all --language typescript` is refused; `check-all` checks every
   corpus.
+- `cargo xtask verdict-corpus check --language perl` builds ripr with
+  `lang-perl`, passes each case's packet with `--perl-facts`, and reports
+  producer and edited-packet rates in separate rows.
 
 ## Test Mapping
 
@@ -178,15 +230,26 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `a_report_and_its_rebless_hint_name_the_corpus_language`
 - `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
 - `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`
+- `committed_perl_corpus_is_valid_and_covers_each_test_library`
+- `perl_expected_rows_agree_with_corpus_labels`
+- `validator_holds_perl_packets_to_their_pins_and_provenance`
+- `validator_refuses_perl_facts_and_a_producer_outside_the_perl_corpus`
+- `packet_findings_count_while_their_subject_is_unresolved_and_others_do_not`
+- `report_keeps_edited_packet_rates_apart_from_producer_rates`
+- `a_packet_case_refuses_a_binary_without_the_perl_adapter`
+- `case_output_refuses_an_unavailable_perl_run_only_for_packet_cases`
 - `committed_python_corpus_is_valid_and_covers_each_test_library`
 - `python_expected_rows_agree_with_corpus_labels`
 - `fixtures/python-verdict-corpus/spec-coverage.toml` and its floor
+- `fixtures/typescript-verdict-corpus/spec-coverage.toml` and its floor
 
 ## Implementation Mapping
 
 - `xtask/src/reports/verdict_corpus.rs` owns the `--language` selection
   and the Rust-only replay label rules; RIPR-SPEC-0219's `check-all` owns
-  corpus discovery and per-language run and report paths.
+  corpus discovery and per-language run and report paths. It also owns the
+  Perl packet validation, the `--perl-facts` run and the provenance rates;
+  `xtask/src/reports/fixtures.rs` builds the `lang-perl` binary.
 - `fixtures/<language>-verdict-corpus/` holds each language's corpus.
 
 ## Metrics

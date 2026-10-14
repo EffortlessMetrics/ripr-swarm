@@ -1,0 +1,11 @@
+t/total_more.t ..
+# Subtest: line item total
+    ok 1 - price times quantity
+    ok 2 - empty quantity
+    1..2
+ok 1 - line item total
+1..1
+ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.01 sys +  0.04 cusr  0.01 csys =  0.07 CPU)
+Result: PASS

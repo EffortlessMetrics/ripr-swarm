@@ -18,5 +18,22 @@
   "contradictions": [],
   "findings_scored": 2,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_error_variant",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#22"
+    },
+    "observed_kind": "exact_error_variant",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "check_twenty_is_bad",
+        "kind": "exact_error_variant",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
 }

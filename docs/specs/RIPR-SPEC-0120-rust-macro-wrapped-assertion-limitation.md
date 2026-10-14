@@ -72,6 +72,37 @@ The analyzer route is:
 analysis/rust-macro-assertion-oracle
 ```
 
+### Weakly exposed by a proximity oracle (#7089)
+
+A finding can read `weakly_exposed` only because a test that merely shares the
+owner's file (`same_test_file`, `same_module` or a name-token relation) holds a
+weak recognized oracle, while every test that calls or reaches the owner has
+none. The same limit applies to that finding when all of these hold:
+
+- the finding is `weakly_exposed` and has no static limit yet;
+- the related-test window is complete (no matched test was truncated away);
+- at least one related test has a direct relation (not proximity and not
+  name-only: `same_test_file`, `same_module`, `weak_token_substring` and
+  `owner_named_test` do not count), and no such test, nor any test without a
+  relation reason, has a recognized oracle or an assertion ripr refused to
+  credit (`assertion_not_credited`);
+- at least one proximity or name-only test does hold a recognized oracle;
+- one of the direct tests invokes an assertion-like macro outside the known
+  set, and the macro's delimited arguments make a bare call `owner(`, read
+  with comments and strings masked. A path- or method-qualified call
+  (`Bar::new(`, `x.len(`) may name another item with the same last segment
+  and does not count, nor does an argument list that runs past a `;` or holds
+  a `'` (char literals are not masked and can unbalance the delimiters) or a
+  nested macro invocation (`stringify!(owner(1))` never evaluates its tokens);
+- the parser established the owner as a free function. For a method owner
+  (`impl Cart::total`) or a trait default method a bare `total(` can only be
+  another item, so the path does not run; the lexical fallback leaves the
+  context unknown, so it does not run there either.
+
+The class stays `weakly_exposed`; the finding names the limit instead of
+reporting a gap. An owner value that reaches the macro only through a binding,
+or a direct test that also holds a recognized oracle, keeps the gap.
+
 ## Fail-Closed Boundaries
 
 - Never promote the finding because a custom assertion macro exists.
@@ -86,7 +117,7 @@ analysis/rust-macro-assertion-oracle
 
 | Field | Value |
 |---|---|
-| `classification` | `reachable_unrevealed` |
+| `classification` | `reachable_unrevealed`, or `weakly_exposed` under the proximity-oracle rule (#7089) |
 | `static_limit_kind` | `rust_macro_wrapped_assertion_unresolved` |
 | `related_tests` | preserved from direct reach classification |
 | `static_limitation.analyzer_route` | `analysis/rust-macro-assertion-oracle` |
@@ -105,6 +136,15 @@ analysis/rust-macro-assertion-oracle
 2. **Known assertion macro**: `assert_eq!(result, 7)` remains handled by the
    existing Rust assertion extractor. The new limitation does not fire for
    built-in assertion macros.
+3. **Proximity oracle beside an unread macro** (#7089): the only test calling
+   changed owner `bulk` runs `assert_flag!(bulk(100), true)`; another test in
+   the file asserts `assert!(needs_review(5000))`. RIPR keeps the finding
+   `weakly_exposed` and emits
+   `static_limit_kind: rust_macro_wrapped_assertion_unresolved`. With
+   `let flag = bulk(100); assert_flag!(flag, true);` the gap stays.
+   Corpus: `checkout-bulk-custom-assert-macro`. `strsim-sorensen-dice-equal`
+   keeps its gap: its related-test window is truncated, so a hidden direct
+   test's oracle cannot be ruled out.
 
 ## Required Evidence
 
@@ -126,6 +166,13 @@ analysis/rust-macro-assertion-oracle
 
 - `crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro`
 - `crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_ignores_known_assertion_macros`
+- `crates/ripr/src/analysis/language/rust/oracles.rs::tests::owner_scoped_assertion_scan_requires_an_owner_call_in_the_arguments`
+- `crates/ripr/src/analysis/language/rust/oracles.rs::tests::weakly_exposed_limit_needs_a_complete_direct_window_and_a_proximity_oracle`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_unread_assertion_macro_without_the_owner_call_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_direct_test_with_a_recognized_oracle_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_quoted_by_stringify_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_trait_default_method_owner_keeps_the_gap`
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`

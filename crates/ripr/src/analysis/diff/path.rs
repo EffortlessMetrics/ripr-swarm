@@ -117,7 +117,9 @@ pub(super) fn parse_old_path_marker(raw: &str) -> bool {
     if path.is_dev_null() {
         return true;
     }
-    path.without_side_prefix("a/").is_plausible()
+    // Quoted Git paths can contain whitespace. Keep the same boundary
+    // admission as the new marker; confinement still owns path acceptance.
+    marker.starts_with('"') || path.without_side_prefix("a/").is_plausible()
 }
 
 /// Extract and confine the old path from a `--- <path>` marker, symmetrically
@@ -326,6 +328,10 @@ where
     };
 
     match ch {
+        'a' => bytes.push(0x07),
+        'b' => bytes.push(0x08),
+        'v' => bytes.push(0x0b),
+        'f' => bytes.push(0x0c),
         'n' => bytes.push(b'\n'),
         'r' => bytes.push(b'\r'),
         't' => bytes.push(b'\t'),
@@ -364,6 +370,109 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_c_control_escapes_keep_native_path_identity() {
+        for (escape, control) in [('a', '\x07'), ('b', '\x08'), ('v', '\x0b'), ('f', '\x0c')] {
+            let expected = PathBuf::from(format!("src/byte{control}.rs"));
+            let marker = format!("\"b/src/byte\\{escape}.rs\"");
+            assert_eq!(
+                parse_new_path_marker(&format!("+++ {marker}")),
+                Some(expected.clone())
+            );
+            assert_eq!(
+                parse_old_path_for_confinement(&format!("--- \"a/src/byte\\{escape}.rs\"")),
+                Some(expected.clone())
+            );
+            assert_eq!(
+                parse_rename_to_path(&format!("rename to \"src/byte\\{escape}.rs\"")),
+                Some(expected.clone())
+            );
+            assert_ne!(expected, PathBuf::from(format!("src/byte{escape}.rs")));
+            assert_ne!(
+                parse_new_path_marker(&format!("+++ \"b/src/byte\\\\{escape}.rs\"")),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_whitespace_old_headers_keep_plain_file_sections_separate() -> Result<(), String> {
+        use super::super::parse::{
+            parse_unified_diff_with_limit, parse_unified_diff_with_metadata,
+        };
+
+        for (escape, control) in [('n', '\n'), ('t', '\t'), ('v', '\x0b'), ('f', '\x0c')] {
+            let input = format!(
+                "--- a/src/first.rs\n+++ b/src/first.rs\n@@ -2 +2 @@\n-before first\n+after first\n\
+                 --- \"a/src/byte\\{escape}.rs\"\n+++ \"b/src/byte\\{escape}.rs\"\n@@ -4 +4 @@\n-before second\n+after second\n"
+            );
+            let unbounded = parse_unified_diff_with_metadata(&input);
+            assert!(
+                unbounded.limitations.is_empty(),
+                "{escape}: {:?}",
+                unbounded.limitations
+            );
+            assert_eq!(unbounded.truncated_file_sections, 0);
+            for files in [
+                unbounded.changed_files,
+                parse_unified_diff_with_limit(&input, 2)?,
+            ] {
+                assert_eq!(files.len(), 2, "{escape}: {files:?}");
+                for (path, line, before, after) in [
+                    (
+                        PathBuf::from("src/first.rs"),
+                        2,
+                        "before first",
+                        "after first",
+                    ),
+                    (
+                        PathBuf::from(format!("src/byte{control}.rs")),
+                        4,
+                        "before second",
+                        "after second",
+                    ),
+                ] {
+                    let file = files
+                        .iter()
+                        .find(|file| file.path == path)
+                        .ok_or_else(|| format!("missing {path:?}: {files:?}"))?;
+                    assert_eq!(file.removed_lines.len(), 1);
+                    assert_eq!(file.added_lines.len(), 1);
+                    assert_eq!(
+                        (
+                            file.removed_lines[0].line,
+                            file.removed_lines[0].text.as_str()
+                        ),
+                        (line, before)
+                    );
+                    assert_eq!(
+                        (file.added_lines[0].line, file.added_lines[0].text.as_str()),
+                        (line, after)
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_control_header_pair_inside_declared_hunk_stays_source_payload() {
+        use super::super::parse::parse_unified_diff_with_metadata;
+
+        let input = "--- a/src/first.rs\n+++ b/src/first.rs\n@@ -2,2 +2,2 @@\n--- \"a/src/byte\\v.rs\"\n+++ \"b/src/byte\\v.rs\"\n-before second\n+after second\n";
+        let parsed = parse_unified_diff_with_metadata(input);
+        assert!(parsed.limitations.is_empty());
+        assert_eq!(parsed.changed_files.len(), 1);
+        let file = &parsed.changed_files[0];
+        assert_eq!(file.path, PathBuf::from("src/first.rs"));
+        assert_eq!(file.removed_lines.len(), 2);
+        assert_eq!(file.added_lines.len(), 2);
+        assert_eq!(file.removed_lines[0].text, "-- \"a/src/byte\\v.rs\"");
+        assert_eq!(file.added_lines[0].text, "++ \"b/src/byte\\v.rs\"");
+        assert_eq!(file.removed_lines[1].text, "before second");
+        assert_eq!(file.added_lines[1].text, "after second");
+    }
 
     #[test]
     fn c_quoted_paths_reconstruct_utf8_names_and_keep_invalid_bytes_distinct() {

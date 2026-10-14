@@ -39,6 +39,7 @@ rust_subprocess_binary_reach_unresolved
 wrapper_error_binding_unresolved
 python_transitive_reach_unresolved
 rust_assertion_context_unresolved
+rust_log_capture_unresolved
 ```
 
 When `static_limit_kind` is absent but stable static-limit text is present,
@@ -69,6 +70,7 @@ action.
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. |
 | `rust_assertion_context_unresolved` | A related Rust test has an `assert_eq!`, but RIPR refused it for a limit of its own reading: the file did not parse or could not be placed, the test could not be identified, it carries a feature `cfg`, or a glob import or unresolved `#[macro_use]` may rebind the macro. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). The "not credited" note names the refused assertion; check that it compares the changed value, and add a test only if none does. |
+| `rust_log_capture_unresolved` | A changed `log::` record is checked by a related Rust test that installs a capturing logger (`log::set_logger` or `log::set_boxed_logger`, directly or through a same-file helper that returns the installed logger) before calling the owner and asserts exactly on a value read from the captured store, against a string literal that carries the record's static template text, but RIPR does not resolve the logger or match the format template against the asserted text. | The gap is withheld (`static_unknown`, #7133). Check that the assertion compares the changed record; add a test only if none does. |
 
 ## Seam Readings: `opaque` and `activation_unknown`
 
@@ -96,6 +98,22 @@ How the two count:
 that your tests use reads `opaque` even when no test runs that impl (`Debug`,
 `Hash` and `Drop` impls are typical). `opaque` is a prompt to look, not
 evidence that a test exists. RIPR-SPEC-0230 lists the limits.
+
+## Rust Documentation and Example Assertions
+
+Rust doctests are not indexed as related tests. An exact assertion in a runnable
+doc example may already distinguish a change that RIPR reports as weakly
+exposed. Inspect that example before adding a duplicate test or replacing an
+assertion. In an ordinary Cargo library, run `cargo test --doc` from its package
+directory to check rustdoc examples; `cargo test --lib` and
+`cargo test --all-targets` leave those examples out.
+
+A passing `no_run` or `compile_fail` doctest checks compilation, while `ignore`
+and `text` fences do not execute the example's assertion. Check the executed
+subjects and the fence before treating a green result as behavior evidence.
+Assertions in an example program's `main` run with
+`cargo run --example <example-name>`. `cargo test --examples` uses the test
+harness by default and does not run that `main`.
 
 ## External-Language Related-Test Inventory
 

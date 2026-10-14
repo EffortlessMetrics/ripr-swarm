@@ -23,6 +23,7 @@
 //! Cloning the real-repository corpus is opt-in (`--clone`).
 
 mod measure;
+mod population;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -81,7 +82,7 @@ target/ripr/reports/dx-scoreboard.{json,md}.
   --ingest <file>     merge metrics measured by another harness
   --baseline <file>   compare against an earlier dx-scoreboard.json
   --gate              exit nonzero when a metric regresses past its margin
-                      or an instrument fails";
+                      or an instrument or case comparison fails";
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Config {
@@ -169,6 +170,8 @@ pub(crate) struct Sample {
 pub(crate) enum SampleOutcome {
     /// The instrument produced a number.
     Value(f64),
+    /// A committed verdict rate with its case identities and contributions.
+    Corpus(population::Population),
     /// The instrument ran but the product did not reach a useful result
     /// (for example pilot exited nonzero). The elapsed number is kept for
     /// context but the sample can never meet its target.
@@ -1478,12 +1481,17 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
 /// denominator is `not_measured`, not a perfect rate.
 fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
     let mut samples = Vec::new();
+    let mut corpus_records = BTreeMap::new();
     for metric in &config.metric {
         if !boards.contains(&metric.board) {
             continue;
         }
         if let Some(reference) = metric.source.strip_prefix("verdict-corpus:") {
-            samples.push(verdict_corpus_sample(metric, reference));
+            samples.push(verdict_corpus_sample(
+                metric,
+                reference,
+                &mut corpus_records,
+            ));
             continue;
         }
         let Some(reference) = metric.source.strip_prefix("file:") else {
@@ -1515,7 +1523,11 @@ fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, Strin
     Ok(samples)
 }
 
-fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
+fn verdict_corpus_sample(
+    metric: &MetricDef,
+    reference: &str,
+    cache: &mut BTreeMap<String, Result<population::Records, String>>,
+) -> Sample {
     let (dir, pointer) = reference.split_once('#').unwrap_or((reference, ""));
     // A missing corpus is not measured; a corpus that exists but whose rows
     // do not parse is a failed instrument, as an unparsable `file:` receipt is.
@@ -1538,11 +1550,35 @@ fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
     {
         return spec_example_coverage_sample(metric, dir, pointer);
     }
-    let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
-        serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
-    });
-    match report {
-        Ok(json) => ratio_sample(&metric.id, dir, pointer, &json),
+    let records = cache
+        .entry(dir.to_string())
+        .or_insert_with(|| population::Records::load(Path::new(dir)));
+    let population = records
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|records| records.population(pointer));
+    match population {
+        Ok(population) => {
+            let (n, d) = match population.totals() {
+                Ok(totals) => totals,
+                Err(err) => {
+                    return Sample {
+                        metric: metric.id.clone(),
+                        repo: None,
+                        outcome: SampleOutcome::Failed,
+                        detail: err,
+                    };
+                }
+            };
+            Sample {
+                metric: metric.id.clone(),
+                repo: None,
+                outcome: SampleOutcome::Corpus(population),
+                detail: format!(
+                    "{dir} {pointer}: {n}/{d}; committed expected records, not fresh analyzer execution"
+                ),
+            }
+        }
         Err(err) => Sample {
             metric: metric.id.clone(),
             repo: None,
@@ -1671,13 +1707,15 @@ pub(crate) fn build_report(
                 // The compared value: the baseline plus the delta over the
                 // repositories both runs measured, not the overall worst,
                 // which may come from a repository new to this run.
-                "current": match (
+                "current": if !row["baseline"]["current"].is_null() {
+                    row["baseline"]["current"].clone()
+                } else { match (
                     row["baseline"]["value"].as_f64(),
                     row["baseline"]["delta"].as_f64(),
                 ) {
                     (Some(base), Some(delta)) => json!(round(base + delta)),
                     _ => row["value"].clone(),
-                },
+                } },
                 "allowed_worsening": row["baseline"]["allowed_worsening"],
                 "reason": row["baseline"]["reason"],
                 "regressed_repos": row["baseline"]["regressed_repos"],
@@ -1692,6 +1730,7 @@ pub(crate) fn build_report(
         .filter(|_| baseline.is_some())
         .filter(|row| {
             row["baseline"]["comparable"] == false
+                && row["baseline"]["comparison_failed"] != true
                 && row["baseline"]["review"].is_null()
                 && (!row["baseline"]["value"].is_null() || !row["value"].is_null())
         })
@@ -1723,6 +1762,11 @@ pub(crate) fn build_report(
         .filter(|row| row["status"].as_str() == Some("failed"))
         .map(|row| row["id"].clone())
         .collect();
+    let comparison_failures: Vec<Value> = metrics
+        .iter()
+        .filter(|row| row["baseline"]["comparison_failed"] == true)
+        .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
+        .collect();
     let gate_status = if !gate {
         "not_run"
     } else if baseline.is_none() {
@@ -1731,7 +1775,7 @@ pub(crate) fn build_report(
         } else {
             "fail"
         }
-    } else if regressions.is_empty() && failed.is_empty() {
+    } else if regressions.is_empty() && failed.is_empty() && comparison_failures.is_empty() {
         "pass"
     } else {
         "fail"
@@ -1758,6 +1802,7 @@ pub(crate) fn build_report(
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
+            "failed_comparisons": comparison_failures,
             "review": review,
             "uncompared": uncompared,
         },
@@ -1853,12 +1898,16 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
         .iter()
         .map(|sample| {
             let (value, status) = sample_value_status(def, &sample.outcome);
-            json!({
+            let mut rendered = json!({
                 "repo": sample.repo,
                 "value": value,
                 "status": status,
                 "detail": sample.detail,
-            })
+            });
+            if let SampleOutcome::Corpus(population) = &sample.outcome {
+                rendered["population"] = json!(population);
+            }
+            rendered
         })
         .collect();
 
@@ -1891,8 +1940,9 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
         .any(|s| matches!(s.outcome, SampleOutcome::Incomplete(_)));
     let measured: Vec<f64> = samples
         .iter()
-        .filter_map(|s| match s.outcome {
-            SampleOutcome::Value(v) | SampleOutcome::Incomplete(v) => Some(v),
+        .filter_map(|s| match &s.outcome {
+            SampleOutcome::Value(v) | SampleOutcome::Incomplete(v) => Some(*v),
+            SampleOutcome::Corpus(population) => population.value(),
             SampleOutcome::NotMeasured | SampleOutcome::Failed => None,
         })
         .collect();
@@ -1934,6 +1984,10 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
 
 fn sample_value_status(def: &MetricDef, outcome: &SampleOutcome) -> (Value, &'static str) {
     match outcome {
+        SampleOutcome::Corpus(population) => match population.value() {
+            Some(value) => sample_value_status(def, &SampleOutcome::Value(value)),
+            None => (Value::Null, "not_measured"),
+        },
         SampleOutcome::Value(v) => (
             json!(round(*v)),
             if meets_target(def, *v) {
@@ -2143,8 +2197,22 @@ pub(crate) fn compare_with_baseline(
             .find(|r| r["id"].as_str() == Some(def.id.as_str()))
     });
     let Some(base_row) = base_row else {
+        if population::is_case_rate(def) {
+            return population::failure(
+                "metric absent from baseline; case identity evidence is required",
+            );
+        }
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
+    if population::is_case_rate(def) {
+        let matches = baseline["metrics"].as_array().map_or(0, |rows| {
+            rows.iter().filter(|row| row["id"] == def.id).count()
+        });
+        if matches != 1 {
+            return population::failure("duplicate baseline metric evidence");
+        }
+        return population::compare(def, row, base_row);
+    }
     if def.source == "ingest:mutation-spot-check" {
         if !from_spot_check_v2(base_row) {
             return json!({
@@ -2286,6 +2354,7 @@ fn status_counts(rows: &[&Value]) -> Value {
         ("not_measured", 0),
         ("failed", 0),
         ("regressed", 0),
+        ("comparison_failed", 0),
     ]);
     for row in rows {
         if let Some(status) = row["status"].as_str()
@@ -2298,13 +2367,18 @@ fn status_counts(rows: &[&Value]) -> Value {
         {
             *slot += 1;
         }
+        if row["baseline"]["comparison_failed"] == true
+            && let Some(slot) = counts.get_mut("comparison_failed")
+        {
+            *slot += 1;
+        }
     }
     json!(counts)
 }
 
 fn board_status(counts: &Value) -> &'static str {
     let get = |key: &str| counts[key].as_u64().unwrap_or(0);
-    if get("failed") > 0 || get("regressed") > 0 {
+    if get("failed") > 0 || get("regressed") > 0 || get("comparison_failed") > 0 {
         "attention"
     } else if get("below_target") > 0 {
         "gaps"
@@ -2364,6 +2438,17 @@ fn gate_failure_message(report: &Value) -> String {
             metric.as_str().unwrap_or("?")
         ));
     }
+    for item in report["gate"]["failed_comparisons"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  comparison failed {}: {}",
+            item["metric"].as_str().unwrap_or("?"),
+            item["reason"].as_str().unwrap_or("missing evidence")
+        ));
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -2391,6 +2476,17 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or(&[]);
+    for item in report["gate"]["failed_comparisons"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**Comparison failed** `{}`: {}\n",
+            item["metric"].as_str().unwrap_or("?"),
+            item["reason"].as_str().unwrap_or("missing evidence")
+        ));
+    }
     let uncompared = report["gate"]["uncompared"]
         .as_array()
         .map(Vec::as_slice)
@@ -2558,6 +2654,30 @@ fn repo_note(baseline: &Value, key: &str, label: &str) -> String {
 }
 
 fn baseline_cell(baseline: &Value) -> String {
+    if !baseline["common"].is_null() {
+        return format!(
+            "common {} cases: {}/{} → {}/{} {}; added {} ({}/{}), removed {}, changed definitions {}",
+            baseline["common"]["cases_total"],
+            baseline["common"]["baseline"]["numerator"],
+            baseline["common"]["baseline"]["denominator"],
+            baseline["common"]["current"]["numerator"],
+            baseline["common"]["current"]["denominator"],
+            if baseline["comparable"] != true {
+                baseline["reason"].as_str().unwrap_or("comparison failed")
+            } else if baseline["regressed"] == true {
+                "**regressed**"
+            } else {
+                "ok"
+            },
+            baseline["new_cases"].as_array().map_or(0, Vec::len),
+            baseline["added"]["numerator"],
+            baseline["added"]["denominator"],
+            baseline["removed_cases"].as_array().map_or(0, Vec::len),
+            baseline["changed_definitions"]
+                .as_array()
+                .map_or(0, Vec::len)
+        );
+    }
     if baseline["comparable"].as_bool() == Some(true) {
         let verdict = if baseline["regressed"].as_bool() == Some(true) {
             "**regressed**"
@@ -2589,3 +2709,6 @@ fn read_json(path: &Path) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod population_tests;

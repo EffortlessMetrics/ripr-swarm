@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testmore-tier-far-from-boundary",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-tier-far-from-boundary.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_far_from_boundary",
+  "hard_case": "The exact is() targets the changed sub but its inputs (2000, 10) sit far from the 1000 threshold; the producer still records the changed predicate as the oracle's observed_sink.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 'gold' if 1000 < $points;",
+        "mutated_line": "return 'gold' if 1000 < $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1000 points become silver"
+      },
+      {
+        "replacement": "return 'gold' if 1500 <= $points;",
+        "mutated_line": "return 'gold' if 1500 <= $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1200 points become silver"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Inputs 2000 and 10 are far from 1000, so moving the gold threshold changes no asserted value. An exact assertion on the owner is not observation of the changed predicate. Spec cells: RIPR-SPEC-0064 sink alignment, #5498.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-tier-far-from-boundary.json",
+    "sha256": "09b3cb2b26839256e718cf6436c3d2f91d6354d6a582b7c8a34b5835fe1a9228",
+    "provenance": "producer"
+  }
+}

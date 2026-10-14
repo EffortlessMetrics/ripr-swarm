@@ -41,7 +41,9 @@
 //! the projection only ever produces `Some(record)` for synthetic test
 //! findings. PR 16 lands the real Perl evidence path.
 
-use crate::domain::{ExposureClass, Finding, LanguageId, LanguageStatus};
+use crate::domain::{
+    ExposureClass, Finding, LanguageId, LanguageStatus, perl_suggested_related_test,
+};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility,
 };
@@ -74,8 +76,8 @@ const PERL_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 ///   P-verify: the corresponding `perl_*:` evidence keys are present
 /// - P-stop / P-must-not-change: at least one `perl_stop_if:` and one
 ///   `perl_must_not_change:` line (mirrors `perl_preview_card.rs:77`)
-/// - P-related-test: at least one related test with an oracle-strength rank
-///   (mirrors the TS G-D gate)
+/// - P-related-test: the declared file/name identifies exactly one retained
+///   oracle-related test
 /// - P-missing-disc: at least one `activation.missing_discriminators` entry
 ///   (mirrors the TS G-E gate)
 pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
@@ -106,7 +108,6 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
     // P-verify: every required perl_* evidence key must be present.
     let repair_kind = evidence_value(finding, "perl_repair_kind: ")?;
     let _target_test_shape = evidence_value(finding, "perl_target_test_shape: ")?;
-    let suggested_test_location = evidence_value(finding, "perl_suggested_test_location: ")?;
     let suggested_assertion = evidence_value(finding, "perl_suggested_assertion: ")?;
     let verify_command = evidence_value(finding, "perl_verify_command: ")?;
 
@@ -121,24 +122,10 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         return None;
     }
 
-    // P-related-test: at least one related test (mirrors TS G-D). We pick the
-    // strongest by oracle rank for the target_file / target_line.
-    let related_test = finding
-        .related_tests
-        .iter()
-        .max_by_key(|t| t.oracle_strength.rank())?;
-    let test_file = related_test.file.display().to_string().replace('\\', "/");
-    // Prefer the related-test file for the edit surface; fall back to the
-    // file component of the suggested test location.
-    let target_file = if test_file.is_empty() {
-        suggested_test_location
-            .split_once("::")
-            .map(|(file, _)| file)
-            .unwrap_or(suggested_test_location)
-            .to_string()
-    } else {
-        test_file
-    };
+    // Keep the producer's location, assertion and command beside the same
+    // declared test; consumers do not make another ranking decision.
+    let related_test = perl_suggested_related_test(finding)?;
+    let target_file = related_test.file.display().to_string().replace('\\', "/");
 
     // P-missing-disc: at least one named missing discriminator (mirrors TS G-E).
     if finding.activation.missing_discriminators.is_empty() {

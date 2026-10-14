@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 5: `assert parse_and_chain(\"1\") == 2 and other == 3` is read as smoke_only, yet the left conjunct compares exactly, so `+ 2` fails the test. ripr's weakly_exposed is the spec's verdict and scores false actionable.",
+  "reasoning": "RIPR-SPEC-0238 example 5: `assert parse_and_chain(\"1\") == 2 and other == 3` is read as smoke_only, yet the left conjunct compares exactly, so `+ 2` fails the test. ripr's weakly_exposed is the spec's verdict and scores false actionable. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-rstest-values-matrix-relational",
+  "subject_id": "authored-lib-rstest",
+  "origin": "authored",
+  "anchor": "src/lib.rs:13",
+  "behavior_family": "return_value",
+  "test_shape": "rstest_values_matrix_relational",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1301,6 +1301,38 @@ owner = "product-analysis"
 standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0252"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0256"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0258"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a committed Jest or Vitest snapshot entry the assertion compares with as strong, amending RIPR-SPEC-0247 rule 3 from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0254"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a changed TypeScript lookup-table entry as a return-value change credited only by a changed-key lookup, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0250"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
@@ -1451,6 +1483,30 @@ path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
+
+[[artifact]]
+id = "RIPR-SPEC-0263"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the if-guard counterpart of RIPR-SPEC-0229 for side effects (#7132): a changed side_effect or call_deletion line directly inside a literal parameter guard that no related test input enters reads weakly_exposed, not exposed, with every unreadable shape failing closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0257"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0257-current-cache-export.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the producer-owned current-input cache snapshot contract (#7517): ordinary key selection, copied-byte validation, source preservation, exclusive independent outputs, explicit failure ownership and restored reuse without retaining historical generations."
+
+[[artifact]]
+id = "RIPR-SPEC-0255"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0255-check-config-path-disclosure.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #7536 names the loaded ripr.toml in ripr check's human header and JSON (config_path), exactly when a file was loaded; built-in defaults stay an explicit absence, no change to which file loads."
 [[artifact]]
 id = "RIPR-SPEC-0253"
 kind = "spec"

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b384688..9b5db58 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -43,7 +43,7 @@
+     Record {
+         id: format!("{}-{:04}", prefix, seq + 1),
+         total_cents: items.iter().map(line_total).sum(),
+-        items: items.len(),
++        items: items.iter().count(),
+     }
+ }
+ 

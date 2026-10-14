@@ -8,15 +8,32 @@
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",
-  "observed_verdict": "gap",
+  "observed_verdict": "credited",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "weakly_exposed"
+    "exposed"
   ],
-  "outcome": "false_actionable",
+  "outcome": "ideal",
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#6"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "check_five_is_ok_five",
+        "kind": "exact_value",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
 }

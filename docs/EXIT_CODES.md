@@ -41,23 +41,33 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 object (RIPR-SPEC-0190). Orchestrators that discover commands from that
 document should branch on `exit`, not on free-text `stop_states`.
 
+Error and panic diagnostics on stderr are best effort. If a stderr reader
+closes after a JSON refusal has been written, the command retains that stdout
+document and its original exit `2` or `3`. A failed panic diagnostic still
+terminates with `2`; reporting it must not cause a recursive panic or abort.
+
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable
   `--diff` path, or a directory), the diff exceeded the hard
   `RIPR_MAX_DIFF_*` guards (`diff_scope_oversized` with no analysis run), the
   base ref could not be resolved, or the workspace root could not be
-  determined. A diff that is read but does not parse (no file headers or
-  hunks) is not an exit-2 error: `ripr check` exits `0` with the typed
-  outcome `unsupported_input` (the human header reads
-  `Analysis outcome: the input is not supported (analysis incomplete; unsupported_input).`). A run that analyzed only
+  determined. A read diff whose typed outcome is `unsupported_input`
+  (for example malformed input or a truncated declared hunk) exits `2`
+  after writing its original report, including retained advisory findings,
+  counts, input identity, limitations and recovery routes. JSON stdout remains
+  one ordinary check or diff document, with `analysis_complete: false`; it is not
+  replaced by a refusal envelope. This changes the earlier unsupported-input
+  exit-`0` contract (#7440 for check, #7793 for diff). Empty or whitespace-only input stays complete
+  `no_scope` with exit `0`; it does not establish analyzed behavior.
+  A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
   over the smaller partial budget (its limitation is also named
   `diff_scope_oversized`), a changed Rust file the parser refused and read
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
-  With `--json`, every post-argv-parse `check` failure — the analysis errors
+  With `--json`, every pre-report, post-argv-parse `check` failure — the analysis errors
   above, an unreadable config or suppression policy, a git timeout, or any
   other failure the command can produce — also writes a machine-readable
   refusal document to stdout naming the failure; the exit stays `2` and the
@@ -70,9 +80,12 @@ document should branch on `exit`, not on free-text `stop_states`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
-  error annotation, and `badge-json`, `repo-exposure-json`, and
-  `agent-seam-packets-json` render their format's degraded/refused envelope
-  (zeroed counts, `run_status: "refused"`). Machine formats without an
+  error annotation, `badge-json` renders the badge family's degraded-state
+  convention (`status: "warn"`, `color: "lightgrey"`, zeroed counts,
+  `message: "refused: <identity>"`, repair route in the first warning,
+  `analysis_outcome: null`; no `run_status` field), and
+  `repo-exposure-json` and `agent-seam-packets-json` render their format's
+  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
   `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
@@ -82,6 +95,11 @@ document should branch on `exit`, not on free-text `stop_states`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
+  missing or not a directory is an argv-level usage refusal: it exits `2`,
+  names the root, and does not write `gate-decision.{json,md}`. Evaluation
+  does not start. This is distinct from a completed `config_error` decision
+  (also exit `2`), which still writes the report before returning.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -126,11 +144,13 @@ document should branch on `exit`, not on free-text `stop_states`.
   body or `const` block, an owner behind a cfg in its own file that a plain
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
-  selector names no reported gap. Several inline test modules are not a
+  selector names no reported gap (`seam_not_found`), or the location selector
+  matches several files or tied disjoint seams (`selector_ambiguous`: choose
+  a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` `state: refused` envelope under `--json`; stdout stays
+  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
   empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
@@ -150,6 +170,32 @@ document should branch on `exit`, not on free-text `stop_states`.
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
   exit `2`.
+- **Task-first repair façade refusal**: `ripr repair` refused a start
+  without writing a success document. The named causes are: an explicit
+  item that names no seam, a `ripr check` finding ID, or a gap ID that
+  names several seams; no repair-eligible seam under the selected root
+  (honest setup or limitation prose, including when no seams are
+  visible); several eligible seams, or a start the selector will not
+  bind, so no item is selected (the canonical next-action block and a
+  retry command); and a card render that fails after the before phase
+  already published an attempt (#7032). In every case stdout stays
+  empty and stderr names the cause. The post-publication card path is a
+  deliberate asymmetry with `ripr agent card`: even an operational card
+  failure is remapped to exit `3` because the attempt exists, and
+  recovery inspects or continues that same attempt
+  (`ripr status --attempt` / `ripr continue --attempt`) rather than
+  implying no start happened. A truncated seam inventory still exits
+  `2`, because the command could not select from a complete list.
+- **Task-first continue façade refusal**: `ripr continue` refused to
+  claim completion. The named causes are: an attempt that ended without
+  a receipt (`stale`, `failed`, or `incomparable`); an attempt whose
+  finished state a compliant receipt does not confirm (unissued,
+  unavailable, or compatibility-only); no current attempt under the
+  selected root; and several current attempts, so none is selected (a
+  bounded list and a retry command). Stdout stays empty; stderr carries
+  the cause and, for an ended attempt, the status facts. A continue that
+  has selected a current attempt then follows the same
+  `ripr agent repair --phase after` refusals above.
 
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.
@@ -168,13 +214,18 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
-The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
-`.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Cargo.toml at the selected root, an
+The `Cargo.toml` check applies only when Rust is in scope for the root:
+Rust is enabled and either a Cargo.toml is found at the selected root, an
+ancestor Cargo project bounded by git, or nested in this tree; Rust markers
+(`.rs` files) are detected at the selected root; or no other language is
+detected or enabled. A Python-only or TypeScript-only root with no nested
+or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
+The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
+still probes those tools and can exit `2` if they are missing.
+A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
-(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+(for example `rust/Cargo.toml` at a polyglot git root that also has
+`package.json`) passes `cargo_toml`.
 A root with Rust sources but no Cargo.toml anywhere in that bounded search,
 and an empty root under the Rust-only default, still fail on a missing
 manifest.
@@ -218,6 +269,9 @@ empty (the default, advisory) or `visible-only` never fails the job;
 a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
 `0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
 evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
-`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+`2` on a `config_error`; those completed decisions still write
+`gate-decision.{json,md}`. A `--root` that is missing or not a directory is
+argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
+treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.

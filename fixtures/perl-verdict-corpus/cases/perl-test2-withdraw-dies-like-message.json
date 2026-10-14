@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-test2-withdraw-dies-like-message",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-withdraw-dies-like-message.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 28
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "test2_like_dies_message",
+  "hard_case": "The exception is observed through like(dies { ... }, qr/.../), which the producer maps to a weak broad exception observer.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"insufficient\" . \" balance\\n\" if $amount > $balance;",
+        "mutated_line": "die \"insufficient\" . \" balance\\n\" if $amount > $balance;",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: overdrawing names the reason",
+        "equivalence_review": "not equivalent: the message no longer says funds"
+      },
+      {
+        "replacement": "die \"insufficient\" . \" funds\\n\" if $amount > $balance + 20;",
+        "mutated_line": "die \"insufficient\" . \" funds\\n\" if $amount > $balance + 20;",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: overdrawing names the reason",
+        "equivalence_review": "not equivalent: overdrawing by 10 no longer dies"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The regex pins 'insufficient funds' and the call overdraws by 10, so changing the message or raising the threshold fails. Spec cells: RIPR-SPEC-0064 exception_observer.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-withdraw-dies-like-message.json",
+    "sha256": "0a34637a46215dbeabb5f6cf3f6515dd5dbe331de3bd085d91e13ff9aa55e65b",
+    "provenance": "producer"
+  }
+}

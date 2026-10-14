@@ -107,6 +107,8 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// setup, so a member call on one acts on a value RIPR has seen.
     enclosing: BTreeSet<String>,
     imports: Vec<TypeScriptImport>,
+    /// Actual local imports, excluding re-exports recorded for owner graphs.
+    registration_imports: Vec<TypeScriptImport>,
     /// Directory segments of the test file, relative to the analysis root.
     test_dir: Vec<String>,
     /// Something the runner runs for every test in the file is
@@ -120,8 +122,26 @@ impl TypeScriptAdmissionContext {
         imports: &[TypeScriptImport],
         file: &Path,
     ) -> Self {
+        let esm_imports: Vec<_> = statements
+            .iter()
+            .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+            .flat_map(|statement| extract_imports_from_statements(std::slice::from_ref(statement)))
+            .collect();
+        let known_require = program_require_is_known(statements, &esm_imports);
         let mut context = Self {
             imports: imports.to_vec(),
+            registration_imports: statements
+                .iter()
+                .filter(|statement| {
+                    matches!(statement, Statement::ImportDeclaration(_))
+                        || matches!(statement, Statement::VariableDeclaration(declaration)
+                            if known_require && !declaration.declare
+                                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+                })
+                .flat_map(|statement| {
+                    extract_imports_from_statements(std::slice::from_ref(statement))
+                })
+                .collect(),
             test_dir: file
                 .parent()
                 .map(|dir| {
@@ -176,9 +196,100 @@ impl TypeScriptAdmissionContext {
         }
     }
 
+    /// Root admission for newly supported awaited registrations. Reuse the
+    /// scanner's runner binding decision before a recognized assertion can
+    /// take the shortcut in `admission_of`. The extractor supplies visible
+    /// bindings and marks file-level declarations. File-wide setup uncertainty
+    /// is not lexical authority: a sibling suite's helper cannot shadow this
+    /// call. Only an actual file import can exempt a declaration from shadowing.
+    pub(crate) fn registration_is_known(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        expected_describe: bool,
+        bindings: impl Iterator<Item = (String, bool)>,
+    ) -> bool {
+        let imports: Vec<_> = self
+            .registration_imports
+            .iter()
+            // ESM namespace objects are not callable runner registrations.
+            // A literal CommonJS require has imported = Some("default").
+            .filter(|import| import.imported.is_some())
+            .cloned()
+            .collect();
+        let context = Self {
+            // A graph-only re-export or namespace object must not fall back
+            // to an ambient global registration with the same spelling.
+            enclosing: self
+                .imports
+                .iter()
+                .filter(|import| !imports.iter().any(|local| local.local == import.local))
+                .map(|import| import.local.clone())
+                .collect(),
+            imports,
+            test_dir: self.test_dir.clone(),
+            ..Self::default()
+        };
+        let mut scan = Scan::new(&context, false);
+        scan.scopes.push(
+            bindings
+                .filter(|(name, file_declaration)| {
+                    !file_declaration || !context.imports.iter().any(|import| import.local == *name)
+                })
+                .map(|(name, _)| (name, Bound::Local))
+                .collect(),
+        );
+        let expected = if expected_describe {
+            RegistrationKind::Describe
+        } else {
+            RegistrationKind::Test
+        };
+        scan.registration(call)
+            .is_some_and(|registration| registration.kind == expected)
+    }
+
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// Loader identity for the bounded awaited-root import exemption. Mutable
+/// loaders and same-spelled helpers cannot establish a callable runner. The
+/// ambient `require` syntax contract does not prove runtime module resolution.
+fn program_require_is_known(statements: &[Statement<'_>], imports: &[TypeScriptImport]) -> bool {
+    let mut names = Vec::new();
+    super::tests_extract::collect_registration_scope_names(statements, &mut names);
+    if !names.iter().any(|name| name == "require") {
+        return true;
+    }
+    statements.iter().any(|statement| {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            return false;
+        };
+        if declaration.declare
+            || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+        {
+            return false;
+        }
+        declaration.declarations.iter().any(|declarator| {
+            if !matches!(&declarator.id, BindingPattern::BindingIdentifier(id) if id.name == "require") {
+                return false;
+            }
+            let Some(Expression::CallExpression(call)) = &declarator.init else {
+                return false;
+            };
+            let Expression::Identifier(factory) = &call.callee else {
+                return false;
+            };
+            imports.iter().any(|import| {
+                import.local == factory.name.as_str()
+                    && matches!(import.source.as_str(), "node:module" | "module")
+                    && import.imported.as_deref() == Some("createRequire")
+            }) && matches!(call.arguments.as_slice(), [Argument::StaticMemberExpression(member)]
+                if member.property.name == "url"
+                    && matches!(&member.object, Expression::MetaProperty(meta)
+                        if meta.meta.name == "import" && meta.property.name == "meta"))
+        })
+    })
 }
 
 /// What a module specifier is, for admission purposes.

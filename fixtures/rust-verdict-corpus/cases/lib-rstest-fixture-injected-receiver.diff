@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b39b033..84bae1f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -35,7 +35,7 @@
+     }
+ 
+     pub fn monthly_fee(&self) -> u64 {
+-        self.balance / 20
++        self.balance / 4 / 5
+     }
+ }
+ 

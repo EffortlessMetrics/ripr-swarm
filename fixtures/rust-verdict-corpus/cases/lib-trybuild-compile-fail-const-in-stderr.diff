@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1202571..4c05c7f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,5 +11,5 @@
+ }
+ 
+ pub const fn frame_len(payload: usize) -> usize {
+-    payload + 4
++    4 + payload
+ }

@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-mockall-grace-boundary-times",
+  "subject_id": "authored-lib-mockall",
+  "diff": "cases/lib-mockall-grace-boundary-times.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mockall_times_expectation_boundary",
+  "hard_case": "The boundary is pinned by a mockall .times(1) expectation plus assert!(remind(.., 31)) and assert!(!remind(.., 30)); ripr reads the bool assertions as relational/weak.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "GRACE_DAYS <= overdue_days",
+        "mutated_line": "if GRACE_DAYS <= overdue_days {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::reminds_only_after_the_grace_period",
+        "equivalence_review": "not equivalent: 30 days sends a reminder"
+      },
+      {
+        "replacement": "GRACE_DAYS + 1 < overdue_days",
+        "mutated_line": "if GRACE_DAYS + 1 < overdue_days {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::reminds_only_after_the_grace_period",
+        "equivalence_review": "not equivalent: 31 days sends nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Under `<=` the call at 30 days also sends, and the mock's times(1) expectation panics on that second send, so the test fails before the negated assert runs; under `GRACE_DAYS + 1 <` remind(.., 31) is false and the positive assert fails.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

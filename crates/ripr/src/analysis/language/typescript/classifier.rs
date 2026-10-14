@@ -190,9 +190,10 @@ pub(crate) struct CreditFacts<'a> {
 /// `import { owner as local }` that gives the same test its
 /// `ImportAliasOwnerCall` relation, or the `local` of a default import of
 /// the owner's own default export behind an `ImportedOwnerCall` relation
-/// (RIPR-SPEC-0251). The effect side-channel test below stays a substring test
-/// (Decision 4): there a miss grants credit, so tightening it would add
-/// credit.
+/// (RIPR-SPEC-0251). The effect side-channel test below also checks admitted
+/// free-function import locals, including mixed direct/aliased calls. It stays
+/// a substring test (Decision 4): there a miss grants credit, so tightening it
+/// would add credit.
 pub(crate) fn ts_changed_value_is_observed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
@@ -371,7 +372,35 @@ pub(crate) fn ts_changed_value_is_observed(
                 // (a closure-local side-effect variable, a captured mock result,
                 // or any side-channel) — conservatively treat it as observing
                 // the effect.
-                if !observed.contains(owner_name) {
+                if observed.contains(owner_name) {
+                    continue;
+                }
+                // #7514: a renamed free-function owner still returns the
+                // owner's value. Resolve both named and default locals even
+                // when another call wins relation ranking. Method relations
+                // must not borrow a same-named free export's identity.
+                let observes_owner_alias = matches!(
+                    candidate.relation,
+                    TypeScriptRelationKind::DirectOwnerCall
+                        | TypeScriptRelationKind::ImportAliasOwnerCall
+                        | TypeScriptRelationKind::ImportedOwnerCall
+                ) && (import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+                .into_iter()
+                .any(|name| observed.contains(name))
+                    || default_import_owner_locals(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .into_iter()
+                    .any(|name| observed.contains(name)));
+                if !observes_owner_alias {
                     return true;
                 }
             }
@@ -2439,7 +2468,7 @@ fn later_reassigns_ident(body: &str, ident: &str, from: usize) -> bool {
 /// marker simply carries no matcher-argument facts; the deeper expected-side
 /// guards (self-comparing tautology, dead expected) decide on what is
 /// checkable rather than guessing.
-fn assertion_expected_side_is_pinned(assertion: &TypeScriptAssertion) -> bool {
+pub(super) fn assertion_expected_side_is_pinned(assertion: &TypeScriptAssertion) -> bool {
     !assertion.has_dynamic_matcher_arg
 }
 
@@ -2490,7 +2519,7 @@ fn is_boundary_literal(operand: &str) -> bool {
 
 /// Canonical decimal text of a numeric literal token (`50`, `50.0`, `1_000`,
 /// `10n`), or `None` when the token is not a plain decimal literal.
-fn numeric_literal_value(token: &str) -> Option<String> {
+pub(crate) fn numeric_literal_value(token: &str) -> Option<String> {
     let token = token.trim().trim_end_matches('n').replace('_', "");
     if !token.starts_with(|ch: char| ch.is_ascii_digit())
         || !token.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
@@ -3450,6 +3479,21 @@ pub(crate) fn strongest_family_matching_oracle(
                 {
                     (OracleKind::BroadError, OracleStrength::Weak)
                 }
+                // #7315 under the #6798 verdict owner: a literal rejection
+                // equality promoted to `exact_error_variant` carries its
+                // pinned reason in `expected_value_or_variant` while
+                // `error_payload` stays `None`. A reason the changed line
+                // never throws observes a different throw site, so it reads
+                // `broad_error` / weak for this change.
+                (None, _)
+                    if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
+                        && !literal_rejection_credits(
+                            assertion.expected_value_or_variant.as_deref(),
+                            error_facts,
+                        ) =>
+                {
+                    (OracleKind::BroadError, OracleStrength::Weak)
+                }
                 (_, Some(payload))
                     if effect_family
                         && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
@@ -3642,6 +3686,16 @@ pub(crate) fn classify_change_with_alias_state(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
+    // RIPR-SPEC-0254 rule 1: a changed entry of a lookup table the owner
+    // returns from is a return-value change, credited only under rule 2.
+    let lookup_change = (!probe_shape.specific)
+        .then(|| ts_lookup_table_change(owner, line_text, old_line_text))
+        .flatten();
+    let probe_shape = if lookup_change.is_some() {
+        TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        probe_shape
+    };
     let mut related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
@@ -3785,6 +3839,12 @@ pub(crate) fn classify_change_with_alias_state(
         alias_map,
         workspace_root,
     ));
+    pin_facts.extend(ts_typed_loose_number_facts(
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    ));
     if !pin_facts.is_empty() {
         project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
     }
@@ -3865,8 +3925,20 @@ pub(crate) fn classify_change_with_alias_state(
     }
     let boundary_witnessed = !strong_oracle_present
         || ts_predicate_boundary_witnessed_by_rows(&predicate_boundary, &predicate_activations);
+    // RIPR-SPEC-0254 rule 2: some strong assertion calls the owner with a
+    // changed key.
+    let lookup_witnessed = lookup_change.as_ref().is_none_or(|change| {
+        ts_lookup_table_witnessed(
+            change,
+            owner,
+            &related_candidates,
+            alias_map,
+            workspace_root,
+        )
+    });
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
+        && lookup_witnessed
         && ts_changed_value_is_observed(
             &probe_shape,
             line_text,
@@ -3935,7 +4007,21 @@ pub(crate) fn classify_change_with_alias_state(
         // Strong oracle exists but observation guard failed: downgrade to
         // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
         // predicate boundary is not witnessed (RIPR-SPEC-0027).
-        let named_limitation = if boundary_witnessed {
+        let named_limitation = if let Some(change) =
+            lookup_change.as_ref().filter(|_| !lookup_witnessed)
+        {
+            format!(
+                "The change to `{}` only moves the lookup-table value for {}, and no strong assertion calls `{}` with a changed key; an exact assertion on another key passes on both versions. Add a case that looks up a changed key.",
+                owner.name,
+                change
+                    .changed_keys
+                    .iter()
+                    .map(|key| format!("`{key}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                owner.name
+            )
+        } else if boundary_witnessed {
             ts_observation_guard_limitation(&probe_shape, line_text)
         } else {
             ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
@@ -4122,6 +4208,17 @@ pub(crate) fn classify_change_with_alias_state(
             ),
             None => "TypeScript preview adapter: strong oracle found but the changed predicate boundary is not statically witnessed by any strong assertion; discriminate unknown.".to_string(),
         }
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && lookup_change.is_some()
+        && !lookup_witnessed
+    {
+        // RIPR-SPEC-0254 rule 2: the missing line names the changed keys.
+        format!(
+            "TypeScript preview adapter: strong oracle found but no strong assertion looks up a changed key: {}",
+            missing
+                .first()
+                .map_or("see missing evidence.", String::as_str)
+        )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()
@@ -4499,25 +4596,7 @@ pub(crate) fn ts_dropped_term_witness(
             continue;
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
-        // An `import { owner as local }` rename calls the owner as `local`.
-        let mut names: Vec<&str> = vec![owner.name.as_str()];
-        if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
-            names.extend(import_alias_owner_locals(
-                candidate.test,
-                owner,
-                alias_map,
-                workspace_root,
-            ));
-        }
-        // RIPR-SPEC-0251: `import local from "./owner"` calls it as `local`.
-        if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
-            names.extend(default_import_owner_locals(
-                candidate.test,
-                owner,
-                alias_map,
-                workspace_root,
-            ));
-        }
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             // A value matcher sees the returned value; an error matcher
             // (`rejects.toThrow`) sees only that the call fails.
@@ -4529,23 +4608,16 @@ pub(crate) fn ts_dropped_term_witness(
             {
                 continue;
             }
-            let Some(observed) = assertion.observed_expression.as_deref() else {
-                continue;
-            };
             // Only an assertion on the call's whole result sees the term:
             // `quote(6000, 5).tier` does not. In `price(price(6000, 0), 7)`
             // the outer call's arguments are the asserted result's.
-            let arguments = ts_whole_owner_call_arguments(observed, &names, owner, &receivers)
-                .or_else(|| {
-                    names.iter().find_map(|name| {
-                        ts_observed_local_owner_call_arguments(
-                            candidate.test,
-                            assertion,
-                            name,
-                            &receivers,
-                        )
-                    })
-                });
+            let arguments = ts_observed_owner_call_arguments(
+                candidate.test,
+                assertion,
+                &names,
+                owner,
+                &receivers,
+            );
             let argument_lists: Vec<Vec<String>> = arguments.into_iter().collect();
             for arguments in argument_lists {
                 let arguments = substitute_constant_arguments(
@@ -4583,6 +4655,53 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// The names a related test calls the owner by: its own name, plus the
+/// `import { owner as local }` locals behind an `ImportAliasOwnerCall`
+/// relation and the RIPR-SPEC-0251 default-import locals behind an
+/// `ImportedOwnerCall` relation.
+pub(crate) fn ts_owner_call_names<'a>(
+    candidate: &TypeScriptRelatedCandidate<'a>,
+    owner: &'a TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'a str> {
+    let mut names: Vec<&'a str> = vec![owner.name.as_str()];
+    if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+        names.extend(import_alias_owner_locals(
+            candidate.test,
+            owner,
+            alias_map,
+            workspace_root,
+        ));
+    }
+    if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+        names.extend(default_import_owner_locals(
+            candidate.test,
+            owner,
+            alias_map,
+            workspace_root,
+        ));
+    }
+    names
+}
+
+/// The arguments of the owner call whose whole result `assertion` observes,
+/// directly or through a local bound once to that call.
+pub(crate) fn ts_observed_owner_call_arguments(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> Option<Vec<String>> {
+    let observed = assertion.observed_expression.as_deref()?;
+    ts_whole_owner_call_arguments(observed, names, owner, receivers).or_else(|| {
+        names.iter().find_map(|name| {
+            ts_observed_local_owner_call_arguments(test, assertion, name, receivers)
+        })
+    })
 }
 
 /// The arguments of the owner call `observed` is, whole: `name(...)` for the

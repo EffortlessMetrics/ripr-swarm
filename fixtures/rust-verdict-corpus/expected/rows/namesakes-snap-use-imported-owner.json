@@ -1,0 +1,22 @@
+{
+  "case_id": "namesakes-snap-use-imported-owner",
+  "subject_id": "authored-namesakes",
+  "origin": "authored",
+  "anchor": "src/lib.rs:18",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "use_import_selects_one_of_same_named_functions",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

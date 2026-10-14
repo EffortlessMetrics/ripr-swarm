@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-namesakes",
+  "origin": "authored",
+  "version_label": "authored 2026-10-05 for same-named module-level functions (#6292, #6537, #6544)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "851f62a59ac8d3d10d5e3c3984b242f74ae4e6a3deff4b64c02edcd1cb325714"
+    },
+    {
+      "path": "src/coolers.rs",
+      "sha256": "78c9d6fa5d46eb3c562ecf4cc15065dced6744c265ac33ee873411a8518c0eaa"
+    },
+    {
+      "path": "src/heaters.rs",
+      "sha256": "40328d49adfa818588e313184a0c8acc96e88ee2d6a69697aaea3f77ae6e9b2a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0b471d6ea99f53cd32eda587a9829e275282fc3e1ae7d1db7605578ea3c777dc"
+    }
+  ]
+}

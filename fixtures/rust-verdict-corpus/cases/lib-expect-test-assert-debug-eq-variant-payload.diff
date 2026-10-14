@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6c3b406..b30c025 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@
+ pub fn tokenize(src: &str) -> Vec<Token> {
+     src.split_whitespace()
+         .map(|w| match w.parse::<i64>() {
+-            Ok(n) => Token::Num(n * 10),
++            Ok(n) => Token::Num(10 * n),
+             Err(_) => Token::Word(w.to_lowercase()),
+         })
+         .collect()

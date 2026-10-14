@@ -1,0 +1,32 @@
+t/total_more.t ..
+# Subtest: line item total
+    not ok 1 - price times quantity
+    not ok 2 - empty quantity
+    1..2
+not ok 1 - line item total
+1..1
+Dubious, test returned 1 (wstat 256, 0x100)
+Failed 1/1 subtests
+
+Test Summary Report
+-------------------
+t/total_more.t (Wstat: 256 (exited 1) Tests: 1 Failed: 1)
+  Failed test:  1
+  Non-zero exit status: 1
+Files=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.03 cusr  0.01 csys =  0.06 CPU)
+Result: FAIL
+
+    #   Failed test 'price times quantity'
+    #   at t/total_more.t line 7.
+    #          got: '128'
+    #     expected: '375'
+
+    #   Failed test 'empty quantity'
+    #   at t/total_more.t line 8.
+    #          got: '125'
+    #     expected: '0'
+    # Looks like you failed 2 tests of 2.
+
+#   Failed test 'line item total'
+#   at t/total_more.t line 9.
+# Looks like you failed 1 test of 1.

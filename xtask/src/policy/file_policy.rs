@@ -190,7 +190,10 @@ fn validate_test_covered_by_recorded_with(
         let warmup = spawns.len() == 2;
         let mut listed = None;
         for (index, spawn) in spawns.into_iter().enumerate() {
-            if index == 0 && warmup && !warmed.insert(spawn.args.join("\u{1f}")) {
+            let key = (index == 0 && warmup)
+                .then(|| preparation_key(&spawn.args))
+                .flatten();
+            if key.as_ref().is_some_and(|key| warmed.contains(key)) {
                 continue;
             }
             let captured = capture(&spawn);
@@ -199,12 +202,119 @@ fn validate_test_covered_by_recorded_with(
             if output.timed_out || !output.status.is_some_and(|status| status.success()) {
                 return Ok(enumeration_result(output, spawn.timeout));
             }
+            if let Some(key) = key {
+                warmed.insert(key);
+            }
             listed = Some(output);
         }
         let output = listed
             .ok_or_else(|| "test-valued covered_by enumeration produced no spawn".to_string())?;
         Ok(enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT))
     })
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct PreparationKey {
+    args: Vec<String>,
+    cwd: std::path::PathBuf,
+    environment: BTreeMap<std::ffi::OsString, std::ffi::OsString>,
+}
+
+fn preparation_key(args: &[String]) -> Option<PreparationKey> {
+    Some(PreparationKey {
+        args: preparation_args_identity(args),
+        cwd: std::env::current_dir().ok()?,
+        environment: std::env::vars_os().collect(),
+    })
+}
+
+/// Cargo passes TESTNAME to the harness; it does not change a no-run build.
+/// Recognize only unambiguous option forms here. Unknown or malformed argv
+/// keeps its exact identity, so Cargo still decides acceptance. Spawn argv
+/// and every native listing remain unchanged. This is invocation-local
+/// preparation reuse, not acceptance of a persistent compilation artifact.
+fn preparation_args_identity(args: &[String]) -> Vec<String> {
+    const VALUES: &[&str] = &[
+        "-p",
+        "--package",
+        "--exclude",
+        "--bin",
+        "--example",
+        "--test",
+        "--bench",
+        "-F",
+        "--features",
+        "--target",
+        "--profile",
+        "--manifest-path",
+        "--target-dir",
+        "-j",
+        "--jobs",
+        "--config",
+        "--color",
+        "--message-format",
+        "-Z",
+    ];
+    const FLAGS: &[&str] = &[
+        "--no-run",
+        "--no-fail-fast",
+        "--workspace",
+        "--all",
+        "--lib",
+        "--bins",
+        "--examples",
+        "--tests",
+        "--benches",
+        "--all-targets",
+        "--all-features",
+        "--no-default-features",
+        "-r",
+        "--release",
+        "--locked",
+        "--offline",
+        "--frozen",
+        "-q",
+        "--quiet",
+        "-v",
+        "--verbose",
+        "--keep-going",
+    ];
+    if args.first().map(String::as_str) != Some("test") || args.iter().any(|arg| arg.contains('\0'))
+    {
+        return args.to_vec();
+    }
+    let mut filter = None;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if VALUES.contains(&arg) {
+            let Some(value) = args.get(index + 1) else {
+                return args.to_vec();
+            };
+            if value.is_empty() || value.starts_with('-') {
+                return args.to_vec();
+            }
+            index += 2;
+            continue;
+        }
+        if FLAGS.contains(&arg)
+            || arg.split_once('=').is_some_and(|(name, value)| {
+                name.starts_with("--") && VALUES.contains(&name) && !value.is_empty()
+            })
+        {
+            index += 1;
+            continue;
+        }
+        if arg.is_empty() || arg.starts_with('-') || filter.replace(index).is_some() {
+            return args.to_vec();
+        }
+        index += 1;
+    }
+    let mut identity = args.to_vec();
+    if let Some(index) = filter {
+        identity.remove(index);
+    }
+    identity
 }
 
 /// One cargo spawn used to prove a test-valued `covered_by` pointer.
@@ -369,6 +479,251 @@ mod tests {
     use super::validate_test_covered_by_with;
     use crate::run::{CommandDiagnostic, TimedOutput};
     use crate::{FilePolicyHost, FilePolicyTestCommand, is_cargo_test_command};
+
+    fn argv(command: &str) -> Vec<String> {
+        command.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn covered_by_preparation_identity_preserves_option_values() {
+        for options in [
+            "-p xtask --bin xtask --locked --offline",
+            "--package=xtask --bin=xtask --features=alpha --profile=test",
+            "--package xtask --features alpha --target beta --profile gamma",
+            "--manifest-path alpha --target-dir beta --config gamma --jobs 2",
+            "--workspace --exclude alpha --lib --all-features --frozen",
+            "-p alpha -F beta -j 2 --release --no-default-features",
+        ] {
+            let expected = argv(&format!("test {options} --no-run"));
+            for command in [
+                format!("test {options} alpha --no-run"),
+                format!("test beta {options} --no-run"),
+            ] {
+                assert_eq!(super::preparation_args_identity(&argv(&command)), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn covered_by_preparation_identity_declines_ambiguous_forms() {
+        for command in [
+            "test -pxtask alpha --no-run",
+            "test -Falpha beta --no-run",
+            "test --unknown alpha --no-run",
+            "test --package --bin xtask alpha --no-run",
+            "test --package --no-run",
+            "test alpha beta --no-run",
+            "test --features= alpha --no-run",
+            "test --doc alpha --no-run",
+            "test alpha\0beta --no-run",
+            "test a\u{1f}b --unknown --no-run",
+            "test a b --unknown --no-run",
+        ] {
+            let args = argv(command);
+            assert_eq!(super::preparation_args_identity(&args), args);
+        }
+        let one = super::preparation_key(&argv("test a\u{1f}b --unknown --no-run"));
+        let two = super::preparation_key(&argv("test a b --unknown --no-run"));
+        assert!(one != two, "argument boundaries must not alias");
+    }
+
+    #[test]
+    fn covered_by_launch_invalid_filter_keeps_its_preparation_refusal() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask alpha"),
+            common(2, "cargo test -p xtask beta\0"),
+        ];
+        let mut rows = Vec::new();
+        let result = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                if spawn.args.iter().any(|arg| arg.contains('\0')) {
+                    return Err(format!(
+                        "refused NUL {}",
+                        if spawn.args.iter().any(|arg| arg == "--no-run") {
+                            "preparation"
+                        } else {
+                            "listing"
+                        }
+                    ));
+                }
+                Ok(timed_output(Some(status(0)), "alpha: test\n", "", false))
+            },
+        );
+        assert!(result.is_err_and(|error| error.ends_with("refused NUL preparation")));
+        assert_eq!(
+            rows.len(),
+            3,
+            "healthy preparation/list and refused sibling preparation"
+        );
+        assert!(rows[2].argv.iter().any(|arg| arg == "--no-run"));
+        assert_eq!(rows[2].outcome, "capture_unavailable");
+        Ok(())
+    }
+
+    #[test]
+    fn covered_by_preparation_keeps_compilation_requests_distinct() -> Result<(), String> {
+        for (left, right) in [
+            ("-p one", "-p two"),
+            ("--bin one", "--bin two"),
+            ("--test one", "--test two"),
+            ("--features one", "--features two"),
+            ("--target one", "--target two"),
+            ("--profile one", "--profile two"),
+            ("--locked", "--offline"),
+            ("--locked --offline", "--locked"),
+            ("--config one", "--config two"),
+            ("--target-dir one", "--target-dir two"),
+        ] {
+            let commands = [
+                common(1, &format!("cargo test {left} alpha")),
+                common(2, &format!("cargo test {right} beta")),
+            ];
+            let mut rows = Vec::new();
+            let observations = super::validate_test_covered_by_recorded_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut rows,
+                |_| Ok(timed_output(Some(status(0)), "selected: test\n", "", false)),
+            )?;
+            assert_eq!(observations.len(), 2);
+            assert_eq!(
+                rows.len(),
+                4,
+                "distinct preparation requests: {left}, {right}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn covered_by_preparation_reuse_is_local_and_failure_stops_siblings() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask alpha"),
+            common(2, "cargo test -p xtask beta"),
+        ];
+        for failure in ["exit", "timeout", "status", "capture"] {
+            let mut rows = Vec::new();
+            let result = super::validate_test_covered_by_recorded_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut rows,
+                |_| {
+                    if failure == "capture" {
+                        return Err("refused capture".to_string());
+                    }
+                    Ok(timed_output(
+                        if failure == "status" {
+                            None
+                        } else {
+                            Some(status(if failure == "exit" { 1 } else { 0 }))
+                        },
+                        "partial: test\n",
+                        "partial diagnostic",
+                        failure == "timeout",
+                    ))
+                },
+            );
+            assert!(result.is_err(), "{failure} preparation was accepted");
+            assert_eq!(
+                rows.len(),
+                1,
+                "failed preparation must stop before any listing or sibling"
+            );
+        }
+        for _ in 0..2 {
+            let mut rows = Vec::new();
+            super::validate_test_covered_by_recorded_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut rows,
+                |_| Ok(timed_output(Some(status(0)), "selected: test\n", "", false)),
+            )?;
+            assert_eq!(rows.len(), 3, "each invocation needs its own preparation");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn covered_by_sibling_filters_share_only_successful_preparation() -> Result<(), String> {
+        let commands = [
+            common(
+                11,
+                "cargo test -p xtask --bin xtask --locked --offline alpha",
+            ),
+            common(
+                12,
+                "cargo test -p xtask --bin xtask --locked --offline beta",
+            ),
+            common(
+                13,
+                "cargo test -p xtask --bin xtask --locked --offline alpha",
+            ),
+        ];
+        let mut rows = Vec::new();
+        let mut calls = Vec::new();
+        let observations = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                calls.push(spawn.args.clone());
+                let subject = if spawn.args.iter().any(|arg| arg == "beta") {
+                    "beta"
+                } else {
+                    "alpha"
+                };
+                Ok(timed_output(
+                    Some(status(0)),
+                    &format!("{subject}: test\n"),
+                    "",
+                    false,
+                ))
+            },
+        )?;
+        assert_eq!(
+            calls.len(),
+            3,
+            "one preparation and both distinct native listings"
+        );
+        assert_eq!(rows.len(), calls.len());
+        assert!(calls[0].contains(&"--no-run".to_string()));
+        assert!(
+            calls[0].contains(&"alpha".to_string()),
+            "spawn argv stays original"
+        );
+        for (call, subject) in calls[1..].iter().zip(["alpha", "beta"]) {
+            assert!(call.contains(&"--list".to_string()));
+            assert!(call.contains(&subject.to_string()));
+        }
+        assert_eq!(observations.len(), 3);
+        for ((observation, command), (line, subject)) in
+            observations
+                .iter()
+                .zip(&commands)
+                .zip([(11, "alpha"), (12, "beta"), (13, "alpha")])
+        {
+            assert_eq!(
+                observation.selected.as_deref(),
+                Some([subject.to_string()].as_slice())
+            );
+            assert_eq!(
+                observation.render(),
+                format!(
+                    "line {line}; host=unix; declared=all; applicable; selected=1; tests=[{subject}]; `{}`",
+                    command.command
+                )
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn covered_by_diagnostics_count_only_actual_spawns_and_preserve_order() -> Result<(), String> {

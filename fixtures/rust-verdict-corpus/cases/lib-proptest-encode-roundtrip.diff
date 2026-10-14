@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 159e349..1992cd0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@
+     let mut runs: Vec<(u8, u8)> = Vec::new();
+     for &byte in data {
+         match runs.last_mut() {
+-            Some((value, count)) if *value == byte && *count < u8::MAX => *count += 1,
++            Some((value, count)) if byte == *value && *count < u8::MAX => *count += 1,
+             _ => runs.push((byte, 1)),
+         }
+     }

@@ -716,3 +716,409 @@ fn aliased_or_same_named_wrapper_does_not_relate_or_pair() -> Result<(), String>
     assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
+
+/// A wrapper that hands the changed owner to a local `macro_rules!` macro
+/// as an identifier token (#6614). The changed `base_rate` body is always
+/// on line 8.
+fn macro_rate_source(macro_rule: &str, wrapper_body: &str, tests: &str) -> String {
+    format!(
+        "macro_rules! twice {{\n    {macro_rule}\n}}\n\npub fn other_rate() -> u32 {{ 5 }}\n\npub fn base_rate() -> u32 {{\n    3 + 4\n}}\n\npub fn doubled_rate() -> u32 {{\n    {wrapper_body}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn doubled_rate_is_pinned() {{\n        {tests}\n    }}\n}}\n"
+    )
+}
+
+const IDENT_RULE: &str = "($f:ident) => { $f() * 2 };";
+const MACRO_RATE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,3 +7,3 @@\n pub fn base_rate() -> u32 {\n-    7\n+    3 + 4\n }\n";
+
+fn macro_rate_finding(rule: &str, wrapper: &str, tests: &str) -> Result<Value, String> {
+    let finding = family_finding(
+        &macro_rate_source(rule, wrapper, tests),
+        MACRO_RATE_DIFF,
+        "return_value",
+    )?;
+    assert_eq!(finding["probe"]["line"], 8, "{finding}");
+    Ok(finding)
+}
+
+#[test]
+fn exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded() -> Result<(), String> {
+    for wrapper in [
+        "twice!(base_rate)",
+        "twice![base_rate]",
+        "twice! { base_rate }",
+    ] {
+        let finding = macro_rate_finding(IDENT_RULE, wrapper, "assert_eq!(doubled_rate(), 14);")?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{wrapper}: {finding}"
+        );
+        assert_eq!(
+            relation_of(&finding, "doubled_rate_is_pinned"),
+            Some("helper_owner_call"),
+            "{wrapper}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn any_exact_oracle_on_a_macro_argument_caller_abstains() -> Result<(), String> {
+    // ripr does not expand `twice!`, so an exact oracle in any operand shape
+    // can neither credit nor fault the owner.
+    for tests in [
+        "let rate = doubled_rate();\n        assert_eq!(rate, 14);",
+        "assert_eq!(doubled_rate().to_string(), \"14\");",
+    ] {
+        let finding = macro_rate_finding(IDENT_RULE, "twice!(base_rate)", tests)?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{tests}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap() -> Result<(), String> {
+    // The macro names a different function: no edge reaches the owner.
+    let other = macro_rate_finding(
+        IDENT_RULE,
+        "twice!(other_rate)",
+        "assert_eq!(doubled_rate(), 10);",
+    )?;
+    // The owner name is only string-literal content of the macro argument.
+    let literal = macro_rate_finding(
+        "($f:literal) => { $f.len() as u32 * 2 };",
+        "twice!(\"base_rate\")",
+        "assert_eq!(doubled_rate(), 18);",
+    )?;
+    // The edge exists, but the oracle is weak on its own terms.
+    let compared = macro_rate_finding(
+        IDENT_RULE,
+        "twice!(base_rate)",
+        "assert!(doubled_rate() > 0);",
+    )?;
+    for finding in [&other, &literal, &compared] {
+        assert_ne!(
+            finding["classification"], "propagation_unknown",
+            "{finding}"
+        );
+        let propagate = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            !propagate.contains("helper_result_not_forwarded"),
+            "{finding}"
+        );
+    }
+    assert_eq!(compared["classification"], "weakly_exposed", "{compared}");
+    assert_eq!(literal["classification"], "weakly_exposed", "{literal}");
+    Ok(())
+}
+
+#[test]
+fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(), String> {
+    // `banner` names `title` only inside its format string; the test calls
+    // `title()` itself and pins `banner()`. No macro edge, no abstention.
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+    let finding = family_finding(source, diff, "return_value")?;
+    assert_eq!(finding["probe"]["line"], 2, "{finding}");
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_ne!(
+        relation_of(&finding, "banner_reads_title"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+
+fn banner_finding(wrapper: &str, test: &str) -> Result<Value, String> {
+    let source = format!(
+        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+    );
+    let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
+    assert_eq!(
+        relation_of(&finding, "banner_check"),
+        Some("helper_owner_call"),
+        "{wrapper} | {test}: {finding}"
+    );
+    Ok(finding)
+}
+
+#[test]
+fn weak_oracle_behind_a_non_forwarding_hop_keeps_its_gap() -> Result<(), String> {
+    // #7549: the oracle cannot discriminate the caller's result exactly, so
+    // it cannot discriminate the owner's either; no pairing is needed.
+    for (wrapper, test) in [
+        ("format!(\"[{}]\", title())", "assert!(banner().len() > 0);"),
+        (
+            "format!(\"[{}]\", title())",
+            "assert!(!banner().is_empty());",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty());",
+        ),
+    ] {
+        let finding = banner_finding(wrapper, test)?;
+        assert_eq!(
+            finding["classification"], "weakly_exposed",
+            "{wrapper} | {test}: {finding}"
+        );
+        let propagate = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            !propagate.contains("helper_result_not_forwarded"),
+            "{wrapper} | {test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains() -> Result<(), String> {
+    // An exact oracle on the caller (even on a projection such as `.len()`)
+    // might pin the owner through the transform: neither credit nor gap.
+    for (wrapper, test) in [
+        (
+            "format!(\"[{}]\", title())",
+            "assert_eq!(banner().len(), 6);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert_eq!(banner(), \"ripr!\");",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty());\n        assert_eq!(banner(), \"ripr!\");",
+        ),
+        // A bare call of a caller pins its whole result.
+        (
+            "title().to_string() + \"!\"",
+            "assert!(banner().len() == 5);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty() != true);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(banner().contains(\"pr\"));",
+        ),
+    ] {
+        let finding = banner_finding(wrapper, test)?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{wrapper} | {test}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+fn title_item_finding(items: &str, test: &str) -> Result<Value, String> {
+    let source = format!(
+        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+    );
+    family_finding(&source, TITLE_DIFF, "return_value")
+}
+
+fn assert_abstains_through_hop(finding: &Value, label: &str) {
+    assert_eq!(
+        relation_of(finding, "banner_check"),
+        Some("helper_owner_call"),
+        "{label}: {finding}"
+    );
+    assert_eq!(
+        finding["classification"], "propagation_unknown",
+        "{label}: {finding}"
+    );
+    assert_not_forwarded(finding);
+}
+
+#[test]
+fn bool_caller_pinned_by_a_plain_assert_abstains() -> Result<(), String> {
+    // `assert!(caller(..))` is `assert_eq!(caller(..), true)`, a cast keeps
+    // that pin, and a `bool` caller decides rather than carries data.
+    let titled = "pub fn titled() -> bool {\n    title() == \"ripr\"\n}";
+    for test in [
+        "assert!(titled());",
+        "assert!(!titled());",
+        "assert!(titled() as u8 > 0);",
+    ] {
+        assert_abstains_through_hop(&title_item_finding(titled, test)?, test);
+    }
+    Ok(())
+}
+
+#[test]
+fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<(), String> {
+    // #7549 review B1: the caller turns the owner's exact value into the
+    // very shape the loose check reads, so the check pins the owner.
+    for (item, test) in [
+        (
+            "pub fn parse() -> Result<(), ()> {\n    if title() == \"ripr\" { Ok(()) } else { Err(()) }\n}",
+            "assert!(parse().is_ok());",
+        ),
+        (
+            "pub fn gated(len: usize) -> usize {\n    if title() == \"ripr\" { len } else { 0 }\n}",
+            "assert!(gated(4) > 0);",
+        ),
+        (
+            "pub fn role() -> Option<u8> {\n    (title() == \"ripr\").then_some(1)\n}",
+            "assert!(role().is_some());",
+        ),
+        (
+            "pub fn role() -> Option<u8> {\n    (title() == \"ripr\").then_some(1)\n}",
+            "assert!(role() != None);",
+        ),
+        (
+            "pub fn kind() -> u8 {\n    match title() { \"ripr\" => 1, _ => 0 }\n}",
+            "assert!(kind() > 0);",
+        ),
+        (
+            "pub fn banner() -> String {\n    format!(\"[{}]\", title())\n}",
+            "assert!(banner().parse::<u8>().is_err());\n        let _ = banner().chars().next().unwrap();",
+        ),
+        // Review B2: the decision moves into something the caller calls.
+        (
+            "fn check(t: &str) -> Result<(), ()> {\n    if t == \"ripr\" { Ok(()) } else { Err(()) }\n}\n\npub fn parse() -> Result<(), ()> {\n    check(title())\n}",
+            "assert!(parse().is_ok());",
+        ),
+        (
+            "pub fn port() -> Result<u16, std::num::ParseIntError> {\n    title().parse()\n}",
+            "assert!(port().is_err());",
+        ),
+        (
+            "const TABLE: [u8; 2] = [1, 2];\n\npub fn entry() -> Option<&'static u8> {\n    TABLE.get(title().len())\n}",
+            "assert!(entry().is_none());",
+        ),
+        (
+            "pub fn share() -> usize {\n    100 / title().len()\n}",
+            "assert!(share() > 0);",
+        ),
+        (
+            "pub fn banner() -> String {\n    format!(\"{}\", title().len() > 3)\n}",
+            "assert!(!banner().is_empty());",
+        ),
+        (
+            "pub fn mode() -> String {\n    title().into()\n}",
+            "assert!(!mode().is_empty());",
+        ),
+        // Devin review: a discarded call, and an exact decision under a
+        // loose projection or comparison.
+        (
+            "pub fn banner() -> String {\n    let _ignored = title();\n    String::from(\"fixed\")\n}",
+            "assert!(!banner().is_empty());",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "assert!(banner().strip_prefix(\"ripr!\").is_some());",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "assert!(banner().find(\"ripr\").unwrap_or(9) < 1);",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "let shown = banner();\n        assert!(shown.len() > 0);",
+        ),
+    ] {
+        assert_abstains_through_hop(&title_item_finding(item, test)?, test);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_local_helper_hop_is_part_of_the_oracle() -> Result<(), String> {
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
+    let finding = family_finding(source, TITLE_DIFF, "return_value")?;
+    assert_abstains_through_hop(&finding, "test-local helper");
+    // The same data-carrying caller in production keeps the weak gap.
+    let production = title_item_finding(
+        "pub fn titled(suffix: &str) -> String {\n    format!(\"{}{}\", title(), suffix)\n}",
+        "assert!(titled(\"!\").len() > 0);",
+    )?;
+    assert_eq!(
+        production["classification"], "weakly_exposed",
+        "{production}"
+    );
+    Ok(())
+}
+
+#[test]
+fn weak_oracle_does_not_lift_the_effect_target_rule() -> Result<(), String> {
+    // Effect families keep their target-passing rule: a fresh temporary is
+    // invisible to the test whatever its oracle.
+    let source = "fn record(out: &mut Vec<u32>) {\n    out.push(10);\n}\n\npub fn wrapper() -> u32 {\n    record(&mut Vec::new());\n    7\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn wrapper_returns_seven() {\n        assert!(wrapper() > 0);\n    }\n}\n";
+    let report = all_findings(source, RECORD_DIFF)?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert!(!findings.is_empty(), "{report}");
+    for finding in findings {
+        assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+        assert_eq!(
+            relation_of(finding, "wrapper_returns_seven"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert_not_forwarded(finding);
+    }
+    Ok(())
+}
+
+/// An effect owner behind a local-macro hop, called by `entry`. `wrapper`
+/// is either the macro caller itself or a plain fn hop above it.
+fn macro_record_source(entry: &str, test: &str) -> String {
+    format!(
+        "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\nmacro_rules! fresh {{\n    ($f:ident) => {{{{ $f(&mut Vec::new()); 7 }}}};\n}}\n\npub fn inner() -> u32 {{\n    fresh!(record)\n}}\n\n{entry}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn wrapper_returns_seven() {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn effect_macro_exception_needs_every_hop_through_the_macro() -> Result<(), String> {
+    // #7622 review: the local-macro exception covers the macro hop only. A
+    // plain fn hop above it keeps the effect target-passing rule.
+    let direct = all_findings(
+        &macro_record_source("", "assert!(inner() > 0);"),
+        RECORD_DIFF,
+    )?;
+    let direct = direct["findings"].as_array().ok_or("missing findings")?;
+    assert!(!direct.is_empty());
+    for finding in direct {
+        assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    }
+    let mixed = all_findings(
+        &macro_record_source(
+            "pub fn outer() -> u32 {\n    inner()\n}",
+            "assert!(outer() > 0);",
+        ),
+        RECORD_DIFF,
+    )?;
+    let mixed = mixed["findings"].as_array().ok_or("missing findings")?;
+    assert!(!mixed.is_empty());
+    for finding in mixed {
+        assert_eq!(
+            relation_of(finding, "wrapper_returns_seven"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert_not_forwarded(finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn user_type_between_owner_and_caller_abstains() -> Result<(), String> {
+    // #7549 review B3: `format!`, `to_string` and `clone` run the owner's
+    // type's own impls, which may decide on the value.
+    let source = "#[derive(Clone, PartialEq, Debug)]\npub struct Mode(u8);\n\nimpl std::fmt::Display for Mode {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        if self.0 == 1 { write!(f, \"fast\") } else { write!(f, \"\") }\n    }\n}\n\nfn mode() -> Mode {\n    Mode(2 - 1)\n}\n\npub fn banner() -> String {\n    format!(\"{}\", mode())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_check() {\n        assert!(!banner().is_empty());\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -10,3 +10,3 @@ impl std::fmt::Display for Mode {\n fn mode() -> Mode {\n-    Mode(1)\n+    Mode(2 - 1)\n }\n";
+    let finding = family_finding(source, diff, "return_value")?;
+    assert_abstains_through_hop(&finding, "user Display");
+    Ok(())
+}

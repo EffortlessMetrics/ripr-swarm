@@ -1,15 +1,15 @@
 use crate::analysis::classify::{
-    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
-    fallible_literal_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
+    body_contains_owner_call, callee_is_unique, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    contains_as_whole_word, current_path_witness, fallible_check_receipt, fallible_literal_witness,
+    getter_plainly_reads, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
     operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, signature_parameters,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 
 mod side_flip;
 mod tuple_match;
+
+pub(super) const PROPAGATION_BOUNDARY_UNVERIFIED: &str =
+    "propagation_boundary_activation_unestablished";
 
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
@@ -129,6 +132,29 @@ impl ClassifiedProbeEvidence {
                 })
             })
             .or_else(|| {
+                context.owner_fn.and_then(|owner| {
+                    crate::analysis::classify::constant_tail_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                    )
+                })
+            })
+            .or_else(|| {
+                context.owner_fn.and_then(|owner| {
+                    crate::analysis::classify::format_tail_witness(
+                        context.probe,
+                        owner,
+                        context
+                            .index
+                            .files()
+                            .get(&owner.file)
+                            .map(|facts| facts.data().source.as_ref()),
+                        &flow_sinks,
+                    )
+                })
+            })
+            .or_else(|| {
                 returned_ledger.as_ref().and_then(|_| {
                     crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
                 })
@@ -159,7 +185,7 @@ impl ClassifiedProbeEvidence {
                 }
                 PropagationWitnessDiagnostic::from_witness(witness)
             });
-        let gathered = activation_and_boundary_input(
+        let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -169,6 +195,12 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
+        crate::analysis::classify::refine_slice_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &flow_sinks,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -176,16 +208,17 @@ impl ClassifiedProbeEvidence {
         let owner_package = context
             .owner_fn
             .and_then(|owner| package_prefix(&owner.file));
-        // RIPR-SPEC-0229: an unselected-arm discriminator reads each related
-        // test's owner calls as inputs to the changed owner. A test whose
+        // RIPR-SPEC-0229: an unselected-arm discriminator (and a
+        // RIPR-SPEC-0263 unentered guard) reads each related test's owner
+        // calls as inputs to the changed owner. A test whose
         // file imports a foreign same-named function, or whose own package
         // defines one, may be calling that function instead, so the same
-        // identity defeats reveal applies withhold the named arm here.
+        // identity defeats reveal applies withhold the named arm or guard here.
         if let Some(owner) = context.owner_fn
             && activation
                 .missing_discriminators
                 .iter()
-                .any(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+                .any(|fact| is_unselected_input_reason(&fact.reason))
             && test_summaries.iter().any(|test| {
                 let imports_foreign = context.index.files().get(&test.file).is_some_and(|facts| {
                     context.test_file_imports_foreign_callee_name(
@@ -209,7 +242,7 @@ impl ClassifiedProbeEvidence {
         {
             activation
                 .missing_discriminators
-                .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
+                .retain(|fact| !is_unselected_input_reason(&fact.reason));
         }
         let infect = infection_evidence_with_boundary_input(
             context.probe,
@@ -296,6 +329,16 @@ impl ClassifiedProbeEvidence {
             (Some(owner), Some(chain))
                 if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
+                    // #6614, #7549: when every oracle on a caller's result
+                    // is weak on its own terms, its gap is established
+                    // without pairing the caller to the owner; only an
+                    // oracle that might pin the owner abstains.
+                    && !crate::analysis::classify::hop_reach_keeps_weak_oracle_gap(
+                        owner,
+                        chain,
+                        &context.related_tests,
+                        effect_family,
+                    )
                     && if effect_family {
                         !chain_passes_effect_target_to_observed_hops(
                             owner,
@@ -366,13 +409,22 @@ impl ClassifiedProbeEvidence {
             })
             .and_then(|owner| ArmSelector::establish(context.probe, owner))
             .map(|selector| {
-                selector.in_workspace(
-                    context.index,
-                    context
-                        .related_tests
-                        .iter()
-                        .map(|(test, _)| test.file.as_path()),
-                )
+                selector
+                    .in_workspace(
+                        context.index,
+                        context
+                            .related_tests
+                            .iter()
+                            .map(|(test, _)| test.file.as_path()),
+                    )
+                    // RIPR-SPEC-0229 (#6616): exact pattern pins through a verified
+                    // local `assert_matches!`, read once per file per run.
+                    .with_pattern_pins(
+                        context.related_tests.iter().map(|(test, _)| *test),
+                        |test, assertion| {
+                            pin_syntax.exact_pattern_pin_value(test, assertion, context.index)
+                        },
+                    )
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
@@ -494,6 +546,12 @@ impl ClassifiedProbeEvidence {
                     effect_carrier
                         .as_ref()
                         .is_none_or(|carrier| carrier.admits(test, assertion))
+                },
+                setter_writes_field: &|impl_type, setter, field| {
+                    setter_plainly_writes(context.index, impl_type, setter, field)
+                },
+                getter_reads_field: &|impl_type, getter, field| {
+                    getter_plainly_reads(context.index, impl_type, getter, field)
                 },
             },
             arm_selector.as_ref(),
@@ -658,6 +716,24 @@ impl ClassifiedProbeEvidence {
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
+
+        // #1715: a complete expression identifies the changed `?`, but an
+        // equality for another error exit cannot certify that propagation path.
+        // Retain the closing-line origin and refuse new token-only promotion
+        // until same-test activation of this exact boundary is established.
+        let discriminate = if context.propagation_origin.is_some()
+            && discriminate.state == StageState::Yes
+        {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Low,
+                format!(
+                    "Complete propagation subject located; activation of the changed `?` exit is unestablished ({PROPAGATION_BOUNDARY_UNVERIFIED})"
+                ),
+            )
+        } else {
+            discriminate
+        };
 
         let ripr = RiprEvidence {
             reach: reach.clone(),
@@ -1077,8 +1153,10 @@ fn trailing_path_segments(path: &str) -> Vec<&str> {
         None => path,
     };
     let start = path
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == ':'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
     path[start..]
         .split("::")
         .filter(|segment| !segment.is_empty())
@@ -1131,6 +1209,7 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
 mod tests {
     use super::evidence_summaries;
     use super::owner_local_binding_names;
+    use super::trailing_path_segments;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::FunctionSourceRole;
@@ -1837,5 +1916,10 @@ mod tests {
             "callee identity must be bound to semantic digest"
         );
         Ok(())
+    }
+
+    #[test]
+    fn trailing_path_segments_steps_past_a_multi_byte_separator() {
+        assert_eq!(trailing_path_segments("x→Stack::new"), vec!["Stack", "new"]);
     }
 }

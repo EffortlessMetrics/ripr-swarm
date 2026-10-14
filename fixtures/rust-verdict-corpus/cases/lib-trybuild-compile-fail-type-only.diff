@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1202571..b3995f7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,7 +7,7 @@
+ }
+ 
+ pub fn default_port(scheme: &str) -> u16 {
+-    if scheme == "https" { 443 } else { 80 }
++    if "https" == scheme { 443 } else { 80 }
+ }
+ 
+ pub const fn frame_len(payload: usize) -> usize {

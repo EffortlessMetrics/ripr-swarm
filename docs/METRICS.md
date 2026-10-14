@@ -51,6 +51,8 @@ A useful targeted test intent names:
 | Survived-mutant recall after calibration | Tests whether static gaps predict real mutation outcomes. | Up |
 | Top-N precision after calibration | Keeps reports useful. | Up |
 | Verdict-corpus spec-example coverage | Share of in-scope numbered spec acceptance examples (minus waived) that a runtime-labeled case cites, so each specified verdict behavior can be measured (RIPR-SPEC-0219; `cargo xtask verdict-corpus check` gates its floor). | Up to 100% |
+| Verdict-corpus oracle accuracy | Share of cases labeled with a spec-adopted related-test oracle (`expected_oracle`) where ripr reports the same kind and strength; scored apart from the verdict, which cannot see an oracle error that leaves the line verdict unchanged (RIPR-SPEC-0219; `verdict-corpus check` gates the match floor). | Up to 100% |
+| Verdict-corpus oracle overclaim rate | Share of those labeled cases where ripr reports a stronger oracle than the spec adopts, the reading that grants unearned credit (RIPR-SPEC-0219; `verdict-corpus check` gates the overclaim ceiling). | Down to 0 |
 
 ## Engineering Metrics
 

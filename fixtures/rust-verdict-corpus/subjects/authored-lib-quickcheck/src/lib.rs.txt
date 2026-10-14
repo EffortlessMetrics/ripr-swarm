@@ -1,0 +1,48 @@
+//! Byte masking, bit counting and truncation checked by quickcheck properties.
+
+pub fn mask(b: u8) -> u8 {
+    b ^ 0x5A
+}
+
+pub fn encode(xs: &[u8]) -> Vec<u8> {
+    xs.iter().map(|&b| mask(b)).collect()
+}
+
+pub fn decode(xs: &[u8]) -> Vec<u8> {
+    xs.iter().map(|&b| mask(b)).collect()
+}
+
+pub fn popcount(x: u32) -> u32 {
+    let mut c = 0;
+    for i in 0..32 {
+        c += (x >> i) & 1;
+    }
+    c
+}
+
+pub fn truncate(xs: &[u8], max: usize) -> Vec<u8> {
+    xs[..xs.len().min(max)].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn roundtrip(xs: Vec<u8>) -> bool {
+        decode(&encode(&xs)) == xs
+    }
+
+    #[quickcheck]
+    fn popcount_matches_model(x: u32) -> bool {
+        popcount(x) == x.count_ones()
+    }
+
+    quickcheck::quickcheck! {
+        fn truncate_never_exceeds(xs: Vec<u8>, m: u8) -> bool {
+            let max = (m % 16) as usize;
+            truncate(&xs, max).len() <= max
+        }
+    }
+}

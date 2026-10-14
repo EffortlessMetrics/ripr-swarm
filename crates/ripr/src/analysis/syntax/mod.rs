@@ -3,18 +3,22 @@ pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_test_macros;
 mod module_tree;
+mod name_scope;
 mod nesting;
 mod owner_pin;
-#[cfg(test)]
+mod pattern_pin;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    constant_table_column, empty_macro_binding_ambiguities, err_return_guard_key,
-    local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
-    returns_leave_the_function, trusted_macro_binding_sites,
+    constant_table_call_column, constant_table_column, empty_macro_binding_ambiguities,
+    err_return_guard_key, local_empty_macro_names, macro_binding_scan, macro_call_is_statement,
+    owner_pin_assertions, owner_reference_count, returns_leave_the_function,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
+    use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 
 pub use adapter::{
@@ -24,7 +28,9 @@ pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
+pub(crate) use name_scope::{NameScope, NameScopes, UseBinding, name_scopes_for_fn};
 pub(crate) use nesting::{non_code_token_end, parse_clean_source_file, rust_nesting_refusal};
+pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]
 pub(crate) use ra::production_owner_module_path;

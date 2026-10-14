@@ -1,0 +1,45 @@
+{
+  "case_id": "py-blocks-wallet-clamp-second-line",
+  "subject_id": "authored-py-pytest-blocks",
+  "diff": "cases/py-blocks-wallet-clamp-second-line.diff",
+  "anchor": {
+    "file": "ledger/account.py",
+    "line": 19
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_assert_equal_method_result",
+  "hard_case": "the clamped return is the second line of a two-line replacement block",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return max(0, self._held)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_account.py::test_an_overdrawn_wallet_reads_its_debt",
+        "equivalence_review": "not equivalent: a negative stored balance reads 0 instead of the debt"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The discriminating control: the same two-line block shape, but the test asserts Wallet(-50).amount() == -50, which the clamp turns into 0.",
+  "labeling_observation": {
+    "ripr_commit": "3eef453",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

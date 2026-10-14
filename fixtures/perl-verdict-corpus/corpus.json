@@ -1,0 +1,22 @@
+{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0245",
+  "description": "Hand-labeled Perl verdict corpus: one-line rewrites in three small authored Perl distributions (Test::More, Test2::V0 and Test::Exception), each with the fact packet the pinned perl-ripr-facts producer wrote for that diff, labeled with what the distribution's own tests actually discriminate, so ripr's Perl verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal. A second group of cases edits a producer packet to carry a RIPR-SPEC-0235 fact the producer cannot emit yet.",
+  "label_method": "For each case the rewrite was applied to a fresh copy of the authored distribution and `prove -l t` was run to confirm it keeps every test green (behavior_preserving_rewrite). Each listed mutant of the rewritten text was then applied by hand on the anchor line and `prove -l t` run again; no Perl mutation tool drives Test::More, Test2 and Test::Exception alike, so the mutants are hand-written and each was reviewed for equivalence. A mutant counts as detected (`tests_failed`) when prove fails after every file compiles, and its failing_test names the test file and the failing assertion's name. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated. The fact packet comes from `fact_producer` run on the same diff; an edited_producer packet names its edits and has its fingerprint recomputed.",
+  "verdict_projection": "Only candidate_current findings on the anchor file and line count. For Perl, a finding whose source_currentness is unresolved_subject also counts, because ripr resolves a Perl finding to candidate_current only when the packet's change range, read one-based, meets a diff line (#6586), and the pinned producer writes zero-based lines (#3221), so its findings stay unresolved_subject. exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. Rates are also reported by packet provenance, so producer packets and edited packets never mix.",
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Perl code or for ripr in general.",
+    "Every subject is authored to fill a cell of ripr's Perl oracle and reach rules; its rates are not real-world rates.",
+    "ripr does not parse Perl. Every verdict here is ripr's reading of a committed fact packet, so a wrong verdict can come from the producer's facts or from ripr's rules; the case reasoning says which.",
+    "edited_producer cases measure ripr's rules on facts the pinned producer does not emit; they are not evidence about the producer.",
+    "Truth comes from the listed hand-written mutants, not from exhaustive mutation; a discriminated label means every listed mutant made prove fail.",
+    "The harness does not run Perl, prove, the fact producer, mutation testing, or any network access."
+  ],
+  "fact_producer": {
+    "name": "perl-ripr-facts",
+    "repository": "https://github.com/EffortlessMetrics/perl-lsp-swarm",
+    "commit": "99458fde50b8204ecf7054779bb3670e6b5fdda5",
+    "command": "perl-ripr-facts ripr-facts --root <subject> --base base --head HEAD --diff <case>.diff --out <case>.json, run from the subject's parent directory with the subject committed as `base` and the rewrite as HEAD"
+  }
+}

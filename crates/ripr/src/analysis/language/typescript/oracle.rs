@@ -181,10 +181,12 @@ pub(crate) fn collect_callback_assertions(
     bindings: &TypeScriptAssertionBindings,
     returns_to_runner: bool,
 ) -> Vec<TypeScriptAssertion> {
+    let literal_consts = loose_literal_consts(statements, source);
     let context = AssertionContext {
         receiver,
         bindings,
         returns_to_runner,
+        literal_consts: &literal_consts,
     };
     let mut out = Vec::new();
     for stmt in statements {
@@ -200,6 +202,23 @@ pub(crate) struct AssertionContext<'a> {
     bindings: &'a TypeScriptAssertionBindings,
     /// Whether a `return` here hands its value to the test runner.
     returns_to_runner: bool,
+    /// The test body's top-level literal `const`s a loose equality may read
+    /// (RIPR-SPEC-0247 rule 2). Empty inside a nested statement, where a
+    /// block could redeclare the name.
+    literal_consts: &'a [LooseLiteralConst],
+}
+
+impl<'a> AssertionContext<'a> {
+    /// This context for a statement nested in a block, loop, branch or
+    /// `try`, which no longer reads the body's literal `const`s.
+    fn nested(&self) -> AssertionContext<'a> {
+        AssertionContext {
+            receiver: self.receiver,
+            bindings: self.bindings,
+            returns_to_runner: self.returns_to_runner,
+            literal_consts: &[],
+        }
+    }
 }
 
 /// Try chai's BDD `expect(...).to.equal(...)` shape (only when the file binds
@@ -217,7 +236,7 @@ fn assertion_from_expression_any(
             context
                 .bindings
                 .runner_expect_reachable()
-                .then(|| expect_assertion_from_expression(expr, source))
+                .then(|| expect_assertion_from_expression(expr, source, context.bindings))
                 .flatten()
         })
         .or_else(|| {
@@ -225,7 +244,19 @@ fn assertion_from_expression_any(
                 .receiver
                 .and_then(|r| ava_assertion_from_expression(expr, source, r))
         })
-        .or_else(|| module_assert_assertion_from_expression(expr, source, context.bindings))
+        .or_else(|| {
+            context
+                .receiver
+                .and_then(|r| node_test_context_assert_assertion(expr, source, r, context))
+        })
+        .or_else(|| {
+            module_assert_assertion_from_expression(
+                expr,
+                source,
+                context.bindings,
+                context.literal_consts,
+            )
+        })
 }
 
 pub(crate) fn collect_expect_assertions_in_statement(
@@ -234,9 +265,10 @@ pub(crate) fn collect_expect_assertions_in_statement(
     context: &AssertionContext<'_>,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
+    let nested = context.nested();
     match stmt {
         Statement::BlockStatement(block) => {
-            collect_expect_assertions_from_statement_vec(&block.body, source, context, out);
+            collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
             if let Some(assertion) =
@@ -269,35 +301,35 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
         }
         Statement::IfStatement(if_stmt) => {
-            collect_expect_assertions_in_statement(&if_stmt.consequent, source, context, out);
+            collect_expect_assertions_in_statement(&if_stmt.consequent, source, &nested, out);
             if let Some(alternate) = &if_stmt.alternate {
-                collect_expect_assertions_in_statement(alternate, source, context, out);
+                collect_expect_assertions_in_statement(alternate, source, &nested, out);
             }
         }
         Statement::DoWhileStatement(do_while) => {
-            collect_expect_assertions_in_statement(&do_while.body, source, context, out);
+            collect_expect_assertions_in_statement(&do_while.body, source, &nested, out);
         }
         Statement::WhileStatement(while_stmt) => {
-            collect_expect_assertions_in_statement(&while_stmt.body, source, context, out);
+            collect_expect_assertions_in_statement(&while_stmt.body, source, &nested, out);
         }
         Statement::ForStatement(for_stmt) => {
-            collect_expect_assertions_in_statement(&for_stmt.body, source, context, out);
+            collect_expect_assertions_in_statement(&for_stmt.body, source, &nested, out);
         }
         Statement::ForInStatement(for_in) => {
-            collect_expect_assertions_in_statement(&for_in.body, source, context, out);
+            collect_expect_assertions_in_statement(&for_in.body, source, &nested, out);
         }
         Statement::ForOfStatement(for_of) => {
-            collect_expect_assertions_in_statement(&for_of.body, source, context, out);
+            collect_expect_assertions_in_statement(&for_of.body, source, &nested, out);
         }
         Statement::LabeledStatement(labeled) => {
-            collect_expect_assertions_in_statement(&labeled.body, source, context, out);
+            collect_expect_assertions_in_statement(&labeled.body, source, &nested, out);
         }
         Statement::SwitchStatement(switch_stmt) => {
             for case in &switch_stmt.cases {
                 collect_expect_assertions_from_statement_vec(
                     &case.consequent,
                     source,
-                    context,
+                    &nested,
                     out,
                 );
             }
@@ -306,23 +338,23 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(
                 &try_stmt.block.body,
                 source,
-                context,
+                &nested,
                 out,
             );
             if let Some(handler) = &try_stmt.handler {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,
                     source,
-                    context,
+                    &nested,
                     out,
                 );
             }
             if let Some(finalizer) = &try_stmt.finalizer {
-                collect_expect_assertions_from_statement_vec(&finalizer.body, source, context, out);
+                collect_expect_assertions_from_statement_vec(&finalizer.body, source, &nested, out);
             }
         }
         Statement::WithStatement(with_stmt) => {
-            collect_expect_assertions_in_statement(&with_stmt.body, source, context, out);
+            collect_expect_assertions_in_statement(&with_stmt.body, source, &nested, out);
         }
         _ => {}
     }
@@ -431,7 +463,12 @@ fn collect_nested_callback_assertions(
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
-                    collect_expect_assertions_from_statement_vec(statements, source, context, out);
+                    collect_expect_assertions_from_statement_vec(
+                        statements,
+                        source,
+                        &context.nested(),
+                        out,
+                    );
                 }
             } else if let Some(assertions) = callback_case_assertions(
                 callback,
@@ -467,10 +504,12 @@ fn collect_nested_callback_assertions(
             let Some(statements) = function_body_statements_from_argument(callback) else {
                 return;
             };
+            let literal_consts = loose_literal_consts(statements, source);
             let subtest = AssertionContext {
                 receiver: first_plain_parameter(callback),
                 bindings: context.bindings,
                 returns_to_runner: true,
+                literal_consts: &literal_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }
@@ -603,6 +642,7 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 pub(crate) fn expect_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
@@ -624,7 +664,7 @@ pub(crate) fn expect_assertion_from_expression(
 
     let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
-    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+    let (mut oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
     } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
         // An error object this extraction could not read stays unresolved
@@ -653,6 +693,23 @@ pub(crate) fn expect_assertion_from_expression(
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
         };
 
+    // A rejection equality observes the rejected reason, not the fulfilled
+    // value. Admit this new credit only for a concrete literal through a
+    // known, unshadowed runner binding; the existing binding filter supplies
+    // the scope proof. Implicit globals and dynamic arguments keep their
+    // current classification (#7315).
+    let rendered_call = if async_modifier == Some("rejects")
+        && oracle_kind == OracleKind::ExactValue
+        && outer_call.arguments.len() == 1
+        && expected_value_or_variant.is_some()
+        && bindings.runner_expects.iter().any(|name| name == "expect")
+    {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        Some(format!("expect(...).rejects.{matcher}(...)"))
+    } else {
+        None
+    };
+
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
 
@@ -668,7 +725,8 @@ pub(crate) fn expect_assertion_from_expression(
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: None,
+        rendered_call,
+        loose_number_expected: false,
     })
 }
 
@@ -736,6 +794,7 @@ pub(crate) fn ava_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: None,
+        loose_number_expected: false,
     })
 }
 
@@ -766,7 +825,8 @@ pub(crate) enum AssertFlavor {
 
 /// Module-level bindings through which a test file reaches an assertion
 /// library that is not a test-callback receiver (#4547): `node:assert` (and
-/// its `/strict` variant) and chai's `assert` / `expect`.
+/// its `/strict` variant), chai's `assert` / `expect`, and explicit runner
+/// `expect` imports for literal rejection equality (#7315).
 ///
 /// Only names the file IMPORTS from one of those modules are recorded — an
 /// ESM import or a top-level `require(...)` binding — so a locally declared
@@ -784,8 +844,18 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_expects: Vec<String>,
     /// Identifiers bound to the chai module (`chai.expect`, `chai.assert`).
     chai_modules: Vec<String>,
+    /// Explicit Jest/Vitest `expect` imports eligible for literal rejection
+    /// equality credit. Ordinary matcher admission remains unchanged.
+    runner_expects: Vec<String>,
     /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
     expect_binding: ExpectBinding,
+    /// Identifiers bound to `node:test`'s default export, `test` or `it`,
+    /// whose test context carries `t.assert` (RIPR-SPEC-0252).
+    node_test_locals: Vec<String>,
+    /// Whether the test being read was registered through one of
+    /// `node_test_locals`; set only by `for_registration`, so any other
+    /// path reads no context assert.
+    node_test_runner: bool,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -838,6 +908,28 @@ impl TypeScriptAssertionBindings {
             bindings.expect_binding = ExpectBinding::Other;
         }
         for stmt in statements {
+            // The relation inventory also records re-exports. Only actual
+            // local value imports can establish the new runner credit.
+            if let Statement::ImportDeclaration(import) = stmt {
+                if import.import_kind != ImportOrExportKind::Type
+                    && matches!(import.source.value.as_str(), "vitest" | "@jest/globals")
+                    && let Some(specifiers) = &import.specifiers
+                {
+                    for specifier in specifiers {
+                        if let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier
+                            && specifier.import_kind != ImportOrExportKind::Type
+                            && super::owners::module_export_name_text(&specifier.imported)
+                                .as_deref()
+                                == Some("expect")
+                        {
+                            bindings
+                                .runner_expects
+                                .push(specifier.local.name.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
             let Statement::VariableDeclaration(decl) = stmt else {
                 continue;
             };
@@ -857,6 +949,12 @@ impl TypeScriptAssertionBindings {
                 bindings.bind(&module, Some(member.property.name.as_str()), false, local);
             }
         }
+        // `export { test } from "node:test"` reaches here as an import but
+        // binds no local, so a `test` in scope is some other binding.
+        let reexported = node_test_reexported_names(statements);
+        bindings
+            .node_test_locals
+            .retain(|local| !reexported.iter().any(|name| name == local));
         bindings
     }
 
@@ -864,6 +962,12 @@ impl TypeScriptAssertionBindings {
     /// namespace import) of `module`.
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
+        // Only a binding of the test function itself can register a test
+        // whose callback receives a `TestContext`; `describe as test` hands
+        // its callback a `SuiteContext` with no `assert` (RIPR-SPEC-0252).
+        if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
+            self.node_test_locals.push(local.clone());
+        }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
                 AssertFlavor::NodeStrict
@@ -928,12 +1032,36 @@ impl TypeScriptAssertionBindings {
                 .filter(|local| !is_shadowed(local))
                 .cloned()
                 .collect(),
+            runner_expects: self
+                .runner_expects
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
             expect_binding: if is_shadowed("expect") {
                 ExpectBinding::Other
             } else {
                 self.expect_binding
             },
+            node_test_locals: self
+                .node_test_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            node_test_runner: self.node_test_runner,
         }
+    }
+
+    /// These bindings for a test registered through a callee whose root
+    /// identifier is `callee_root` (`test`, `it`, `test.only`): the
+    /// `node:test` context assert is read only when that root is bound to
+    /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
+    pub(crate) fn for_registration(&self, callee_root: Option<&str>) -> Self {
+        let mut bindings = self.clone();
+        bindings.node_test_runner =
+            callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
+        bindings
     }
 
     /// These bindings with `expect` destructured from the Vitest test
@@ -960,6 +1088,7 @@ impl TypeScriptAssertionBindings {
                 .any(|(local, _, _)| local == name)
             || self.chai_expects.iter().any(|local| local == name)
             || self.chai_modules.iter().any(|local| local == name)
+            || self.runner_expects.iter().any(|local| local == name)
     }
 
     fn is_empty(&self) -> bool {
@@ -1076,16 +1205,101 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
     )
 }
 
+/// Names a top-level `export { ... } from "node:test"` re-exports. The
+/// import extractor records them as imports, but they bind nothing in this
+/// file.
+fn node_test_reexported_names(statements: &oxc_allocator::Vec<'_, Statement<'_>>) -> Vec<String> {
+    let mut names = Vec::new();
+    for stmt in statements {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.declaration.is_some()
+            || export.source.as_ref().map(|source| source.value.as_str()) != Some("node:test")
+        {
+            continue;
+        }
+        names.extend(
+            export.specifiers.iter().filter_map(|specifier| {
+                super::owners::module_export_name_text(&specifier.exported)
+            }),
+        );
+    }
+    names
+}
+
+/// RIPR-SPEC-0252 rule 1: `t.assert.<method>(...)` on a `node:test` test
+/// context. `t.assert` exposes the top-level `node:assert` functions, so the
+/// call reads as legacy `node:assert` does (`equal` is loose `==`). Only a
+/// test registered through a `node:test` binding has this receiver shape; AVA's
+/// `t.assert(value)` is a call, not a member object, and is read elsewhere.
+fn node_test_context_assert_assertion(
+    expr: &Expression<'_>,
+    source: &SourceText<'_>,
+    receiver: &str,
+    context: &AssertionContext<'_>,
+) -> Option<TypeScriptAssertion> {
+    if !context.bindings.node_test_runner {
+        return None;
+    }
+    let expr = match expr {
+        Expression::AwaitExpression(await_expr) => &await_expr.argument,
+        _ => expr,
+    };
+    let Expression::CallExpression(call) = expr else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    // Rule 1, amended: `t["assert"]` with a string-literal key names the
+    // same member as `t.assert`.
+    let (object, assert_text) = match &member.object {
+        Expression::StaticMemberExpression(assert_member)
+            if assert_member.property.name.as_str() == "assert" =>
+        {
+            (&assert_member.object, ".assert")
+        }
+        Expression::ComputedMemberExpression(assert_member)
+            if matches!(
+                &assert_member.expression,
+                Expression::StringLiteral(key) if key.value.as_str() == "assert"
+            ) =>
+        {
+            (&assert_member.object, "[\"assert\"]")
+        }
+        _ => return None,
+    };
+    let Expression::Identifier(object) = object else {
+        return None;
+    };
+    if object.name.as_str() != receiver {
+        return None;
+    }
+    let method = member.property.name.as_str();
+    assert_call_assertion(
+        call,
+        source,
+        method,
+        AssertFlavor::NodeLegacy,
+        format!("{receiver}{assert_text}.{method}"),
+        context.literal_consts,
+    )
+}
+
 /// Match a `node:assert` / chai `assert` call made through an imported
 /// binding (#4547): `assert.strictEqual(actual, expected)`,
 /// `chai.assert.equal(...)`, a bare named method `strictEqual(actual,
 /// expected)`, or the callable `assert(value)` (smoke). The receiver or callee
 /// must be a binding [`TypeScriptAssertionBindings`] recorded from an import,
-/// so a same-named local helper is not credited.
+/// so a same-named local helper is not credited. `literal_consts` are the
+/// test body's literal `const`s a loose equality may read (RIPR-SPEC-0247
+/// rule 2).
 pub(crate) fn module_assert_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
+    literal_consts: &[LooseLiteralConst],
 ) -> Option<TypeScriptAssertion> {
     if bindings.is_empty() {
         return None;
@@ -1115,6 +1329,20 @@ pub(crate) fn module_assert_assertion_from_expression(
         }
         _ => return None,
     };
+    assert_call_assertion(call, source, method, flavor, callee_text, literal_consts)
+}
+
+/// The assertion an `assert`-style call reads as once its method and API
+/// flavor are known: shared by imported `node:assert` / chai bindings and
+/// the `node:test` context's `t.assert`.
+fn assert_call_assertion(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    method: &str,
+    flavor: AssertFlavor,
+    callee_text: String,
+    literal_consts: &[LooseLiteralConst],
+) -> Option<TypeScriptAssertion> {
     let (mut oracle_kind, mut oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
@@ -1136,17 +1364,35 @@ pub(crate) fn module_assert_assertion_from_expression(
     }
     // RIPR-SPEC-0247 rule 2: loose `==` equality against a literal that
     // coercion cannot reach pins the value as strict equality does.
+    // A test-local `const` bound to such a literal reads as the literal.
     let loose_equality = matches!(method, "equal" | "deepEqual")
         && matches!(oracle_kind, OracleKind::RelationalCheck);
+    let deep = method == "deepEqual";
+    let resolved_const = call
+        .arguments
+        .get(1)
+        .filter(|_| loose_equality)
+        .and_then(|expected| {
+            resolve_loose_literal_const(literal_consts, expected, call.span.start)
+        });
     if loose_equality
-        && call
-            .arguments
-            .get(1)
-            .is_some_and(|expected| loose_equality_pins_literal(expected, method == "deepEqual"))
+        && (resolved_const.is_some()
+            || call
+                .arguments
+                .get(1)
+                .is_some_and(|expected| loose_equality_pins_literal(expected, deep)))
     {
         oracle_kind = OracleKind::ExactValue;
         oracle_strength = OracleStrength::Strong;
     }
+    // Rule 2's typed amendment: `0` and `1` stay weak here, and the
+    // classifier credits them against an owner declared to return `number`.
+    let loose_number_literal = call
+        .arguments
+        .get(1)
+        .filter(|_| loose_equality && matches!(oracle_kind, OracleKind::RelationalCheck))
+        .and_then(|expected| finite_number_literal_text(expected, source));
+    let loose_number_expected = loose_number_literal.is_some();
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -1160,7 +1406,10 @@ pub(crate) fn module_assert_assertion_from_expression(
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        expected_argument_metadata(expected_arg, source);
+        match resolved_const.or(loose_number_literal) {
+            Some(literal) => (Some(literal.to_string()), false),
+            None => expected_argument_metadata(expected_arg, source),
+        };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
     let rendered_call = match &error_payload {
@@ -1180,6 +1429,7 @@ pub(crate) fn module_assert_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered_call),
+        loose_number_expected,
     })
 }
 
@@ -1474,6 +1724,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered),
+        loose_number_expected: false,
     })
 }
 

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2192590..ad1098c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@
+ }
+ 
+ pub fn mean(xs: &[f64]) -> f64 {
+-    xs.iter().sum::<f64>() / xs.len() as f64
++    xs.iter().fold(0.0, |a, b| a + b) / xs.len() as f64
+ }
+ 
+ pub fn kmh_to_ms(v: f64) -> f64 {

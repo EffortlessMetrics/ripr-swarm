@@ -1,0 +1,13 @@
+diff --git a/lib/Account.pm b/lib/Account.pm
+index 1e1ba56..91e8cee 100644
+--- a/lib/Account.pm
++++ b/lib/Account.pm
+@@ -47,7 +47,7 @@ sub freeze {
+ 
+ sub balance_after {
+     my ($balance, $amount) = @_;
+-    return $balance - $amount - 1;
++    return $balance - ($amount + 1);
+ }
+ 
+ 1;

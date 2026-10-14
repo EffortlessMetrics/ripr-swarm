@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 14 more runtime-labeled grid cases in four authored crates
   (`authored-grid-flow`, `-bindings`, `-results`, `-bits`) for spec cells the
   operator grid left open: a lone `} else {` line and field-assignment

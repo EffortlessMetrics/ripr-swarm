@@ -1,0 +1,53 @@
+{
+  "case_id": "lib-pretty-render-shadowed-assert-eq",
+  "subject_id": "authored-lib-pretty-assertions",
+  "diff": "cases/lib-pretty-render-shadowed-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_deletion",
+  "test_shape": "pretty_assertions_use_shadowed_assert_eq",
+  "hard_case": "ripr reads the pretty_assertions assert_eq! as a strong exact oracle and reports the call deletion as exposed, but a field_construction finding on the same line is weakly_exposed and the line-level gap outranks the credit.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "out += &format!(\"{:<7}{:>6}\\n\", l.label, l.cents);",
+        "mutated_line": "out += &format!(\"{:<7}{:>6}\\n\", l.label, l.cents);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::renders_aligned_columns",
+        "equivalence_review": "not equivalent: \"tea\" pads to 7 columns, not 8"
+      },
+      {
+        "replacement": "out += &format!(\"{:<8}{:>5}\\n\", l.label, l.cents);",
+        "mutated_line": "out += &format!(\"{:<8}{:>5}\\n\", l.label, l.cents);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::renders_aligned_columns",
+        "equivalence_review": "not equivalent: 1200 pads to 5 columns, not 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_eq! (pretty_assertions) compares the whole rendered table to a literal, so changing either column width fails renders_aligned_columns.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

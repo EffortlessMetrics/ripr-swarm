@@ -51,5 +51,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#5"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "exact_error_variant",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#5"
+  }
 }

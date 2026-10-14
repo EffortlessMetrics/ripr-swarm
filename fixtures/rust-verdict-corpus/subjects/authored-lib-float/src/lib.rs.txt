@@ -1,0 +1,46 @@
+//! Floating-point helpers tested with `approx` and `float-cmp`.
+
+use std::f64::consts::PI;
+
+pub fn circle_area(r: f64) -> f64 {
+    PI * r * r
+}
+
+pub fn fahrenheit(c: f64) -> f64 {
+    c * 1.8 + 32.0
+}
+
+pub fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+pub fn kmh_to_ms(v: f64) -> f64 {
+    v / 3.6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::{assert_abs_diff_eq, assert_relative_eq};
+    use float_cmp::{approx_eq, assert_approx_eq};
+
+    #[test]
+    fn area_of_radius_three() {
+        assert_relative_eq!(circle_area(3.0), 28.274333882308138, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn boiling_point() {
+        assert_abs_diff_eq!(fahrenheit(100.0), 212.0, epsilon = 0.5);
+    }
+
+    #[test]
+    fn mean_of_three() {
+        assert_approx_eq!(f64, mean(&[1.0, 2.0, 4.0]), 7.0 / 3.0, ulps = 2);
+    }
+
+    #[test]
+    fn highway_speed() {
+        assert!(approx_eq!(f64, kmh_to_ms(36.0), 10.0, epsilon = 0.5));
+    }
+}

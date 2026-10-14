@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0228-collection-getter-read",
+  "subject_id": "authored-spec0228-collection-getter",
+  "diff": "cases/spec0228-collection-getter-read.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "owner_call_then_assert_eq_resolved_getter",
+  "hard_case": "the getter `entries()` shares no name with the written field `lines`; before RIPR-SPEC-0228 getter resolution this read weakly_exposed",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.lines.push(qty + 1);",
+        "mutated_line": "self.lines.push(qty + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_records_the_line",
+        "equivalence_review": "not equivalent: the order records 5 instead of 4, and entries() returns &self.lines"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::add_records_the_line",
+        "equivalence_review": "not equivalent: nothing is recorded, so entries() is empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "add_records_the_line calls add(4) on order and asserts order.entries() == &[4]; entries() returns &self.lines, the field the push writes. Spec cells: RIPR-SPEC-0228 example 12.",
+  "labeling_observation": {
+    "ripr_commit": "017fda1f",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#12"
+  ]
+}

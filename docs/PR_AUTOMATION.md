@@ -41,6 +41,87 @@ review artifacts described here. Machine-readable receipts record which gates
 and report commands ran so agents and reviewers can inspect evidence without
 reading raw logs.
 
+## Draft to Ready handoff
+
+Publish a coherent candidate as Draft. The delivery owner completes this order
+before spending the Ready-triggered `Ripr Rust Small Result` qualification:
+
+1. Bind the exact candidate head and integration basis. Complete independent
+   substantive review through `review-pr`, disposition every known finding, and
+   compose accepted repairs into that candidate while Draft.
+2. Run applicable, available local proof on the composed head and refresh affected review.
+   Follow changed expectations into their consumers: corpus rows can change a
+   scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
+   passing Python/card tests. Check the relevant test placement, private imports,
+   targets and feature selection. Preserve independent literal oracles and
+   meaningful negative controls; derive expected values from the contract, not
+   from the implementation being tested. This selects focused proof, not every
+   possible test or a duplicate of the hosted matrix.
+3. Reconcile actual conflicts, changed prerequisites and affected combined-tree
+   proof. Unrelated main movement alone needs no branch update or repeated proof.
+   If an applicable required gate has a known deterministic failure on this
+   basis, keep Draft, link the existing repair and its owner, and name the event
+   that permits resumption. Do not repeat that failure on each dependent PR,
+   duplicate its repair, or bless baseline failures. After the prerequisite lands,
+   verify the resulting basis and refresh only affected proof and review.
+   Before Ready, inspect GitHub's PR merge ref through an available permitted
+   Git/API read. Record its commit, parents and tree against the reviewed head,
+   basis and material prerequisites; local `merge-tree` proof does not establish
+   that remote subject. Judge differences for applicability, without behind-only
+   restacking. A stale subject missing a material prerequisite keeps Draft until
+   its owner corrects the source ancestry or remote ref state and the changed
+   subject is verified. A landing notification alone is not that verification.
+   If the ref cannot be queried, retain the exact read limit and leave the hosted
+   subject unestablished. An existing authorized, credibly expected-green route
+   may obtain that evidence; do not spend known-red qualification to discover
+   whether its prerequisite reached the hosted subject.
+4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
+   only for the unchanged, reviewed and composed candidate when green is
+   reasonably expected, with no unresolved material finding or known applicable
+   gate blocker. If local execution is genuinely unavailable, follow the existing
+   [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
+   record the unavailable dimension and reason, completed available checks, and
+   existing authorized narrow hosted qualification that will establish it.
+   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   applicable local check, unfinished review or repair, a known-red test, or
+   missing claim-essential native proof. Ready requests qualification;
+   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+
+After Ready, inspect the actual job checkout commit, parents and tree against
+the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
+does not guarantee the checkout. If a material mismatch appears, retain the
+actual run/subject, return to Draft and resume only after the changed prerequisite
+or subject is verified; do not relabel that run as proof for the local tree or
+repeat Ready toggles to refresh it.
+
+A new head or material finding returns the candidate to Draft for one joined
+repair/proof/review wave before another Ready transition. Preserve unaffected
+evidence. Do not re-toggle an unchanged head with a queued or running required
+run: the toggle cancels it. Retain its run link and yield the remote wait.
+
+### PR-native continuation record
+
+Keep one current block in the existing PR body or owned issue/PR comment. Edit
+it at a transition; link the underlying reviews and reports instead of repeating
+their prose. Live GitHub metadata remains authoritative over a stale block.
+
+```text
+Owner / governing claim:
+Candidate: PR / exact head / reviewed basis and tree / observed GitHub merge subject
+Review: exact-head record / remaining findings or evidence
+Validation: command + result links / unrun applicable dimensions
+Dependency: canonical issue or PR / owner / blocking reason, or none
+Next: action / owner / exact resume condition
+```
+
+For pending local work include its original task/driver and log paths; a missing
+terminal exit is not a pass. When native writes are unavailable, return this
+record to the capable delivery owner. A fresh worker reads the native objects
+and takes the earliest missing judgment; no separate tracker or idle polling
+worker is needed. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
+exercise both proceed and hold decisions without claiming actual CI or merge.
+
 ## Current Commands
 
 The current repo automation surface is:
@@ -235,6 +316,19 @@ Top-level `plans/` files are documentation evidence and campaign-planning
 inputs. They appear in the docs, evidence/support, and campaign-planning
 sections of the reviewer packet without being treated as production behavior.
 
+`cargo xtask ci-policy` is the hosted Rust policy entry. It uses the same
+change-set discovery, metadata validation, policy table and three whitespace
+checks as local precommit, with the existing nine-scan collect-all producer
+before compilation-bearing file-policy enumeration. It writes
+`target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
+identifies its composition, and leaves legacy `precommit.md` and structured
+local `precommit-v2` receipts untouched.
+Its pass excludes selected Clippy; the required producer retains explicit
+`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
+policy-preflight receipt is still verified. Formatting and the later dependency,
+process and network steps are retained; no duplicate-policy removal or measured
+savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
 review.
@@ -263,7 +357,7 @@ this cleanup. Both captured scopes exclude pipe drain. Inherited-status elapsed
 includes the launch/status call and preserves inherited streams. Missing values
 are unavailable evidence. Cargo counts normalize existing ANSI color sequences
 and recognize `Compiling`, `Checking` and `Fresh` stderr progress lines only; they do not identify compiler units, prove
-artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
+artifact reuse or by themselves justify changing Clippy composition. Dirty-source HEAD,
 base and paths supply invocation context rather than immutable source identity.
 Successful report-write failures still return an I/O error; interrupted execution
 retains its original error and separately reports publication failures.
@@ -363,10 +457,13 @@ through GitHub CLI and writes `target/ripr/reports/pr-triage.md` plus
 `target/ripr/reports/pr-triage.json`. It flags same-title families, identical
 changed-file sets, stale drafts, branches behind main, incomplete validation
 signals, and policy/gate/generated workflow surfaces. It also emits an
-advisory queue disposition for each PR — `merge_candidate`, `needs_rebase`,
+advisory queue disposition for each PR — `merge_candidate`, `needs_integration_review`,
 `needs_review`, `close_duplicate`, `superseded`, `needs_fresh_validation`,
 `needs_owner_decision`, or `do_not_touch_wrong_lane`. It is advisory and never
-updates, closes, merges, or comments on PRs.
+updates, closes, merges, or comments on PRs. The behind finding and disposition
+preserve the observation and unaffected proof; they request material integration
+judgment rather than a branch update. Existing duplicate, policy, validation and
+review routes precede that disposition.
 
 `branch-inventory` is the remote-branch ownership/age report (#2024). It
 regenerates the inventory from current GitHub/Git data and writes
@@ -394,8 +491,10 @@ latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
 checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `rebase`, `inspect failure`, or `merge`. It is
-advisory and never updates the branch, comments, approves, or merges.
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+`BEHIND` requests integration judgment after Draft, review-required and pending
+waits; it does not establish that a branch update is needed. It is advisory and
+never updates the branch, comments, approves, or merges.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
@@ -877,13 +976,15 @@ failure, preserves each leaf report/error, and writes
 command. Any leaf error or aggregate report-write error returns nonzero.
 `check-file-policy` is excluded because it can compile tests. The selected
 leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
-compiles the driver when needed. This is a local workflow improvement; existing
-precommit/check-fast behavior and hosted gate routing remain unchanged.
+compiles the driver when needed. Ordinary local precommit/check-fast behavior
+is unchanged. Hosted `ci-policy` reuses this same producer once before the
+remaining policy checks; it does not add another nine-scan pass.
 
 [RIPR-SPEC-0253](specs/RIPR-SPEC-0253-local-collect-all-policy.md) maps this
 command's five acceptance cases to its actual-driver tests and production owner.
 
-The precommit inventory is:
+The policy inventory (the maintained execution authority is `PRECOMMIT_GATE_COMMANDS`
+and `precommit_policy` in `xtask/src/main.rs`) is:
 
 ```bash
 cargo fmt --check
@@ -892,21 +993,29 @@ cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-local-context
 cargo xtask check-file-policy
+cargo xtask check-covered-by
 cargo xtask check-executable-files
+cargo xtask check-text-encoding
 cargo xtask check-workflows
 cargo xtask check-droid-review-config
 cargo xtask check-spec-format
 cargo xtask check-spec-numbering
 cargo xtask check-fixture-contracts
+cargo xtask check-rust-judged-panel
+cargo xtask check-release-challenge-selection
+cargo xtask check-release-challenge-judgments
+cargo xtask check-python-judged-panel
 cargo xtask check-traceability
 cargo xtask check-capabilities
 cargo xtask check-workspace-shape
 cargo xtask check-architecture
+cargo xtask check-rust-source-role-authority
 cargo xtask check-public-api
 cargo xtask check-output-contracts
 cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
+cargo xtask check-changelog-fragments
 cargo xtask check-readme-state
 cargo xtask markdown-links
 cargo xtask check-pr-shape
@@ -915,6 +1024,10 @@ cargo xtask check-generated
 cargo xtask check-badge-diff-policy
 cargo xtask check-generated-clean
 cargo xtask check-proof-packs
+cargo xtask check-release-targets
+cargo xtask check-dependencies
+cargo xtask check-process-policy
+cargo xtask check-network-policy
 cargo xtask check-lint-policy
 ```
 

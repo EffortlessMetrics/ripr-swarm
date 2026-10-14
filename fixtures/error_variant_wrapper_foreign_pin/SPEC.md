@@ -11,8 +11,9 @@ through `.map_err(..)`). The only related test calls the inner callee but
 pins an exact variant against a *different* call (`unrelated_check`, whose
 error enum shares the terminal variant name `MalformedSource` under a
 different qualifier `OtherError`). The test is named after the callee it
-exercises (`try_parse_summary_with_foreign_pin`): test-to-seam linkage is
-name-anchored, so a generic name would report `no_static_path` instead.
+exercises (`try_parse_summary_with_foreign_pin`): before the shared
+reach-bearing relation rule (#5335) that name anchor supplied owner reach;
+it no longer does.
 
 ## When
 
@@ -29,9 +30,12 @@ ripr check --root fixtures/error_variant_wrapper_foreign_pin/input --diff fixtur
 ## Then
 
 The `error_path` probe for `try_parse_summary(raw).map_err(Into::into)`
-reports `weakly_exposed` (NOT `exposed`). The foreign pin constrains another
-call's result, so no wrapper-to-variant binding is established and the
-discriminate stage emits `observation_unverified`.
+reports `no_static_path` (NOT `exposed`). The foreign pin constrains another
+call's result, so no wrapper-to-variant binding is established; the name
+anchor no longer counts as reach (#5335) and nothing invokes the wrapper,
+so the finding discloses the missing static path. The discriminate stage
+reads `no`: no test reaches the changed owner, so no test can discriminate
+this change.
 
 ## Must Not
 

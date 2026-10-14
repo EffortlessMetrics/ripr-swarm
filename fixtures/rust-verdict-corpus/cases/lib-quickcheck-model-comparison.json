@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-quickcheck-model-comparison",
+  "subject_id": "authored-lib-quickcheck",
+  "diff": "cases/lib-quickcheck-model-comparison.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "quickcheck_bool_model_comparison",
+  "hard_case": "A model-comparison property (`popcount(x) == x.count_ones()`) returned as bool is not recognized as an oracle; ripr reports static_unknown only.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(x >> i) & 3",
+        "mutated_line": "c += (x >> i) & 3;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::popcount_matches_model",
+        "equivalence_review": "not equivalent: popcount(2) = 3 instead of 1"
+      },
+      {
+        "replacement": "(x >> (i / 2)) & 1",
+        "mutated_line": "c += (x >> (i / 2)) & 1;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::popcount_matches_model",
+        "equivalence_review": "not equivalent: popcount(2) = 2 instead of 1 (bit 1 counted twice)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The #[quickcheck] property compares against the std model count_ones over random u32, so any change in bit counting is found.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

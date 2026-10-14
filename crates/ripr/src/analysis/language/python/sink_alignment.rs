@@ -49,15 +49,13 @@ pub(super) struct CreditedAssertion {
 impl SinkAlignment {
     /// The decision the classifier uses, derived from the alignment so the two
     /// can never drift. A strong oracle observes the owner when the alignment is
-    /// `direct`/`alias`/`changed_sink_token`, OR in the legacy module-owner /
-    /// empty-token case (alignment `unknown`, reason `module_owner_no_sink_token`)
-    /// which historically returned `true` — the one place where `unknown` does
-    /// not imply not-observed, preserved to keep the prior decision unchanged.
+    /// `direct`/`alias`/`changed_sink_token`. An empty token set cannot establish
+    /// observation; an assertion must satisfy one of the existing credit branches.
     pub(super) fn observes(&self) -> bool {
         matches!(
             self.oracle_alignment.as_str(),
             "direct" | "alias" | "changed_sink_token"
-        ) || self.alignment_reason == "module_owner_no_sink_token"
+        )
     }
 
     /// The same read-out with a non-delegatable reason: a related row has
@@ -106,8 +104,8 @@ pub(super) fn oracle_text_observes_token(text: &str, token: &str) -> bool {
 /// is not enough: a strong oracle that asserts a *different* value (e.g. a
 /// wrapper's return) does not discriminate the change. The three token groups
 /// (owner name, import alias, changed-sink tokens) are probed in order against
-/// the strongest related oracles, mirroring the prior boolean exactly so the
-/// derived decision is unchanged.
+/// the admitted strong assertions. Empty token groups supply no observation
+/// credit; the call and effect branches can still observe the actual output.
 #[cfg(test)]
 pub(super) fn classify_sink_alignment(
     owner: &PythonOwner,
@@ -122,8 +120,8 @@ pub(super) fn classify_sink_alignment(
 /// sink — not merely reaches the owner. Derived from [`classify_sink_alignment`]
 /// so the boolean and the surfaced `oracle_alignment` can never disagree. Now a
 /// `#[cfg(test)]` regression helper: production code reads the alignment directly
-/// via [`SinkAlignment::observes`], and the existing boolean tests pin that the
-/// derivation stays equivalent to the prior decision.
+/// via [`SinkAlignment::observes`], and the boolean tests pin that observation
+/// requires a crediting branch.
 #[cfg(test)]
 pub(super) fn strong_oracle_observes_owner(
     owner: &PythonOwner,
@@ -494,7 +492,7 @@ pub(super) fn classify_sink_alignment_with_old(
         .collect();
     // A changed side effect (`print`, a file write, a call on a passed-in
     // collaborator, a `self` field) may be observed through its channel.
-    let effect = ChangedEffect::of(line_text, owner);
+    let effect = ChangedEffect::of(line_text, old_line_text, owner);
     let mock_tests: Vec<&RelatedTest> = if effect
         .as_ref()
         .is_some_and(ChangedEffect::admits_mock_assertion)
@@ -539,6 +537,10 @@ pub(super) fn classify_sink_alignment_with_old(
         &focus,
         effect.as_ref(),
     ));
+    // Each credited list assertion must call this owner in its own test row.
+    // Apply the guard to the gate text, after per-assertion expansion.
+    units
+        .retain(|unit| super::oracles::unittest_list::observes_owner(&unit.text, unit.test, owner));
     if units.is_empty() {
         if strong_tests.is_empty() {
             return SinkAlignment::unknown(changed_sink);
@@ -677,24 +679,6 @@ pub(super) fn classify_sink_alignment_with_old(
         None => change_only.clone(),
     };
 
-    // Module owner / no usable token: the prior boolean returned `true` here, so
-    // the decision must stay `observes`. Map to `unknown` with the reason that
-    // `observes()` special-cases back to true.
-    if identity_tokens.is_empty()
-        && method_name_token.is_none()
-        && alias_tokens.is_empty()
-        && change_only.is_empty()
-        && !is_method_owner
-    {
-        return SinkAlignment {
-            changed_sink,
-            observed_sink,
-            oracle_alignment: "unknown".to_string(),
-            alignment_reason: "module_owner_no_sink_token".to_string(),
-            credited: None,
-        };
-    }
-
     let observes = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
         group
             .iter()
@@ -739,6 +723,11 @@ pub(super) fn classify_sink_alignment_with_old(
     let module_call_observed = |unit: &AlignmentUnit<'_>| {
         !is_method_owner
             && unit.test.is_some_and(|test| {
+                if let Some(observes) =
+                    super::oracles::unittest_list::calls_owner(&unit.text, Some(test), owner)
+                {
+                    return observes;
+                }
                 let callees = owner_module_callees(test, owner);
                 callees
                     .iter()
@@ -787,8 +776,14 @@ pub(super) fn classify_sink_alignment_with_old(
     } else {
         None
     };
+    let list_equality_discriminates = units
+        .iter()
+        .any(|unit| super::oracles::unittest_list::literal_text(&unit.text))
+        && super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
     let field_construction_credit_ok = |unit: &AlignmentUnit<'_>| {
-        if let Some((changed_keys, changed_values)) = &dict_change {
+        if super::oracles::unittest_list::literal_text(&unit.text) {
+            list_equality_discriminates
+        } else if let Some((changed_keys, changed_values)) = &dict_change {
             oracle_observes_changed_dict_element(&unit.text, changed_keys, changed_values)
         } else if let Some((changed_indices, changed_values)) = &list_change {
             oracle_observes_changed_list_element(&unit.text, changed_indices, changed_values)
@@ -992,6 +987,7 @@ fn alignment_units<'a>(
         let test = all_tests.iter().find(|test| {
             test.name == related.name
                 && test.file == related.file
+                && test.line == related.line
                 && super::test_activation::activation_control(test).is_none()
         });
         let before = units.len();

@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-mockall-grace-boundary-times",
+  "subject_id": "authored-lib-mockall",
+  "origin": "authored",
+  "anchor": "src/lib.rs:13",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mockall_times_expectation_boundary",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

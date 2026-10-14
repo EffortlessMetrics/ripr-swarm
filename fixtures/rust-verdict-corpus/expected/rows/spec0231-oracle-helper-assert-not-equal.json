@@ -18,5 +18,22 @@
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "relational_check",
+      "strength": "weak",
+      "spec": "RIPR-SPEC-0231#11"
+    },
+    "observed_kind": "relational_check",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "score_is_not_zero",
+        "kind": "relational_check",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
 }

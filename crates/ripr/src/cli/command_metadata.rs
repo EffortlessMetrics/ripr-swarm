@@ -146,7 +146,8 @@ pub(crate) struct CommandOutputs {
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.
     CompletedOrFailed,
-    /// `ripr check`: findings, including `exposed`, still complete with `0`.
+    /// `ripr check` / `ripr diff`: findings still complete with `0`;
+    /// unsupported input keeps its report and exits `2`.
     AdvisoryFindings,
     /// `ripr gate evaluate`: `config_error` is `2`, `blocked` is `3`.
     GateEvaluate,
@@ -200,7 +201,7 @@ const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptChec
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
 fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
-        "cmd:check" => Some(EXIT_ADVISORY_FINDINGS),
+        "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
             Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
@@ -299,7 +300,8 @@ const VERIFY_PACKET_RUNNER: CommandEffects = CommandEffects {
     may_start_child_process: true,
 };
 
-/// Doctor probes installed tool versions but runs no analysis.
+/// Environment probes (doctor tool versions or implicit-root Git boundary)
+/// run no analysis, compilation, tests, mutation or network operations.
 const TOOL_PROBES: CommandEffects = CommandEffects {
     may_run_analysis: false,
     may_compile: false,
@@ -2046,8 +2048,8 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr diff --root . --base REV --head HEAD --json",
         next_routes: &["check", "explain"],
         stop_states: &["explicit refusal on unresolvable revisions"],
-        exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed.",
+        exit: EXIT_ADVISORY_FINDINGS,
+        limitations: "delivers JSON on stdout; redirect to a file when a report artifact is needed. Findings and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2069,7 +2071,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["explain", "context", "repair"],
         stop_states: &["explicit refusal when no diff can be resolved"],
         exit: EXIT_ADVISORY_FINDINGS,
-        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact. Findings, including exposed, do not fail the process.",
+        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact. Findings, including exposed, and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2182,10 +2184,10 @@ const METADATA: &[CommandMetadata] = &[
         state_target: None,
         json_support: false,
         example: "ripr cache",
-        next_routes: &["cache status", "cache clear"],
+        next_routes: &["cache status", "cache export", "cache clear"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "prints the cache surface; status and clear carry the behavior.",
+        limitations: "prints the cache surface; status, export and clear carry the behavior.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2208,6 +2210,35 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "read-only; it does not evict entries.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:cache.export",
+        summary: "Copy a validated current-input cache snapshot without historical generations.",
+        task: "Diagnose setup",
+        workflows: &["setup", "reports"],
+        operation: CommandOperation::WritesArtifacts,
+        cost: CommandCost::Workspace,
+        effects: TOOL_PROBES,
+        primary_inputs: &[
+            "current workspace bytes and configuration",
+            "the live workspace cache",
+        ],
+        outputs: CommandOutputs {
+            default: Some("current-input cache snapshot and JSON export report"),
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr cache export --out NEW_DIRECTORY",
+        next_routes: &["cache status"],
+        stop_states: &[
+            "missing current classified cache",
+            "invalid present cache or changed inputs",
+            "existing, overlapping or linked output",
+        ],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "reads the live cache without modifying it; hashes workspace bytes and validates copied entries. Output is independent files in a fresh directory. Require exit zero before restoration; failure retains a named incomplete output. No fixed byte or memory bound.",
         not_applicable_reason: None,
     },
     CommandMetadata {

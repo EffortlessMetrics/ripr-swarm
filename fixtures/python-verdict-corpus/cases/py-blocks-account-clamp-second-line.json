@@ -1,0 +1,44 @@
+{
+  "case_id": "py-blocks-account-clamp-second-line",
+  "subject_id": "authored-py-pytest-blocks",
+  "diff": "cases/py-blocks-account-clamp-second-line.diff",
+  "anchor": {
+    "file": "ledger/account.py",
+    "line": 10
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_call_then_assert_unchanged_private_operand",
+  "hard_case": "the clamped return is the second line of a two-line replacement block",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return max(0, self._balance)",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a negative stored balance reads 0 instead of the debt"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The comment above the return and the return are replaced together. The only test calls Account.balance() but discards the result and asserts Account._balance, an operand the edit leaves unchanged, so the clamp passes. Paired with its own old line, the delta is `max` and the test observes none of it (#1276); without it every token on the line, `_balance` included, reads as changed and the test gets false credit (#7556).",
+  "labeling_observation": {
+    "ripr_commit": "3eef453",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

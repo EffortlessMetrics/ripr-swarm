@@ -206,6 +206,16 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
+    // #7352: a fresh context run re-executes the full check pipeline; on a
+    // cold large repository the silent window looked like a hang. The same
+    // stderr-only stage lines `ripr check` projects (throttled heartbeats
+    // included) disclose the work without touching machine stdout. The
+    // `--from` artifact path runs no pipeline and wires no sink.
+    let progress = crate::cli::progress::CliProgressSink::for_stderr(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        crate::cli::progress::ProgressPolicy::STANDARD,
+    );
+    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,
@@ -214,21 +224,27 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             &config,
             artifact_path,
             asserted_base.as_deref(),
+            explicit.mode,
         )
         .map_err(&refuse)?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::collect_context_with_config_and_worktree(
+            app::collect_context_with_config_worktree_and_progress(
                 input,
                 &selector,
                 max_tests,
                 &config,
                 worktree,
                 explicit.mode,
+                progress_sink,
             )
             .map_err(&refuse)?
         }
     };
+    // #7352 review: commit the held `completed` terminal before the sink
+    // drops, or the drop projects `ripr progress: failed` on success; the
+    // artifact path wired no sink and has nothing to commit.
+    progress.commit_success();
     println!("{rendered}");
     Ok(())
 }
@@ -251,10 +267,11 @@ mod tests {
         );
     }
 
-    /// #4318 review: zero is a valid render cap (the packet renders zero
-    /// related tests, matching `reports.max_related_tests = 0`), so it must
-    /// pass parsing and fail later — here on the missing root — never with
-    /// the numeric-shape message.
+    /// #4318 review: zero is a valid explicit per-invocation render cap (the
+    /// packet renders zero related tests), so it must pass parsing and fail
+    /// later — here on the missing root — never with the numeric-shape
+    /// message. The config key is the opposite contract: a zero
+    /// `reports.max_related_tests` now fails closed at config parse (#7353).
     #[test]
     fn context_accepts_zero_max_related_tests_at_parse_time() {
         let result = context(&args(&[

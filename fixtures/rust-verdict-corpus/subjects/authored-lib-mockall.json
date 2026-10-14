@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-mockall",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against mockall 0.13.1 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "717329ddea7995ce7f1c4ea6e881c51529abef87c7bbf0036ad5104322d9782a"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "a0dba2f74ad946a3dc6105a76908dd2dc20c38942995dad9d3ee48b6917b604d"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f2113c7735576ca1cf928c6e6c99df3ffeba3b632a5acccc5e3155d8e58c6c75"
+    }
+  ]
+}

@@ -246,3 +246,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (19)
+
+Reason:
+RIPR-SPEC-0001: tail if/else sink resolved (#6781); propagation yes, class unchanged, advisory confidence rises
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

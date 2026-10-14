@@ -38,12 +38,20 @@ pub(crate) fn related_test_miss_reason(
             "ripr could not confirm that this assertion observes the changed behavior".to_string()
         }
         // The analyzer assigns `missing_input` only for a predicate probe
-        // with a boundary fact or a match-arm probe with an unselected-arm
-        // fact, and `missing_exact_assertion` only when neither exists, so
+        // with a boundary fact, a match-arm probe with an unselected-arm
+        // fact, or a side-effect or call-deletion probe with an unentered
+        // guard fact, and `missing_exact_assertion` only when neither exists, so
         // reading the facts as a predicate's picks the fact each miss was
         // assigned from.
         RelatedTestMiss::MissingInput => {
-            if let Some(fact) = input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
+            // The guard fact is read first: its value (`if x == 10`) may
+            // hold the ` == ` the predicate reading looks for.
+            if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::SideEffect)
+            {
+                format!("no test input enters `{}`", one_line(&fact.value))
+            } else if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
             {
                 format!("no test input reaches `{}`", one_line(&fact.value))
             } else if let Some(fact) =
@@ -179,6 +187,26 @@ mod tests {
                 "{miss:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_unentered_guard_reads_as_an_input_that_enters_it() {
+        let facts = vec![MissingDiscriminatorFact {
+            value: "if x == 10".to_string(),
+            reason: format!(
+                "{} `if x == 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        assert_eq!(
+            related_test_miss_reason(
+                &test_with(Some(RelatedTestMiss::MissingInput), None),
+                &facts
+            )
+            .as_deref(),
+            Some("no test input enters `if x == 10`")
+        );
     }
 
     #[test]

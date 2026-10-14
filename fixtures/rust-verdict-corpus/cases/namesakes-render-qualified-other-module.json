@@ -1,0 +1,58 @@
+{
+  "case_id": "namesakes-render-qualified-other-module",
+  "subject_id": "authored-namesakes",
+  "diff": "cases/namesakes-render-qualified-other-module.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "qualified_call_to_same_named_function_in_other_module",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x - 1",
+        "mutated_line": "x - 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a::render(2) becomes 1 instead of 3"
+      },
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a::render returns 0"
+      },
+      {
+        "replacement": "x",
+        "mutated_line": "x",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a::render(2) becomes 2 instead of 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "a::render is never called; the only render test calls b::render(2) by its qualified path, so no mutant of a::render fails. Issue #6292.",
+  "labeling_observation": {
+    "ripr_commit": "8cdde3b",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

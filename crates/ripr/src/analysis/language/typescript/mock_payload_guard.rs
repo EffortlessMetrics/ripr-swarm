@@ -38,16 +38,20 @@ impl MockCallFacts {
     /// changed call must be the only way the owner reaches the parameter:
     /// the parameter appears exactly twice in the owner (its declaration and
     /// this call). A second call, `p.call(...)`, an alias, passing `p` on, or
-    /// an inner parameter shadowing it all add a mention and refuse. A loop,
-    /// a nested function or recursion could run the changed call more than
-    /// once (or never), so an owner body with any of them credits nothing.
+    /// an inner parameter shadowing it all add a mention and refuse. A loop or
+    /// recursion could run the changed call more than once (or never), so
+    /// an owner body with either credits nothing. A nested function (arrow,
+    /// `function`, method shorthand or class member) refuses too, unless
+    /// the changed line is a whole top-level statement of the body
+    /// (RIPR-SPEC-0256 rule 1), where no nested function can run it.
     pub(crate) fn read(
         line_text: &str,
         owner_body: Option<&str>,
         owner_name: &str,
         owner_params: &[String],
     ) -> Self {
-        let Some(owner_body) = owner_body.filter(|body| runs_each_statement_once(body, owner_name))
+        let Some(owner_body) =
+            owner_body.filter(|body| runs_changed_line_once(body, owner_name, line_text))
         else {
             return Self::default();
         };
@@ -89,6 +93,11 @@ impl MockCallFacts {
             return false;
         }
         let segments: Vec<&str> = payload.target.split('.').collect();
+        if let [local] = segments.as_slice()
+            && self.credits_object_argument(local, test_body)
+        {
+            return true;
+        }
         let Some(call) = self
             .calls
             .iter()
@@ -118,6 +127,62 @@ impl MockCallFacts {
             && identifier_mentions_outside_expect(test_body, local) == 2
             && owner_call_passes_at(test_body, &self.owner_name, local, call.index)
     }
+}
+
+impl MockCallFacts {
+    /// RIPR-SPEC-0256 rule 2: the asserted `local` is a test-local mock the
+    /// test passes as the method of an inline object literal at the
+    /// parameter's position (`checkout("ann", lines, { send })` for a
+    /// changed `notifier.send(...)`), and mentions nowhere else but
+    /// `expect(local)`.
+    fn credits_object_argument(&self, local: &str, test_body: &str) -> bool {
+        let masked_body = ts_mask_literals_and_comments(test_body);
+        let Some(scope) = callback_scope(&masked_body) else {
+            return false;
+        };
+        if !test_local_mock_binding(scope, local)
+            || identifier_mentions_outside_expect(test_body, local) != 2
+        {
+            return false;
+        }
+        self.calls.iter().any(|call| {
+            call.method.as_deref().is_some_and(|method| {
+                owner_call_argument_at(test_body, &self.owner_name, call.index)
+                    .is_some_and(|argument| object_literal_binds(&argument, method, local))
+            })
+        })
+    }
+}
+
+/// `true` when `argument` is a flat object literal whose entries are all
+/// `key: value` or shorthand `key` with plain keys, `method` is keyed once,
+/// and its value is exactly `local`. A spread, a method or accessor, a
+/// quoted or computed key, or a second `method` key refuses.
+fn object_literal_binds(argument: &str, method: &str, local: &str) -> bool {
+    let Some(rest) = argument.trim().strip_prefix('{') else {
+        return false;
+    };
+    let Some(literal) = literal_body(rest) else {
+        return false;
+    };
+    if rest
+        .get(literal.len() + 1..)
+        .is_none_or(|tail| !tail.trim().is_empty())
+    {
+        return false;
+    }
+    let mut bound = Vec::new();
+    for entry in top_level_entries(literal) {
+        let (key, value) = entry
+            .split_once(':')
+            .map_or((entry, entry), |(key, value)| (key.trim(), value.trim()));
+        if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
+            return false;
+        }
+        bound.push((key, value));
+    }
+    let mut keyed = bound.iter().filter(|(key, _)| *key == method);
+    matches!((keyed.next(), keyed.next()), (Some((_, value)), None) if *value == local)
 }
 
 /// One call outside literals and comments: the called name, the first
@@ -249,26 +314,49 @@ fn closes_expect_subject(rest: &str) -> bool {
 /// and that call passes `local` as a whole argument at `index`, with no
 /// spread before it.
 fn owner_call_passes_at(test_body: &str, owner_name: &str, local: &str, index: usize) -> bool {
+    owner_call_argument_at(test_body, owner_name, index)
+        .is_some_and(|argument| argument.trim() == local)
+}
+
+/// The masked argument at `index` of the test's one owner call (bare or as
+/// a method), or `None` when the test calls the owner other than exactly
+/// once, passes fewer arguments, or spreads an argument at or before
+/// `index`.
+fn owner_call_argument_at(test_body: &str, owner_name: &str, index: usize) -> Option<String> {
     let masked = ts_mask_literals_and_comments(test_body);
     let mut calls = masked.match_indices(owner_name).filter_map(|(at, _)| {
         if !(word_boundary_before(&masked, at) || masked[..at].ends_with('.')) {
             return None;
         }
         let rest = masked[at + owner_name.len()..].trim_start();
-        top_level_arguments(rest.strip_prefix('(')?)
+        Some((at, top_level_arguments(rest.strip_prefix('(')?)?))
     });
-    let (Some(arguments), None) = (calls.next(), calls.next()) else {
-        return false;
+    let (Some((at, arguments)), None) = (calls.next(), calls.next()) else {
+        return None;
     };
-    arguments
+    // One call site can still run several times: inside a loop, or inside a
+    // callback, method, getter or class (`ids.forEach((id) => notify({ send },
+    // id))`), and `toHaveBeenCalledWith` passes when any recorded call
+    // matches. The test's own block holds no loop, and nothing before the
+    // call in it opens a function that could hold the call.
+    let range = callback_scope_range(&masked)?;
+    if ["for", "while", "do"]
         .iter()
-        .position(|argument| argument.trim() == local)
-        .is_some_and(|at| {
-            at == index
-                && !arguments[..at]
-                    .iter()
-                    .any(|argument| argument.trim_start().starts_with("..."))
-        })
+        .any(|word| !identifier_offsets(&masked[range.clone()], word).is_empty())
+        || !range.contains(&at)
+        || opens_function_before_call(&masked[range.start..at])
+        || inside_parameter_list(&masked[range.clone()], at - range.start)
+    {
+        return None;
+    }
+    if arguments
+        .iter()
+        .take(index + 1)
+        .any(|argument| argument.trim_start().starts_with("..."))
+    {
+        return None;
+    }
+    arguments.get(index).map(|argument| (*argument).to_string())
 }
 
 /// The comma-separated top-level arguments of a call whose `(` was just
@@ -409,18 +497,23 @@ fn top_level_entries(literal: &str) -> Vec<&str> {
 /// matching `}`. A body with no such brace is read whole. `None` when the
 /// block never closes, so an unreadable shape earns nothing.
 fn callback_scope(masked: &str) -> Option<&str> {
+    callback_scope_range(masked).map(|range| &masked[range])
+}
+
+/// The byte range of [`callback_scope`] within `masked`.
+fn callback_scope_range(masked: &str) -> Option<std::ops::Range<usize>> {
     let mut parens = 0usize;
     for (index, c) in masked.char_indices() {
         match c {
             '(' => parens += 1,
             ')' => parens = parens.saturating_sub(1),
             '{' if parens == 1 => {
-                let inner = &masked[index + 1..];
+                let start = index + 1;
                 let mut depth = 0usize;
-                for (offset, c) in inner.char_indices() {
+                for (offset, c) in masked[start..].char_indices() {
                     match c {
                         '{' => depth += 1,
-                        '}' if depth == 0 => return Some(&inner[..offset]),
+                        '}' if depth == 0 => return Some(start..start + offset),
                         '}' => depth -= 1,
                         _ => {}
                     }
@@ -430,7 +523,123 @@ fn callback_scope(masked: &str) -> Option<&str> {
             _ => {}
         }
     }
-    Some(masked)
+    Some(0..masked.len())
+}
+
+/// `true` when the masked test text `before` the owner call opens an arrow
+/// or a method-like block (see [`has_method_like_block`]: a `function`,
+/// class, method or getter body), any of which may hold the call and run it more
+/// than once. A mock's own type arguments and implementation
+/// (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`) are skipped when
+/// they close before the call; any other arrow refuses, even one that ends
+/// before the call.
+fn opens_function_before_call(before: &str) -> bool {
+    let before = without_closed_mock_factories(before);
+    // A `function`, class, method or getter body opens with a `{` that the
+    // allowlist reads as method-like (`function (id) {`, `class H {`).
+    before.contains("=>") || has_method_like_block(&before)
+}
+
+/// `true` when the owner call at byte `at` of the masked test `scope` sits
+/// in a parameter list: an enclosing `(` whose matching `)` is followed by
+/// `=>`, `{` or a `:` return type (`(r = owner(...)) => r`,
+/// `function run(r = owner(...)) {`). A default runs on every call that
+/// omits the argument. An enclosing `(` that never closes also refuses; an
+/// `if`, `switch` or `with` condition does not.
+fn inside_parameter_list(scope: &str, at: usize) -> bool {
+    let mut open = Vec::new();
+    for (offset, c) in scope[..at].char_indices() {
+        match c {
+            '(' => open.push(offset),
+            ')' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    open.into_iter().any(|start| {
+        // An `if`, `switch` or `with` condition runs once, though its `)` is
+        // followed by `{`.
+        let head = scope[..start].trim_end();
+        let word = trailing_identifier(head);
+        if ["if", "switch", "with"].contains(&word) && !is_property_name(head, word) {
+            return false;
+        }
+        let Some(end) = closing_offset(&scope[start..], '(', ')') else {
+            return true;
+        };
+        let after = scope[start + end..].trim_start();
+        after.starts_with("=>") || after.starts_with('{') || after.starts_with(':')
+    })
+}
+
+/// `text` with each `vi.fn` / `jest.fn` mock factory's type arguments and
+/// arguments removed (`vi.fn<...>(...)`, `jest.fn(impl)`). Type arguments
+/// count only when a `(` follows them and they read as types (see
+/// [`type_like`]). A group that does not close inside
+/// `text` is kept, so a call inside a mock implementation still reads as
+/// nested. An `=>` inside the type arguments does not close the `<`.
+fn without_closed_mock_factories(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(".fn") {
+        let after = start + ".fn".len();
+        let factory = ["vi", "jest"].iter().any(|receiver| {
+            rest[..start].ends_with(receiver) && word_boundary_before(rest, start - receiver.len())
+        });
+        kept.push_str(&rest[..after]);
+        rest = &rest[after..];
+        if !factory || rest.starts_with(is_identifier_part) {
+            continue;
+        }
+        let mut end = 0;
+        if rest.starts_with('<') {
+            match closing_offset(rest, '<', '>') {
+                Some(close) if rest[close..].starts_with('(') && type_like(&rest[1..close - 1]) => {
+                    end = close
+                }
+                _ => continue,
+            }
+        }
+        if rest[end..].starts_with('(') {
+            let Some(close) = closing_offset(&rest[end..], '(', ')') else {
+                kept.push_str(rest);
+                return kept;
+            };
+            end += close;
+        }
+        rest = &rest[end..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// `true` when the text inside a factory's `<...>` reads as type arguments:
+/// no `;`, `{` or `}`, and balanced parentheses. A comparison such as
+/// `vi.fn<3; xs.forEach((w) => w>(0) && owner(...))` that only looks closed
+/// keeps its text, so the callback in it still refuses.
+fn type_like(text: &str) -> bool {
+    !text.contains([';', '{', '}']) && text.matches('(').count() == text.matches(')').count()
+}
+
+/// The byte offset just past the `close` matching the `open` that starts
+/// `text`, skipping `=>`, or `None` when it never closes.
+fn closing_offset(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((offset, c)) = chars.next() {
+        if c == '=' && chars.peek().is_some_and(|(_, next)| *next == '>') {
+            chars.next();
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(offset + c.len_utf8());
+            }
+        }
+    }
+    None
 }
 
 /// The owner's masked body: the text after its header (the parameter list up
@@ -452,17 +661,241 @@ pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     None
 }
 
-/// `true` when the owner's body has no loop, no nested function and no call
-/// back into the owner, so the changed line runs at most once per owner
-/// call.
-fn runs_each_statement_once(owner_source: &str, owner_name: &str) -> bool {
+/// `true` when the changed line runs at most once per owner call: the
+/// owner's body has no loop and no call back into the owner, and either it
+/// has no nested function at all (no arrow, `function`, method shorthand or
+/// class member), or (RIPR-SPEC-0256 rule 1) the changed
+/// line is a whole top-level statement of the body with no function on it,
+/// so a nested function elsewhere (`lines.reduce((sum, l) => ...)`) cannot
+/// run it.
+fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str) -> bool {
     let Some(body) = masked_owner_body(owner_source) else {
         return false;
     };
-    !body.contains("=>")
-        && ["for", "while", "do", "function", owner_name]
-            .iter()
-            .all(|word| identifier_offsets(&body, word).is_empty())
+    if !["for", "while", "do", owner_name]
+        .iter()
+        .all(|word| identifier_offsets(&body, word).is_empty())
+    {
+        return false;
+    }
+    let no_nested_function = !body.contains("=>")
+        && identifier_offsets(&body, "function").is_empty()
+        && !has_method_like_block(&body);
+    no_nested_function || changed_line_is_top_level_statement(&body, line_text)
+}
+
+/// `true` when some `{` in the masked `body` may open a function body that
+/// is not an arrow or `function`: method shorthand or a class member
+/// (`run(x) {`, `get total() {`), a typed method (`run(): string {`,
+/// `run(): { n: number } {`) or a class body. Only an allowlist of shapes
+/// reads as a plain block or object literal: a `{` at the start of the body,
+/// after `= ( , [ : ? & | ! ; {`, after a control keyword's `(...)` where
+/// the keyword stands in statement position (see [`control_keyword_at`]),
+/// after `else`, `try`, `finally`, `do` or `return`, or opening a template
+/// literal's `${`. Any other `{` counts, so an unfamiliar shape refuses, and
+/// so does an object method named like a keyword (`{ catch(e) {...} }`).
+fn has_method_like_block(body: &str) -> bool {
+    const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
+    body.char_indices()
+        .filter(|(_, c)| *c == '{')
+        .any(|(at, _)| {
+            // A template literal's `${` opens an expression, not a block.
+            if body[..at].ends_with('$') {
+                return false;
+            }
+            let before = body[..at].trim_end();
+            let Some(last) = before.chars().next_back() else {
+                return false;
+            };
+            if last == ')' {
+                let Some(open) = matching_open_paren(before) else {
+                    return true;
+                };
+                return !control_keyword_at(before[..open].trim_end());
+            }
+            if is_identifier_part(last) {
+                // `cfg.try {` ends a property access (a return type such as
+                // `typeof cfg.try`), not a `try` statement.
+                let word = trailing_identifier(before);
+                return !BLOCK_WORDS.contains(&word) || is_property_name(before, word);
+            }
+            !matches!(
+                last,
+                '=' | '(' | ',' | '[' | ':' | '?' | '&' | '|' | '!' | ';' | '{'
+            )
+        })
+}
+
+/// `true` when `head` ends with a control keyword that stands in statement
+/// position, so the `(...)` after it is a condition and not a method's
+/// parameters. `catch` must follow a `}`; the other keywords must follow the
+/// start of the body, `;`, `}`, `)`, `else`, or a `{` that itself opens a
+/// block (see [`brace_context`]). After `,`, `:`, `.` or an object literal's
+/// `{` the word names a method or property, so it is not control.
+fn control_keyword_at(head: &str) -> bool {
+    brace_context(head, false)
+}
+
+/// Walk for [`control_keyword_at`]. With `block == false`, `text` ends with
+/// the word before a `(...)`; with `block == true`, `text` precedes a `{`
+/// that must open a statement block, not an object literal: one at the start
+/// of the body, after `;`, `}`, a control keyword's `(...)`, `else`, `try`,
+/// `finally` or `do`, or after a `{` that itself opens a block (`return {`,
+/// `= {` and `({` open object literals). It walks back through enclosing `{` and control
+/// headers iteratively, so deep nesting cannot overflow the stack.
+fn brace_context(text: &str, block: bool) -> bool {
+    const CONTROL: [&str; 5] = ["if", "for", "while", "switch", "with"];
+    const BLOCK_WORDS: [&str; 4] = ["else", "try", "finally", "do"];
+    let mut text = text;
+    let mut block = block;
+    loop {
+        if !block {
+            // `text` ends with the word before a `(...)`.
+            let word = trailing_identifier(text);
+            if is_property_name(text, word) {
+                return false;
+            }
+            let before = text[..text.len() - word.len()].trim_end();
+            if word == "catch" {
+                return before.ends_with('}');
+            }
+            if !CONTROL.contains(&word) {
+                return false;
+            }
+            // The keyword must start a statement.
+            match before.chars().next_back() {
+                None | Some(';' | '}' | ')') => return true,
+                Some('{') => {
+                    text = &before[..before.len() - 1];
+                    block = true;
+                    continue;
+                }
+                Some(_) => {
+                    let word = trailing_identifier(before);
+                    return word == "else" && !is_property_name(before, word);
+                }
+            }
+        }
+        // `text` precedes a `{` that must open a block.
+        let before = text.trim_end();
+        match before.chars().next_back() {
+            None | Some(';' | '}') => return true,
+            Some('{') => text = &before[..before.len() - 1],
+            Some(')') => {
+                let Some(open) = matching_open_paren(before) else {
+                    return false;
+                };
+                text = before[..open].trim_end();
+                block = false;
+            }
+            Some(c) if is_identifier_part(c) => {
+                let word = trailing_identifier(before);
+                return BLOCK_WORDS.contains(&word) && !is_property_name(before, word);
+            }
+            Some(_) => return false,
+        }
+    }
+}
+
+/// `true` when `word`, the identifier `text` ends with, is a property name
+/// (`cfg.try`, `a?.if`) rather than a keyword.
+fn is_property_name(text: &str, word: &str) -> bool {
+    text[..text.len() - word.len()].trim_end().ends_with('.')
+}
+
+/// The byte offset of the `(` matching the `)` that ends `text`.
+fn matching_open_paren(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The identifier `text` ends with, or `""`.
+fn trailing_identifier(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_identifier_part(*c))
+        .last()
+        .map_or(text.len(), |(at, _)| at);
+    &text[start..]
+}
+
+/// RIPR-SPEC-0256 rule 1: the masked changed line occurs once in the masked
+/// owner `body`, outside every brace, parenthesis and bracket, right after
+/// the start of the body, a `;` or a `}`, and holds no `=>`, `function` or
+/// method-like block (see [`has_method_like_block`]).
+/// A line after `=>` (an expression-bodied arrow), after `if (...)` or
+/// `else` without a block, or inside a callback refuses.
+fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
+    let masked_line = ts_mask_literals_and_comments(line_text);
+    let statement = masked_line.trim();
+    if statement.is_empty()
+        || statement.contains("=>")
+        || !identifier_offsets(statement, "function").is_empty()
+        || has_method_like_block(statement)
+        || !starts_new_statement(statement)
+    {
+        return false;
+    }
+    let mut found = body.match_indices(statement);
+    let (Some((at, _)), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for c in body[..at].chars() {
+        match c {
+            '{' | '(' | '[' => depth += 1,
+            // An unmatched closer means the masking or the body boundary
+            // is off; refuse rather than guess the statement's depth.
+            '}' | ')' | ']' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    depth == 0
+        && body[..at]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|c| matches!(c, ';' | '}'))
+}
+
+/// `true` when `statement` cannot continue the expression on the line before
+/// it: it opens with an identifier that is not an operator or clause keyword.
+/// A line opening with `:`, `?`, `&&`, `.`, `(` and the like continues an
+/// expression (`const each = (id) => id < 0 ? {}` then `: p.m(id);`), so the
+/// `}` before it closes an object literal inside a nested function, not a
+/// block.
+fn starts_new_statement(statement: &str) -> bool {
+    const CONTINUATIONS: [&str; 9] = [
+        "in",
+        "instanceof",
+        "as",
+        "satisfies",
+        "of",
+        "else",
+        "catch",
+        "finally",
+        "while",
+    ];
+    let word = statement
+        .find(|c: char| !is_identifier_part(c))
+        .map_or(statement, |end| &statement[..end]);
+    statement.starts_with(is_identifier_start) && !CONTINUATIONS.contains(&word)
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.

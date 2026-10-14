@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-expect-test-expect-file-golden",
+  "subject_id": "authored-lib-expect-test",
+  "diff": "cases/lib-expect-test-expect-file-golden.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "expect_test_expect_file_golden",
+  "hard_case": "The expected text is in src/expect/summary.txt via `expect_file![..]`; ripr reads snapshot/medium and reports weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "count >> 2",
+        "mutated_line": "format!(\"items: {}\\nhalf: {}\\n\", count, count >> 2)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::summary_golden_file",
+        "equivalence_review": "not equivalent: count=7 gives half 1 not 3"
+      },
+      {
+        "replacement": "(count + 1) >> 1",
+        "mutated_line": "format!(\"items: {}\\nhalf: {}\\n\", count, (count + 1) >> 1)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::summary_golden_file",
+        "equivalence_review": "not equivalent: count=7 gives half 4 not 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "expect_file! compares the whole rendered summary to the committed golden file; both mutants change the `half:` line.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

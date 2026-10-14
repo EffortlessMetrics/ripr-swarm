@@ -2,7 +2,7 @@ diff --git a/src/title.ts b/src/title.ts
 index 0000000..1111111 100644
 --- a/src/title.ts
 +++ b/src/title.ts
-@@ -2,6 +2,6 @@ export function parseTitle(s: string): string {
+@@ -2,7 +2,7 @@ export function parseTitle(s: string): string {
    const title = s.trim();
    if (title === "") {
 -    // refuse an empty title

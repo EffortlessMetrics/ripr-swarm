@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed collection write on a field path (`self.log.push(..)`, `self.stock.insert(..)`) is now confirmed only by a test that reads that field from the binding it ran the owner on. The read can be direct (`inv.log`) or go through a getter whose body returns that field (`inv.history()` returning `&self.log`). A getter named after the field that returns another field no longer reads `exposed`, and a getter with a different name that does return the field no longer reads `weakly_exposed` (RIPR-SPEC-0228 examples 12 and 13, #7131).

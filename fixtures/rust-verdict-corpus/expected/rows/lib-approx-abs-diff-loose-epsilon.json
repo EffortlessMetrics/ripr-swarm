@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-approx-abs-diff-loose-epsilon",
+  "subject_id": "authored-lib-float",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "approx_assert_abs_diff_eq_loose_epsilon",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

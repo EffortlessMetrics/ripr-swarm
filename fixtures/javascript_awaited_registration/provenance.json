@@ -1,0 +1,28 @@
+{
+  "package": "nanoid",
+  "version": "6.0.2",
+  "git_commit": "3167e108865702c0539d8e552365ed840ac9d8d9",
+  "source": "https://registry.npmjs.org/nanoid/-/nanoid-6.0.2.tgz",
+  "archive_sha256": "91f1fbef0fc30de371dbf9dfe668942b317503477d267920c5a9ea9b994be569",
+  "license": "MIT",
+  "retained_files": [
+    {
+      "path": "non-secure/index.js",
+      "sha256": "6c25ff996c0fc5e4ef65fceb3ffc8e76d21d51e2a23a66febce306b848a187dd"
+    },
+    {
+      "path": "url-alphabet/index.js",
+      "sha256": "33ea592bd475568d67c0fb4e1a78c9dea91cdaf66348d6f1d4bb278e55077f2c"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "4383cb2c3608397ce7a4159502614ed66890f8999c2a9c056dd3b1024d6721f0"
+    },
+    {
+      "path": "package.json",
+      "sha256": "db4529bba6a049e176f5a43b131f903047b72c9b609f4cc12f9230c83e379682"
+    }
+  ],
+  "consumer_tests": "Authored node:test consumer of the published default 21-symbol ID contract; not upstream test bytes.",
+  "input_change": "Only the final nanoid return is changed from return id to return id.slice(1); upstream/ retains byte-identical originals."
+}

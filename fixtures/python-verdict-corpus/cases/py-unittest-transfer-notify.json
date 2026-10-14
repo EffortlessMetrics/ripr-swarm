@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_receiver_is_notified_of_the_amount checks notifier.send.assert_called_once_with(\"bob\", 25), the mock call oracle RIPR-SPEC-0028 names, so sending 2500 fails it. ripr reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "test_receiver_is_notified_of_the_amount checks notifier.send.assert_called_once_with(\"bob\", 25), the mock call oracle RIPR-SPEC-0028 names, so sending 2500 fails it. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

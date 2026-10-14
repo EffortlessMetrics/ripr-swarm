@@ -46,8 +46,10 @@ The TypeScript preview adapter:
   binds under the owner parameter's own name as strong (RIPR-SPEC-0247
   rule 1), so `notifyStatus` and `notifyLiteral` read `exposed`;
 - keeps `notifyAudit` at `mock_expectation` / medium and `weakly_exposed`:
-  its test asserts on a `record` mock passed as `{ record }`, not on the
-  parameter's own name, so rule 1 refuses it (this is the
+  its test asserts on a `record` mock passed inside a `sink` local, not on
+  the parameter's own name, so RIPR-SPEC-0247 rule 1 refuses it, and the
+  object is not an inline literal argument, so RIPR-SPEC-0256 rule 2
+  refuses it too (this is the
   `mock_interaction_without_payload_proof` audit case's source finding);
 - keeps snapshot and smoke-only assertions weak instead of treating them as
   strong discriminators;

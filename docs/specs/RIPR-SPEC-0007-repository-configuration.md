@@ -234,6 +234,20 @@ found at rust/Cargo.toml via workspace root rust/);
 and a root with Rust sources but no Cargo.toml, or an empty root under the
 Rust-only default, still fails cargo_toml;
 and doctor's selected --root is not rebound to the nested workspace.
+
+Given a git root with a TypeScript marker (`package.json` or `tsconfig.json`)
+and a nested Cargo workspace (`rust/Cargo.toml`) and no Cargo.toml or `.rs`
+files at the selected root,
+when ripr doctor runs from that git root,
+then the cargo_toml check stays required and passes naming the nested
+manifest;
+and a TypeScript-only or Python-only root with no nested or ancestor
+Cargo.toml still skips cargo_toml;
+and `[languages] enabled = ["typescript"]` still skips even when a nested
+Cargo.toml exists;
+and doctor's selected --root is not rebound;
+and language detection remains a shallow root scan (the locator stays
+cargo-only).
 ```
 
 ## Test Mapping
@@ -294,6 +308,10 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
 - `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
 - `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::polyglot_git_root_with_typescript_and_nested_workspace_keeps_cargo_toml_required`
+- `crates/ripr/src/output/doctor.rs::tests::nested_workspace_does_not_override_rust_disabled_in_languages`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::detect_languages_stays_shallow_when_nested_rust_lives_under_typescript_root`
+- `crates/ripr/tests/cli_smoke.rs::doctor_polyglot_git_root_with_typescript_passes_nested_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root`
 - `crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools`
 - `crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing`
@@ -339,7 +357,9 @@ Current implementation:
 - `crates/ripr/src/output/doctor.rs` projects missing cargo/rustc as analysis
   advisories or source-build failures with an install route. The `cargo_toml`
   check locates a selected-root, git-bounded ancestor, or nested Cargo.toml
-  without rebinding doctor's `--root`.
+  without rebinding doctor's `--root`. `rust_toolchain_scope` consults that
+  locator so a polyglot git root with a TypeScript marker does not skip the
+  check (#7506); `detect_languages` stays a shallow root scan.
 - `crates/ripr/src/cli/commands/doctor.rs` prints start-here / first-command
   guidance for the analysis profile only.
 - `crates/ripr/src/app.rs` provides config-aware orchestration for CLI and LSP

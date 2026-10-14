@@ -1,0 +1,13 @@
+diff --git a/src/label.ts b/src/label.ts
+index 0000000..1111111 100644
+--- a/src/label.ts
++++ b/src/label.ts
+@@ -2,7 +2,6 @@ export function parseLabel(s: string): string {
+   const label = s.trim();
+   if (label === "") {
+-    // refuse an empty label
+-    throw new Error("label must not be blank");
++    throw new Error("label is blank");
+   }
+   return label;
+ }

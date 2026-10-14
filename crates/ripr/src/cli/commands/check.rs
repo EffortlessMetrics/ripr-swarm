@@ -8,7 +8,7 @@
 use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::commands_context::{
-    config_load_refusal, ensure_command_root, write_stdout_chunked,
+    analysis_outcome_exit_result, config_load_refusal, ensure_command_root, write_stdout_chunked,
 };
 use crate::cli::help;
 use crate::cli::parse::{
@@ -51,7 +51,10 @@ fn validate_repo_scope_diff_inputs(
         if diff != Path::new("-") && !diff.is_file() {
             // Untyped on purpose: a missing `--diff` names no analysis
             // stage, matching the diff-scoped loader's fallback identity.
-            return Err(format!("check: --diff {} is not a readable file", diff.display()).into());
+            return Err(format!(
+                "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                diff.display()
+            ).into());
         }
         return Ok(());
     }
@@ -100,8 +103,14 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
 }
 
 fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String> {
-    if !dir.join(".git").exists() {
+    let marker = dir.join(".git");
+    if std::fs::symlink_metadata(&marker).is_err() {
         return Ok(None);
+    }
+    // A dangling or cyclic marker is still a boundary, but Git cannot
+    // certify its target. Do not let an enclosing workspace claim this root.
+    if !marker.exists() {
+        return Ok(Some(WorkTreeRootProbe::Unverified));
     }
     crate::git::probe_work_tree_root(dir)
         .map(Some)
@@ -330,9 +339,10 @@ fn select_output_format(
 /// for SARIF, GitHub annotations, badge JSON, repo-exposure JSON, and
 /// agent-seam-packets JSON (#7332) — then the unchanged prose error returns
 /// for stderr. Human formats and formats without an honest refusal shape
-/// return the prose untouched. Every `?` and `return Err` in [`check`] below
-/// the argv parser routes through here; argv usage errors return before the
-/// envelope snapshot exists and stay prose-only.
+/// return the prose untouched. Failures before a result is rendered route
+/// through here; a rendered `unsupported_input` result keeps its original
+/// report instead of appending a refusal. Argv usage errors return before
+/// the envelope snapshot exists and stay prose-only.
 fn refuse_check(
     envelope_input: &CheckInput,
     format: OutputFormat,
@@ -1281,6 +1291,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
     )
     .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
+    // The producer's unsupported result is already on stdout. Keep that
+    // report, including retained findings and coverage identity; appending a
+    // refusal here would corrupt machine output. Genuine partial reports
+    // remain advisory, so completeness or zero findings cannot own this exit.
+    if !format.is_repo_scope() {
+        analysis_outcome_exit_result("check", output.analysis_outcome.as_ref())?;
+    }
     if let Some(sink) = &progress {
         sink.commit_success();
     }

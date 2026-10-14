@@ -1,0 +1,13 @@
+diff --git a/lib/Account.pm b/lib/Account.pm
+index 1e1ba56..fbbb509 100644
+--- a/lib/Account.pm
++++ b/lib/Account.pm
+@@ -16,7 +16,7 @@ package Account;
+ 
+ sub withdraw {
+     my ($balance, $amount) = @_;
+-    die "insufficient funds: need $amount\n" if $amount > $balance;
++    die "insufficient funds: " . "need $amount\n" if $amount > $balance;
+     return $balance - $amount;
+ }
+ 

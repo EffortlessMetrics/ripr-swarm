@@ -1,0 +1,10 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -172,5 +172,5 @@ def perr_exc_length(text):
+ 
+ 
+ def on_parse(text, handler):
+-    handler(int(text))
++    handler(abs(int(text)))
+     return handler

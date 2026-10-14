@@ -18,5 +18,22 @@
   "contradictions": [],
   "findings_scored": 2,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "broad_error",
+      "strength": "weak",
+      "spec": "RIPR-SPEC-0231#3"
+    },
+    "observed_kind": "broad_error",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "check_twenty_has_an_error_message",
+        "kind": "broad_error",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
 }

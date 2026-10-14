@@ -1,0 +1,8 @@
+diff --git a/src/constants.py b/src/constants.py
+index 76b4641..2c18545 100644
+--- a/src/constants.py
++++ b/src/constants.py
+@@ -1,2 +1,2 @@
+-x = 0
++x = 1
+ y = 2

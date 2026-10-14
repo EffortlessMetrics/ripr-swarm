@@ -121,6 +121,11 @@ remainder that does not exist:
 The two format-pointer lines are identical in both states, so a consumer
 scraping them does not need to know which heading was used.
 
+When the hidden identity list exceeds its 20-finding window, its remainder
+line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
+Default check JSON has its own findings-array byte budget; the explicit
+opt-out recovers the full finding set without changing either display cap.
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -247,6 +252,14 @@ a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
 suggestions are filtered to that family before the five-entry limit is
 applied. If the file contains only other families, the suggestions are empty.
 
+Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
+from a suffix naming several files or disjoint same-kind seams that tie
+(`selector_ambiguous`). Both remain decisions (exit 3), with empty stdout,
+the schema `0.2` refused envelope then human guidance on stderr, and no stub
+write. Unresolved identity/disclosure fields are explicitly null and warnings
+are empty. An exact path or a suggested seam ID can select one behavior;
+nested seams remain governed by the existing nesting rule (#7762).
+
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
 is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
@@ -315,9 +328,28 @@ completeness, with the shared repair-packet validator as the only authority:
 
 ### Exhaustive human output
 
-`ripr check --format human-full` and the `text-full` alias render the previous
-full per-finding evidence report. This format is diff-scoped like `human` and
-is not a repo-scoped format.
+`ripr check --format human-full` and the `text-full` alias render an exhaustive
+per-finding evidence report. This format is diff-scoped like `human` and
+is not a repo-scoped format. The navigation-aware CLI may define identical
+evidence and guidance once in a `Shared evidence and guidance` catalogue,
+labelled with every using finding ordinal. Each finding retains its complete
+changed fragments, identity, classification, confidence, currentness,
+discriminator and private evidence, with explicit ordered references for shared
+content. Shared CLI blocks use compact section spacing; only empty separators
+are removed, never a content line. Consecutive references preserve evidence
+order and repeated entries.
+No finding or evidence fact is removed to shorten the report (#7394).
+
+Sharing requires established identical full source ownership, source file,
+language/status/owner kind, currentness and raw test context/counts. An evidence
+entry additionally retains exact producer facts, including stage confidence,
+raw oracle and context-dependent miss provenance; equal display captions alone
+are insufficient. Distinct reconciled guidance stays local. Suppressed findings
+cannot donate shared content. Existing evidence-window disclosures stay local.
+When a visible finding contains multiline literal content, the CLI keeps the
+complete unshared layout so source text and whitespace cannot collide with
+catalogue/reference structure. Without CLI navigation, the public library preserves the previous complete
+per-finding report bytes, including repeated evidence and guidance.
 
 When `ripr check` renders `human-full` itself, each rendered finding ends with
 a `Drill in:` block holding the same `ripr explain` / `ripr context --at`
@@ -480,6 +512,9 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
+- `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
+- `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

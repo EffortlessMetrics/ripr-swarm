@@ -468,6 +468,13 @@ pub(crate) struct TypeScriptAssertion {
     /// `expect(...).to.equal(...)`, #4547). `None` keeps the Jest/AVA
     /// rendering in `assertion_oracle_text`.
     pub(crate) rendered_call: Option<String>,
+    /// RIPR-SPEC-0247 rule 2 (typed amendment): loose `==` equality
+    /// (`equal`, legacy `deepEqual`) left `relational_check` / weak whose
+    /// expected argument is a finite number literal such as `0` or `1`.
+    /// Only a non-number coerces to such a literal, so the classifier
+    /// credits it against an owner declared to return `number`
+    /// (`ts_typed_loose_number_facts`).
+    pub(crate) loose_number_expected: bool,
 }
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the

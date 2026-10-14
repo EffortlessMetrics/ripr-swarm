@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex09-mock-sign",
+  "subject_id": "authored-py-pytest-spec0233",
+  "origin": "authored",
+  "anchor": "src/subject.py:175",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_mock_result_assert_called_once_with",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

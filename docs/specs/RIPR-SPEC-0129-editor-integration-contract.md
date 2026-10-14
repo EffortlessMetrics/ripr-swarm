@@ -93,7 +93,7 @@ Diagnostic-addressing actions attach the addressed diagnostic in
 fix-instruction summaries, and no retrieval references — those belong to
 `codeAction/resolve` (#1751). Disabled reasons are a closed vocabulary in
 `lsp/action_contract.rs`; only reasons with a real producer are emitted —
-today `stale_snapshot`, `client_capability_missing`,
+today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
 `verification_route_unavailable`, `receipt_route_unavailable`, and
 `preview_or_static_limitation` — while the reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
@@ -200,6 +200,14 @@ action that a standard client cannot execute, a repair packet that an
 inspect-only gap does not own, or an absent next step. Missing test paths remain
 qualified as static analysis results; diagnostic codes and data remain stable.
 
+Retained snapshot hovers disclose when the shared analysis-health authority
+does not allow current repairs (#7458). The warning precedes the evidence,
+names the latest attempt and run status, and qualifies repair/verification
+commands as historical guidance. Queued/running attempts advise waiting;
+failed, cancelled, superseded, stopped, or explicitly stale completed states
+name `ripr.refresh` as recovery. A current completion removes the warning.
+This presentation must preserve the snapshot's diagnostics and result IDs.
+
 - A standard LSP client (e.g. Neovim) that does NOT advertise
   `experimental.riprEditor` receives zero `ripr.copyContext` or
   `ripr.openRelatedTest` command IDs in code actions — only server-executed
@@ -275,8 +283,18 @@ qualified as static analysis results; diagnostic codes and data remain stable.
   `tests.rs` tests verify the omit-vs-disabled policy both directions, the
   disabled-never-executes invariant across scenarios, the kind retention
   under `context.only`, and the named suppression reasons (`stale_snapshot`,
+  `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
   `preview_or_static_limitation`).
+- `tests.rs::retained_code_actions_disclose_health_on_the_public_handler`
+  verifies inert action identity/diagnostic preservation across shared health
+  states, kind filtering, active refresh recovery and fail-closed resolve.
+  `tests.rs::retained_code_actions_preserve_client_root_and_item_gates`
+  rejects affordances without a snapshot, with a blocked root, for wrong URI
+  or unknown seam, and for clients without disabled support.
+  `tests.rs::framed_retained_code_actions_survive_changed_config_failure`
+  observes a real configuration-file failure over standard framed LSP and
+  requires the retained diagnostic's menu to disclose the failure inert.
 - `tests.rs::push_and_pull_delivery_yield_identical_code_action_availability`
   verifies push/pull action-availability parity end-to-end (#1628
   residual): two in-process sessions per negotiated profile (generic,
@@ -312,6 +330,9 @@ qualified as static analysis results; diagnostic codes and data remain stable.
   `hover_for_position_adds_snapshot_status_to_seam_hover`) verify hover
   falls back to snapshot status and never fabricates content without a
   snapshot.
+- `tests.rs::retained_hover_discloses_analysis_health_without_changing_evidence`
+  verifies retained-hover lifecycle disclosure, recovery, and unchanged
+  diagnostic payload/result identity.
 - Hover reaches line-level diagnostics: a line-level range (zero-width or
   the projected full-line span) is hoverable at every column of its own
   line, and a zero-width one highlights that line. Within one diagnostic
@@ -420,8 +441,16 @@ client supports:
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
   `preview_or_static_limitation` (cross-language unresolved target). The
-  backend health/root gate stays omit-only: without a snapshot no
-  diagnostic-addressing action can be constructed.
+  backend health gate also returns retained diagnostic-addressed actions
+  inert as `analysis_not_current` when the root is valid and the client
+  supports disabled actions (#7458). It names queued/running as a wait state
+  and failed/cancelled/superseded/stopped or stale completion as a refresh
+  state, with reported failures resolved first. Commands, edits and preferred
+  status are removed; existing stale-item refusals remain `stale_snapshot`.
+  Action identity and attached diagnostic remain unchanged. Refresh stays
+  active; `context.only` still filters kinds. Missing snapshots, blocked roots
+  and legacy clients retain omission. Resolve/execute freshness authority is
+  unchanged; retained presentation cannot make a command executable.
 - `codeAction/resolve` is advertised (`resolveProvider: true`) as
   revalidation, never command stripping (#1751):
   `textDocument/codeAction` keeps emitting fully-resolved actions so

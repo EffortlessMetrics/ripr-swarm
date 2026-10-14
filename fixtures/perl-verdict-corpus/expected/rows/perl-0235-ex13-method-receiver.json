@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-0235-ex13-method-receiver",
+  "subject_id": "authored-perl-testmore-shop",
+  "origin": "authored",
+  "anchor": "lib/Shop/Cart.pm:20",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testmore_is_method_receiver_relation",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "edited_producer"
+}

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 529e5e3..d58e6e7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@
+ }
+ 
+ pub fn parse_port(s: &str) -> Result<u16, PortError> {
+-    if s.is_empty() {
++    if s.len() == 0 {
+         return Err(PortError::Empty);
+     }
+     let n: u32 = s.parse().map_err(|_| PortError::NotNumber)?;

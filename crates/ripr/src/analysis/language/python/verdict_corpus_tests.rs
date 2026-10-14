@@ -763,3 +763,757 @@ fn a_capture_bound_after_the_owner_call_observes_its_output() -> Result<(), Stri
     );
     Ok(())
 }
+
+fn unittest_fee_class(body: &str) -> Result<ExposureClass, String> {
+    fee_class(&format!(
+        "import unittest\n\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        {body}\n"
+    ))
+}
+
+#[test]
+fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), String> {
+    // Rule 12 (#6603): at seven places the assertion fails for any change of
+    // at least 1e-7; an explicit tolerance band may admit the old value.
+    for body in [
+        "self.assertAlmostEqual(fee(10), 30.0)",
+        "self.assertAlmostEqual(fee(10), 30.0, places=None)",
+        "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", None)",
+    ] {
+        assert_eq!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    for body in [
+        "self.assertAlmostEqual(fee(10), 30.0, places=0)",
+        "self.assertAlmostEqual(fee(10), 30.0, delta=100)",
+        "self.assertAlmostEqual(fee(10), 30.0, 0)",
+        "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", 100)",
+        "checks.assertAlmostEqual(fee(10), 30.0)",
+        "self.assertNotAlmostEqual(fee(10), 20.0)",
+        "self.assertAlmostEqual(fee(10), fee(10))",
+    ] {
+        assert_ne!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fluent_helper_chain_is_an_opaque_custom_helper() -> Result<(), String> {
+    // Rule 3 (#6603): the helper body is not read, so the verdict abstains
+    // rather than reporting a gap the helper may already close.
+    let imports = "from src.shop import charge, fee\nfrom tests.fluent import assert_that";
+    let class = |body: &str| classify(FEE, 2, FEE_OLD, &test_module(imports, body));
+    assert_eq!(
+        class("def test_fee():\n    assert_that(fee(10)).is_equal_to(30)\n")?,
+        ExposureClass::StaticUnknown
+    );
+    // A chain with no assertion-helper call is still no assertion.
+    assert_eq!(
+        class("def test_fee():\n    print_that(fee(10)).is_equal_to(30)\n")?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+const MESSAGE: &str = "def parse(text):\n    if not text:\n        raise KeyError(\"blank\")\n    return int(text)\n\n\ndef other(text):\n    if not text:\n        raise KeyError(\"blank\")\n    return int(text)\n";
+const MESSAGE_OLD: &str = "        raise KeyError(\"empty\")";
+
+fn message_class(body: &str) -> Result<ExposureClass, String> {
+    classify(
+        MESSAGE,
+        3,
+        MESSAGE_OLD,
+        &test_module(
+            "import unittest\n\nimport pytest\n\nfrom src.shop import other, parse",
+            body,
+        ),
+    )
+}
+
+fn unittest_message_class(body: &str) -> Result<ExposureClass, String> {
+    message_class(&format!(
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n{body}\n"
+    ))
+}
+
+#[test]
+fn the_callable_of_an_exception_assertion_is_called() -> Result<(), String> {
+    // Rule 13 (#6603): the assertion calls the callable it is passed.
+    for body in [
+        "        self.assertRaisesRegex(KeyError, \"empty\", parse, \"\")",
+        "        self.assertRaisesRegex(KeyError, \"blank\", parse, \"\")",
+    ] {
+        assert_eq!(
+            unittest_message_class(body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    for body in [
+        // Only the class is pinned.
+        "        self.assertRaises(KeyError, parse, \"\")",
+        "        self.assertRaisesRegex(KeyError, \".*\", parse, \"\")",
+        // Another function is called, so the owner is not reached.
+        "        self.assertRaisesRegex(KeyError, \"empty\", other, \"\")",
+    ] {
+        assert_ne!(
+            unittest_message_class(body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    // pytest passes `match=` to the callable in this form, whatever the
+    // callable is.
+    for body in [
+        "def test_parse():\n    pytest.raises(KeyError, parse, \"\", match=\"empty\")\n",
+        "def test_parse():\n    pytest.raises(KeyError, lambda: parse(\"\"), match=\"empty\")\n",
+    ] {
+        assert_ne!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
+    // Rule 14 (#6603): the comparison after the `with` reads the raised error.
+    for body in [
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value.args[0] == \"blank\"\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
+    ] {
+        assert_eq!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    for body in [
+        // A coarser read does not pin the message.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert len(str(exc.value)) == 7\n",
+        // A comparison inside the body runs only when nothing is raised.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n        assert str(exc.value) == \"'empty'\"\n",
+        // The exception is rebound before the comparison.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc = None\n    assert str(exc.value) == \"'empty'\"\n",
+        // An attribute reached through the exception is assigned.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc.value.args = (\"empty\",)\n    assert str(exc.value) == \"'empty'\"\n",
+        // A tuple target, a walrus or a method call rebinds or mutates it.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc, expected = other_error, \"'empty'\"\n    assert str(exc.value) == expected\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    print(exc := other_error)\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    setattr(exc.value, \"args\", (\"empty\",))\n    assert str(exc.value) == \"'empty'\"\n",
+        // A method call in an assigned value, a call passed the error inside
+        // an assert, or an alias of the error.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    _ = exc.value.__init__(\"empty\")\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert setattr(exc.value, \"args\", (\"empty\",)) is None\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    msg = str(exc.value)\n    assert str(exc.value) == msg\n",
+        // The other operand reads the error too, so the comparison can hold
+        // for any message.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == repr(exc.value)\n",
+        // unittest's field is `exception`, and the receiver must be `self`.
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.value), \"'empty'\")\n",
+        // `is not None` is not a value comparison.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value is not None\n",
+        // A tautology does not promote.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == str(exc.value)\n",
+        // Another bound name.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    err = KeyError(\"x\")\n    assert str(err) == \"'empty'\"\n",
+    ] {
+        assert_ne!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+const QUOTE: &str = "FREE_SHIPPING_CENTS = 5000\n\n\ndef shipping_fee(subtotal_cents):\n    \"\"\"Orders at or above the threshold ship free.\"\"\"\n    if subtotal_cents >= FREE_SHIPPING_CENTS:\n        return 0\n    return 499\n\n\ndef handling_fee(subtotal_cents):\n    return subtotal_cents // 100\n\n\ndef quote(subtotal_cents):\n    return {\"total_cents\": subtotal_cents}\n";
+const QUOTE_OLD_SHIPPING: &str =
+    "    return {\"total_cents\": subtotal_cents + shipping_fee(subtotal_cents)}";
+const QUOTE_OLD_HANDLING: &str =
+    "    return {\"total_cents\": subtotal_cents + handling_fee(subtotal_cents)}";
+
+fn quote_class(old: &str, body: &str) -> Result<ExposureClass, String> {
+    classify(
+        QUOTE,
+        16,
+        old,
+        &test_module("from src.shop import quote", body),
+    )
+}
+
+#[test]
+fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() -> Result<(), String>
+{
+    // #6733: `shipping_fee(6000)` is 0, so the test passes with or without it.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // One input below the threshold activates the term.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n    assert quote(1000)[\"total_cents\"] == 1499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // An input the rule cannot resolve leaves the verdict to the oracle.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    amount = 6000\n    assert quote(amount)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A callee that is not one guarded return of literals is not evaluated.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_HANDLING,
+            "def test_quote():\n    assert quote(50)[\"total_cents\"] == 50\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const BIG: &str = "def check(n):\n    if n > 10:\n        raise KeyError(\"big\")\n    return n\n";
+const BIG_OLD: &str = "    if n >= 10:";
+
+#[test]
+fn the_callable_form_binds_its_arguments_for_the_boundary_rule() -> Result<(), String> {
+    // Rule 13 calls `check(20)`: both predicates raise there, so the changed
+    // boundary is not activated, as in the `with` form.
+    let class = |call: &str| {
+        classify(
+            BIG,
+            2,
+            BIG_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import check",
+                &format!(
+                    "class CheckTest(unittest.TestCase):\n    def test_check(self):\n        {call}\n"
+                ),
+            ),
+        )
+    };
+    assert_eq!(
+        class("self.assertRaisesRegex(KeyError, \"big\", check, 20)")?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        class("self.assertRaisesRegex(KeyError, \"big\", check, 10)")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+/// The `QUOTE` module with `quote`'s body replaced.
+fn quote_module(quote_body: &str) -> String {
+    let head = QUOTE.split("def quote").next().unwrap_or_default();
+    format!("{head}def quote(subtotal_cents):\n{quote_body}")
+}
+
+fn quote_module_class(
+    module: &str,
+    line: usize,
+    old: &str,
+    body: &str,
+) -> Result<ExposureClass, String> {
+    classify(
+        module,
+        line,
+        old,
+        &test_module("import pytest\n\nfrom src.shop import quote", body),
+    )
+}
+
+#[test]
+fn a_removed_term_reads_only_stable_inputs_and_the_one_callee() -> Result<(), String> {
+    let free = "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 2000\n";
+    // The owner rebinds its parameter before the term, so the call-site
+    // value is not the term's argument.
+    let rebound = quote_module(
+        "    subtotal_cents = subtotal_cents - 4000\n    return {\"total_cents\": subtotal_cents}\n",
+    );
+    assert_eq!(
+        quote_module_class(&rebound, 17, QUOTE_OLD_SHIPPING, free)?,
+        ExposureClass::Exposed
+    );
+    // A strong call the reader cannot bind leaves the inputs unresolved.
+    let plain = quote_module("    return {\"total_cents\": subtotal_cents}\n");
+    assert_eq!(
+        quote_module_class(
+            &plain,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_free():\n    assert quote(6000)[\"total_cents\"] == 6000\n\n\ndef test_paid():\n    assert quote(\n        100,  # below the threshold\n    )[\"total_cents\"] == 599\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A test that patches the callee may give it any value.
+    assert_eq!(
+        quote_module_class(
+            &plain,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    shop.shipping_fee = fixed_fee\n    assert quote(6000)[\"total_cents\"] == 6499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A second definition of the callee is the one Python binds.
+    let redefined = format!(
+        "{}\n\ndef shipping_fee(subtotal_cents):\n    return 499\n",
+        plain.trim_end()
+    );
+    assert_eq!(
+        quote_module_class(
+            &redefined,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A subtracted term whose zero comes from the fallback branch.
+    let inverted = "FREE_SHIPPING_CENTS = 5000\n\n\ndef rebate(subtotal_cents):\n    if subtotal_cents >= FREE_SHIPPING_CENTS:\n        return 250\n    return 0\n\n\ndef quote(subtotal_cents):\n    return {\"total_cents\": subtotal_cents}\n";
+    assert_eq!(
+        quote_module_class(
+            inverted,
+            11,
+            "    return {\"total_cents\": subtotal_cents - rebate(subtotal_cents)}",
+            "def test_quote():\n    assert quote(100)[\"total_cents\"] == 100\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn an_inactive_term_names_the_missing_discriminator_and_its_inputs() -> Result<(), String> {
+    let owners = extract_owners(Path::new(OWNER_FILE), QUOTE);
+    let tests = extract_tests(
+        Path::new(TEST_FILE),
+        &test_module(
+            "from src.shop import quote",
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n",
+        ),
+    );
+    let finding = classify_change_with_old(
+        Path::new(OWNER_FILE),
+        16,
+        "    return {\"total_cents\": subtotal_cents}",
+        Some(QUOTE_OLD_SHIPPING),
+        &owners,
+        &tests,
+    )
+    .ok_or("changed line should classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    let missing = &finding.activation.missing_discriminators;
+    assert_eq!(
+        missing
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["shipping_fee(subtotal_cents) != 0"]
+    );
+    assert_eq!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["subtotal_cents = 6000"]
+    );
+    Ok(())
+}
+
+const BONUS: &str = "def bonus(points):\n    if points < 100:\n        return 0\n    return 5\n\n\ndef eligible(points):\n    return points > 10\n";
+
+#[test]
+fn an_inactive_term_on_a_predicate_line_shows_the_term_inputs() -> Result<(), String> {
+    // `points = 10` sits on the `points > 10` boundary, so the boundary rule
+    // observes `points == 10` too. The finding names `bonus(points) != 0`,
+    // so it shows only the inputs that make the term 0.
+    let owners = extract_owners(Path::new(OWNER_FILE), BONUS);
+    let tests = extract_tests(
+        Path::new(TEST_FILE),
+        &test_module(
+            "from src.shop import eligible",
+            "def test_eligible():\n    assert eligible(10) == False\n",
+        ),
+    );
+    let finding = classify_change_with_old(
+        Path::new(OWNER_FILE),
+        8,
+        "    return points > 10",
+        Some("    return points > 10 + bonus(points)"),
+        &owners,
+        &tests,
+    )
+    .ok_or("changed line should classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["bonus(points) != 0"]
+    );
+    assert_eq!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["points = 10"]
+    );
+    Ok(())
+}
+
+const BIG_DEFAULT: &str =
+    "def check(code, n=15):\n    if n > 15:\n        raise KeyError(\"big\")\n    return code\n";
+const BIG_DEFAULT_OLD: &str = "    if n >= 15:";
+
+#[test]
+fn the_callable_form_passes_its_keyword_arguments_on() -> Result<(), String> {
+    // `check("b", n=20)` is the call: binding the default `n=15` instead
+    // would place the input on the changed boundary.
+    assert_eq!(
+        classify(
+            BIG_DEFAULT,
+            2,
+            BIG_DEFAULT_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import check",
+                "class CheckTest(unittest.TestCase):\n    def test_check(self):\n        self.assertRaisesRegex(KeyError, \"big\", check, \"b\", n=20)\n",
+            ),
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+const ON_PARSE: &str =
+    "def on_parse(text, handler):\n    handler(int(text) + 1)\n    return handler\n";
+const ON_PARSE_OLD: &str = "    handler(int(text))";
+
+fn on_parse_class(
+    owner: &str,
+    line: usize,
+    old: &str,
+    body: &str,
+) -> Result<ExposureClass, String> {
+    classify(
+        owner,
+        line,
+        old,
+        &test_module(
+            "from unittest.mock import Mock\n\nfrom src.shop import on_parse",
+            body,
+        ),
+    )
+}
+
+#[test]
+fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), String> {
+    // #7586, example 9: the owner hands its handler back, so `m` is the mock
+    // the test passed, and the pinned expectation fails on the handed 2.
+    let returned =
+        "def test_on_parse():\n    m = on_parse('1', Mock())\n    m.assert_called_once_with(1)\n";
+    assert_eq!(
+        on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, returned)?,
+        ExposureClass::Exposed
+    );
+    // The same mock reached through the local the test passed.
+    assert_eq!(
+        on_parse_class(
+            ON_PARSE,
+            2,
+            ON_PARSE_OLD,
+            "def test_on_parse():\n    h = Mock()\n    on_parse('1', h)\n    h.assert_called_once_with(1)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A wrapping call can return its argument unchanged at the test's input
+    // (`abs(1) == 1`), so the expectation may still hold.
+    let wrapped = "def on_parse(text, handler):\n    handler(abs(int(text)))\n    return handler\n";
+    assert_eq!(
+        on_parse_class(wrapped, 2, ON_PARSE_OLD, returned)?,
+        ExposureClass::WeaklyExposed
+    );
+    // An owner that returns something else, or rebinds the parameter first,
+    // does not hand the mock back.
+    for owner in [
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    return text\n",
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    handler = Mock()\n    return handler\n",
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    if text:\n        return None\n    return handler\n",
+    ] {
+        assert_eq!(
+            on_parse_class(owner, 2, ON_PARSE_OLD, returned)?,
+            ExposureClass::WeaklyExposed,
+            "{owner}"
+        );
+    }
+    // Rule 17's argument rules still apply: an unpinned or last-call-only
+    // expectation does not credit.
+    for check in ["m.assert_called_once()", "m.assert_called_with(1)"] {
+        assert_eq!(
+            on_parse_class(
+                ON_PARSE,
+                2,
+                ON_PARSE_OLD,
+                &format!("def test_on_parse():\n    m = on_parse('1', Mock())\n    {check}\n")
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{check}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_mock_passed_to_a_classmethod_owner_pins_its_arguments() -> Result<(), String> {
+    // #7634: a classmethod or staticmethod owner is called on its imported
+    // class (rule 9), and its binding decorator leaves the returned mock
+    // unchanged.
+    const IMPORTS: &str = "from unittest.mock import Mock\n\nfrom src.other import Other\nfrom src.shop import Service";
+    // `decorators` are the owner's decorator lines; the changed line is the
+    // first call in the body.
+    let class = |decorators: &[&str], signature: &str, test: &str| {
+        let head: String = decorators
+            .iter()
+            .map(|decorator| format!("    @{decorator}\n"))
+            .collect();
+        classify(
+            &format!(
+                "class Service:\n{head}    def run({signature}):\n        handler(2)\n        return handler\n"
+            ),
+            decorators.len() + 3,
+            "        handler(1)",
+            &test_module(IMPORTS, test),
+        )
+    };
+    let returned =
+        "def test_run():\n    m = Service.run(Mock())\n    m.assert_called_once_with(2)\n";
+    let passed =
+        "def test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n";
+    for (decorator, signature) in [("classmethod", "cls, handler"), ("staticmethod", "handler")] {
+        for test in [returned, passed] {
+            assert_eq!(
+                class(&[decorator], signature, test)?,
+                ExposureClass::Exposed,
+                "@{decorator}: {test}"
+            );
+        }
+    }
+    // The class through an import alias, and a staticmethod whose handler is
+    // not its first parameter.
+    assert_eq!(
+        classify(
+            "class Service:\n    @classmethod\n    def run(cls, handler):\n        handler(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                "from unittest.mock import Mock\n\nfrom src.shop import Service as S",
+                "def test_run():\n    h = Mock()\n    S.run(h)\n    h.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        class(
+            &["staticmethod"],
+            "tag, handler",
+            "def test_run():\n    h = Mock()\n    Service.run(1, h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A classmethod's receiver binds the class whatever it is named, so the
+    // local passed second is the handler, not the first parameter after it.
+    let klass = "klass, handler, audit";
+    assert_eq!(
+        class(
+            &["classmethod"],
+            klass,
+            "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // `audit` gets 2 before and after, so its expectation cannot fail.
+    assert_eq!(
+        classify(
+            "class Service:\n    @classmethod\n    def run(klass, handler, audit):\n        handler(2)\n        audit(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // `@classmethod` over `@staticmethod` binds no receiver: `h` is the
+    // handler, and `a`, which gets 2 either way, is not read.
+    assert_ne!(
+        classify(
+            "class Service:\n    @classmethod\n    @staticmethod\n    def run(handler, audit):\n        handler(2)\n        audit(2)\n",
+            5,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
+    );
+    // A later import of the same name binds another class.
+    assert_ne!(
+        class(
+            &["classmethod"],
+            "cls, handler",
+            "from src.other import Other as Service\n\n\ndef test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // Another decorator stacked on the classmethod may change what the call
+    // returns, so the result is not the mock passed; the passed local still
+    // reads it.
+    let cached = ["classmethod", "functools.cache"];
+    assert_eq!(
+        class(&cached, "cls, handler", returned)?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        class(&cached, "cls, handler", passed)?,
+        ExposureClass::Exposed
+    );
+    // Not the owner on that class: an instance method called on the class, a
+    // decorator that only ends in `classmethod` or `staticmethod`, the same method on another
+    // class, and a class name the test rebinds (rule 9).
+    for (decorators, signature, test) in [
+        (&[][..], "self, handler", passed),
+        (&["lib.fake_classmethod"][..], "cls, handler", passed),
+        (
+            &["lib.fake_staticmethod"][..],
+            "handler",
+            "def test_run():\n    s = Service()\n    h = Mock()\n    s.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    h = Mock()\n    Other.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    Service = Other\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+    ] {
+        // Either reading fails closed; neither credits the mock.
+        assert!(
+            matches!(
+                class(decorators, signature, test)?,
+                ExposureClass::WeaklyExposed | ExposureClass::StaticUnknown
+            ),
+            "{decorators:?} {signature}: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), String> {
+    // The gate applies to `p.m(...)` too: `abs(user)` may hand the mock the
+    // same value, while a scaled or added argument differs at a nonzero input
+    // (RIPR-SPEC-0238 Decision 15).
+    //
+    // Each test pins the arguments the new call passes at `user == 3`, so it
+    // passes on the new code; whether it also passes on the old code is what
+    // the verdict reads.
+    let class = |new: &str, old: &str, pinned: &str| {
+        classify(
+            &format!("def notify(client, user, other=5):\n    client.send({new})\n"),
+            2,
+            &format!("    client.send({old})"),
+            &test_module(
+                "from unittest.mock import Mock\n\nfrom src.shop import notify",
+                &format!(
+                    "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with({pinned})\n"
+                ),
+            ),
+        )
+    };
+    // Any rewrite that keeps the old argument inside it, other than literal
+    // arithmetic, can return it unchanged at the test's input.
+    for (new, old, pinned) in [
+        ("abs(user)", "user", "3"),
+        ("user", "int(user)", "3"),
+        ("abs(abs(user))", "user", "3"),
+        ("float(abs(user))", "user", "3.0"),
+        ("max(user, 0)", "user", "3"),
+        ("user or 0", "user", "3"),
+        ("(user)", "user", "3"),
+        ("user.real", "user", "3"),
+        ("2.0", "2", "2"),
+        ("*[user]", "user", "3"),
+        // An identity operation or a requoted string hands the mock the same
+        // value.
+        ("user + 0", "user", "3"),
+        ("user * 1", "user", "3"),
+        ("user ** 1", "user", "3"),
+        ("0 + user", "user", "3"),
+        ("1 * user", "user", "3"),
+        ("str(user) + ''", "str(user)", "'3'"),
+        ("\"hi\"", "'hi'", "'hi'"),
+        ("1_000", "1000", "1000"),
+    ] {
+        assert_eq!(
+            class(new, old, pinned)?,
+            ExposureClass::WeaklyExposed,
+            "{old} -> {new}"
+        );
+    }
+    for (new, old, pinned) in [
+        ("user * 100", "user", "300"),
+        ("user + 1", "user", "4"),
+        ("1 + user", "user", "4"),
+        ("user", "user - 1", "3"),
+        ("user, 1", "user", "3, 1"),
+        ("abs(user), 1", "user, 2", "3, 1"),
+        ("2.5", "2", "2.5"),
+        ("'welcome'", "'hi'", "'welcome'"),
+        ("other", "user", "5"),
+        ("user, tag=1", "user", "3, tag=1"),
+        ("0 - user", "user", "-3"),
+        ("user - 1", "user", "2"),
+        ("'1'", "1", "'1'"),
+        ("user, tag=1", "user, kind=1", "3, tag=1"),
+    ] {
+        assert_eq!(
+            class(new, old, pinned)?,
+            ExposureClass::Exposed,
+            "{old} -> {new}"
+        );
+    }
+    // An old line that is not a call statement cannot be compared: it fails
+    // closed rather than reading the new call as a change.
+    for old in [
+        "    client.send(user)  # notify",
+        "    sent = client.send(user)",
+        "    self.sent = client.send(user)",
+        "    log(); client.send(user)",
+    ] {
+        assert_eq!(
+            classify(
+                "def notify(client, user):\n    client.send(abs(user))\n",
+                2,
+                old,
+                &test_module(
+                    "from unittest.mock import Mock\n\nfrom src.shop import notify",
+                    "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with(3)\n",
+                ),
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{old}"
+        );
+    }
+    Ok(())
+}

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 76d7894..472fb89 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@
+ pub struct DivByZero;
+ 
+ pub fn first_even(xs: &[u32]) -> Option<u32> {
+-    xs.iter().copied().find(|x| x % 2 == 0)
++    xs.iter().copied().find(|x| (x & 1) == 0)
+ }
+ 
+ pub fn find_index(xs: &[i32], t: i32) -> Option<usize> {

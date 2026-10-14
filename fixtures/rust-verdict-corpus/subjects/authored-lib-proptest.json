@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-proptest",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against proptest 1.11.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "6dd8048559e208ea3b60199d0ae595e111ee9aad43e1956c260fd40f23de671b"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "35ad42183ea3075d5be7d9d1fc2c75cfd4d5e77a92c5d1abf3d6e66c07fc8bb5"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "42f39cf0d2742d399e1a7166ad28d5bfc2764b1c2d8f277f144e6857ed30438b"
+    }
+  ]
+}

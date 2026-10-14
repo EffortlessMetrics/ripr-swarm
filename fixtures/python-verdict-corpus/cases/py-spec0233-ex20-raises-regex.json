@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 20: self.assertRaisesRegex(KeyError, \"empty\", perr_raises_regex, \"\") is not used as an oracle (Decision 9), so ripr reports weakly_exposed, the spec's verdict; the regex fails for 'blank', so it scores false actionable.",
+  "reasoning": "RIPR-SPEC-0238 example 20: self.assertRaisesRegex(KeyError, \"empty\", perr_raises_regex, \"\") is not used as an oracle (Decision 9), so ripr reports weakly_exposed, the spec's verdict; the regex fails for 'blank', so it scores false actionable. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

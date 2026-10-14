@@ -81,6 +81,7 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
             envelope,
             workspace::SESSION_SCHEMA_VERSION,
             "serialize workspace status",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
         )
         .map_err(|error| error.to_string())?;
     let rendered = format!("{response:?}");
@@ -88,6 +89,9 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
         return Err(format!(
             "oversized envelope missed typed refusal: {rendered}"
         ));
+    }
+    if rendered.contains("ripr_get_gap") {
+        return Err(format!("status overflow named ripr_get_gap: {rendered}"));
     }
     Ok(())
 }
@@ -100,6 +104,114 @@ async fn status_tool_still_serves_through_the_shared_bound() -> Result<(), Strin
         .status_tool()
         .await
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// #7462 review: the recovery wording is wired into the real routes, not
+/// only the shared constant. One canonical item whose serialized document
+/// exceeds the MCP response bound is bound into a completed snapshot and
+/// read through the actual `ripr_get_gap` tool dispatch; the typed failure
+/// must leave MCP through the committed CLI read (disclosed as a bounded
+/// summary) and must not send the caller back through `ripr_get_gap`. The
+/// gap-resource failure rendering and its URI route carry the same
+/// recovery, so a miswired constant or a reintroduced circular recovery
+/// fails here even though the constant-level control in `workspace.rs`
+/// still passes.
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 2,
+            candidate_line_count: 2,
+            probe_count: 2,
+            finding_count: 1,
+        },
+        Vec::new(),
+    )
+    .map_err(|error| format!("fixture outcome refused: {error}"))?;
+    let mut finding = gaps::test_finding()?;
+    finding.evidence = vec!["x".repeat(super::super::MAX_RESPONSE_BYTES)];
+    let output = crate::app::CheckOutput {
+        schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        harness_projections: Vec::new(),
+        tool: "ripr".to_string(),
+        mode: crate::app::Mode::Draft,
+        root: PathBuf::from("."),
+        base: None,
+        analysis_outcome: Some(outcome),
+        summary: crate::domain::Summary::default(),
+        findings: vec![finding],
+        preview_language_advisories: Vec::new(),
+        language_runs: Vec::new(),
+        no_scope_provided: false,
+        unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
+        unlinked_python_tests: None,
+        suppression: None,
+        partial_scope: None,
+        analyzed_revisions: None,
+    };
+    let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
+        .map_err(|failure| failure.detail)?;
+    *server.session.lock().await = workspace::WorkspaceSession {
+        in_flight: false,
+        last_good: Some(Arc::new(snapshot)),
+        ..Default::default()
+    };
+
+    // The tool route: the real `ripr_get_gap` dispatch.
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("canonical_id".to_string(), Value::from("gap:test:1"));
+    let response = server
+        .get_gap_tool(Some(arguments))
+        .await
+        .map_err(|error| format!("an oversized item must fail typed, not error: {error}"))?;
+    let rendered = format!("{response:?}");
+    if !rendered.contains(workspace::CODE_RESULT_TOO_LARGE) {
+        return Err(format!(
+            "routed tool response missed typed refusal: {rendered}"
+        ));
+    }
+    if !rendered.contains("ripr check --committed --format json")
+        || !rendered.contains("related tests are capped per finding")
+    {
+        return Err(format!(
+            "routed tool recovery lost the committed CLI route: {rendered}"
+        ));
+    }
+    if rendered.contains("one item through ripr_get_gap") {
+        return Err(format!(
+            "routed tool recovery went circular again: {rendered}"
+        ));
+    }
+
+    // The gap-resource route: the same session read rendered through the
+    // production resource-failure path, behind the URI route.
+    if gaps::gap_resource_id("ripr://gap/gap:test:1") != Some("gap:test:1") {
+        return Err("the gap resource URI stopped routing this item".to_string());
+    }
+    let failure = server
+        .session
+        .lock()
+        .await
+        .get_gap("gap:test:1", None)
+        .err()
+        .ok_or_else(|| "the oversized item must fail the resource read too".to_string())?;
+    if failure.code != workspace::CODE_RESULT_TOO_LARGE {
+        return Err(format!("unexpected resource failure code {}", failure.code));
+    }
+    let error = resource_failure("gap", &failure, None);
+    let data = error
+        .data
+        .ok_or_else(|| "the gap resource failure carries typed data".to_string())?;
+    if data["recovery"].as_str() != Some(workspace::RECOVERY_GAP_ITEM_TOO_LARGE) {
+        return Err(format!("gap resource recovery drifted: {data}"));
+    }
     Ok(())
 }
 
@@ -143,9 +255,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 8 {
+    if tools.tools.len() != 9 {
         return Err(format!(
-            "SDK descriptor must expose the eight-tool slice surface, got {} tools",
+            "SDK descriptor must expose the nine-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
@@ -328,6 +440,79 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
             Err(error) => {
                 return Err(format!(
                     "list_gaps must reject malformed paging arguments with invalid params, got {error:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_gaps_accepts_filters_at_the_dispatch_edge() -> Result<(), String> {
+    // #7464: filter arguments are part of the input contract. A pre-refresh
+    // server answers past dispatch with typed `no_snapshot` — proving the
+    // arguments were accepted — while malformed values stay invalid params.
+    let server = healthy_server()?;
+    for arguments in [
+        serde_json::json!({"file": "src/checkout.rs"}),
+        serde_json::json!({"class": "weakly_exposed"}),
+        serde_json::json!({"language": "rust"}),
+        serde_json::json!({"repair_ready": true}),
+        serde_json::json!({"repair_ready": false}),
+        serde_json::json!({
+            "file": "src/checkout.rs",
+            "class": "weakly_exposed",
+            "language": "rust",
+            "repair_ready": true,
+            "offset": 0,
+            "limit": 10,
+        }),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let response = server
+            .list_gaps_tool(arguments)
+            .await
+            .map_err(|error| format!("dispatch must accept filter arguments: {error:?}"))?;
+        let result = match response {
+            rmcp::model::CallToolResponse::Complete(result) => result,
+            other => {
+                return Err(format!(
+                    "accepted filter arguments must reach the typed failure, got {other:?}"
+                ));
+            }
+        };
+        let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        if value
+            .pointer("/structuredContent/failure/code")
+            .and_then(serde_json::Value::as_str)
+            != Some(workspace::CODE_NO_SNAPSHOT)
+        {
+            return Err(format!("filtered call lost no_snapshot: {value}"));
+        }
+    }
+    for arguments in [
+        serde_json::json!({"file": ""}),
+        serde_json::json!({"file": 7}),
+        serde_json::json!({"file": null}),
+        serde_json::json!({"class": ""}),
+        serde_json::json!({"class": null}),
+        serde_json::json!({"language": 7}),
+        serde_json::json!({"repair_ready": "true"}),
+        serde_json::json!({"repair_ready": 1}),
+        serde_json::json!({"repair_ready": null}),
+        serde_json::json!({"repairReady": true}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        match server.list_gaps_tool(arguments).await {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            Ok(response) => {
+                return Err(format!(
+                    "list_gaps must reject malformed filter arguments with invalid params: {response:?}"
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "list_gaps must reject malformed filter arguments with invalid params, got {error:?}"
                 ));
             }
         }

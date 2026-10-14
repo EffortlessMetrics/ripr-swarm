@@ -1,0 +1,51 @@
+/// An order with the lines a customer added and the lines held back for
+/// review.
+pub struct Order {
+    lines: Vec<u32>,
+    held: Vec<u32>,
+}
+
+impl Order {
+    pub fn new() -> Self {
+        Order {
+            lines: Vec::new(),
+            held: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, qty: u32) {
+        self.lines.push(qty);
+    }
+
+    pub fn hold(&mut self, qty: u32) {
+        self.held.push(qty);
+    }
+
+    pub fn entries(&self) -> &[u32] {
+        &self.lines
+    }
+
+    /// Named after the held lines, but reads the added ones.
+    pub fn held(&self) -> &[u32] {
+        &self.lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line() {
+        let mut order = Order::new();
+        order.add(4);
+        assert_eq!(order.entries(), &[4]);
+    }
+
+    #[test]
+    fn hold_leaves_the_order_lines_alone() {
+        let mut order = Order::new();
+        order.hold(3);
+        assert_eq!(order.held(), &[] as &[u32]);
+    }
+}

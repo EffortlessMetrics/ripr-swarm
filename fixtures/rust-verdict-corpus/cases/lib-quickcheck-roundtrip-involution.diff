@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0b62f5f..e4ee93e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Byte masking, bit counting and truncation checked by quickcheck properties.
+ 
+ pub fn mask(b: u8) -> u8 {
+-    b ^ 0x5A
++    0x5A ^ b
+ }
+ 
+ pub fn encode(xs: &[u8]) -> Vec<u8> {

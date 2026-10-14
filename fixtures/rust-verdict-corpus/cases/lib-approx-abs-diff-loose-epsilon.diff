@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2192590..d4d750b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,7 +7,7 @@
+ }
+ 
+ pub fn fahrenheit(c: f64) -> f64 {
+-    c * 1.8 + 32.0
++    32.0 + c * 1.8
+ }
+ 
+ pub fn mean(xs: &[f64]) -> f64 {

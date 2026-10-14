@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-insta-debug-file-snapshot-tier-boundary",
+  "subject_id": "authored-lib-insta",
+  "diff": "cases/lib-insta-debug-file-snapshot-tier-boundary.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 38
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "insta_debug_file_snapshot",
+  "hard_case": "The expected value lives only in the committed src/snapshots/*.snap file, not in Rust source; ripr cannot see it and grades snapshot/medium.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "threshold < total_cents",
+        "mutated_line": ".map(|&threshold| (threshold, if threshold < total_cents { threshold / 20 } else { 0 }))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::discount_tiers_file_snapshot",
+        "equivalence_review": "not equivalent: total=5000 tier 5000 gets 0 not 250"
+      },
+      {
+        "replacement": "threshold <= total_cents * 2",
+        "mutated_line": ".map(|&threshold| (threshold, if threshold <= total_cents * 2 { threshold / 20 } else { 0 }))",
+        "outcome": "tests_failed",
+        "failing_test": "tests::discount_tiers_file_snapshot",
+        "equivalence_review": "not equivalent: total=5000 tier 10000 gets 500 not 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert_debug_snapshot!(discount_tiers(5_000))` compares against the committed .snap (insta fails on mismatch under CI=true INSTA_UPDATE=no); the input sits exactly on the 5000 threshold so both boundary mutants change the debug output.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

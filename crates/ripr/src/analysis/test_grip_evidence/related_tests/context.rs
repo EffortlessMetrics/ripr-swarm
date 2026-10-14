@@ -28,6 +28,11 @@ pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) tests_by_assertion_token:
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
+    /// Tests in crate-root files (`lib.rs`, `main.rs`), keyed by the
+    /// separator-normalized path. A crate root has no module stem, so its
+    /// inline tests relate only to an owner in that exact file (#5395).
+    pub(in crate::analysis::test_grip_evidence) tests_by_crate_root_file:
+        BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
     /// Indexed-function counts by exact name, built once per context (#5201).
     /// Per-seam `OwnerContext` resolution reads this instead of scanning
@@ -68,6 +73,8 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per owner id: the unresolved-reach summary, or `None` when the
     /// `no` reach is established. Seams share owners.
     unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
+    /// Built on first use; see [`Self::unseen_reach_names`].
+    unseen_reach_names: OnceLock<crate::analysis::classify::UnseenReachNames>,
     /// One shared record per distinct related-test grip (#5341, #5362).
     /// Seams relate to the same tests over and over: on ripr-swarm 10,000
     /// seams hold 1.28M related-test entries but only about 15k distinct
@@ -278,6 +285,7 @@ impl<'a> CompactGripContext<'a> {
             BTreeMap::new();
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_crate_root_file: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let shared = context_build_phase("shared_index_tables", || SharedIndexTables::build(index));
         checkpoint()?;
@@ -518,9 +526,13 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                let stem = normalized_file_stem(&test.file);
-                if !stem.is_empty() {
+                if let Some(stem) = crate::analysis::classify::module_stem(&test.file) {
                     tests_by_file_stem.entry(stem).or_default().push(test_index);
+                } else if let Some(path) = crate_root_file_key(&test.file) {
+                    tests_by_crate_root_file
+                        .entry(path)
+                        .or_default()
+                        .push(test_index);
                 }
                 for token in import_affinity_tokens(&code_lines) {
                     tests_by_import_token
@@ -573,6 +585,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_free_target_affinity_owner_call_name,
             tests_by_assertion_token,
             tests_by_file_stem,
+            tests_by_crate_root_file,
             tests_by_import_token,
             function_name_counts,
             name_module_candidates,
@@ -587,6 +600,7 @@ impl<'a> CompactGripContext<'a> {
             transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
+            unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
         })
     }
@@ -599,6 +613,15 @@ impl<'a> CompactGripContext<'a> {
         self.type_mentions.get_or_init(|| {
             crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex::build(self)
         })
+    }
+
+    /// Which owners something could run without a test naming them, from
+    /// one workspace scan shared by every seam that needs it.
+    pub(in crate::analysis::test_grip_evidence) fn unseen_reach_names(
+        &self,
+    ) -> &crate::analysis::classify::UnseenReachNames {
+        self.unseen_reach_names
+            .get_or_init(|| crate::analysis::classify::UnseenReachNames::build(self.index))
     }
 
     pub(in crate::analysis::test_grip_evidence) fn unresolved_reach_cached(
@@ -3913,4 +3936,12 @@ mod tests {
             impl_context: Default::default(),
         }
     }
+}
+
+/// Exact-file key for a file with no module stem. Non-UTF-8 paths fail
+/// closed, like `module_stem` (#3545).
+pub(in crate::analysis::test_grip_evidence) fn crate_root_file_key(path: &Path) -> Option<String> {
+    let text = path.to_str()?.replace('\\', "/");
+    let text = text.trim_start_matches("./");
+    (!text.is_empty()).then(|| text.to_string())
 }

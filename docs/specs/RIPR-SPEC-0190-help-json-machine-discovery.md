@@ -132,6 +132,12 @@ Authority:
     the exit authority. The document does not prove a given invocation's
     status.
 
+The startup error reporter preserves that numeric mapping when stderr is
+unwritable: a previously rendered JSON refusal remains intact with exit `2`
+or `3`. Panic diagnostics are also best effort, retaining the internal-error
+exit `2` without recursive abort. This does not guarantee report production
+when an earlier analysis-stage diagnostic fails.
+
 `help --json` serializes existing catalog authority only. It never parses
 human help, executes commands, inspects a repository, or strengthens any
 command or workflow claim.
@@ -191,7 +197,9 @@ command or workflow claim.
 1. `ripr help --json` prints one JSON line carrying `schema_version` 2,
    every catalog command row, every workflow row, and the catalog digest;
    stderr is empty and the workspace is untouched. The `cmd:check` row's
-   `exit` object names findings including `exposed` as completed (0); the
+   `exit` object names findings including `exposed` and
+   `partial_with_limitations` as completed (0), and `unsupported_input` as
+   could-not-complete (2); the
    `cmd:gate.evaluate` row names `config_error` 2 and `blocked` 3; the
    `cmd:agent.verify` row names decision-or-refusal 3 with
    `stdout_on_refusal: empty`.

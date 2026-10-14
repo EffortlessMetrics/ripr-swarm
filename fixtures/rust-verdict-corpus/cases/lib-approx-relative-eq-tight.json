@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-approx-relative-eq-tight",
+  "subject_id": "authored-lib-float",
+  "diff": "cases/lib-approx-relative-eq-tight.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "approx_assert_relative_eq_tight_epsilon",
+  "hard_case": "approx::assert_relative_eq! with epsilon = 1e-9 is read as unknown/none, so a tight float oracle is only weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "r * 3.14159 * r",
+        "mutated_line": "r * 3.14159 * r",
+        "outcome": "tests_failed",
+        "failing_test": "tests::area_of_radius_three",
+        "equivalence_review": "not equivalent: circle_area(3.0) differs by ~2.4e-5 (> 1e-9)"
+      },
+      {
+        "replacement": "2.0 * PI * r",
+        "mutated_line": "2.0 * PI * r",
+        "outcome": "tests_failed",
+        "failing_test": "tests::area_of_radius_three",
+        "equivalence_review": "not equivalent: circle_area(3.0) = 6*PI instead of 9*PI"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_relative_eq!(circle_area(3.0), 9*PI, epsilon = 1e-9) is effectively exact at this scale; both mutants differ far beyond the tolerance.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

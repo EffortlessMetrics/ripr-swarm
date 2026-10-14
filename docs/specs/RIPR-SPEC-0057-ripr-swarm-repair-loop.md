@@ -488,9 +488,31 @@ Repo-exposure snapshot comparison commands are not by themselves bounded verify
 commands for default swarm delegation; they must be excluded with
 `unbounded_verify_command` unless the packet also supplies or can derive a
 narrower proof route. The only default derived proof route is a typed Rust test
-target: `related_test_or_observer.file` must map to a known workspace package,
+target using the producer's declared package-layout convention:
+`crates/<package>/...` maps to `<package>`, and `xtask/...` maps to `xtask`.
 `related_test_or_observer.name` must be a safe cargo test filter, and the
-resulting command is `cargo test -p <package> <test-filter>`.
+resulting command is `cargo test -p <package> <test-filter>`. Neither this
+projector fallback nor editor admission independently resolves Cargo manifests,
+workspace membership, or directory/package-name mismatches. Validity relies on
+the declared layout; these checks do not establish execution authority.
+
+The editor's setup-files queue consumer uses that same typed-target contract
+for `Copy Current Repair Packet`: `related_test_or_observer.name` provenance
+must carry the exact package/filter command derived from the related target.
+The existing canonical verification source remains supported; this does not
+admit arbitrary Cargo test options or add another proof route. Every actionable
+row must retain truthful projection metadata and an empty string-array of
+exclusions before selection. Raw unsafe command bytes and broad snapshot
+comparisons, including quoted flag fragments, remain refused.
+
+The trusted extension test lane generates a genuine fixture once through the
+existing public Rust producer/projector composition test in a fresh unique
+export directory, preserving earlier transcripts and receipts, then exercises the
+filesystem/setup/copy consumer. Controller instrumentation and producer fixture
+proof remain distinct from native editor and installed-candidate qualification.
+This queue reader checks declared freshness and existing path/root boundaries;
+these checks do not establish source/corpus drift validation or authenticate a
+producer from its provenance label.
 
 Readiness must also expose `top_next_action` as a stable projection of
 `next_actions[0]`. Downstream surfaces may show that object directly, but they

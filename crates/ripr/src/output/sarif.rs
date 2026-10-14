@@ -1447,6 +1447,19 @@ mod tests {
                 .to_string(),
             "suggested_verify_command_confidence: high".to_string(),
         ]);
+        // The selected Python location must have its own related row; the
+        // sample output's unrelated Rust row cannot supply card evidence.
+        finding.related_tests = vec![RelatedTest {
+            name: "test_apply_discount_threshold_boundary".to_string(),
+            file: PathBuf::from("tests/test_pricing.py"),
+            line: 12,
+            oracle: Some("assert apply_discount(50, 100)".to_string()),
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Smoke,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
         let sarif = parse_json(&rendered)?;
@@ -1456,6 +1469,10 @@ mod tests {
         assert_eq!(card["language"], "python");
         assert_eq!(card["language_status"], "preview");
         assert_eq!(card["authority_boundary"], "preview_advisory_only");
+        assert_eq!(
+            card["current_test_evidence"],
+            "tests/test_pricing.py:12 test_apply_discount_threshold_boundary currently has oracle_strength=smoke, oracle_kind=smoke_only: assert apply_discount(50, 100)"
+        );
         assert_eq!(
             card["canonical_gap_id"],
             "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"

@@ -1,0 +1,317 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/currentness_matrix_typescript_deleted_statement/input",
+  "config_path": "<cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":3,"findings":3,"exposed":3,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:2d31671553974d415bcd3a105ca21dae9b944692314feab8f131b59d87b35a29","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_cart.ts:typescript_preview:b397df4d",
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:src_cart.ts:typescript_preview:b397df4d",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "src/cart.ts",
+        "line": 6,
+        "expression": "    total = Math.min(total, CAP);",
+        "owner": "typescript:src/cart.ts::cappedTotal"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `cappedTotal`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `cappedTotal`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches constructed field: total = Math.min(total, CAP); (line 6)", "related test tests/cart.test.ts:3 cappedTotal stops at the cap uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"total = Math.min(total, CAP);","line":6}
+      ],
+      "evidence": ["owner: cappedTotal", "typescript_oracle_observed: cappedTotal([80, 50])", "typescript_oracle_expected: 100", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/cart.test.ts:4", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/cart.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:b397df4d;owner=cappedTotal", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved"],
+      "missing": ["Related test reaches `cappedTotal` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "cappedTotal stops at the cap",
+          "file": "tests/cart.test.ts",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "preview_actionability": {
+        "actionability_category": "strong_oracle_observed",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        "gap_state": "already_observed",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/cart.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 6,
+            "owner": "cappedTotal",
+            "raw": "file=src/cart.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:b397df4d;owner=cappedTotal",
+            "sample": null,
+            "source_id": "probe:src_cart.ts:typescript_preview:b397df4d"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "unlock_condition": null,
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_cart.ts:typescript_preview:89362f07",
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:src_cart.ts:typescript_preview:89362f07",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "src/cart.ts",
+        "line": 12,
+        "expression": "    total = Math.max(total, FLOOR);",
+        "owner": "typescript:src/cart.ts::flooredTotal"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `flooredTotal`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `flooredTotal`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches constructed field: total = Math.max(total, FLOOR); (line 12)", "related test tests/cart.test.ts:7 flooredTotal never goes below the floor uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"total = Math.max(total, FLOOR);","line":12}
+      ],
+      "evidence": ["owner: flooredTotal", "typescript_oracle_observed: flooredTotal([1, 2])", "typescript_oracle_expected: 10", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/cart.test.ts:8", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/cart.ts;line=12;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:89362f07;owner=flooredTotal", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved"],
+      "missing": ["Related test reaches `flooredTotal` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "flooredTotal never goes below the floor",
+          "file": "tests/cart.test.ts",
+          "line": 7,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "preview_actionability": {
+        "actionability_category": "strong_oracle_observed",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        "gap_state": "already_observed",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/cart.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 12,
+            "owner": "flooredTotal",
+            "raw": "file=src/cart.ts;line=12;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:89362f07;owner=flooredTotal",
+            "sample": null,
+            "source_id": "probe:src_cart.ts:typescript_preview:89362f07"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "unlock_condition": null,
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_cart.ts:typescript_preview:7b9c7c82",
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:src_cart.ts:typescript_preview:7b9c7c82",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/cart.ts",
+        "line": 17,
+        "expression": "    return x * 2;",
+        "owner": "typescript:src/cart.ts::doubled"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `doubled`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `doubled`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return x * 2; (line 17)", "related test tests/cart.test.ts:11 doubled doubles uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return x * 2;","line":17}
+      ],
+      "evidence": ["owner: doubled", "typescript_oracle_observed: doubled(4)", "typescript_oracle_expected: 8", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/cart.test.ts:12", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/cart.ts;line=17;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:7b9c7c82;owner=doubled", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related test reaches `doubled` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "doubled doubles",
+          "file": "tests/cart.test.ts",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/cart.ts:17: `return x * 2;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "doubled",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/cart.test.ts",
+          "line": 11,
+          "name": "doubled doubles"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "preview_actionability": {
+        "actionability_category": "strong_oracle_observed",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        "gap_state": "already_observed",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/cart.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 17,
+            "owner": "doubled",
+            "raw": "file=src/cart.ts;line=17;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:7b9c7c82;owner=doubled",
+            "sample": null,
+            "source_id": "probe:src_cart.ts:typescript_preview:7b9c7c82"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "unlock_condition": null,
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/cart.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/cart.ts","digest":"sha256:fa91c790d88687d2950c71cbea34e4836a67841d399a7c17bb4c1333ed2015c5"}]}
+}

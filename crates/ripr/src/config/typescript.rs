@@ -68,6 +68,28 @@ pub(crate) fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
     })
 }
 
+/// Whether an exact normalized repository-relative declaration admits this
+/// path past the built-in excluded-directory conventions (#7386).
+/// Declarations are the `[languages.typescript] handwritten_files` entries:
+/// exact paths only, no globs, normalized with `/` separators at parse time.
+pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    declared.iter().any(|entry| entry == &normalized)
+}
+
+/// Whether any declared hand-written TypeScript/JavaScript path lives under
+/// `dir`, which is repository-relative and normalized. The workspace walk
+/// consults this before pruning an excluded-name directory: a declared
+/// hand-written file keeps its ancestor directories reachable so the file
+/// can be read and indexed (#7386).
+pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
+    let mut prefix = dir.to_string_lossy().replace('\\', "/");
+    if !prefix.is_empty() && !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+    declared.iter().any(|entry| entry.starts_with(&prefix))
+}
+
 /// Whether a UTF-8 file name is a generated TypeScript/JavaScript artifact.
 ///
 /// The families are `*.generated.*` (`cart.generated.ts`,

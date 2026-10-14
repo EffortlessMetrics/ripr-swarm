@@ -1443,7 +1443,7 @@ fn json_scalar_as_usize(value: &Value) -> Option<usize> {
 /// Snapshots written without artifact identity (the plain
 /// `write_repo_exposure_json` path, which is what `ripr pilot` emits) have no
 /// `artifact` key at all.
-fn snapshot_repository_head(snapshot: &str) -> Option<String> {
+pub(crate) fn snapshot_repository_head(snapshot: &str) -> Option<String> {
     /// Just enough of the artifact envelope to read the head, so this does
     /// not hold a second full `Value` for a document the report path has
     /// already parsed.

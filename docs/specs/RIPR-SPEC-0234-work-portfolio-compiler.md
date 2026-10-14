@@ -101,7 +101,8 @@ relationship; dependencies and blockers; semantic conflict resources and
 overlapping work; proof/review/CI cost classes (`not_proven` when
 unsourced); lane/capacity state; explicitly sourced readiness contribution
 and regression risks; the ordered ranking factors with per-factor
-contributions and source references; confidence with named partial-data
+contributions and source references and their exact eight-integer
+`ranking_key`; confidence with named partial-data
 reasons; and the recommended packet compiler entrypoint
 (`cargo xtask work explain --candidate <id>`). The portfolio preserves the
 complete candidate set; ranking is advisory and inspectable.
@@ -148,6 +149,16 @@ active claim; a merged PR alone is finished work (`verify_current_head` /
 `complete` / `reconcile_closeout` material), not resumable work. Readiness/release contribution appears only
 when sourced from explicit accepted artifacts, marked advisory, and never
 changes the factor order.
+
+The compiler emits `ranking_key` in the existing v1 portfolio, candidates,
+and explain JSON, alongside the unchanged factor prose. It computes the key
+once and sorts by that same value in ascending lexicographic order; equal
+keys sort by `candidate_id` ascending. Markdown names the key and tie-break.
+Legacy candidate JSON without the additive field still deserializes and
+round-trips without it; absence means unavailable, never an invented zero
+key. A present non-null key must contain exactly eight integers. Adding the
+field changes regenerated portable identity digests, whose candidate DTO
+inputs now include the key, without changing candidate order or authority.
 
 ### Determinism, budgets and portability
 

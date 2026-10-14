@@ -1,0 +1,13 @@
+diff --git a/lib/Account.pm b/lib/Account.pm
+index 1e1ba56..498d067 100644
+--- a/lib/Account.pm
++++ b/lib/Account.pm
+@@ -22,7 +22,7 @@ sub withdraw {
+ 
+ sub transfer {
+     my ($from, $amount) = @_;
+-    if ($amount > $from) {
++    if ($from < $amount) {
+         die "transfer exceeds balance\n";
+     }
+     return $from - $amount;

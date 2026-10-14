@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-vitest-unit-price-table-other-key",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/ts-vitest-unit-price-table-other-key.diff",
+  "anchor": {
+    "file": "src/cart.ts",
+    "line": 48
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_resolves_to_be",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 5.0.4, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "const table: Record<string, number> = { apple: 125, pear: 95 };",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: fetchUnitPrice(\"apple\") returns 125 instead of 120; no test looks up apple"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only fetchUnitPrice test looks up pear, so moving apple's price passes every test. RIPR-SPEC-0254 rule 2 credits a table change only when a strong assertion looks up a changed key, so this stays weakly_exposed, the ideal gap. Negative control for ts-vitest-unit-price-table.",
+  "labeling_observation": {
+    "ripr_commit": "16355a0",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

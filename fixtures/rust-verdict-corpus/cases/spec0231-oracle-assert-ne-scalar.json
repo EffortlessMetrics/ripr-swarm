@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "scalar_return_value",
   "test_shape": "assert_ne_scalar",
-  "hard_case": "ripr reports exact_value / strong for the related test; the spec adopts relational_check / weak (measured defect). The return_value finding stays weakly_exposed, so ripr's class agrees with the partial truth.",
+  "hard_case": "Measured defect at labeling: ripr reported exact_value / strong for the related test; the spec adopts relational_check / weak. Since #6670 ripr reports relational_check / weak. The return_value finding stays weakly_exposed, so ripr's class agrees with the partial truth.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
@@ -57,5 +57,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#1"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#1"
+  }
 }

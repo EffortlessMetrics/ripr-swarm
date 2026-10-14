@@ -68,6 +68,37 @@ pub(crate) fn limitations_for_absent_changed_files(
         .collect()
 }
 
+/// Absent-file disclosure for a consumer that keeps earlier evidence, such as
+/// the pilot supplement (`classify_seams_in_files_at_with_config`): a name the
+/// portable limitation path refuses (for example a drive-like `C:missing.rs`
+/// changed file on Unix) must not discard the whole report. Returns the
+/// canonical per-file limitations, or one bounded, path-less limitation
+/// naming the refusal so the withheld coverage stays disclosed.
+pub(crate) fn supplement_absent_file_limitations(
+    paths: &[PathBuf],
+) -> Result<Vec<AnalysisLimitation>, String> {
+    match limitations_for_absent_changed_files(paths) {
+        Ok(limitations) => Ok(limitations),
+        Err(error) => {
+            // `bounded_detail` rejects over-long text instead of truncating,
+            // and the refusal embeds the refused path, so bound it here.
+            let error = error.chars().take(256).collect::<String>();
+            Ok(vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
+                )?,
+            )
+            .with_affected_items(paths.len() as u64)?
+            .with_detail(format!(
+                "the absent changed-file disclosure was refused by the portable path ({error}); named coverage for these absent files was withheld and other changed files keep their classified seams"
+            ))?])
+        }
+    }
+}
+
 pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
     if relative.is_absolute()
         || relative
@@ -209,8 +240,10 @@ const PYTHON_VENDOR_DIRS: &[&str] = &[
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
 
-/// Whether a repository-relative path is a Python test file: `test_*.py` or
-/// `*_test.py`, or any `.py` below a `tests/` or `test/` directory.
+/// Whether a repository-relative path is a Python test file: `test_*.py`,
+/// `*_test.py`, a bare `tests.py` or `test.py` module (the Django
+/// `startapp` convention), or any `.py` below a `tests/` or `test/`
+/// directory.
 pub(crate) fn is_python_test_path(relative: &Path) -> bool {
     let Some(name) = relative.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -218,7 +251,7 @@ pub(crate) fn is_python_test_path(relative: &Path) -> bool {
     let Some(stem) = name.strip_suffix(".py") else {
         return false;
     };
-    if stem.starts_with("test_") || stem.ends_with("_test") {
+    if stem.starts_with("test_") || stem.ends_with("_test") || stem == "tests" || stem == "test" {
         return true;
     }
     relative
@@ -387,6 +420,50 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>
+    {
+        let limitations = supplement_absent_file_limitations(&[PathBuf::from("src/z_hidden.rs")])?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
+        assert_eq!(
+            limitations[0].kind,
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+        );
+        assert_eq!(limitations[0].affected_items, Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn supplement_absent_file_limitations_degrades_refused_name_to_bounded_disclosure()
+    -> Result<(), String> {
+        // A drive-like name is a legal repository-relative Unix filename, but
+        // the portable limitation path refuses it; the supplement must keep
+        // running instead of failing, so the refused disclosure degrades to
+        // one bounded, path-less stand-in naming the refusal (#6976).
+        let absent = [PathBuf::from("src/kept.rs"), PathBuf::from("C:missing.rs")];
+        let limitations = supplement_absent_file_limitations(&absent)?;
+        assert_eq!(limitations.len(), 1, "one bounded stand-in, not an error");
+        let fallback = &limitations[0];
+        assert_eq!(fallback.path, None, "the refused name cannot be a path");
+        assert_eq!(fallback.affected_items, Some(2));
+        let detail = fallback
+            .bounded_detail
+            .as_deref()
+            .ok_or("the stand-in must carry detail")?;
+        assert!(detail.contains("withheld"), "{detail}");
+        assert!(detail.contains("C:missing.rs"), "{detail}");
+        Ok(())
+    }
+
+    #[test]
+    fn supplement_absent_file_limitations_names_nothing_when_no_file_is_absent()
+    -> Result<(), String> {
+        let limitations = supplement_absent_file_limitations(&[])?;
+        assert!(limitations.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn python_test_path_predicate_is_discriminating() {
         for yes in [
             "tests/test_x.py",
@@ -394,6 +471,9 @@ mod tests {
             "pkg/y_test.py",
             "tests/helpers/conftest.py",
             "test/util.py",
+            "tests.py",
+            "blog/tests.py",
+            "test.py",
         ] {
             assert!(is_python_test_path(Path::new(yes)), "{yes}");
         }
@@ -402,7 +482,6 @@ mod tests {
             "python/pkg/mod.py",
             "tests/test_x.rs",
             "contest/mod.py",
-            "tests.py",
             "pkg/latest.py",
         ] {
             assert!(!is_python_test_path(Path::new(no)), "{no}");

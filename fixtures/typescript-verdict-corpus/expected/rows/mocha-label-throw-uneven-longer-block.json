@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-label-throw-uneven-longer-block",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/label.ts:6",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

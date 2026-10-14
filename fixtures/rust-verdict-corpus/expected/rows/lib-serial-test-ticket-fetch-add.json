@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-serial-test-ticket-fetch-add",
+  "subject_id": "authored-lib-serial-test",
+  "origin": "authored",
+  "anchor": "src/lib.rs:14",
+  "behavior_family": "return_value",
+  "test_shape": "serial_test_attribute_below_test",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

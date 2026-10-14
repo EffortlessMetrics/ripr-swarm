@@ -1,5 +1,5 @@
 use super::AnalysisStatusNotification;
-use super::actions::{code_action_response, resolve_action};
+use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
     ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
     root_from_initialize_params, workspace_folder_set_from_initialize_params,
@@ -8,11 +8,12 @@ use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    diagnostic_refresh_plan, take_all_uris,
+    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
+    take_all_uris,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
+    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
     is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
@@ -3136,13 +3137,12 @@ impl Backend {
             .ok()
             .and_then(|value| value.clone())
             .map(|snapshot| {
-                let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
-                if let Some(selection) = &snapshot.delivery_selection
-                    && let Some(omission) = selection.document_omissions().get(uri.as_str())
-                {
-                    diagnostics.push(delivery_omission_diagnostic(omission));
-                }
-                diagnostics
+                let omissions = snapshot
+                    .delivery_selection
+                    .as_ref()
+                    .map(|selection| selection.document_omissions())
+                    .unwrap_or_default();
+                delivered_diagnostics_for_uri(&snapshot, uri, &omissions)
             })
             .unwrap_or_default()
     }
@@ -3322,6 +3322,14 @@ impl Backend {
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
+        // Capture health before any snapshot lock: completion records health
+        // while reading the snapshot. Every retained-evidence branch uses
+        // this same lifecycle projection without reversing that lock order.
+        let health = self.analysis_health_snapshot();
+        let with_status = |hover, snapshot: &AnalysisSnapshot| {
+            let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
+            hover_with_analysis_health(hover, snapshot, &effective)
+        };
         let uri = &params.text_document_position_params.text_document.uri;
         let position = &params.text_document_position_params.position;
         // A quarantined (dirty-buffer) document has no valid saved-state
@@ -3359,7 +3367,7 @@ impl Backend {
             overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
                         &snapshot,
                     ));
@@ -3372,7 +3380,7 @@ impl Backend {
             // evidence as the highest-priority structural projection.
             for diagnostic in &overlapping {
                 if is_gap_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         diagnostic_hover_response(diagnostic),
                         &snapshot,
                     ));
@@ -3380,14 +3388,14 @@ impl Backend {
             }
             for diagnostic in &overlapping {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         finding_hover_response(finding, diagnostic),
                         &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     diagnostic_hover_response(diagnostic),
                     &snapshot,
                 ));
@@ -3414,7 +3422,7 @@ impl Backend {
                 .filter(|finding| !published.contains(finding.id.as_str()))
                 .collect::<Vec<_>>();
             if !findings.is_empty() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
@@ -5510,9 +5518,6 @@ impl LanguageServer for Backend {
             .and_then(|value| value.clone());
         let health = self.analysis_health_snapshot();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
-        let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
-            .then_some(snapshot)
-            .flatten();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
         // which strips every client-executed command rather than offering
@@ -5522,11 +5527,26 @@ impl LanguageServer for Backend {
             .lock()
             .map(|features| features.clone())
             .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
-        let result = Ok(Some(code_action_response(
+        // A valid-root retained snapshot can name the unavailable actions,
+        // but only for a client that understands the inert disabled form.
+        // Root/missing-snapshot and legacy-client gates stay omit-only.
+        let retained_inert = root_allows_analysis
+            && snapshot.is_some()
+            && !health.allows_current_repairs()
+            && client_features.code_action_disabled;
+        let action_snapshot = (root_allows_analysis
+            && (health.allows_current_repairs() || retained_inert))
+            .then_some(snapshot)
+            .flatten();
+        let mut actions = code_action_response(
             &params,
             action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
             &client_features,
-        )));
+        );
+        if retained_inert {
+            disable_retained_analysis_actions(&mut actions, &health);
+        }
+        let result = Ok(Some(actions));
         self.trace_response("textDocument/codeAction", &result)
             .await;
         result
@@ -5774,7 +5794,7 @@ impl Backend {
                 .log_message(MessageType::WARNING, disclosure)
                 .await;
         }
-        let diagnostics = snapshot.served_diagnostics_for_uri(&uri);
+        let diagnostics = result_ids.delivered_diagnostics_for_uri(&snapshot, &uri);
         Ok(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                 related_documents: None,
@@ -5887,7 +5907,7 @@ impl Backend {
                 }
                 Vec::new()
             } else {
-                snapshot.served_diagnostics_for_uri(&uri)
+                result_ids.delivered_diagnostics_for_uri(&snapshot, &uri)
             };
             items.push(WorkspaceDocumentDiagnosticReport::Full(
                 WorkspaceFullDocumentDiagnosticReport {
@@ -6814,37 +6834,6 @@ fn push_budget_omission_disclosure(
     Some(format!(
         "ripr push diagnostic delivery budget overflowed; publication is partial: {payload}"
     ))
-}
-
-/// One visible summary of the same budget omission the selection and log
-/// retain. This is a delivery limitation, never a source finding or action.
-fn delivery_omission_diagnostic(
-    omission: &crate::lsp::diagnostic_budget::DocumentDeliveryOmission,
-) -> Diagnostic {
-    Diagnostic {
-        severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::INFORMATION),
-        code: Some(tower_lsp_server::ls_types::NumberOrString::String(
-            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
-        )),
-        source: Some("ripr".to_string()),
-        message: format!(
-            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
-            omission.omitted_count, omission.total_count, omission.retrieval_route
-        ),
-        data: Some(serde_json::json!({
-            "kind": "delivery_limitation",
-            "scope": omission.scope,
-            "selected_count": omission.selected_count,
-            "omitted_count": omission.omitted_count,
-            "total_count": omission.total_count,
-            "count_budget": omission.count_budget,
-            "byte_budget": omission.byte_budget,
-            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
-            "complete_evidence_identity": omission.complete_evidence_identity,
-            "retrieval_route": omission.retrieval_route,
-        })),
-        ..Default::default()
-    }
 }
 
 /// Restore the prior *served* publication during transaction rollback. The
@@ -10723,6 +10712,7 @@ mod delivery_selection_parity_tests {
 
     /// Pull one document through the real async `textDocument/diagnostic`
     /// handler and return the served canonical ids plus the result id.
+    /// Typed delivery limitations are transport items, not canonical evidence.
     fn pulled_document(
         backend: &Backend,
         runtime: &tokio::runtime::Runtime,
@@ -10753,6 +10743,9 @@ mod delivery_selection_parity_tests {
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| format!("full document report had no items array: {json}"))?
             .iter()
+            .filter(|item| {
+                item["code"] != super::super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+            })
             .map(|item| {
                 item.get("data")
                     .and_then(|data| data.get("diagnostic_id"))
@@ -10785,6 +10778,9 @@ mod delivery_selection_parity_tests {
         sorted.sort();
         sorted
     }
+
+    // Keep the payload oracles separate from the selected-ID-only tests.
+    mod omission_tests;
 
     #[test]
     fn input_change_reset_clears_component_degradation_dedup() -> Result<(), String> {

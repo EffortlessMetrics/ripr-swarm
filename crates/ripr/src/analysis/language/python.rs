@@ -58,6 +58,7 @@ use std::{
 };
 mod boundary;
 mod classify;
+mod deleted_lines;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -137,6 +138,7 @@ mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod same_class_callees;
 mod static_limits;
+mod term_activation;
 mod test_activation;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
@@ -153,9 +155,9 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-#[cfg(test)]
-use workspace::visit_workspace;
-use workspace::{collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line};
+use workspace::{
+    collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
+};
 
 /// Python preview adapter.
 ///
@@ -211,6 +213,10 @@ struct PythonOwner {
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
     class_path: String,
+    /// What a function owner's body lets RIPR-SPEC-0238 rule 20 read: its
+    /// guarded-return shape as a callee, and whether its parameters hold
+    /// their call-site values as a caller (`term_activation.rs`, #6733).
+    term_facts: term_activation::PythonTermFacts,
 }
 
 /// One declared parameter of a Python function owner.
@@ -315,6 +321,10 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// The call a callable-form exception assertion makes
+    /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
+    /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
+    callable_call: Option<String>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,
@@ -609,7 +619,38 @@ impl PythonAdapter {
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
     ) -> Result<LanguageDiffResult, String> {
-        let discovered = collect_workspace_python_files(&options.root);
+        Self::analyze_diff_with_handwritten(options, changed_files, walk_limits, &[])
+    }
+
+    /// [`analyze_diff_with_handwritten`] with the environment-resolved walk
+    /// bounds, for callers outside the Python module (the pipeline) that
+    /// cannot name the crate-private [`PythonDiffWalkLimits`] type.
+    pub(crate) fn analyze_diff_with_handwritten_env(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_handwritten(
+            options,
+            changed_files,
+            PythonDiffWalkLimits::from_env(),
+            handwritten,
+        )
+    }
+
+    /// [`analyze_diff_with_limits`] plus the `[languages.python]
+    /// handwritten_files` declarations (#7386): exact repository-relative
+    /// paths admitted past the built-in excluded-directory conventions, so a
+    /// hand-written source under a `build/`, `dist/` or `env/` directory is
+    /// walked, read and counted instead of silently dropped.
+    pub(in crate::analysis::language::python) fn analyze_diff_with_handwritten(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        walk_limits: PythonDiffWalkLimits,
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        let discovered =
+            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
         let (workspace_files, refused_files) =
             truncate_workspace_files(discovered, walk_limits.max_workspace_files);
         let workspace_read = read_workspace_sources_capped(
@@ -747,7 +788,11 @@ impl PythonAdapter {
             .filter(|changed| {
                 matches!(route(&changed.path), Some(LanguageId::Python))
                     && !is_detectable_generated_python_path(&changed.path)
-                    && !is_detectable_excluded_python_path(&changed.path)
+                    && (!is_detectable_excluded_python_path(&changed.path)
+                        || crate::config::is_declared_handwritten_python_path(
+                            handwritten,
+                            &changed.path,
+                        ))
             })
             .collect::<Vec<_>>();
         // The workspace walk cannot discover a missing NEW-side path. Reuse
@@ -784,12 +829,14 @@ impl PythonAdapter {
             // bounds above; a capped-out file degrades to empty ranges,
             // exactly the pre-existing unreadable-file path, and the file
             // itself is already named in the limitation set.
-            let (old_docstring_ranges, old_import_ranges) = workspace_read
+            let old_source = workspace_read
                 .sources
                 .get(&changed.path)
-                .and_then(|source| reconstruct_old_source(source, changed))
+                .and_then(|source| reconstruct_old_source(source, changed));
+            let (old_docstring_ranges, old_import_ranges) = old_source
+                .as_deref()
                 .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, &source);
+                    let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
@@ -804,16 +851,20 @@ impl PythonAdapter {
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other
             // added import line is not.
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7556, #7524 for TypeScript). Every old-line reader below takes
+            // it from one pairing: by position in an even block, by content in
+            // an uneven one, by coordinate where a removed line interrupts the
+            // run.
+            let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
-                    && changed
-                        .removed_lines
-                        .iter()
-                        .find(|removed| removed.new_side_line == added.line)
-                        .is_none_or(|removed| {
-                            !line_is_in_ranges(removed.line, &old_import_ranges)
-                                && !is_python_import_line(&removed.text)
-                        })
+                    && counterparts.get(&added.line).is_none_or(|removed| {
+                        !line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text)
+                    })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
@@ -824,12 +875,9 @@ impl PythonAdapter {
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
             for (added_index, added) in changed.added_lines.iter().enumerate() {
-                // Pair the in-place removed line (same new-side position) so the
-                // classifier can credit the changed-sink token on the DELTA only.
-                let old_line = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line);
+                // Pair the replaced old line so the classifier can credit the
+                // changed-sink token on the DELTA only.
+                let old_line = counterparts.get(&added.line).copied();
                 // Git pairs a rewritten block line by line, so a comment, a
                 // lone bracket or an import that lands where old code stood is
                 // not the carrier of that code's change: the behavioral lines of
@@ -902,6 +950,26 @@ impl PythonAdapter {
                     findings.push(finding);
                 }
             }
+            // A deleted behavior line no added line pairs with is kept as
+            // base-side evidence on its owner, as the Rust adapter keeps it
+            // (#7587, RIPR-SPEC-0156).
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                &deleted_lines::OldSideRanges {
+                    docstrings: &old_docstring_ranges,
+                    imports: &old_import_ranges,
+                    source: old_source.as_deref(),
+                },
+                workspace_read
+                    .sources
+                    .get(&changed.path)
+                    .map(String::as_str),
+                &all_owners,
+                &all_tests,
+                &findings,
+            );
+            findings.extend(deleted);
         }
         Ok(LanguageDiffResult {
             findings,
@@ -956,6 +1024,9 @@ impl PythonAdapter {
 mod assertion_selection_tests;
 
 #[cfg(test)]
+mod deleted_lines_tests;
+
+#[cfg(test)]
 mod new_declaration_tests;
 
 #[cfg(test)]
@@ -963,6 +1034,9 @@ mod python_tests;
 
 #[cfg(test)]
 mod reexport_tests;
+
+#[cfg(test)]
+mod replaced_block_tests;
 
 #[cfg(test)]
 mod tests;

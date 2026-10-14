@@ -89,6 +89,102 @@ fn semantic_config_diagnostic_names_profile_expected_values() {
     assert_eq!(diagnostic.expected_values, ["actionable", "full"]);
 }
 
+/// A typo in `[perl].producer` must fail at parse like the other closed
+/// enums. The runtime `is_managed_perl_producer` allowlist stays the single
+/// accepted set; `check.rs:1504` uses `"custom"` only as a non-managed
+/// predicate token, not as a documented `ripr.toml` value.
+#[test]
+fn perl_producer_typo_fails_closed_with_key_named_error() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"perllspp\"\n") {
+        Ok(_) => return Err("typo producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.config_path.as_deref() != Some("perl.producer") {
+        return Err(format!("config_path: {:?}", diagnostic.config_path));
+    }
+    if diagnostic.location_status != ConfigLocationStatus::Exact {
+        return Err(format!("location_status: {:?}", diagnostic.location_status));
+    }
+    if diagnostic.invalid_value.as_deref() != Some("\"perllspp\"") {
+        return Err(format!("invalid_value: {:?}", diagnostic.invalid_value));
+    }
+    if diagnostic.expected_values != ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        return Err(format!("expected_values: {:?}", diagnostic.expected_values));
+    }
+    if !diagnostic
+        .message
+        .contains("perl.producer `perllspp` is not supported")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    if !diagnostic
+        .message
+        .contains("expected perl-ripr-facts, perllsp, or perl-lsp")
+    {
+        return Err(diagnostic.message.clone());
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_custom_is_not_a_documented_unmanaged_value() -> Result<(), String> {
+    let error = match parse_config("[perl]\nproducer = \"custom\"\n") {
+        Ok(_) => return Err("custom is not an accepted ripr.toml producer".to_string()),
+        Err(error) => error,
+    };
+    if !error.contains("perl.producer `custom` is not supported") {
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_accepted_managed_values_and_omission_parse() -> Result<(), String> {
+    for value in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        let config = parse_config(&format!("[perl]\nproducer = \"{value}\"\n"))
+            .map_err(|err| format!("{value} must parse: {err}"))?;
+        if config.perl().producer() != Some(value) {
+            return Err(format!("{value} parsed as {:?}", config.perl().producer()));
+        }
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} must remain on the existing managed allowlist"
+            ));
+        }
+    }
+    let omitted = parse_config("[perl]\ntimeout_ms = 1000\n")
+        .map_err(|err| format!("omitted producer remains valid: {err}"))?;
+    if omitted.perl().producer().is_some() {
+        return Err(format!(
+            "omitted producer must stay None, got {:?}",
+            omitted.perl().producer()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn perl_producer_diagnostic_expected_values_match_managed_allowlist() -> Result<(), String> {
+    let diagnostic = match parse_config_diagnostic("[perl]\nproducer = \"nope\"\n") {
+        Ok(_) => return Err("unknown producer must fail parse".to_string()),
+        Err(diagnostic) => diagnostic,
+    };
+    if diagnostic.expected_values.is_empty() {
+        return Err("editor/LSP expected-values must name the closed set".to_string());
+    }
+    for value in &diagnostic.expected_values {
+        if !crate::app::is_managed_perl_producer(value) {
+            return Err(format!(
+                "{value} listed as expected but is not a managed producer"
+            ));
+        }
+    }
+    if crate::app::is_managed_perl_producer("nope") {
+        return Err("control: the rejected value must stay unmanaged".to_string());
+    }
+    Ok(())
+}
+
 fn temp_root(name: &str) -> Result<PathBuf, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -968,6 +1064,59 @@ fn config_file_discovery_stops_at_git_boundary() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn config_discovery_stops_at_unresolvable_git_entries() -> Result<(), String> {
+    for (label, target) in [("dangling", "missing-gitdir"), ("cycle", ".git")] {
+        let outer = temp_root(label)?;
+        let boundary = outer.join("project");
+        let nested = boundary.join("src");
+        fs::create_dir_all(&nested).map_err(|err| format!("mkdir failed: {err}"))?;
+        write_file(
+            &outer.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\ninclude_unchanged_tests = false\n",
+        )?;
+        std::os::unix::fs::symlink(target, boundary.join(".git"))
+            .map_err(|err| format!("symlink failed: {err}"))?;
+
+        let defaults = load_for_root(&nested)?;
+        assert!(
+            defaults.source_path().is_none(),
+            "{label}: parent config leaked"
+        );
+        let mut input = CheckInput::default();
+        apply_to_check_input(&mut input, &defaults, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Draft, "{label}");
+        assert!(input.include_unchanged_tests, "{label}");
+
+        write_file(
+            &boundary.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"ready\"\ninclude_unchanged_tests = true\n",
+        )?;
+        let local = load_for_root(&nested)?;
+        assert_eq!(
+            local.source_path(),
+            Some(boundary.join(CONFIG_FILE_NAME).as_path())
+        );
+        apply_to_check_input(&mut input, &local, CheckInputExplicit::default());
+        assert_eq!(input.mode, Mode::Ready, "{label}: local config must apply");
+        input.mode = Mode::Instant;
+        input.include_unchanged_tests = false;
+        apply_to_check_input(
+            &mut input,
+            &local,
+            CheckInputExplicit {
+                mode: true,
+                include_unchanged_tests: true,
+            },
+        );
+        assert_eq!(input.mode, Mode::Instant, "{label}: explicit CLI wins");
+        assert!(!input.include_unchanged_tests, "{label}: explicit CLI wins");
+        fs::remove_dir_all(&outer).map_err(|err| format!("remove fixture failed: {err}"))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn oracle_strength_literals_round_trip_through_config() -> Result<(), String> {
     let weak_smoke_none = parse_config(
@@ -1111,6 +1260,8 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
     let finding_affecting = [
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
+        "languages.python.handwritten_files",
+        "languages.typescript.handwritten_files",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
@@ -1296,9 +1447,13 @@ proptest! {
         max_related_tests in any::<usize>(),
         suppression_path in valid_repository_paths(),
         resolve_tsconfig_paths in any::<bool>(),
-        producer in any::<String>(),
+        producer in prop::option::of(prop::sample::select(vec![
+            "perl-ripr-facts".to_string(),
+            "perllsp".to_string(),
+            "perl-lsp".to_string(),
+        ])),
         executable in any::<String>(),
-        timeout_ms in any::<u64>(),
+        timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
         let raw = RawConfig {
@@ -1337,13 +1492,15 @@ proptest! {
             languages: Some(RawLanguagesConfig {
                 enabled: Some(vec!["rust".to_string()]),
                 rust: None,
+                python: None,
+                typescript: None,
             }),
             profiles: None,
             typescript: Some(RawTypescriptConfig {
                 resolve_tsconfig_paths: Some(resolve_tsconfig_paths),
             }),
             perl: Some(RawPerlConfig {
-                producer: Some(producer),
+                producer: spanned_value(producer),
                 executable: Some(executable),
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
@@ -1765,6 +1922,52 @@ fn rust_handwritten_files_accepts_scoped_recovery_configuration() -> Result<(), 
 }
 
 #[test]
+fn python_and_typescript_handwritten_files_parse_and_validate() -> Result<(), String> {
+    let config = parse_config(
+        "[languages.python]
+handwritten_files = ['build/lib/pipeline.py']
+[languages.typescript]
+handwritten_files = ['dist/pricing.ts', 'env/config.mjs']
+",
+    )?;
+    assert_eq!(
+        config.languages.python.handwritten_files,
+        ["build/lib/pipeline.py"]
+    );
+    assert_eq!(
+        config.languages.typescript.handwritten_files,
+        ["dist/pricing.ts", "env/config.mjs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn python_and_typescript_handwritten_files_reject_wrong_extensions_and_globs() -> Result<(), String>
+{
+    for (section, paths) in [
+        ("languages.python", "['build/lib/pipeline.ts']"),
+        ("languages.python", "['build/*.py']"),
+        ("languages.typescript", "['dist/pricing.py']"),
+        ("languages.typescript", "['dist/*.ts']"),
+    ] {
+        let result = parse_config(&format!(
+            "[{section}]
+handwritten_files = {paths}
+"
+        ));
+        match result {
+            Err(_e) => {}
+            Ok(_) => {
+                return Err(format!(
+                    "invalid [{section}] handwritten_files declaration was accepted: {paths}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn handwritten_files_rejects_ambiguous_or_escaping_paths() {
     // Construct the synthetic drive prefix as in the local-context checker's
     // own negative fixtures; this is not a real machine path in source.
@@ -1860,6 +2063,53 @@ fn candidate_config_error_timeout_renders_the_timeout_diagnostic() {
         "candidate tree ripr.toml: bad toml",
         "non-timeout failures keep their message verbatim"
     );
+}
+
+/// #7353: `reports.max_related_tests = 0` used to be accepted silently and
+/// emptied `related_tests` in every context packet; it must now fail closed
+/// with a named error naming the key and the accepted set, like the
+/// neighboring keys.
+#[test]
+fn reports_max_related_tests_zero_fails_closed_with_a_named_error() -> Result<(), String> {
+    match parse_config("[reports]\nmax_related_tests = 0\n") {
+        Err(error) => {
+            for expected in ["reports.max_related_tests", "at least 1"] {
+                if !error.contains(expected) {
+                    return Err(format!("the error must name {expected}: {error}"));
+                }
+            }
+        }
+        Ok(_) => return Err("zero max_related_tests was accepted silently".to_string()),
+    }
+    let config = parse_config("[reports]\nmax_related_tests = 3\n")
+        .map_err(|error| format!("a positive cap must parse: {error}"))?;
+    if config.reports().max_related_tests() != 3 {
+        return Err("a positive cap did not round-trip".to_string());
+    }
+    Ok(())
+}
+
+/// #7353: `perl.timeout_ms = 0` used to be silently coerced back to the
+/// default by the accessor, so "no timeout" got an undocumented 30 s
+/// limit; it must now fail closed at parse with a named error.
+#[test]
+fn perl_timeout_ms_zero_fails_closed_with_a_named_error() -> Result<(), String> {
+    match parse_config("[perl]\ntimeout_ms = 0\n") {
+        Err(error) => {
+            for expected in ["perl.timeout_ms", "at least 1"] {
+                if !error.contains(expected) {
+                    return Err(format!("the error must name {expected}: {error}"));
+                }
+            }
+        }
+        Ok(_) => return Err("zero perl.timeout_ms was accepted silently".to_string()),
+    }
+    let config = parse_config("[perl]\ntimeout_ms = 1500\n")
+        .map_err(|error| format!("a positive timeout must parse: {error}"))?;
+    if config.perl().timeout_ms() != 1500 {
+        return Err("a positive timeout did not round-trip".to_string());
+    }
+    Ok(())
 }
 
 fn skipped_config_workspace(label: &str) -> Result<(PathBuf, PathBuf), String> {

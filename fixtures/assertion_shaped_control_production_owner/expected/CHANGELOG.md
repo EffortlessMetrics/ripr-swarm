@@ -261,3 +261,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_owner (15)
+
+Reason:
+RIPR-SPEC-0032 (#6615): the only owner input is the helper call boundary_amount(), whose value ripr does not evaluate (it returns 100, the boundary), so the boundary is activation unknown (infection_unknown) instead of a weakly_exposed missing-equality gap; the control's oracle (standard guidance, no owner_shape line) is unchanged
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_owner (16)
+
+Reason:
+RIPR-SPEC-0133: call-built boundary input reads infection_unknown (#6615); next step follows #7477 unknown-finding guidance
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

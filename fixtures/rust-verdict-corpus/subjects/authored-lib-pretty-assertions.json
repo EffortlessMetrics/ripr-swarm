@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-lib-pretty-assertions",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against pretty_assertions 1.4.1 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "2511d10aabee208f4c2be7d2d3049a81e6c45e9877f974b8e9f0a4ffba9ebd14"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "b4f7e900efed00678b1e2a1b6992beb26b75ec6b51a86ae937ac896456da80d5"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "5b49b34cc0f1676dba087fe6903953484fa271a70ab9d2aa21945fc6189e8d5c"
+    },
+    {
+      "path": "tests/totals.rs",
+      "sha256": "a0a4b7a45a3fbb272ad6783af78aceb2fcb0544f06db67454f2e68107c0e4b9d"
+    }
+  ]
+}

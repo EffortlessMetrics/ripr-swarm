@@ -1,0 +1,12 @@
+diff --git a/src/load.ts b/src/load.ts
+--- a/src/load.ts
++++ b/src/load.ts
+@@ -1,6 +1,6 @@
+ export async function load(options?: { token?: string }): Promise<string> {
+   if (!options?.token) {
+-    throw "TOKEN_MISSING";
++    throw "TOKEN_REQUIRED";
+   }
+-  return "done";
++  return "ready";
+ }

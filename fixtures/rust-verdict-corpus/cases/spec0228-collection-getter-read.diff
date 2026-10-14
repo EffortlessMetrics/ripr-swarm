@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index fade21b..92b8678 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@ impl Order {
+     }
+ 
+     pub fn add(&mut self, qty: u32) {
+-        self.lines.push(qty);
++        self.lines.push(qty + 0);
+     }
+ 
+     pub fn hold(&mut self, qty: u32) {

@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-jest-snapshot-unwritten",
+  "origin": "authored",
+  "version_label": "authored@2026-10-14",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "65be81a3c8c9d8d0bd95145cb5a91c8e7a263cade1ca8c75737eebb2abe96ea9"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/priceSnapUnwritten.ts",
+      "sha256": "bbef3f22a75ac208ecce2dfaa56b4e0b307b51b61b4e1753998051bffed3c78e"
+    },
+    {
+      "path": "test/priceSnapUnwritten.test.ts",
+      "sha256": "a8ed7f280e6759d5f5a38a3df512035cbb6daa7f10da851b3eb43191a64ffe71"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

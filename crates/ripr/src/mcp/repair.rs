@@ -16,7 +16,10 @@
 //! misleading attempt.
 
 use super::gaps::GapItem;
-use super::workspace::{AttemptFailure, CODE_ITEM_NOT_FOUND, WorkspaceSession, bounded_document};
+use super::workspace::{
+    AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
+    bounded_document,
+};
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
     find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
@@ -397,7 +400,7 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
             format!(
                 "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
             ),
-            "prepare the item with ripr_prepare_repair, or list durable attempts with `ripr agent status` in the repository",
+            "prepare the item with ripr_prepare_repair, or discover durable attempts with ripr_list_repair_attempts",
         )
     } else {
         (
@@ -435,7 +438,7 @@ fn load_durable_attempt(
                 return Err(AttemptFailure::new(
                     CODE_ATTEMPT_INVALID,
                     format!("repair attempt `{attempt_id}` failed canonical validation"),
-                    "run `ripr agent status` in the repository for the refusal detail",
+                    "read ripr_list_repair_attempts for the invalid directory identity; inspect `ripr agent status` for the full canonical validation diagnostic",
                 ));
             }
             _other => {}
@@ -446,7 +449,7 @@ fn load_durable_attempt(
         format!(
             "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
         ),
-        "list durable attempts with `ripr agent status` in the repository",
+        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id",
     ))
 }
 
@@ -479,7 +482,7 @@ fn session_receipt_document(transaction: &RepairTransaction) -> Value {
     })
 }
 
-fn durable_receipt_document(
+pub(super) fn durable_receipt_document(
     manifest: &crate::app::repair_attempt::RepairAttemptManifest,
     root: &Path,
     root_identity: Option<&str>,
@@ -676,14 +679,14 @@ impl WorkspaceSession {
                 ],
                 "claim_boundary": "Repair-packet evaluation for one canonical item. This negative document authorizes nothing and creates nothing.",
             });
-            return bounded_document(document);
+            return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
         }
 
         // Ready: replay the identical transaction when one exists for this
         // snapshot, item, and root; otherwise create it once.
         let attempt_id = session_attempt_id(&snapshot_id, &item.canonical_id, root_identity)?;
         if let Some(transaction) = self.repairs.get(&attempt_id) {
-            return bounded_document(transaction.packet.clone());
+            return bounded_document(transaction.packet.clone(), RECOVERY_REPAIR_TOO_LARGE);
         }
         let Some(fix_site) = readiness.fix_site.clone() else {
             // `ready` implies a fix site; keep the fail-closed shape instead
@@ -762,7 +765,7 @@ impl WorkspaceSession {
             },
             "claim_boundary": "One bounded repair transaction for one canonical item of one committed snapshot. RIPR prepared evidence only: it does not edit source, does not launch a process, and does not execute verification or mutation commands. The external client's approval and sandbox policy remains authoritative for every command.",
         });
-        let packet = bounded_document(packet)?;
+        let packet = bounded_document(packet, RECOVERY_REPAIR_TOO_LARGE)?;
         let transaction = RepairTransaction {
             packet: packet.clone(),
             ..transaction
@@ -837,7 +840,10 @@ impl WorkspaceSession {
                 )
                 .with_data(json!({ "current_snapshot_id": current })));
             }
-            return bounded_document(session_attempt_document(transaction));
+            return bounded_document(
+                session_attempt_document(transaction),
+                RECOVERY_REPAIR_TOO_LARGE,
+            );
         }
         if let Some(old_snapshot) = self.superseded_attempts.get(attempt_id) {
             let current = self
@@ -857,7 +863,10 @@ impl WorkspaceSession {
             return Err(unknown_attempt(attempt_id, false));
         };
         let manifest = load_durable_attempt(root, attempt_id)?;
-        bounded_document(durable_attempt_document(&manifest, root, root_identity))
+        bounded_document(
+            durable_attempt_document(&manifest, root, root_identity),
+            RECOVERY_REPAIR_TOO_LARGE,
+        )
     }
 
     /// `ripr_get_receipt_status` / `ripr://receipt/{receipt_id}`: current
@@ -892,7 +901,10 @@ impl WorkspaceSession {
                 )
                 .with_data(json!({ "current_snapshot_id": current })));
             }
-            return bounded_document(session_receipt_document(transaction));
+            return bounded_document(
+                session_receipt_document(transaction),
+                RECOVERY_REPAIR_TOO_LARGE,
+            );
         }
         if let Some(old_snapshot) = self.superseded_attempts.get(receipt_id) {
             let current = self
@@ -912,7 +924,10 @@ impl WorkspaceSession {
             return Err(unknown_attempt(receipt_id, false));
         };
         let manifest = load_durable_attempt(root, receipt_id)?;
-        bounded_document(durable_receipt_document(&manifest, root, root_identity))
+        bounded_document(
+            durable_receipt_document(&manifest, root, root_identity),
+            RECOVERY_REPAIR_TOO_LARGE,
+        )
     }
 }
 

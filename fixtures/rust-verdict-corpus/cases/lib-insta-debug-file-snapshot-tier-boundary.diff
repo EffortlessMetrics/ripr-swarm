@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b384688..a792fb8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -35,7 +35,7 @@
+ pub fn discount_tiers(total_cents: u64) -> Vec<(u64, u64)> {
+     [1_000u64, 5_000, 10_000]
+         .iter()
+-        .map(|&threshold| (threshold, if total_cents >= threshold { threshold / 20 } else { 0 }))
++        .map(|&threshold| (threshold, if threshold <= total_cents { threshold / 20 } else { 0 }))
+         .collect()
+ }
+ 

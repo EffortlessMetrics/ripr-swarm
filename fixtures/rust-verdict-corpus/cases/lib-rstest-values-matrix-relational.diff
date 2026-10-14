@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b39b033..0d0c1f8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@
+ }
+ 
+ pub fn clamp_pct(v: u32) -> u32 {
+-    if v > 100 { 100 } else { v }
++    v.min(100)
+ }
+ 
+ pub struct Account {

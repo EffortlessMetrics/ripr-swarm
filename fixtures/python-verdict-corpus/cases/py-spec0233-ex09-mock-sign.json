@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0233-ex09-mock-sign",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex09-mock-sign.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 175
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "pytest_mock_result_assert_called_once_with",
+  "hard_case": "the same mock expectation, but the only input is positive, so the edit changes no observed argument",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "handler(abs(int(text)))",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: '-1' hands the handler 1 instead of -1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 9, same test: the edit wraps the number in abs(), which changes the handler's argument only for negative text. The test passes '1', so it passes. The spec's verdict is weakly_exposed, so a gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "6da363f9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#9"
+  ]
+}

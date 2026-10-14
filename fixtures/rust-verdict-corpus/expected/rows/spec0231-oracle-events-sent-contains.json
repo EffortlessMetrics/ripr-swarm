@@ -18,5 +18,22 @@
   "contradictions": [],
   "findings_scored": 2,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "mock_expectation",
+      "strength": "medium",
+      "spec": "RIPR-SPEC-0231#10"
+    },
+    "observed_kind": "mock_expectation",
+    "observed_strength": "medium",
+    "observed_all": [
+      {
+        "test": "send_records_the_id",
+        "kind": "mock_expectation",
+        "strength": "medium"
+      }
+    ],
+    "outcome": "match"
+  }
 }

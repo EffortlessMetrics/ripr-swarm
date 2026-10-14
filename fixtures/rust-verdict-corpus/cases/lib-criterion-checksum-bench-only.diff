@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 37500c4..c4612aa 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+ pub fn checksum(data: &[u8]) -> u32 {
+     let mut acc: u32 = 17;
+     for byte in data {
+-        acc = acc.wrapping_mul(31).wrapping_add(u32::from(*byte));
++        acc = acc.wrapping_mul(31).wrapping_add((*byte as u32));
+     }
+     acc
+ }

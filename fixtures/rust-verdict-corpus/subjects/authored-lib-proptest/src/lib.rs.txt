@@ -1,0 +1,75 @@
+//! Property-tested helpers. Each property reads differently as an oracle:
+//! a roundtrip, a bound, a model comparison and a no-panic run.
+
+/// Run-length encode: `[3, 3, 3, 9]` becomes `[(3, 3), (9, 1)]`.
+pub fn encode(data: &[u8]) -> Vec<(u8, u8)> {
+    let mut runs: Vec<(u8, u8)> = Vec::new();
+    for &byte in data {
+        match runs.last_mut() {
+            Some((value, count)) if *value == byte && *count < u8::MAX => *count += 1,
+            _ => runs.push((byte, 1)),
+        }
+    }
+    runs
+}
+
+pub fn decode(runs: &[(u8, u8)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &(value, count) in runs {
+        out.extend(std::iter::repeat(value).take(usize::from(count)));
+    }
+    out
+}
+
+/// Percentage of `part` in `whole`, capped at 100.
+pub fn percent(part: u32, whole: u32) -> u32 {
+    if whole == 0 {
+        return 0;
+    }
+    let raw = u64::from(part) * 100 / u64::from(whole);
+    raw.min(100) as u32
+}
+
+/// Sum of the even values, written for speed.
+pub fn even_sum(values: &[u32]) -> u64 {
+    values
+        .iter()
+        .filter(|v| *v & 1 == 0)
+        .map(|v| u64::from(*v))
+        .sum()
+}
+
+/// Parse `key=value`; the key is trimmed and lowercased.
+pub fn parse_pair(text: &str) -> Option<(String, String)> {
+    let (key, value) = text.split_once('=')?;
+    Some((key.trim().to_ascii_lowercase(), value.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn decode_inverts_encode(data in proptest::collection::vec(0u8..4, 0..64)) {
+            prop_assert_eq!(decode(&encode(&data)), data);
+        }
+
+        #[test]
+        fn percent_stays_in_range(part in 0u32..1000, whole in 0u32..1000) {
+            prop_assert!(percent(part, whole) <= 100);
+        }
+
+        #[test]
+        fn even_sum_matches_the_model(values in proptest::collection::vec(any::<u32>(), 0..32)) {
+            let model: u64 = values.iter().filter(|v| **v % 2 == 0).map(|v| u64::from(*v)).sum();
+            prop_assert_eq!(even_sum(&values), model);
+        }
+
+        #[test]
+        fn parse_pair_never_panics(text in ".{0,16}") {
+            let _ = parse_pair(&text);
+        }
+    }
+}

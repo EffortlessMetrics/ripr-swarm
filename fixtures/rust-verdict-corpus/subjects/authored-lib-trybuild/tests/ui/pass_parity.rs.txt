@@ -1,0 +1,4 @@
+fn main() {
+    assert_eq!(lib_trybuild::parity_bit(0b1011), 1);
+    assert_eq!(lib_trybuild::parity_bit(0b1001), 0);
+}

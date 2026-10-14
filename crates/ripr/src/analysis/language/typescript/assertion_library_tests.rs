@@ -790,3 +790,441 @@ fn only_a_test_runner_expect_reads_jest_matchers() {
         0
     );
 }
+
+/// RIPR-SPEC-0252 rule 1: `t.assert.<method>` on a `node:test` context reads
+/// as legacy `node:assert`. `equal` is loose, so it is strong only against a
+/// literal coercion cannot reach (RIPR-SPEC-0247 rule 2).
+#[test]
+fn node_test_context_assert_reads_as_legacy_node_assert() {
+    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 13] = [
+        (
+            "loose equal against a number",
+            "t.assert.equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.equal(...)",
+        ),
+        (
+            "strictEqual",
+            "t.assert.strictEqual(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.strictEqual(...)",
+        ),
+        (
+            "deepStrictEqual",
+            "t.assert.deepStrictEqual(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.deepStrictEqual(...)",
+        ),
+        (
+            "loose equal against a test-local literal const",
+            "const want = 20;\n  t.assert.equal(lateFee(10), want);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.equal(...)",
+        ),
+        (
+            "loose equal against a let variable stays weak",
+            "let want = 20;\n  t.assert.equal(lateFee(10), want);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t.assert.equal(...)",
+        ),
+        (
+            "string-literal computed member",
+            "t[\"assert\"].equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t[\"assert\"].equal(...)",
+        ),
+        (
+            "single-quoted computed member",
+            "t['assert'].equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t[\"assert\"].equal(...)",
+        ),
+        (
+            "awaited subtest reads its own literal const",
+            "await t.test(\"sub\", (t2) => {\n    const want = 20;\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "awaited subtest does not read the parent's const",
+            "const want = 20;\n  await t.test(\"sub\", (t2) => {\n    t2.assert.equal(lateFee(10), want);\n  });",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t2.assert.equal(...)",
+        ),
+        (
+            "assertion inside try does not read the body's const",
+            "const want = 20;\n  try {\n    t.assert.equal(lateFee(10), want);\n  } finally {}",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t.assert.equal(...)",
+        ),
+        (
+            "anchored throws pins the error",
+            "t.assert.throws(() => lateFee(-1), /^Error: days must be positive$/);",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+            "t.assert.throws(..., /^Error: days must be positive$/)",
+        ),
+        (
+            "awaited rejects with a literal message object",
+            "await t.assert.rejects(async () => lateFee(-1), { message: \"days must be positive\" });",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+            "t.assert.rejects(..., { message: \"days must be positive\" })",
+        ),
+        (
+            "awaited subtest receiver",
+            "await t.test(\"sub\", (t2) => {\n    t2.assert.strictEqual(lateFee(10), 20);\n  });",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t2.assert.strictEqual(...)",
+        ),
+    ];
+    for (label, body, kind, strength, rendered) in cases {
+        let source = format!(
+            "import test from \"node:test\";\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", async (t) => {{\n  {body}\n}});\n"
+        );
+        let assertions = only_assertions("test/latefee.test.ts", &source);
+        let [assertion] = assertions.as_slice() else {
+            assert_eq!(assertions.len(), 1, "{label}: {assertions:?}");
+            continue;
+        };
+        assert_oracle(assertion, kind, strength, rendered);
+        let observed = assertion.observed_expression.as_deref();
+        assert!(
+            observed.is_some_and(|observed| observed.contains("lateFee(")),
+            "{label}: {observed:?}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0252: each supported `node:test` registration form reads the
+/// context assert; the same registration shadowed by a local `test` in the
+/// enclosing `describe` reads nothing.
+#[test]
+fn node_test_context_assert_follows_the_registration_binding() {
+    let call = "t.assert.equal(lateFee(10), 20);";
+    for (label, imports, registration, credited) in [
+        (
+            "named it",
+            "import { it } from \"node:test\";",
+            "it(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "require member",
+            "const test = require(\"node:test\").test;",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "whole-module require",
+            "const test = require(\"node:test\");",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "destructured require",
+            "const { test } = require(\"node:test\");",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "only modifier",
+            "import test from \"node:test\";",
+            "test.only(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "it nested in describe",
+            "import { describe, it } from \"node:test\";",
+            "describe(\"fees\", () => {\n  it(\"late fee\", (t) => {\n    CALL\n  });\n});",
+            true,
+        ),
+        (
+            "callback body reuses the runner name",
+            "import test from \"node:test\";",
+            "test(\"late fee\", (t) => {\n  const test = 1;\n  CALL\n});",
+            true,
+        ),
+        (
+            "describe imported as test",
+            "import { describe as test } from \"node:test\";",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            false,
+        ),
+        (
+            "test re-exported from node:test, imported from another runner",
+            "export { test } from \"node:test\";\nimport { test } from \"./fixtures\";",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            false,
+        ),
+        (
+            "test shadowed in the enclosing describe",
+            "import { describe, test } from \"node:test\";\nimport { makeRunner } from \"./fixtures\";",
+            "describe(\"fees\", () => {\n  const test = makeRunner();\n  test(\"late fee\", (t) => {\n    CALL\n  });\n});",
+            false,
+        ),
+    ] {
+        let registration = registration.replace("CALL", call);
+        let source =
+            format!("{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\n{registration}\n");
+        let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        let read: Vec<_> = tests.iter().flat_map(|test| &test.assertions).collect();
+        if credited {
+            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            let [assertion] = read.as_slice() else {
+                assert_eq!(read.len(), 1, "{label}: {read:?}");
+                continue;
+            };
+            assert_oracle(
+                assertion,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "t.assert.equal(...)",
+            );
+        } else {
+            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            assert!(read.is_empty(), "{label}: {read:?}");
+        }
+    }
+}
+
+/// RIPR-SPEC-0252 negatives: without a `node:test` import, on a receiver
+/// that is not the callback's first parameter, or for a method outside the
+/// `node:assert` table, `x.assert.<method>` yields no assertion.
+#[test]
+fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
+    for (label, imports, body) in [
+        (
+            "AVA file",
+            "import test from \"ava\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
+        ("no runner import", "", "t.assert.equal(lateFee(10), 20);"),
+        (
+            "registered through another runner",
+            "import { mock } from \"node:test\";\nimport { test } from \"./fixtures\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
+        (
+            "type-only runner import",
+            "import type { TestContext } from \"node:test\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
+        (
+            "another receiver",
+            "import test from \"node:test\";\nconst helper = { assert: { equal: () => {} } };",
+            "helper.assert.equal(lateFee(10), 20);",
+        ),
+        (
+            "another member of the context",
+            "import test from \"node:test\";",
+            "t.check.equal(lateFee(10), 20);",
+        ),
+        (
+            "no strict member on the context assert",
+            "import test from \"node:test\";",
+            "t.assert.strict.equal(lateFee(10), 20);",
+        ),
+        (
+            "snapshot is outside the table",
+            "import test from \"node:test\";",
+            "t.assert.snapshot(lateFee(10));",
+        ),
+        (
+            "unknown method",
+            "import test from \"node:test\";",
+            "t.assert.verifies(lateFee(10), 20);",
+        ),
+        (
+            "computed member through a variable key",
+            "import test from \"node:test\";\nconst key = \"assert\";",
+            "t[key].equal(lateFee(10), 20);",
+        ),
+        (
+            "string-literal key naming another member",
+            "import test from \"node:test\";",
+            "t[\"check\"].equal(lateFee(10), 20);",
+        ),
+        (
+            "computed member through a template key",
+            "import test from \"node:test\";",
+            "t[`assert`].equal(lateFee(10), 20);",
+        ),
+    ] {
+        let source = format!(
+            "{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", (t) => {{\n  {body}\n}});\n"
+        );
+        let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+        assert!(
+            tests[0].assertions.is_empty(),
+            "{label}: {:?}",
+            tests[0].assertions
+        );
+    }
+}
+
+/// RIPR-SPEC-0247 rule 2, amended: a loose equality whose expected value is
+/// a `const` the test body declares once, at its top level and before the
+/// assertion, bound to a literal coercion cannot reach, reads as that
+/// literal. Any other binding keeps the variable reading.
+#[test]
+fn loose_equality_reads_a_test_local_literal_const() {
+    for (label, body, credited, expected) in [
+        (
+            "string const",
+            "const want = \"silver\";\n  assert.equal(tier(10), want);",
+            true,
+            Some("\"silver\""),
+        ),
+        (
+            "number const",
+            "const want = 30;\n  assert.equal(tier(10), want);",
+            true,
+            Some("30"),
+        ),
+        (
+            "string const under deepEqual",
+            "const want = \"silver\";\n  assert.deepEqual(tier(10), want);",
+            true,
+            Some("\"silver\""),
+        ),
+        (
+            "parenthesized const with a type assertion",
+            "const want = (30 as number);\n  assert.equal(tier(10), want);",
+            true,
+            Some("30"),
+        ),
+        (
+            "object const under deepEqual can be mutated",
+            "const want = { total: 30 };\n  want.total = tier(10);\n  assert.deepEqual(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "array const filled by the test",
+            "const want = [];\n  want.push(tier(10));\n  assert.deepEqual(tiers([10]), want);",
+            false,
+            None,
+        ),
+        (
+            "coercible number const",
+            "const want = 1;\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "object const under equal compares references",
+            "const want = { total: 30 };\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "let binding",
+            "let want = 30;\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "const bound to a call",
+            "const want = price(30);\n  assert.equal(tier(10), want);",
+            false,
+            None,
+        ),
+        (
+            "const declared after the assertion",
+            "assert.equal(tier(10), want);\n  const want = 30;",
+            false,
+            None,
+        ),
+        (
+            "const declared in a nested block",
+            "{\n    const want = 30;\n    assert.equal(tier(10), want);\n  }",
+            false,
+            None,
+        ),
+        (
+            "assertion in a returned then callback",
+            "const want = 30;\n  return load().then(() => {\n    assert.equal(tier(10), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "const the then callback declares itself",
+            "return load().then((result) => {\n    const want = 30;\n    assert.equal(result, want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "const a forEach callback declares itself",
+            "[10].forEach((input) => {\n    const want = 30;\n    assert.equal(tier(input), want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "parent const in a forEach callback",
+            "const want = 30;\n  [10].forEach((input) => {\n    assert.equal(tier(input), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            // Known under-credit: a zero-parameter callback is walked as a
+            // nested block, which reads no constants, even its own.
+            "own const in a zero-parameter then callback",
+            "return load().then(() => {\n    const want = 30;\n    assert.equal(tier(10), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "parent const in a then callback with a parameter",
+            "const want = 30;\n  return load().then((result) => {\n    assert.equal(result, want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "assertion in a nested block a redeclaration could shadow",
+            "const want = 30;\n  if (ready) {\n    assert.equal(tier(10), want);\n  }",
+            false,
+            None,
+        ),
+    ] {
+        let source = format!(
+            "import assert from \"node:assert\";\nimport {{ tier }} from \"../src/tier\";\n\nit(\"tier\", () => {{\n  {body}\n}});\n"
+        );
+        let assertions = only_assertions("test/tier.test.ts", &source);
+        let [assertion] = assertions.as_slice() else {
+            assert_eq!(assertions.len(), 1, "{label}: {assertions:?}");
+            continue;
+        };
+        if credited {
+            assert_eq!(assertion.oracle_kind, OracleKind::ExactValue, "{label}");
+            assert_eq!(assertion.oracle_strength, OracleStrength::Strong, "{label}");
+            assert!(!assertion.has_dynamic_matcher_arg, "{label}");
+        } else {
+            assert_eq!(
+                assertion.oracle_kind,
+                OracleKind::RelationalCheck,
+                "{label}: {assertion:?}"
+            );
+            assert_eq!(assertion.oracle_strength, OracleStrength::Weak, "{label}");
+        }
+        if let Some(expected) = expected {
+            assert_eq!(
+                assertion.expected_value_or_variant.as_deref(),
+                Some(expected),
+                "{label}"
+            );
+        }
+    }
+}

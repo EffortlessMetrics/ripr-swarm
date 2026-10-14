@@ -1,0 +1,24 @@
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -3,18 +3,16 @@ const FLOOR = 10;
+ 
+ export function cappedTotal(items: number[]): number {
+     let total = items.reduce((sum, item) => sum + item, 0);
+-    // clamp to the cap
+-    total = Math.min(total, CAP);
++// clamp to the cap
+     return total;
+ }
+ 
+ export function flooredTotal(items: number[]): number {
+     let total = items.reduce((sum, item) => sum + item, 0);
+-    total = Math.max(total, FLOOR);
+     return total;
+ }
+ 
+ export function doubled(x: number): number {
+-    // double the input
+-    return x + x;
++    // twice the input
++    return x * 2;
+ }

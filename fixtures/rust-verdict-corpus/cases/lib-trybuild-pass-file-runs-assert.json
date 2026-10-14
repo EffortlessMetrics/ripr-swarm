@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-trybuild-pass-file-runs-assert",
+  "subject_id": "authored-lib-trybuild",
+  "diff": "cases/lib-trybuild-pass-file-runs-assert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "trybuild_pass_file_main_assert",
+  "hard_case": "The only oracle is an assert_eq! inside `fn main` of tests/ui/pass_parity.rs, which is not a cargo test target; trybuild compiles and runs it from `t.pass(\"tests/ui/pass_*.rs\")`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "word.count_ones() & 2",
+        "mutated_line": "(word.count_ones() & 2) as u8",
+        "outcome": "tests_failed",
+        "failing_test": "ui",
+        "equivalence_review": "not equivalent: 0b1011 gives 2 not 1"
+      },
+      {
+        "replacement": "(word.count_ones() + 1) & 1",
+        "mutated_line": "((word.count_ones() + 1) & 1) as u8",
+        "outcome": "tests_failed",
+        "failing_test": "ui",
+        "equivalence_review": "not equivalent: 0b1011 gives 0 not 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "trybuild builds and executes each pass file and fails the `ui` test if the binary panics; the literal assert_eq! pins parity_bit, so both mutants fail.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

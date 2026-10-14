@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-test-case-matches-err-wildcard",
+  "subject_id": "authored-lib-test-case",
+  "diff": "cases/lib-test-case-matches-err-wildcard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "test_case_matches_err_wildcard",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "s.len() == 1",
+        "mutated_line": "if s.len() == 1 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_port(\"\") returns Err(NotNumber) instead of Err(Empty); parse_port(\"5\") returns Err(Empty)"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "if false {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_port(\"\") returns Err(NotNumber) instead of Err(Empty)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`\"\" => matches Err(_)` accepts any error, and the fallback parse error still yields Err, so the empty check can be removed or broken without failing.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

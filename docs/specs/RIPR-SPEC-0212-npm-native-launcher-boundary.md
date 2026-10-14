@@ -9,7 +9,7 @@ Created: 2026-09-29
 Renumbered: from RIPR-SPEC-0181 after main landed the inline test-module
 region cage spec under RIPR-SPEC-0181 first.
 
-Linked issues: #4491, #4710
+Linked issues: #4491, #4710, #7630
 
 Linked PRs: #4716
 
@@ -47,6 +47,11 @@ The package `@effortlessmetrics/ripr`:
   executable to that package's real root;
 - never downloads, compiles, invokes a shell, or falls back to an ambient
   `ripr` executable;
+- reports direct packaged-library `MODULE_NOT_FOUND` resolution failure on
+  stderr with the authentic reason and same-version restoration/reinstall advice;
+  unavailable display metadata in that recovery branch never causes a guessed
+  version, and other resolver errors or internal library import/parser errors
+  retain their own reason without library-restoration advice;
 - starts one absolute executable with literal arguments, inherited working
   directory, environment, and standard streams, and `shell: false`;
 - on POSIX, forwards a direct supervisor `SIGTERM` once to the native child;
@@ -74,8 +79,19 @@ The package `@effortlessmetrics/ripr`:
   surviving child;
 - a planted `ripr` on `PATH` is never selected when the required package is
   absent;
+- missing or corrupt native package metadata and resolver refusals retain their reason
+  and exact package/version in a typed error, instead of claiming the package
+  is absent; resolved non-object manifests fail with a contextual typed error;
 - the packed launcher inventory contains only the declared runtime files and
   notices;
+- deleting the installed launcher library fails with controlled stderr, blank
+  stdout, exit 1, exact-version recovery and PATH refusal from a foreign cwd
+  before and after a directory move; restoring its original bytes reaches native
+  validation again;
+- internal import/parser failures remain distinct, and invalid or unavailable
+  display metadata in the direct `MODULE_NOT_FOUND` recovery branch gives
+  exact-selected-version advice without guessing a tag, range or foreign cwd
+  version; metadata rejected earlier by Node retains its original refusal;
 - the guarded test runner observes the required test names as non-skipped TAP
   passes and fails closed when any required control is absent or failing;
 - `cargo xtask check-release-targets` validates the manifest, source guards,
@@ -104,16 +120,36 @@ The package `@effortlessmetrics/ripr`:
 5. Removing the matching native package produces an actionable error on stderr,
    writes nothing to protocol stdout, and never executes a planted `ripr` from
    `PATH`.
+6. A malformed installed native `package.json` produces a resolution error
+   naming the exact native package/version, original reason, and reinstall
+   advice. Restoring valid metadata reaches payload validation again; absent
+   executables still fail rather than running an ambient `ripr`.
+7. Missing `package.json`, an exports entry targeting a missing manifest, and
+   actual package absence all retain Node's resolver reason without inferring
+   package-directory absence. The legacy `native_package_missing` code still
+   identifies `MODULE_NOT_FOUND`; it does not establish directory presence.
+8. Direct `MODULE_NOT_FOUND` resolution of an installed `lib/launcher.cjs` names
+   that library, retains Node's reason, and advises matching-tarball restoration
+   or exact-version reinstall. Other resolver errors and a resolvable library
+   that fails an internal import or parsing do not receive false library-resolution
+   advice.
 
 ## Test Mapping
 
 - `packaging/npm/launcher/test/run-tests.test.cjs`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects lifecycle scripts, version ranges, and dependency drift`
+- `packaging/npm/launcher/test/launcher.test.cjs::distinguishes native resolution failures from missing optional packages`
+- `packaging/npm/launcher/test/launcher.test.cjs::rejects non-object native manifests with a contextual typed error`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin identifies corrupt package metadata and recovers after restoration`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin retains missing-manifest and missing-exports reasons without claiming package absence`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
 - `packaging/npm/launcher/test/launcher.test.cjs::retains the first observed signal when a supervisor escalates SIGINT to SIGTERM`
 - `packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child`
 - `packaging/npm/launcher/test/launcher.test.cjs::source bin missing-package failure never falls back to PATH or writes stdout`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin missing-library failure gives exact recovery after a directory move`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin preserves internal import and parser failures without library recovery advice`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin library recovery never guesses a version from invalid or unavailable metadata`
 - `packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue`
 - `xtask/src/policy/distribution/tests.rs`
 

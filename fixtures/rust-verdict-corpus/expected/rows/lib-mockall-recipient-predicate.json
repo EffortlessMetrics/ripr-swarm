@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-mockall-recipient-predicate",
+  "subject_id": "authored-lib-mockall",
+  "origin": "authored",
+  "anchor": "src/lib.rs:15",
+  "behavior_family": "side_effect",
+  "test_shape": "mockall_with_eq_and_returning_closure",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

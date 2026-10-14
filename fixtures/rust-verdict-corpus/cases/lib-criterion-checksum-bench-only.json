@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-criterion-checksum-bench-only",
+  "subject_id": "authored-lib-criterion",
+  "diff": "cases/lib-criterion-checksum-bench-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "criterion_bench_only",
+  "hard_case": "Only a criterion bench calls checksum; benches are not run by cargo test, so no test exercises the line. ripr relates the unrelated mix test by file proximity.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(*byte as u32) + 1",
+        "mutated_line": "acc = acc.wrapping_mul(31).wrapping_add((*byte as u32) + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: checksum(&[0]) becomes 17*31+1 instead of 17*31"
+      },
+      {
+        "replacement": "(*byte as u32) ^ 1",
+        "mutated_line": "acc = acc.wrapping_mul(31).wrapping_add((*byte as u32) ^ 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: checksum(&[0]) becomes 17*31+1 instead of 17*31"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "checksum is called only from benches/throughput.rs, a harness = false criterion target that cargo test does not build or run, so both byte-mixing mutants go undetected.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

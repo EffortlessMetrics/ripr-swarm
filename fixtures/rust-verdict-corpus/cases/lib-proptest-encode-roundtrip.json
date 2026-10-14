@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-proptest-encode-roundtrip",
+  "subject_id": "authored-lib-proptest",
+  "diff": "cases/lib-proptest-encode-roundtrip.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "proptest_roundtrip_prop_assert_eq",
+  "hard_case": "A roundtrip property pins only that decode inverts encode: a mutant that splits runs early keeps the roundtrip and goes undetected. ripr treats every proptest! body as opaque (rust_macro_reach_unresolved).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "byte == *value && *count < 2 => *count += 1",
+        "mutated_line": "Some((value, count)) if byte == *value && *count < 2 => *count += 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: encode(&[3, 3, 3]) is [(3, 2), (3, 1)] instead of [(3, 3)]"
+      },
+      {
+        "replacement": "byte == *value && *count < u8::MAX => *count += 2",
+        "mutated_line": "Some((value, count)) if byte == *value && *count < u8::MAX => *count += 2,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::decode_inverts_encode",
+        "equivalence_review": "not equivalent: encode(&[3, 3]) is [(3, 3)] instead of [(3, 2)]"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "prop_assert_eq!(decode(&encode(&data)), data) catches a count that grows by 2 but not a run cap of 2, because decode still restores the bytes from the shorter runs.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

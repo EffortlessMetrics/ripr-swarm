@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..dc1d1da 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -35,7 +35,7 @@ sub tier_label {
+ 
+ sub loyalty_points {
+     my ($spent) = @_;
+-    my $points = int($spent / 10);
++    my $points = int($spent / (5 * 2));
+     return $points;
+ }
+ 

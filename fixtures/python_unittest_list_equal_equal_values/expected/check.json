@@ -1,0 +1,101 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_unittest_list_equal_equal_values/input",
+  "config_path": "<cwd>/fixtures/python_unittest_list_equal_equal_values/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:b8309ecf4b0374594321b347d34b0cd6f0a3752162810b23e339ce8b9d57b227","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_labels.py:python_preview:c34c7239",
+      "canonical_gap_id": "gap:python:src/labels.py:labels:return_value:return_value:[1_true]",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/labels.py:labels:return_value:return_value:[1_true]",
+        "language": "python",
+        "file": "src/labels.py",
+        "owner": "labels",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "[1_true]"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_labels.py:python_preview:c34c7239",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/labels.py",
+        "line": 2,
+        "expression": "    return [1, True]",
+        "owner": "python:src/labels.py::labels"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `labels`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return [1, True]`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return [1, True] (line 2)", "related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True])"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return [1, True]","line":2}
+      ],
+      "evidence": ["owner: labels", "owner_kind: function", "test_framework: unittest (test_labels)", "test_verify_command: python -m unittest tests.test_labels.Checks.test_labels (test_labels)", "related_test_relation: syntactic_call (test_labels)", "test_oracle: exact_value strong (test_labels)"],
+      "missing": ["A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_labels",
+          "file": "tests/test_labels.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "self.assertListEqual(labels(), [1, True])"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "self.assertListEqual(labels(), [1, True])",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/labels.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/labels.py","digest":"sha256:f0b7de5e7e552ac51cbc9b23cfc2390892f5b8399266ad791aef9e6116618278"}]}
+}

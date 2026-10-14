@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-quickcheck",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against quickcheck 1.1.0, quickcheck_macros 1.2.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "e056b96d348d223b063c1bb61313c83a90f6dd198c764e678529b60b8ae46429"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "f8fcc09986875f612f40aebb3092784c85102e88d6086efc35aa15d848b9522c"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "2ffeed02cc6a10e2b5d15d44802b61d59a988c1593a0b16ff541fdfb7f149b14"
+    }
+  ]
+}

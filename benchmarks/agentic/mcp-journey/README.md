@@ -71,3 +71,60 @@ Manual pre-refresh probes against a built fixture root:
 ```sh
 ripr mcp --stdio --root <fixture> < benchmarks/agentic/mcp-journey/b3a.probes.ndjson
 ```
+
+## Durable resumption and edit recovery (#7463)
+
+The additional real stdio consumers live in
+`crates/ripr/tests/support/mcp_attempt_inventory.rs`, using the existing session
+and fixture owners. They do not alter the frozen B2/B3 input identity.
+The initial consumer reproduction on main
+`e57d999ec7427dffd9b92a2a886e8dd53a2ad4e8` completed initialization and discovery,
+then failed because the advertised tool list had no durable inventory route.
+
+The durable journey starts with the real B4 Git/Cargo repository. The client
+discovers tools, refreshes through the production analyzer, selects a nonempty
+changed subject and retrieves its card. The public CLI before phase creates a
+canonical durable attempt as fixture setup. A fresh MCP client then discovers
+that attempt before any refresh and consumes its ID through both existing
+attempt and receipt tools. Literal awaiting/current and diverged/stale results
+form the expected-state oracle; inventory reads preserve source, Git and retained
+artifact bytes.
+
+Adverse controls retain corrupt rows, reject malformed/null/unknown arguments,
+distinguish absent store from unavailable root, and detect empty-store creation.
+Unchanged full/narrow/offset reads keep the same inventory identity. Renaming one
+invalid directory at unchanged counts rejects an old continuation. Tampering a
+real producer artifact refuses its manifest; restoring the original bytes
+recovers it. An external committed test edit followed by refresh changes the
+snapshot identity, rejects the old snapshot and serves the new one. Ordinary
+awaiting-attempt descendants retain shared admission; a diverged HEAD is stale.
+
+A second consumer creates 300 invalid manifests in reverse identity order,
+walks automatically byte-limited pages and reconstructs every directory exactly
+once. It requires structured content, exact page progress and denominators,
+bounded frames and terminal peer reaping even on a failed oracle. Windows uses
+plain long names; Unix also exercises JSON-escaped names. Native Windows execution
+remains a separate proof dimension. Retained transport cancellation controls own
+cancellation semantics; this journey adds no physical-abort or atomic-filesystem
+snapshot claim, and output bounds do not imply bounded whole-store validation.
+
+Independent code review also reproduced a near-cap page on exact predecessor
+`87921ee008a5a0e4d6f0b4b3b1a5ba2ba8d5a7ce`: 300 invalid rows, the first 70
+names with 240 quotes and row 71 with 29. The inner tool envelope fitted, but
+JSON-RPC wrapper bytes caused the actual writer to return error `-32603`, losing
+structured inventory and continuation. The Rust stdio regression failed on that
+same boundary. Inventory fitting now reserves the actual serialized request ID
+and SDK/wrapper bytes. The retained counterexample runs with short and escaped
+IDs through both legacy initialization and the current inline metadata lifecycle;
+it requires complete structured pages and continuing reads, not a generic error.
+
+Remote review identified a second identity counterexample on exact candidate
+`9cd2f0136e9e9ed237dfb937c2c36de6032bbf9d`: renaming a malformed manifest's Unix
+directory from raw byte `ff` to `fe` preserved the lossy displayed row, summary
+digest and accepted continuation. The immutable CLI and actual stdio transcript
+retain that original observation. The shared inventory now refuses names it
+cannot represent as UTF-8. A public Unix control requires whole-store typed
+refusal for both distinct raw names, even when a one-row page would hide them,
+then recovery after the external rename to a UTF-8 directory. The control also
+pins existing publication semantics: a reserved directory without `attempt.json`
+is excluded until the producer publishes its manifest.

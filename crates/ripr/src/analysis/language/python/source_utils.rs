@@ -87,7 +87,11 @@ pub(super) fn is_test_file(path: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    if file_name.starts_with("test_") || file_name.ends_with("_test.py") {
+    if file_name.starts_with("test_")
+        || file_name.ends_with("_test.py")
+        || file_name == "tests.py"
+        || file_name == "test.py"
+    {
         return true;
     }
     path.components().any(|component| {

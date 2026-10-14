@@ -270,3 +270,40 @@ fn timeout_retains_primary_and_every_cleanup_error() -> Result<(), String> {
         Err(failures.join("\n"))
     }
 }
+
+#[test]
+fn missing_command_names_spawn_boundary_without_environment() -> Result<(), String> {
+    let scratch = ripr_help::Scratch::new("help-missing-command")?;
+    let program = scratch.0.join("missing-program");
+    let mut command = Command::new(&program);
+    command
+        .arg("--control")
+        .current_dir(&scratch.0)
+        .env("DIAGNOSTIC_SECRET", "must-not-appear");
+    let mut observed_cleanup = false;
+    let error = ripr_help::capture_with_cleanup(command, Duration::from_secs(1), true, |_, _| {
+        observed_cleanup = true;
+    })
+    .err()
+    .ok_or("missing command unexpectedly ran")?;
+    for expected in [
+        "spawn owned command".into(),
+        format!("{program:?}"),
+        "--control".into(),
+        format!("cwd=Some({:?})", scratch.0),
+        "scratch=".into(),
+        "kind=NotFound".into(),
+        "raw_os_error=Some(".into(),
+    ] {
+        if !error.contains(&expected) {
+            return Err(format!("missing {expected:?}: {error}"));
+        }
+    }
+    if observed_cleanup || error.contains("DIAGNOSTIC_SECRET") || error.contains("must-not-appear")
+    {
+        return Err(format!(
+            "spawn setup invoked cleanup observer or exposed environment: {error}"
+        ));
+    }
+    Ok(())
+}

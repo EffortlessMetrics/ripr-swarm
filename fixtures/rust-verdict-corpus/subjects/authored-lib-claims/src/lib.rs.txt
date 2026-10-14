@@ -1,0 +1,51 @@
+//! Option/Result helpers tested with the `claims` assertion macros.
+
+#[derive(Debug, PartialEq)]
+pub struct DivByZero;
+
+pub fn first_even(xs: &[u32]) -> Option<u32> {
+    xs.iter().copied().find(|x| x % 2 == 0)
+}
+
+pub fn find_index(xs: &[i32], t: i32) -> Option<usize> {
+    xs.iter().position(|&x| x == t)
+}
+
+pub fn capacity_for(n: usize) -> usize {
+    n.next_power_of_two()
+}
+
+pub fn checked_div(a: u32, b: u32) -> Result<u32, DivByZero> {
+    if b == 0 {
+        return Err(DivByZero);
+    }
+    Ok(a / b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claims::{assert_err, assert_ge, assert_ok, assert_some, assert_some_eq};
+
+    #[test]
+    fn first_even_found() {
+        assert_some_eq!(first_even(&[1, 4, 6]), 4);
+    }
+
+    #[test]
+    fn index_found() {
+        assert_some!(find_index(&[5, 3, 3], 3));
+    }
+
+    #[test]
+    fn capacity_fits() {
+        assert_ge!(capacity_for(5), 5);
+    }
+
+    #[test]
+    fn division() {
+        let q = assert_ok!(checked_div(17, 5));
+        assert_eq!(q, 3);
+        assert_err!(checked_div(1, 0));
+    }
+}

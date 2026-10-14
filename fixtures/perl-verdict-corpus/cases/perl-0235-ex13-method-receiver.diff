@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Cart.pm b/lib/Shop/Cart.pm
+index 7330a50..4a37d77 100644
+--- a/lib/Shop/Cart.pm
++++ b/lib/Shop/Cart.pm
+@@ -17,7 +17,7 @@ sub add {
+ sub total {
+     my ($self) = @_;
+     my $total = 0;
+-    $total += $_->{price} * $_->{qty} for @{ $self->{items} };
++    $total += $_->{qty} * $_->{price} for @{ $self->{items} };
+     return $total;
+ }
+ 

@@ -114,7 +114,9 @@ pub(crate) struct MutationCalibrationReport {
     agreement: MutationCalibrationAgreement,
     precision_notes: Vec<String>,
     missed_runtime_signals: Vec<MutationCalibrationRuntimeSignal>,
+    missed_runtime_signals_total: usize,
     static_only_findings: Vec<MutationCalibrationStaticOnlyFinding>,
+    static_only_findings_total: usize,
     matched: Vec<MutationCalibrationMatch>,
     ambiguous_file_line: Vec<AmbiguousMutationCalibrationMatch>,
     ambiguous_span_overlap: Vec<AmbiguousMutationCalibrationMatch>,
@@ -179,6 +181,49 @@ pub(crate) fn mutation_calibration_report_from_json(
         static_seams,
         runtime_mutants,
     ))
+}
+
+/// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
+///
+/// The join itself matches by `seam_id`, span containment, or file/line in
+/// every case; what changes is what can be said about artifact identity.
+/// cargo-mutants `outcomes.json` does not carry a head, so the usual case is
+/// a snapshot that may or may not name one. A disclosure that stays silent
+/// lets a foreign `file:line` inherit the static seam's authority (#7449).
+/// Reuses the outcome snapshot head reader so "full SHA" means the same thing
+/// on both surfaces.
+pub(crate) fn calibrate_head_provenance_disclosure(
+    repo_exposure_json: &str,
+    mutants_json: &str,
+) -> String {
+    match (
+        crate::output::outcome::snapshot_repository_head(repo_exposure_json),
+        crate::output::outcome::snapshot_repository_head(mutants_json),
+    ) {
+        (Some(snapshot_head), Some(mutants_head)) if snapshot_head == mutants_head => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
+            )
+        }
+        (Some(snapshot_head), Some(mutants_head)) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
+            )
+        }
+        (Some(snapshot_head), None) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+            )
+        }
+        (None, Some(mutants_head)) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+            )
+        }
+        (None, None) => {
+            "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string()
+        }
+    }
 }
 
 fn require_imported_runtime_mutants(
@@ -288,6 +333,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
         "| static_without_runtime_total | {} |\n",
         report.static_without_runtime.len()
     ));
+    if let Some(note) = no_observed_runtime_outcome_note(report) {
+        out.push_str("\nNote: ");
+        out.push_str(&note);
+        out.push_str(".\n");
+    }
 
     out.push_str("\n## Static/runtime agreement\n\n");
     out.push_str("| Agreement bucket | Count |\n| --- | ---: |\n");
@@ -321,6 +371,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.missed_runtime_signals.is_empty() {
         out.push_str("No imported runtime gap signals lacked a matching static gap.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.missed_runtime_signals.len(),
+            report.missed_runtime_signals_total,
+        );
         out.push_str("| Runtime mutant | Location | Runtime outcome | Static class | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- | --- |\n");
         for record in &report.missed_runtime_signals {
@@ -347,6 +402,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     if report.static_only_findings.is_empty() {
         out.push_str("No static gap seams lacked a runtime gap signal in this import.\n");
     } else {
+        push_agreement_sample_note(
+            &mut out,
+            report.static_only_findings.len(),
+            report.static_only_findings_total,
+        );
         out.push_str("| Seam | Class | Location | Confidence label | Reason |\n");
         out.push_str("| --- | --- | --- | --- | --- |\n");
         for record in &report.static_only_findings {
@@ -614,15 +674,19 @@ fn build_mutation_calibration_report(
         .cloned()
         .collect::<Vec<_>>();
 
-    let (agreement, precision_notes, missed_runtime_signals, static_only_findings) =
+    let (agreement, precision_notes, mut missed_runtime_signals, mut static_only_findings) =
         mutation_calibration_agreement(
             &static_seams,
             &matched,
             ambiguous_file_line.iter().chain(&ambiguous_span_overlap),
             &unmatched_mutants,
         );
+    let missed_runtime_signals_total = missed_runtime_signals.len();
+    let static_only_findings_total = static_only_findings.len();
+    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
+    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
 
-    MutationCalibrationReport {
+    let mut report = MutationCalibrationReport {
         static_seams_total: static_seams.len(),
         mutants_total: matched.len()
             + ambiguous_file_line.len()
@@ -631,13 +695,19 @@ fn build_mutation_calibration_report(
         agreement,
         precision_notes,
         missed_runtime_signals,
+        missed_runtime_signals_total,
         static_only_findings,
+        static_only_findings_total,
         matched,
         ambiguous_file_line,
         ambiguous_span_overlap,
         unmatched_mutants,
         static_without_runtime,
+    };
+    if let Some(note) = no_observed_runtime_outcome_note(&report) {
+        report.precision_notes.push(note);
     }
+    report
 }
 
 fn candidate_order_key(seam: &StaticSeamRecord) -> (usize, usize, usize, usize, &str) {
@@ -882,15 +952,18 @@ fn mutation_calibration_agreement<'a>(
         }
     }
 
-    missed_runtime_signals.truncate(AGREEMENT_SAMPLE_LIMIT);
-    static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
-
     (
         agreement,
         mutation_calibration_precision_notes(),
         missed_runtime_signals,
         static_only_findings,
     )
+}
+
+fn push_agreement_sample_note(out: &mut String, shown: usize, total: usize) {
+    if total > shown {
+        out.push_str(&format!("Sample only; showing {shown} of {total}.\n\n"));
+    }
 }
 
 fn mutation_calibration_precision_notes() -> Vec<String> {
@@ -901,6 +974,54 @@ fn mutation_calibration_precision_notes() -> Vec<String> {
         "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line".to_string(),
         "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available".to_string(),
     ]
+}
+
+const NO_OBSERVED_RUNTIME_OUTCOMES_NOTE: &str = concat!(
+    "this import has no observed runtime outcomes; ",
+    "`matched_total` counts joined candidate mutants, not executed mutants. ",
+    "Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+);
+
+fn mixed_unobserved_runtime_outcome_note(unknown: usize) -> String {
+    format!(
+        "`matched_total` includes {unknown} joined candidate{} with no observed runtime outcome. Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+        if unknown == 1 { "" } else { "s" }
+    )
+}
+
+fn no_observed_runtime_outcome_note(report: &MutationCalibrationReport) -> Option<String> {
+    if report.mutants_total == 0 {
+        return None;
+    }
+    // All imported records (matched, ambiguous, unmatched) decide whether the
+    // whole import lacks runtime observations. The mixed matched_total note
+    // may only count rows that actually sit in matched_total.
+    if unobserved_imported_runtime_outcome_total(report) == report.mutants_total {
+        return Some(NO_OBSERVED_RUNTIME_OUTCOMES_NOTE.to_string());
+    }
+    let unknown_matched = unobserved_matched_runtime_outcome_total(report);
+    (unknown_matched > 0).then(|| mixed_unobserved_runtime_outcome_note(unknown_matched))
+}
+
+fn has_observed_runtime_outcome(outcome: &str) -> bool {
+    let label = normalize_runtime_label(outcome);
+    !label.is_empty() && label != "unknown"
+}
+
+fn unobserved_imported_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    runtime_outcome_counts(report)
+        .into_iter()
+        .filter(|(label, _)| label.is_empty() || label == "unknown")
+        .map(|(_, count)| count)
+        .sum()
+}
+
+fn unobserved_matched_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    report
+        .matched
+        .iter()
+        .filter(|record| !has_observed_runtime_outcome(&record.mutation.runtime_outcome))
+        .count()
 }
 
 fn static_only_reason(records: &[&MutationCalibrationMatch]) -> String {
@@ -1442,6 +1563,259 @@ mod tests {
         Ok(())
     }
 
+    fn snapshot_with_head(head: Option<&str>) -> String {
+        match head {
+            Some(head) => serde_json::json!({
+                "schema_version": "0.2",
+                "artifact": { "repository": { "root": "/w", "head": head } },
+                "seams": [{
+                    "seam_id": "67fc764ba37d77bd",
+                    "kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "grip_class": "strongly_gripped",
+                    "related_tests": [],
+                    "observed_values": [],
+                    "missing_discriminators": []
+                }]
+            }),
+            None => serde_json::json!({
+                "schema_version": "0.2",
+                "seams": [{
+                    "seam_id": "67fc764ba37d77bd",
+                    "kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "grip_class": "strongly_gripped",
+                    "related_tests": [],
+                    "observed_values": [],
+                    "missing_discriminators": []
+                }]
+            }),
+        }
+        .to_string()
+    }
+
+    fn foreign_same_line_mutants() -> &'static str {
+        r#"{"mutants":[{"id":"other-repo-mutant","file":"src/lib.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#
+    }
+
+    fn mutants_with_head(head: Option<&str>) -> String {
+        match head {
+            Some(head) => serde_json::json!({
+                "artifact": { "repository": { "root": "/other", "head": head } },
+                "mutants": [{
+                    "id": "other-repo-mutant",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "operator": "replace - with +",
+                    "outcome": "missed"
+                }]
+            }),
+            None => serde_json::json!({
+                "mutants": [{
+                    "id": "other-repo-mutant",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "operator": "replace - with +",
+                    "outcome": "missed"
+                }]
+            }),
+        }
+        .to_string()
+    }
+
+    /// A foreign mutant on a coincidental file:line still joins. The
+    /// disclosure is the honesty surface; this PR does not refuse the join.
+    #[test]
+    fn foreign_same_line_mutant_still_joins_by_file_line() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &snapshot_with_head(None),
+            foreign_same_line_mutants(),
+        )?;
+        assert_eq!(
+            report.matched.len(),
+            1,
+            "the issue's coincidental file:line still joins"
+        );
+        assert_eq!(report.matched[0].join_method, "file_line");
+        assert_eq!(
+            confidence_label_for_match(&report.matched[0]),
+            "contradicts_static_clean"
+        );
+        assert_eq!(
+            report.matched[0].mutation.mutant_id.as_deref(),
+            Some("other-repo-mutant")
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains("`file_line` | `contradicts_static_clean`"),
+            "the rendered row must still carry the high-signal label:\\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// A mutant whose path is not in the snapshot inventory stays unmatched.
+    /// Pin this so the provenance warning does not start refusing or
+    /// rewriting location joins that already have an unmatched reason.
+    #[test]
+    fn mutant_on_a_file_absent_from_the_snapshot_stays_unmatched() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &snapshot_with_head(None),
+            r#"{"mutants":[{"id":"other-path","file":"src/other.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#,
+        )?;
+        assert!(
+            report.matched.is_empty(),
+            "a path not in the snapshot inventory must not join: {:?}",
+            report.matched
+        );
+        assert_eq!(report.unmatched_mutants.len(), 1);
+        assert_eq!(report.unmatched_mutants[0].reason, "no_seam_on_line");
+        Ok(())
+    }
+
+    #[test]
+    fn calibrate_disclosure_warns_when_neither_artifact_has_a_head() {
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(None),
+            foreign_same_line_mutants(),
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "identity-free snapshot plus cargo-mutants JSON must keep the caveat: {line}"
+        );
+        assert!(
+            line.contains("same repository and adjacent commits"),
+            "the caveat must name the same-repo obligation: {line}"
+        );
+        assert!(
+            !line.contains("repository head "),
+            "must not invent a head the artifacts do not carry: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_names_the_snapshot_head_when_mutants_have_none() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(head)),
+            foreign_same_line_mutants(),
+        );
+        assert!(
+            line.contains(head),
+            "the snapshot head must be named: {line}"
+        );
+        assert!(
+            line.contains("join assumes that subject"),
+            "a headed snapshot must state which subject the join assumes: {line}"
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "cargo-mutants without a head must still get the caveat: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_flags_different_heads() {
+        let snapshot = "1111111111111111111111111111111111111111";
+        let mutants = "2222222222222222222222222222222222222222";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(snapshot)),
+            &mutants_with_head(Some(mutants)),
+        );
+        assert!(
+            line.contains(snapshot) && line.contains(mutants),
+            "both heads must be named: {line}"
+        );
+        assert!(
+            line.contains("different repository heads"),
+            "a mismatch must be stated as a different subject: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "must not claim a missing head when both artifacts name one: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_reports_matching_heads_as_agreement() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(head)),
+            &mutants_with_head(Some(head)),
+        );
+        assert!(line.contains(head), "the shared head must be named: {line}");
+        assert!(
+            line.contains("same commit"),
+            "matching heads must be reported as agreement: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "must not claim the artifacts lack a head they carry: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_warns_when_only_mutants_name_a_head() {
+        let head = "3333333333333333333333333333333333333333";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(None),
+            &mutants_with_head(Some(head)),
+        );
+        assert!(
+            line.contains(head),
+            "the mutants head must be named: {line}"
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "a headless snapshot must keep the caveat: {line}"
+        );
+    }
+
+    /// Placeholders and short SHAs are absent heads, using the same
+    /// `is_full_sha` rule as `ripr outcome`. A reader coupled to one
+    /// spelling of "unavailable" would miss the rest.
+    /// Directory input combines outcomes.json + mutants.json into a JSON
+    /// array. That shape has no artifact envelope, so it must not be read
+    /// as a headed cargo-mutants file.
+    #[test]
+    fn calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let combined = r#"[{"outcomes":[{"id":"m1","file":"src/lib.rs","line":2,"outcome":"missed"}]},{"mutants":[]}]"#;
+        let line = calibrate_head_provenance_disclosure(&snapshot_with_head(Some(head)), combined);
+        assert!(
+            line.contains(head) && line.contains("does not carry a head SHA"),
+            "a combined directory array is not a headed mutants file: {line}"
+        );
+        assert!(
+            !line.contains("different repository heads"),
+            "an array must not be parsed as a conflicting head: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_treats_a_placeholder_as_no_head() {
+        for placeholder in [
+            "unavailable",
+            "not_available",
+            "none",
+            "2bd22c0b",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "2bd22c0b0718157870e2e78c9a70b9da1c9c1b2",
+            "  ",
+        ] {
+            let line = calibrate_head_provenance_disclosure(
+                &snapshot_with_head(Some(placeholder)),
+                foreign_same_line_mutants(),
+            );
+            assert!(
+                line.contains("does not carry a head SHA")
+                    && !line.contains(&format!("head {placeholder}")),
+                "{placeholder:?} is not a Git object name and must read as an absent head: {line}"
+            );
+        }
+    }
+
     #[test]
     fn empty_import_markdown_does_not_claim_all_mutants_matched() {
         let report = build_mutation_calibration_report(
@@ -1543,6 +1917,84 @@ mod tests {
         assert!(markdown.contains("Confidence label"));
         assert!(markdown.contains("Runtime signals without static gaps"));
         assert!(markdown.contains("Static gaps without runtime signals"));
+        assert!(
+            !markdown.contains("Sample only; showing"),
+            "tables under the sample limit must not claim sampling:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agreement_tables_disclose_sampling_when_truncated() -> Result<(), String> {
+        let over_limit = AGREEMENT_SAMPLE_LIMIT + 1;
+        let static_seams = (0..over_limit)
+            .map(|i| static_seam(&format!("gap-{i}"), "ungripped", "src/gap.rs", i + 1))
+            .collect();
+        let runtime_mutants = (0..over_limit)
+            .map(|i| {
+                runtime(
+                    &format!("m{i}"),
+                    None,
+                    Some("src/other.rs"),
+                    Some(i + 1),
+                    "missed",
+                )
+            })
+            .collect();
+
+        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        assert_eq!(
+            report.agreement.runtime_signal_without_static_gap,
+            over_limit
+        );
+        assert_eq!(
+            report.agreement.static_gap_without_runtime_signal,
+            over_limit
+        );
+        assert_eq!(report.missed_runtime_signals.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.static_only_findings.len(), AGREEMENT_SAMPLE_LIMIT);
+        assert_eq!(report.missed_runtime_signals_total, over_limit);
+        assert_eq!(report.static_only_findings_total, over_limit);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let expected = format!(
+            "Sample only; showing {} of {over_limit}.",
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        let sample_notes = markdown.matches(&expected).count();
+        assert_eq!(
+            sample_notes, 2,
+            "both truncated agreement tables must disclose the pre-truncation count:\n{markdown}"
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Runtime signals without static gaps").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+        assert_eq!(
+            markdown_table_data_rows(&markdown, "### Static gaps without runtime signals").len(),
+            AGREEMENT_SAMPLE_LIMIT
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("failed to parse calibration JSON: {err}"))?;
+        assert_eq!(
+            value["missed_runtime_signals"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert_eq!(
+            value["static_only_findings"].as_array().map(Vec::len),
+            Some(AGREEMENT_SAMPLE_LIMIT)
+        );
+        assert!(
+            value.get("missed_runtime_signals_total").is_none()
+                && value.get("static_only_findings_total").is_none()
+                && value["metrics"]
+                    .get("missed_runtime_signals_total")
+                    .is_none()
+                && value["metrics"].get("static_only_findings_total").is_none(),
+            "sampling totals must stay markdown-side without new JSON fields:\n{json}"
+        );
         Ok(())
     }
 
@@ -1911,6 +2363,136 @@ mod tests {
         let markdown = render_mutation_calibration_md(&report);
         assert!(markdown.contains("Status: advisory"));
         assert!(markdown.contains("Runtime Outcome Counts"));
+        assert!(
+            !markdown.contains("this import has no observed runtime outcomes"),
+            "an outcomes import must not claim the mutants.json-only denominator:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #7451: a mutants.json-only import still joins candidates and counts
+    /// them in matched_total. The Summary must say those rows carry no
+    /// runtime observation. Changing matched_total's meaning is a different
+    /// claim (schema / OUTPUT_SCHEMA).
+    #[test]
+    fn mutants_json_only_import_discloses_unexecuted_matched_total() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"{"mutants":[{"id":"m1","seam_id":"seam-a","operator":"replace"}]}"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(report.matched[0].mutation.runtime_outcome, "unknown");
+        assert_eq!(
+            confidence_label_for_match(&report.matched[0]),
+            "no_runtime_data"
+        );
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains("| matched_total | 1 |"),
+            "matched_total still counts the joined candidate:\n{after_summary}"
+        );
+        assert!(
+            after_summary.contains("this import has no observed runtime outcomes")
+                && after_summary.contains("`matched_total` counts joined candidate mutants")
+                && after_summary.contains("`unknown` / `no_runtime_data`"),
+            "the default Markdown Summary must disclose the unexecuted denominator:\n{after_summary}"
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("mutation calibration JSON should parse: {err}"))?;
+        assert_eq!(value["metrics"]["matched_total"], 1);
+        assert_eq!(value["metrics"]["runtime_outcome_counts"]["unknown"], 1);
+        let notes = value["precision_notes"]
+            .as_array()
+            .ok_or("precision_notes must remain an array")?;
+        assert!(
+            notes.iter().any(|note| {
+                note.as_str().is_some_and(|text| {
+                    text.contains("this import has no observed runtime outcomes")
+                })
+            }),
+            "JSON precision_notes must carry the same denominator caveat: {notes:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed import (some observed outcomes, some not) must not use the
+    /// all-unknown wording, and must still name how many matched_total rows
+    /// lack a runtime observation. Unmatched unknown rows are not in
+    /// matched_total and must not inflate that count.
+    #[test]
+    fn mixed_import_names_how_many_matched_rows_lack_outcomes() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-candidate","seam_id":"seam-a","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.matched.len(), 2);
+        assert_eq!(report.unmatched_mutants.len(), 1);
+        assert_eq!(report.mutants_total, 3);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 2);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains("| matched_total | 2 |"),
+            "matched_total counts both joined rows:\n{after_summary}"
+        );
+        assert!(
+            after_summary.contains(
+                "`matched_total` includes 1 joined candidate with no observed runtime outcome"
+            ),
+            "the mixed note must count only unobserved matched rows, not the unmatched unknown:\n{after_summary}"
+        );
+        assert!(
+            !after_summary.contains("this import has no observed runtime outcomes"),
+            "a mixed import is not mutants.json-only:\n{after_summary}"
+        );
+        Ok(())
+    }
+
+    /// An unmatched unknown row is not in matched_total. A joined observed
+    /// row plus an unmatched candidate must not claim matched_total includes
+    /// an unexecuted candidate.
+    #[test]
+    fn unmatched_unknown_does_not_claim_matched_total_includes_it() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 0);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            !after_summary.contains("`matched_total` includes")
+                && !after_summary.contains("this import has no observed runtime outcomes"),
+            "unmatched unknown rows must not be described as part of matched_total:\n{after_summary}"
+        );
         Ok(())
     }
 
@@ -2290,6 +2872,16 @@ mod tests {
         let mut record = runtime(id, None, Some(file), Some(start.0), "missed");
         record.span = Some(RuntimeSpan { start, end });
         record
+    }
+
+    fn markdown_table_data_rows<'a>(markdown: &'a str, heading: &str) -> Vec<&'a str> {
+        let Some(rest) = markdown.split(heading).nth(1) else {
+            return Vec::new();
+        };
+        rest.lines()
+            .take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
+            .filter(|line| line.starts_with("| `"))
+            .collect()
     }
 
     fn static_seam(id: &str, grip_class: &str, file: &str, line: usize) -> StaticSeamRecord {

@@ -1,0 +1,50 @@
+//! Async pricing helpers exercised from `#[tokio::test]` tests.
+
+pub async fn total(prices: &[u32]) -> u32 {
+    prices.iter().sum::<u32>() + 5
+}
+
+pub async fn discount(p: u32) -> u32 {
+    p - p / 10
+}
+
+pub async fn tax(p: u32) -> u32 {
+    p * 8 / 100
+}
+
+pub async fn backoff_total(n: u32) -> u64 {
+    (1..=n).map(|i| 1u64 << i).sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn total_adds_shipping() {
+        assert_eq!(total(&[1, 2]).await, 8);
+    }
+
+    #[tokio::test]
+    async fn discount_in_background() {
+        let _handle = tokio::spawn(async {
+            assert_eq!(discount(100).await, 90);
+        });
+    }
+
+    #[tokio::test]
+    async fn tax_in_joined_task() {
+        tokio::spawn(async {
+            assert_eq!(tax(1000).await, 80);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn backoff_finishes_in_time() {
+        let r = tokio::time::timeout(Duration::from_secs(1), backoff_total(3)).await;
+        assert!(r.is_ok());
+    }
+}

@@ -20,6 +20,8 @@ use crate::output::typescript_preview_card::{
     typescript_preview_card,
 };
 use std::path::Path;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
@@ -302,8 +304,10 @@ const CODE_SPAN_SLACK: usize = 60;
 ///   `"a  b"` to `"a b"` renders as two identical lines once whitespace is
 ///   normalized, hiding exactly the behavior that changed.
 ///
-/// So the wrap is positional, not whitespace-aware: every character survives,
-/// including runs of spaces, and a reader sees the whole fragment.
+/// Printable Unicode wraps by display cells without separating an extended
+/// grapheme cluster. An indivisible cluster wider than the budget stays intact.
+/// Every character survives, including runs of spaces. Tabs and control escape
+/// expansion retain their existing policy; this is not a terminal-size bound.
 fn wrapped_fragment(label: &str, value: &str) -> String {
     // The label column is the continuation indent, so wrapped lines line up
     // under the value rather than under the field name.
@@ -317,22 +321,27 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     // over-budget line takes the continuation indent.
     let mut out = String::new();
     for (line_index, line) in value.split('\n').enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        if chars.is_empty() {
-            out.push_str(if line_index == 0 { label } else { "" });
-            out.push('\n');
-            continue;
-        }
-        for (chunk_index, chunk) in chars.chunks(budget).enumerate() {
-            let prefix = match (line_index, chunk_index) {
-                (0, 0) => label,
-                (_, 0) => "",
-                _ => indent.as_str(),
+        out.push_str(if line_index == 0 { label } else { "" });
+        let mut cells: usize = 0;
+        let mut has_grapheme = false;
+        for grapheme in line.graphemes(true) {
+            // Preserve ASCII chunking, including the historical one-character
+            // cost for raw tabs/controls; terminal handling occurs afterward.
+            let width = if grapheme.is_ascii() {
+                grapheme.len()
+            } else {
+                grapheme.width()
             };
-            out.push_str(prefix);
-            out.extend(chunk.iter());
-            out.push('\n');
+            if has_grapheme && cells.saturating_add(width) > budget {
+                out.push('\n');
+                out.push_str(&indent);
+                cells = 0;
+            }
+            out.push_str(grapheme);
+            cells = cells.saturating_add(width);
+            has_grapheme = true;
         }
+        out.push('\n');
     }
     out
 }
@@ -342,6 +351,16 @@ pub(crate) fn render_finding_with_config(
     config: &RiprConfig,
     root: &Path,
     wording: JsonPointerWording,
+) -> String {
+    render_finding_with_shared_sections(finding, config, root, wording, None)
+}
+
+pub(super) fn render_finding_with_shared_sections(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+    wording: JsonPointerWording,
+    shared: Option<&super::shared::SharedSections>,
 ) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -423,13 +442,12 @@ pub(crate) fn render_finding_with_config(
     ));
 
     out.push_str("\nEvidence\n");
-    for line in evidence_path_lines(finding, wording) {
-        if is_wrappable_advisory_prose(&line) {
-            out.push_str(&wrap_human_prose(&line, "  - ", "    "));
-        } else {
-            out.push_str(&format!("  - {line}"));
+    if let Some(shared) = shared {
+        out.push_str(&shared.evidence);
+    } else {
+        for line in evidence_path_lines(finding, wording) {
+            push_evidence_line(&mut out, &line);
         }
-        out.push('\n');
     }
 
     let weakness = weakness_lines(finding);
@@ -502,7 +520,13 @@ pub(crate) fn render_finding_with_config(
         // the post-Phase-B PR.
     } else if let Some(card) = perl_preview_card(finding) {
         push_perl_preview_card(&mut out, &card);
-    } else if let Some(placement) = repair_placement_from_evidence(finding) {
+    } else if let Some(placement) = finding
+        .is_candidate_actionable()
+        .then(|| repair_placement_from_evidence(finding))
+        .flatten()
+    {
+        // Base-side evidence names no candidate edit target (#3281), so it
+        // gets no repair placement, as JSON omits one.
         out.push_str("\nRepair placement\n");
         out.push_str(&format!("  suggested file: {}\n", placement.test_file));
         out.push_str(&format!("  suggested test: {}\n", placement.test_name));
@@ -517,10 +541,32 @@ pub(crate) fn render_finding_with_config(
 
     if finding.recommended_next_step.is_some() {
         out.push_str("\nNext step\n");
-        out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+        if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
+            out.push_str(guidance);
+        } else {
+            out.push_str(&format!("  {}\n", reconcile_next_step(finding)));
+        }
     }
 
-    out
+    if shared.is_some() {
+        // The catalogue owns section spacing for this compact exhaustive CLI
+        // form. Raw multiline literals have already refused sharing; removing
+        // empty separator lines here cannot remove a source/evidence line.
+        out.split_inclusive('\n')
+            .filter(|line| *line != "\n")
+            .collect()
+    } else {
+        out
+    }
+}
+
+pub(super) fn push_evidence_line(out: &mut String, line: &str) {
+    if is_wrappable_advisory_prose(line) {
+        out.push_str(&wrap_human_prose(line, "  - ", "    "));
+    } else {
+        out.push_str(&format!("  - {line}"));
+    }
+    out.push('\n');
 }
 
 fn limitation_detail_lines(finding: &Finding) -> Vec<(&'static str, &str)> {
@@ -864,7 +910,8 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
     if !matches!(
         finding.language,
         Some(LanguageId::TypeScript | LanguageId::JavaScript)
-    ) {
+    ) || !finding.is_candidate_actionable()
+    {
         return;
     }
 

@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-0235-ex28-cross-test-oracle",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-0235-ex28-cross-test-oracle.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_far_from_boundary_cross_test",
+  "hard_case": "RIPR-SPEC-0235 example 28: the relation names a different test file than the oracle that carries the sink.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 'gold' if 1000 < $points;",
+        "mutated_line": "return 'gold' if 1000 < $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1000 points become silver"
+      },
+      {
+        "replacement": "return 'gold' if 1500 <= $points;",
+        "mutated_line": "return 'gold' if 1500 <= $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1200 points become silver"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only assertion on tier_label checks 2000 and 10 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr reported exposed when this case was labeled, a false exposed, until #7571 bound sink alignment to the relation's test.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex28-cross-test-oracle.json",
+    "sha256": "0842bcbb18c2a7f3d9f0f523eb74f70f244c44cfea2ade2656b1e5f6efdd56cc",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"test_id\": \"test:t/pricing.t\"}; the packet fingerprint was recomputed."
+  }
+}

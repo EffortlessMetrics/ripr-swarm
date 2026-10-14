@@ -1,0 +1,56 @@
+//! Process-global state tested with `serial_test`, which runs the marked
+//! tests one at a time. The attribute sits above or below `#[test]`, or is
+//! path-qualified, the way real suites mix them.
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static NEXT_TICKET: AtomicU32 = AtomicU32::new(100);
+
+pub fn reset_tickets() {
+    NEXT_TICKET.store(100, Ordering::SeqCst);
+}
+
+pub fn next_ticket() -> u32 {
+    NEXT_TICKET.fetch_add(1, Ordering::SeqCst)
+}
+
+pub fn retries() -> u32 {
+    match std::env::var("APP_RETRIES") {
+        Ok(text) => text.parse().unwrap_or(3),
+        Err(_) => 3,
+    }
+}
+
+pub fn batch_size() -> usize {
+    std::env::var("APP_BATCH").ok().and_then(|t| t.parse().ok()).unwrap_or(64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn tickets_count_up_from_one_hundred() {
+        reset_tickets();
+        assert_eq!(next_ticket(), 100);
+        assert_eq!(next_ticket(), 101);
+    }
+
+    #[serial]
+    #[test]
+    fn retries_read_the_environment() {
+        std::env::set_var("APP_RETRIES", "7");
+        assert_eq!(retries(), 7);
+        std::env::remove_var("APP_RETRIES");
+        assert_eq!(retries(), 3);
+    }
+
+    #[test]
+    #[serial_test::serial(env)]
+    fn batch_size_has_a_default() {
+        std::env::remove_var("APP_BATCH");
+        assert!(batch_size() > 0);
+    }
+}

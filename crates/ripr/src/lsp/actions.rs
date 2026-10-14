@@ -6,7 +6,7 @@ use super::client_features::ClientFeatureProfile;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
 };
-use super::state::AnalysisSnapshot;
+use super::state::{AnalysisAttemptState, AnalysisHealth, AnalysisSnapshot};
 use super::uri::file_uri_for_path;
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -250,7 +250,7 @@ fn disable_missing_client_command_action(
 /// `reason` (#1892, #1751): command and edit stripped (a disabled action
 /// that still executes is the cardinal-sin flip), `is_preferred` cleared,
 /// kind retained for the `CodeActionContext.only` filter, and the machine
-/// reason named in the data payload. Both call-site reasons are statically
+/// reason named in the data payload. Call-site reasons are statically
 /// emittable; if the fail-closed emit guard ever rejects one, the action is
 /// still stripped so it can never stay executable.
 fn disable_action_in_place(action: &mut CodeAction, reason: ActionDisabledReason) {
@@ -268,6 +268,59 @@ fn disable_action_in_place(action: &mut CodeAction, reason: ActionDisabledReason
             "disabled_reason".to_string(),
             Value::String(reason.as_str().to_string()),
         );
+    }
+}
+
+/// Presentation for the backend's blocked-health/retained-snapshot case.
+/// Reuse the existing constructors and inert conversion; leave refresh
+/// active, preserve existing stale-snapshot and route/static refusals, and
+/// update other disabled actions with the current health guidance.
+pub(super) fn disable_retained_analysis_actions(
+    actions: &mut CodeActionResponse,
+    health: &AnalysisHealth,
+) {
+    for action in actions {
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            continue;
+        };
+        let refusal = action
+            .data
+            .as_ref()
+            .and_then(|data| data.get("disabled_reason"))
+            .and_then(Value::as_str);
+        if action
+            .diagnostics
+            .as_ref()
+            .is_none_or(|diagnostics| diagnostics.is_empty())
+            || matches!(
+                refusal,
+                Some(
+                    "stale_snapshot"
+                        | "verification_route_unavailable"
+                        | "receipt_route_unavailable"
+                        | "preview_or_static_limitation"
+                )
+            )
+        {
+            continue;
+        }
+        disable_action_in_place(action, ActionDisabledReason::AnalysisNotCurrent);
+        if let Some(disabled) = &mut action.disabled {
+            disabled.reason = match health.state {
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running => format!(
+                    "Analysis is {}; wait for saved-workspace analysis to complete before using this action",
+                    health.state.as_str()
+                ),
+                AnalysisAttemptState::Succeeded => {
+                    "Retained analysis is stale; refresh analysis before using this action"
+                        .to_string()
+                }
+                _ => format!(
+                    "The latest analysis attempt is {}; resolve any reported failure and refresh analysis before using this action",
+                    health.state.as_str()
+                ),
+            };
+        }
     }
 }
 
@@ -1919,10 +1972,13 @@ fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<
         return None;
     }
     let uri = file_uri_for_path(&absolute).ok()?;
+    // #7460: do not invent line 1 when the ledger omits `target_line`.
+    // Prefer the gap diagnostic's producer-owned anchor line, then drop
+    // the action when no navigation line is available.
     let line = route
         .get("target_line")
         .and_then(Value::as_u64)
-        .unwrap_or(1);
+        .or_else(|| value_at(data, &["anchor", "line"]).and_then(Value::as_u64))?;
     Some(serde_json::json!({
         "uri": uri.as_str(),
         "line": line,

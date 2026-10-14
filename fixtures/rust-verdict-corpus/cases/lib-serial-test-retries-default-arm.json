@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-serial-test-retries-default-arm",
+  "subject_id": "authored-lib-serial-test",
+  "diff": "cases/lib-serial-test-retries-default-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "serial_test_attribute_above_test_env",
+  "hard_case": "The Err arm is reached only after the test removes APP_RETRIES from the process environment, an activation ripr cannot follow.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Err(_) => 4",
+        "mutated_line": "Err(_) => 4,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::retries_read_the_environment",
+        "equivalence_review": "not equivalent: retries() is 4 without the variable"
+      },
+      {
+        "replacement": "Err(_) => 0",
+        "mutated_line": "Err(_) => 0,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::retries_read_the_environment",
+        "equivalence_review": "not equivalent: retries() is 0 without the variable"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "retries_read_the_environment removes APP_RETRIES and asserts retries() == 3, so a default of 4 or 0 fails it.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -19,12 +19,14 @@ use super::related_tests::{
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
+use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
+use crate::analysis::diff::lines_look_alike;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -81,6 +83,29 @@ pub(super) struct PythonNoBehaviorContext {
     pub(super) multi_line_def_header_line: bool,
 }
 
+/// An old declaration line (`def`, `async def`, `class` or a decorator) in
+/// the position of a new `def` header makes it a changed declaration, however
+/// few tokens the two share (#7556).
+pub(super) fn is_python_declaration_line(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    ["def ", "async def ", "class ", "@"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
+/// Content pairing matches old and new lines on their trimmed text, but in
+/// Python a change of indentation moves the line into or out of a block, which
+/// is behavior of its own. The annotation-only guards suppress a probe, so they
+/// fail closed when the paired lines sit at different depths (#7556).
+fn same_indentation(old: &str, new: &str) -> bool {
+    let leading = |text: &str| {
+        text.chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>()
+    };
+    leading(old) == leading(new)
+}
+
 /// Classify a change from producer-owned owner, relation, and oracle facts.
 /// Discriminator narration follows the final class, not oracle strength alone.
 pub(super) fn classify_change_with_context(
@@ -121,23 +146,57 @@ pub(super) fn classify_change_with_context(
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
     if let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
         return None;
     }
-    // New-declaration guard: an unpaired `def` header that opens a NEW owner
-    // whose body carries its own added lines has no behavior of its own — the
-    // body lines are the probes. Crediting `exposed` here would claim a
-    // discriminator for a line with nothing to discriminate. Fails closed on a
-    // changed header (paired old line), a default value (runtime behavior), a
+    // New-declaration guard: a `def` header that opens a NEW owner whose body
+    // carries its own added lines has no behavior of its own — the body lines
+    // are the probes. Crediting `exposed` here would claim a discriminator for
+    // a line with nothing to discriminate. A replacement block pairs the header
+    // with whatever old line stood in its position, so only an old
+    // declaration line, or an old line that looks like it, marks a changed
+    // header (#7556): a rename that shares few tokens is still a changed header.
+    // Fails closed on a changed header, a default value (runtime behavior), a
     // one-line `def f(x): return x`, and a multi-line header.
-    if old_line_text.is_none()
+    if old_line_text
+        .is_none_or(|old| !is_python_declaration_line(old) && !lines_look_alike(old, line_text))
         && no_behavior.opens_owner_with_added_body
         && is_new_def_header_without_defaults(line_text)
     {
         return None;
     }
     let owner = owner_for_changed_line(file, line, owners)?;
+    classify_change_for_owner(
+        ChangeSite { file, line, owner },
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+    )
+}
+
+/// Where a change is classified: its file, the line its evidence names, and
+/// the owner that holds it. A deleted line (#7587) names its own projected
+/// line while its owner is resolved from a live neighbour.
+pub(super) struct ChangeSite<'a> {
+    pub(super) file: &'a Path,
+    pub(super) line: usize,
+    pub(super) owner: &'a PythonOwner,
+}
+
+/// Classify a change at a resolved owner.
+pub(super) fn classify_change_for_owner(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+) -> Option<Finding> {
+    let ChangeSite { file, line, owner } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
     // module-scope annotated-variable change that touches ONLY the annotation
@@ -150,6 +209,7 @@ pub(super) fn classify_change_with_context(
     // line is not a parseable annotated assignment.
     if owner.is_module_owner()
         && let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_var_change(old, line_text)
     {
         return None;
@@ -270,6 +330,37 @@ pub(super) fn classify_change_with_context(
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
     let mut boundary_downgraded = false;
+    // A removed or added additive call term changes the result only where the
+    // term is nonzero (#6733). When every strong related call gives it the
+    // value 0, a strong oracle passes either way.
+    let inactive_term = (static_limit.is_none()
+        && boundary_gap.is_none()
+        && !no_behavior.multi_line_def_header_line)
+        .then(|| {
+            old_line_text.and_then(|old| {
+                python_inactive_term_evidence(
+                    old,
+                    line_text,
+                    owner,
+                    owners,
+                    &related_candidates,
+                    &focus,
+                )
+            })
+        })
+        .flatten();
+    let mut term_downgraded = false;
+    // An existing exact-list assertion cannot justify prescribing the same
+    // assertion again when this bounded path cannot prove unequal values.
+    let unproven_list_equality = !alignment.observes()
+        && related.iter().any(|test| {
+            test.oracle_strength == OracleStrength::Strong
+                && test
+                    .oracle
+                    .as_deref()
+                    .is_some_and(super::oracles::unittest_list::literal_text)
+        })
+        && !super::oracles::unittest_list::literal_change_discriminated(old_line_text, line_text);
 
     let (class, reach_state, observe_state, discriminate_state, mut missing) = if static_limit
         .is_some()
@@ -323,6 +414,7 @@ pub(super) fn classify_change_with_context(
         && alignment.observes()
         && changed_default_exercised_ok
         && boundary_gap.is_none()
+        && inactive_term.is_none()
     {
         (
             ExposureClass::Exposed,
@@ -379,6 +471,21 @@ pub(super) fn classify_change_with_context(
                 gap.reason,
             )],
         )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(term) = &inactive_term
+    {
+        term_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Add a test input where `{}`.",
+                owner.name, term.reason, term.discriminator,
+            )],
+        )
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // A strong oracle reaches the owner, but its assertion observes a value
         // other than the changed owner's output, so static evidence cannot
@@ -390,10 +497,17 @@ pub(super) fn classify_change_with_context(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
-                owner.name
-            )],
+            vec![if unproven_list_equality {
+                format!(
+                    "A strong Python list oracle reaches `{}`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence.",
+                    owner.name
+                )
+            } else {
+                format!(
+                    "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
+                    owner.name
+                )
+            }],
         )
     } else {
         (
@@ -492,7 +606,7 @@ pub(super) fn classify_change_with_context(
     let infect = StageEvidence::new(
         if static_limit.is_some() {
             StageState::Unknown
-        } else if boundary_downgraded {
+        } else if boundary_downgraded || term_downgraded {
             StageState::Weak
         } else {
             StageState::Yes
@@ -505,6 +619,8 @@ pub(super) fn classify_change_with_context(
             )
         } else if boundary_downgraded {
             "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+        } else if term_downgraded {
+            "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
         } else {
             python_infection_evidence(&family, line_text).summary
         },
@@ -517,6 +633,7 @@ pub(super) fn classify_change_with_context(
     let missing_discriminators = if static_limit.is_none()
         && matches!(class, ExposureClass::WeaklyExposed)
         && has_oracle_eligible_relation
+        && !unproven_list_equality
     {
         if boundary_downgraded {
             // The boundary downgrade names the equality that would activate the
@@ -531,6 +648,16 @@ pub(super) fn classify_change_with_context(
                             reason: gap.reason.clone(),
                             flow_sink: flow_sink.clone(),
                         })
+                })
+                .into_iter()
+                .collect()
+        } else if term_downgraded {
+            inactive_term
+                .as_ref()
+                .map(|term| MissingDiscriminatorFact {
+                    value: term.discriminator.clone(),
+                    reason: term.reason.clone(),
+                    flow_sink: flow_sink.clone(),
                 })
                 .into_iter()
                 .collect()
@@ -615,7 +742,9 @@ pub(super) fn classify_change_with_context(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
-    let repair_placement = python_repair_placement(&class, &related_candidates);
+    let repair_placement = (!unproven_list_equality)
+        .then(|| python_repair_placement(&class, &related_candidates))
+        .flatten();
     let confidence_value = if matches!(class, ExposureClass::Exposed) {
         0.6
     } else if matches!(class, ExposureClass::StaticUnknown) {
@@ -662,6 +791,9 @@ pub(super) fn classify_change_with_context(
             "suggested_test_name: {}",
             placement.suggested_test_name
         ));
+        if let Some(line) = placement.suggested_test_line {
+            evidence.push(format!("suggested_test_line: {line}"));
+        }
         if let Some(node_id) = &placement.suggested_test_node_id {
             evidence.push(format!("suggested_test_node_id: {node_id}"));
         }
@@ -774,9 +906,17 @@ pub(super) fn classify_change_with_context(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation: crate::domain::ActivationEvidence {
-            observed_values: boundary
-                .map(|evidence| evidence.observed_values)
-                .unwrap_or_default(),
+            // A term downgrade names `f(...) != 0`; show the values that
+            // support it even when a predicate line also has boundary values.
+            observed_values: if term_downgraded {
+                inactive_term
+                    .map(|term| term.observed_values)
+                    .unwrap_or_default()
+            } else {
+                boundary
+                    .map(|evidence| evidence.observed_values)
+                    .unwrap_or_default()
+            },
             missing_discriminators,
         },
         stop_reasons: static_limit

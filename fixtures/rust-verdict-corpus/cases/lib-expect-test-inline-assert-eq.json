@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-expect-test-inline-assert-eq",
+  "subject_id": "authored-lib-expect-test",
+  "diff": "cases/lib-expect-test-inline-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "expect_test_inline_assert_eq",
+  "hard_case": "A one-line `expect![[\"alice: 42\"]].assert_eq(&render_row(..))` pins the exact text, but ripr reports the test with oracle \"\" unknown/none.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "2 + score",
+        "mutated_line": "format!(\"{name}: {}\", 2 + score)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::row_text_inline",
+        "equivalence_review": "not equivalent: score=41 gives 'alice: 43'"
+      },
+      {
+        "replacement": "1 + score / 2",
+        "mutated_line": "format!(\"{name}: {}\", 1 + score / 2)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::row_text_inline",
+        "equivalence_review": "not equivalent: score=41 gives 'alice: 21'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "expect-test compares the rendered string to the inline literal and panics on mismatch (UPDATE_EXPECT unset); both mutants change the number.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

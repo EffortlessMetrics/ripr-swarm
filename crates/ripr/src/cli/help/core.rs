@@ -253,6 +253,14 @@ Options:
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
 
+Exit status:
+  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  `unsupported_input` reports exit 2 after the original report is written;
+  limitations and recovery routes remain available in that report. Usage and
+  operational errors also exit 2. Empty input is complete no_scope (exit 0).
+  Read the typed outcome to distinguish partial analysis from complete analysis;
+  a successful exit alone does not establish complete scope or a clean gate.
+
 Progress:
   Long-running check analysis writes producer stages to stderr as
   `ripr progress: <stage> [<scope>]` and, while a stage stays active,
@@ -346,9 +354,16 @@ Options:
   --no-unchanged-tests     Limit the index to changed Rust files.
 
 The diff report emits changed files, changed seams, static evidence for those
-seams, a diff-complete runtime status, an explicit full-repo-limited context
+seams, the typed diff runtime status, an explicit full-repo-limited context
 status, and a receipt path hint. It does not run mutation testing, edit files,
 or turn the full-repo limitation into a success state.
+
+Exit status:
+  Complete and partial_with_limitations reports exit 0, regardless of findings.
+  `unsupported_input` reports exit 2 after the original report is written;
+  limitations and recovery routes remain available in that report. Usage and
+  operational errors also exit 2. An empty diff is complete no_scope (exit 0).
+  Diagnostic prose stays on stderr; JSON stdout contains one report.
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
@@ -454,10 +469,13 @@ Checks:
     project's selected toolchain and its actual execution result; doctor does
     not run verification.
 
-Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
-or when no other language is detected or enabled. Otherwise (for example a
-Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
-print as skipped with the reason and do not fail doctor.
+Rust is in scope when it is enabled and Cargo.toml is found at the selected
+root, an ancestor Cargo project bounded by git, or nested in this tree; when
+.rs files are detected at the selected root; or when no other language is
+detected or enabled. Otherwise (for example a Python-only or TypeScript-only
+root with no nested or ancestor Cargo.toml) the analysis profile skips the
+Cargo.toml, cargo, and rustc checks with the reason and does not fail doctor.
+`--profile source-build` still probes cargo and rustc.
 
 First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its

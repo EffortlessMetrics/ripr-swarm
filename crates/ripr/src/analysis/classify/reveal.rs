@@ -1,15 +1,21 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
+    is_inequality_assertion,
 };
 
 use super::arm_selection::ArmSelector;
+use super::builder_override::{
+    OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
+};
 use super::propagation_witness::{
-    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+    assertion_field_collection_reads, assertion_observes_direct_collection,
+    direct_collection_mutation_receiver, field_collection_write_path,
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
 use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -40,6 +46,16 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
+    /// method `(type, setter, field)` plainly stores its argument in the
+    /// field (`builder_override::setter_plainly_writes`). Only a verified
+    /// setter defeats a changed default.
+    pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
+    /// RIPR-SPEC-0228 getter credit: whether the owner type's method
+    /// `(type, getter, field)` returns that field path itself
+    /// (`builder_override::getter_plainly_reads`). Only a verified getter
+    /// lets a read through a method confirm a field-path collection write.
+    pub(in crate::analysis) getter_reads_field: &'a dyn Fn(&str, &str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -61,6 +77,8 @@ fn reveal_evidence(
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
+            getter_reads_field: &|_, _, _| false,
         },
         None,
     );
@@ -174,6 +192,12 @@ pub(in crate::analysis) fn reveal_outcome(
             Confidence::Medium,
             "Strongest oracle does not confirm observation of the changed expression; a weaker assertion cannot supply its confirmation (oracle_confirmation_mixed)",
         )
+    } else if analysis.observation_unverified && analysis.override_defeated {
+        StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            BUILDER_OVERRIDE_UNOBSERVED_SUMMARY,
+        )
     } else if analysis.observation_unverified && analysis.proximity_confirmation_withheld {
         // The generic unconfirmed summary says no assertion text references
         // the arm, which is false when a same-file test names its variant.
@@ -204,6 +228,12 @@ pub(in crate::analysis) fn reveal_outcome(
     }
 }
 
+/// Discriminator summary for a struct literal (or one of its fields) whose
+/// read field the test overwrote on the owner's result before asserting on
+/// it (RIPR-SPEC-0040 builder override, #6613). Keeps the
+/// `(observation_unverified)` token downstream consumers key on.
+const BUILDER_OVERRIDE_UNOBSERVED_SUMMARY: &str = "Discriminator unconfirmed: the related test overwrites the changed field on the owner's result before asserting on it, so no assertion observes this probe's changed value (observation_unverified)";
+
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
 
 const PROXIMITY_VARIANT_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)";
@@ -224,6 +254,11 @@ struct RevealAssertionAnalysis {
     /// but could not confirm a match arm, because another related test reaches
     /// the owner (#6297).
     proximity_confirmation_withheld: bool,
+    /// True when a matched assertion's only confirming tokens were struct
+    /// fields the test overwrote on the owner's result before reading them
+    /// (`builder_override`, #6613). Names the downgrade only; the class is
+    /// decided by `observation_unverified`.
+    override_defeated: bool,
     /// True when this probe's family requires a `token_match` to confirm that
     /// an assertion actually references the specific changed sub-expression, and
     /// no such match has fired yet.
@@ -312,6 +347,332 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
         return false;
     };
     assertion_observes_direct_collection(&assertion.text, receiver)
+}
+
+/// RIPR-SPEC-0228: whether `assertion` observes the field collection `path`
+/// that the owner writes (`self.log.push(..)`). One compared side must read
+/// that field from the binding the test called the owner on, after that
+/// call (`inv.log`, `inv.log.len()`), or read it through a method whose body
+/// returns that field (`inv.history()` with
+/// `fn history(&self) -> &[Event] { &self.log }`). A shared name is not a
+/// read: `inv.log()` returning another field does not confirm.
+fn field_collection_observer_confirms(
+    path: &str,
+    count_reads: bool,
+    owner: Option<OwnerCall<'_>>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    getter_reads_field: &dyn Fn(&str, &str, &str) -> bool,
+) -> bool {
+    let Some(owner) = owner else {
+        return false;
+    };
+    assertion_field_collection_reads(&assertion.text, path, count_reads)
+        .into_iter()
+        .any(|read| {
+            owner_call_precedes_read(
+                &test.body,
+                test.start_line,
+                &read.binding,
+                owner.name(),
+                assertion.line,
+            ) && read.getter.as_deref().is_none_or(|getter| {
+                owner
+                    .impl_type()
+                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            })
+        })
+}
+
+/// Whether `body`, whose first line is file line `start_line`, calls
+/// `binding.method(..)` on a line before `read_line` without rebinding
+/// `binding` (`let binding = ..`) between that call and the read. Comments
+/// and string contents never count as a call.
+pub(in crate::analysis) fn owner_call_precedes_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
+    let bound_at = |at: usize| {
+        masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'))
+    };
+    let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
+    // Offsets where `binding` stops naming the value the call wrote to: a
+    // `let [mut] binding` shadow or a plain `binding = ..` assignment. Offsets,
+    // not lines, so a rebinding on the call's own line still counts.
+    let mut rebindings: Vec<usize> = masked
+        .match_indices("let ")
+        .filter(|(at, _)| bound_at(*at))
+        .filter_map(|(at, keyword)| {
+            let rest = masked[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(binding)?;
+            let end = masked.len() - after.len();
+            name_ends(end).then_some(at)
+        })
+        .collect();
+    rebindings.extend(
+        masked
+            .match_indices(binding)
+            .filter(|(at, name)| bound_at(*at) && name_ends(at + name.len()))
+            .filter(|(at, name)| {
+                let rest = masked[at + name.len()..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+            })
+            .map(|(at, _)| at),
+    );
+    let call = format!("{binding}.{method}(");
+    masked
+        .match_indices(&call)
+        .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&masked, *at))
+        .any(|(at, _)| {
+            line_at(at) < read_line
+                && !rebindings
+                    .iter()
+                    .any(|rebound| *rebound > at && line_at(*rebound) <= read_line)
+        })
+}
+
+/// Whether nothing from the first unconditional `binding.method(..)` call
+/// before `read_line` up to that line may write through `binding` or copy
+/// what the call left, so the read sees the owner's value and nothing else
+/// holds it. Fails closed:
+/// - every owner call in the window must be a bare statement
+///   `binding.method(..);`, optionally ending in `.unwrap()`, `.expect(..)`
+///   or `?`: a bound or chained result (`let o = order.add(..)`,
+///   `order.add(..).clear()`) may write through `binding` without naming it;
+/// - the read line must start with its assertion, so nothing earlier on it
+///   runs between;
+/// - any other statement in the window may name `binding` only as a plain
+///   field read that is a whole `assert!`/`assert_eq!`/`assert_ne!`
+///   argument (`assert_eq!(order.total, 4)`); any other mention
+///   (`order.log.clear()`, `let before = order.log.clone()`,
+///   `order.log[0] = ..`, `&mut order`, a `ref mut` pattern, a block)
+///   refuses. Starting at the first call, not the last, also refuses a
+///   snapshot taken between two calls, however it is spelled.
+pub(in crate::analysis) fn binding_untouched_after_owner_call(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(lines_before) = read_line.checked_sub(start_line) else {
+        return false;
+    };
+    let read_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    if !masked
+        .get(read_at..)
+        .is_some_and(|line| line.trim_start().starts_with("assert"))
+    {
+        return false;
+    }
+    let call = format!("{binding}.{method}(");
+    let Some(call_at) = masked[..read_at]
+        .match_indices(&call)
+        .map(|(at, _)| at)
+        .find(|at| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| ident(before) || before == '.')
+                && runs_unconditionally(&masked, *at)
+        })
+    else {
+        return false;
+    };
+    let statement_start = masked[..call_at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    if !masked[statement_start..call_at].trim().is_empty() {
+        return false;
+    }
+    let Some(mut window_at) = bare_call_end(&masked[..read_at], call_at, call.len()) else {
+        return false;
+    };
+    while window_at < read_at {
+        let statement_len = masked[window_at..read_at]
+            .find(';')
+            .map_or(read_at - window_at, |semi| semi + 1);
+        let statement = &masked[window_at..window_at + statement_len];
+        let leading = statement.len() - statement.trim_start().len();
+        // A later owner call on the binding, itself a bare statement whose
+        // arguments do not name the binding: an argument runs before the
+        // call and may copy what the earlier one left
+        // (`order.add((snap = order.log.clone(), 4).1)`).
+        if statement.trim_start().starts_with(&call)
+            && bare_call_end(&masked[..read_at], window_at + leading, call.len())
+                == Some(window_at + statement_len)
+            && statement.trim_start()[call.len()..]
+                .match_indices(binding)
+                .all(|(at, name)| {
+                    let arguments = &statement.trim_start()[call.len()..];
+                    arguments[..at].chars().next_back().is_some_and(ident)
+                        || arguments[at + name.len()..].starts_with(ident)
+                })
+        {
+            window_at += statement_len;
+            continue;
+        }
+        if !plain_assertion_or_unrelated(statement.trim_end_matches(';'), binding) {
+            return false;
+        }
+        window_at += statement_len;
+    }
+    true
+}
+
+/// The offset just past the `;` that ends the bare call statement whose
+/// `binding.method(` (`call_len` bytes) starts at `call_at` in masked
+/// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
+/// consume its result, so a returned `&mut Self` is never written.
+fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+    let args_at = call_at + call_len;
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in code.get(args_at..)?.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(args_at + offset);
+                break;
+            }
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    let mut tail = code[close? + 1..].trim_start();
+    loop {
+        if let Some(rest) = tail.strip_prefix(".unwrap()") {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix('?') {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix(".expect(") {
+            let end = rest.find(')')?;
+            if rest[..end].contains('(') {
+                return None;
+            }
+            tail = rest[end + 1..].trim_start();
+        } else {
+            break;
+        }
+    }
+    tail.starts_with(';').then(|| code.len() - tail.len() + 1)
+}
+
+/// Whether a masked `statement` (no trailing `;`) leaves `binding` alone:
+/// it does not name it, or names it only as plain field reads that are
+/// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
+/// no block, closure or nested macro other than `vec!`/`format!`.
+fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions: Vec<usize> = statement
+        .match_indices(binding)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            !statement[..*at].chars().next_back().is_some_and(ident)
+                && !statement[at + binding.len()..].starts_with(ident)
+        })
+        .collect();
+    if mentions.is_empty() {
+        return true;
+    }
+    let trimmed = statement.trim_start();
+    let opener = ["assert!(", "assert_eq!(", "assert_ne!("]
+        .iter()
+        .find(|plain| trimmed.starts_with(**plain));
+    // `reset![order]` and other macros may write through the binding.
+    opener.is_some_and(|opener| {
+        let inner = &trimmed[opener.len()..];
+        inner.match_indices('!').all(|(bang, _)| {
+            let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
+            let name_start = inner[..bang]
+                .rfind(|ch: char| !ident(ch))
+                .map_or(0, |index| index + 1);
+            !invoked
+                || (matches!(&inner[name_start..bang], "vec" | "format")
+                    && !inner[..name_start].ends_with(':'))
+        })
+    }) && !statement.contains(['{', '|'])
+        && mentions.iter().all(|at| {
+            let before = statement[..*at].trim_end();
+            let mut rest = &statement[at + binding.len()..];
+            while let Some(member) = rest.strip_prefix('.') {
+                let len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+                if len == 0 {
+                    return false;
+                }
+                rest = &member[len..];
+            }
+            // A whole argument of the assertion itself, not of a call
+            // nested in it (`assert!(reset(&mut (order)))`).
+            before.matches('(').count() == before.matches(')').count() + 1
+                && (before.ends_with('(') || before.ends_with(','))
+                && rest.trim_start().starts_with([',', ')'])
+        })
+}
+
+/// Whether the test body calls `method` on anything but `binding`: another
+/// receiver (`expected.add(..)`, `o.add(..)` in a block), a path call
+/// (`Order::add(&mut expected, ..)`) or a chained receiver
+/// (`Order::new().add(..)`). Such a value may carry the owner's changed
+/// value into the other side of the equality, which then cannot fail on it.
+/// Fails closed: a call on an unrelated value also counts.
+pub(in crate::analysis) fn owner_called_on_other_receiver(
+    body: &str,
+    binding: &str,
+    method: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(method).any(|(at, name)| {
+        let before = &masked[..at];
+        if before.chars().next_back().is_some_and(ident)
+            || masked[at + name.len()..].starts_with(ident)
+        {
+            // Part of a longer name.
+            return false;
+        }
+        // A path (`Order::add(..)`, `let f = Order::add;`) may run the owner
+        // on any value.
+        if before.trim_end().ends_with("::") {
+            return true;
+        }
+        let Some(receiver_end) = before.trim_end().strip_suffix('.').map(str::len) else {
+            // A free function or local of the same name is not the method.
+            return false;
+        };
+        let receiver_end = masked[..receiver_end].trim_end().len();
+        let receiver_start = masked[..receiver_end]
+            .rfind(|ch: char| !ident(ch))
+            .map_or(0, |index| index + 1);
+        masked[..receiver_start].trim_end().ends_with('.')
+            || masked[receiver_start..receiver_end] != *binding
+    })
+}
+
+/// Whether the call at `at` in a test body (masked, starting at its `fn`)
+/// is a top-level statement of that body: not inside a nested block, branch,
+/// loop or closure, any of which may never run it. Fails closed.
+fn runs_unconditionally(masked: &str, at: usize) -> bool {
+    let before = &masked[..at];
+    let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
+    let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+    depth == 1 && !before[statement_start..].contains('|')
 }
 
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
@@ -510,9 +871,49 @@ fn analyze_related_assertions(
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
+        arm_pattern_pinned: false,
         owner_scoped_tokens: &owner_scoped_tokens,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
+    // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
+    // literal (`return_value`) or field initializer (`field_construction`)
+    // writes. Such a field's token confirms nothing in an assertion that
+    // reads the field only after the test overwrote it on the owner's result.
+    let override_fields: Vec<String> = match probe.family {
+        ProbeFamily::ReturnValue => {
+            let fields = struct_literal_fields(&probe.expression);
+            if !fields.is_empty() {
+                fields
+            } else if constructed_field.is_some() {
+                constructed_field.map(str::to_string).into_iter().collect()
+            } else {
+                struct_literal_fields(analysis_expression)
+            }
+        }
+        ProbeFamily::FieldConstruction => {
+            constructed_field.map(str::to_string).into_iter().collect()
+        }
+        _ => Vec::new(),
+    };
+    let override_owner = probe
+        .owner
+        .as_ref()
+        .and_then(|symbol| OwnerCall::from_symbol(&symbol.0));
+    let mut override_setters = Vec::new();
+    if let Some(impl_type) = override_owner.and_then(|owner| owner.impl_type()) {
+        for field in &override_fields {
+            for setter in setter_names(field) {
+                if (return_admission.setter_writes_field)(impl_type, &setter, field) {
+                    override_setters.push(setter);
+                }
+            }
+        }
+    }
+    let override_owner = override_owner.map(|owner| owner.with_setters(&override_setters));
+    // RIPR-SPEC-0228: a field-path collection write (`self.log.push(..)`) is
+    // observed by a read of that field, never by a shared name alone.
+    let field_write = field_collection_write_path(&probe.expression);
+    let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
@@ -653,8 +1054,8 @@ fn analyze_related_assertions(
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins. #6692: a field of a hand-written
-            // `Clone::clone`'s returned literal is pinned by
+            // for return-value and error-path exact pins. #6692: a field of a
+            // hand-written `Clone::clone`'s returned literal is pinned by
             // `assert_eq!(recv.clone(), recv)` under the same gates
             // (`OwnerReturnPin::establish_clone_field`).
             //
@@ -662,31 +1063,48 @@ fn analyze_related_assertions(
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
             // observes a predicate that is that owner's whole tail. Its kind
             // stays the classifier's `relational_check` (RIPR-SPEC-0231);
-            // only its strength relative to this probe rises.
+            // only its strength relative to this probe rises. #6578: the
+            // same holds for an inline expect-test comparison
+            // (`expect![["5"]].assert_eq(&owner(..))`), whose kind stays
+            // `snapshot` (RIPR-SPEC-0231 step 6); the pin admits no other
+            // snapshot spelling.
             let owner_pinned = match probe.family {
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
                     OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
+                        | OracleKind::Snapshot
                 ),
+                // A changed `return Err(..);` is an `error_path` probe; its
+                // pin compares the owner's whole `Err(..)` result.
+                ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 ),
                 _ => false,
-            } && (return_admission.owner_return_pin)(test, assertion);
-            let bool_owner_pinned =
-                owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
+            } && pin_strength_admits(assertion)
+                && (return_admission.owner_return_pin)(test, assertion);
+            let strength_raising_pin = owner_pinned
+                && (matches!(assertion.kind, OracleKind::RelationalCheck)
+                    || is_inline_expect_snapshot(assertion));
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
                     &test.body,
                     match_context.owner_callee,
                 );
-            let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
-                &match_context,
+            let assertion_context = RevealMatchContext {
+                arm_pattern_pinned: match_context
+                    .arm_selector
+                    .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                ..match_context
+            };
+            let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
+                &assertion_context,
                 assertion,
                 assertion_count,
                 import_defeats_owner,
@@ -694,6 +1112,53 @@ fn analyze_related_assertions(
                 owner_pinned,
                 owner_bound,
             );
+            // A read of the written field collection matches the probe even
+            // when it shares no name with the changed line
+            // (`inv.history()` for `self.log.push(..)`).
+            let field_collection_read = field_write.is_some_and(|path| {
+                field_collection_observer_confirms(
+                    path,
+                    // Only a deleted write changes how many elements the
+                    // collection holds; a changed argument does not.
+                    matches!(probe.family, ProbeFamily::CallDeletion),
+                    override_owner,
+                    test,
+                    assertion,
+                    return_admission.getter_reads_field,
+                )
+            });
+            let matched = matched || field_collection_read;
+            // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
+            // the test overwrote before this assertion reads them, and ask
+            // again whether anything else confirms.
+            let overridden = match override_owner {
+                Some(owner) if has_token_match && !override_fields.is_empty() => {
+                    overridden_fields_read(test, assertion, owner, &override_fields)
+                }
+                _ => Vec::new(),
+            };
+            if !overridden.is_empty() {
+                let unoverridden: Vec<String> = probe_tokens
+                    .iter()
+                    .filter(|token| !overridden.contains(token))
+                    .cloned()
+                    .collect();
+                let narrowed = RevealMatchContext {
+                    probe_tokens: &unoverridden,
+                    ..assertion_context
+                };
+                let (_, narrowed_token_match) = assertion_matches_probe_detail_with_literals(
+                    &narrowed,
+                    assertion,
+                    assertion_count,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                    owner_pinned,
+                    owner_bound,
+                );
+                override_defeated |= !narrowed_token_match;
+                has_token_match = narrowed_token_match;
+            }
             // RIPR-SPEC-0035 / #5830: an equality whose expected side is
             // computed through the changed owner moves with it, so it
             // neither pins the value nor confirms observation.
@@ -739,9 +1204,10 @@ fn analyze_related_assertions(
                     && (!confirm_required
                         || (confirms_observation
                             && (collection_observer_confirms(&probe.expression, assertion)
+                                || field_collection_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
-                                    && (has_token_match
+                                    && ((has_token_match && field_write.is_none())
                                         || (is_effect_family(&probe.family)
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
@@ -770,7 +1236,7 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let mut relative_strength = if bool_owner_pinned {
+                let mut relative_strength = if strength_raising_pin {
                     OracleStrength::Strong
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
@@ -841,6 +1307,7 @@ fn analyze_related_assertions(
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
+        override_defeated,
     }
 }
 
@@ -974,6 +1441,10 @@ struct RevealMatchContext<'a> {
     /// direct call the selector reads. A `let reason = |x| ..` closure or
     /// any other local use of the name may shadow the owner.
     arm_inputs_readable: bool,
+    /// RIPR-SPEC-0229 (#6616): the current assertion is an admitted exact
+    /// pattern pin (a verified local `assert_matches!`) whose value
+    /// operand is a direct owner call selecting the arm.
+    arm_pattern_pinned: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -1856,6 +2327,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_callee,
         arm_selector,
         arm_inputs_readable,
+        arm_pattern_pinned,
         owner_scoped_tokens,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
@@ -1979,7 +2451,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable
             && !import_defeats_owner
             && !cross_package_defeats_owner
-            && selector.assertion_selects(&assertion.text)
+            && (selector.assertion_selects(&assertion.text) || arm_pattern_pinned)
     } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
@@ -2109,6 +2581,7 @@ fn assertion_matches_probe_detail(
             owner_callee,
             arm_selector: None,
             arm_inputs_readable: false,
+            arm_pattern_pinned: false,
             owner_scoped_tokens: &[],
         },
         assertion,
@@ -3109,18 +3582,179 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     if matches!(family, ProbeFamily::StaticUnknown) {
         return OracleStrength::Unknown;
     }
-    ORACLE_FAMILY_STRENGTH_OVERRIDES
+    let overridden = ORACLE_FAMILY_STRENGTH_OVERRIDES
         .iter()
         .find(|(rule_family, rule_kind, _)| rule_family == family && rule_kind == &assertion.kind)
         .map_or_else(
             || assertion.strength.clone(),
             |(_, _, strength)| strength.clone(),
-        )
+        );
+    // RIPR-SPEC-0231: no rule raises a strength. A family override may lower
+    // the classifier's reading, but an assertion the classifier weakened
+    // (`assert_ne!` against a struct literal keeps `whole_object_equality`
+    // at weak) never comes back as strong because of its kind. Rule 1: an
+    // inequality is never lifted above its classified strength, whatever
+    // that strength is.
+    if (matches!(
+        assertion.strength,
+        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+    ) || is_inequality_assertion(&assertion.text))
+        && overridden.rank() > assertion.strength.rank()
+    {
+        assertion.strength.clone()
+    } else {
+        overridden
+    }
+}
+
+/// RIPR-SPEC-0231 decision 4: an exact owner pin (`assert_eq!`) needs the
+/// classifier's strong reading. The one exception is RIPR-SPEC-0197's
+/// bool-owner pin: `assert!(owner(..))` / `assert!(!owner(..))` stays the
+/// classifier's weak `relational_check`, but on a `-> bool` owner it fixes
+/// the whole two-valued result, and `owner_pin` alone admits that shape.
+fn pin_strength_admits(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::RelationalCheck)
+        || is_inline_expect_snapshot(assertion)
+        || assertion.strength == OracleStrength::Strong
+}
+
+/// #6578: a `snapshot` oracle the owner pin may raise is only the inline
+/// `expect![[..]].assert_eq(..)` comparison it reads like `assert_eq!`; an
+/// `insta` macro, `expect_file!`, `assert_debug_eq` or any other text the
+/// classifier grades `snapshot` keeps its medium strength.
+fn is_inline_expect_snapshot(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::Snapshot)
+        && super::owner_pin::inline_expect_operands(&assertion.text).is_some()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
+    /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn binding_untouched_after_owner_call_refuses_writes_between_call_and_read() {
+        // The body starts at file line 10; the read sits on line 14.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let untouched =
+            |lines: &str| binding_untouched_after_owner_call(&body(lines), 10, "order", "add", 14);
+        for kept in [
+            "    let mut order = Order::new();\n    order.add(4);\n\n    assert_eq!(order.log, vec![4]);",
+            // Plain field reads in an assertion between are not writes.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.total, 4);\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.tags, vec![]);\n    assert_eq!(order.log, vec![4]);",
+            // Statements that do not name the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    let expected = vec![4];\n    assert_eq!(order.log, expected);",
+            // The result consumed by `unwrap`, `expect` or `?`.
+            "    let mut order = Order::new();\n    order.add(4).unwrap();\n    order.add(5).expect(\"added\")?;\n    assert_eq!(order.log, vec![4, 5]);",
+            // Further bare owner calls in the window.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4);\n    assert_eq!(order.log, vec![1, 4]);",
+        ] {
+            assert!(untouched(kept), "{kept}");
+        }
+        for refused in [
+            "    order.add(4);\n    order.log.clear();\n    order.log.push(4);\n    assert_eq!(order.log, vec![4]);",
+            // A snapshot between two calls, however it is spelled.
+            "    order.add(4);\n    let before = order.log.clone();\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    let before = if true { order.log.clone() } else { vec![] };\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    before.extend_from_slice(&order.log);\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(1);\n    order.log.clear();\n    order.add(4);\n    assert_eq!(order.log, vec![4]);",
+            // A later owner call whose arguments copy the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    order.add((snap = order.log.clone(), 4).1);\n    assert_eq!(order.log, [snap.clone(), snap].concat());",
+            // A later owner call that is not a bare statement.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4).clear();\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    order.log = vec![4];\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    let log = &mut order.log;\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log.pop(), Some(4));\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    normalize(&mut order);\n    assert_eq!(order.log, vec![4]);",
+            // No call before the read, or only one that may not run.
+            "    let mut order = Order::new();\n\n\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    if false { order.add(4); }\n\n    assert_eq!(order.log, vec![4]);",
+            // A chained or bound call result may write without naming `order`.
+            "    let mut order = Order::new();\n    order.add(4).clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4).unwrap().clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    let o = order.add(4);\n    o.log.clear();\n    assert_eq!(order.log, vec![]);",
+            // A write earlier on the read line.
+            "    let mut order = Order::new();\n    order.add(4);\n\n    order.log.clear(); assert_eq!(order.log, vec![]);",
+            // Assertions that write, or are not plain assertions.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!({ order.log[0] = 1; true });\n    assert_eq!(order.log, vec![1]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log[0], 4);\n    assert_eq!(order.log, vec![4]);",
+            "    order.add(4);\n    assert!(match order { Order { ref mut log, .. } => { log.clear(); true } });\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset![1, order, 2], \"m\");\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(my::vec![1, order, 2].is_empty());\n    assert_eq!(order.log, vec![]);",
+        ] {
+            assert!(!untouched(refused), "{refused}");
+        }
+    }
+
+    /// #7688 review: a value built through the owner on another receiver
+    /// may carry the changed value into the other side of the equality.
+    #[test]
+    fn owner_called_on_other_receiver_sees_every_other_owner_call() {
+        let called = |lines: &str| {
+            owner_called_on_other_receiver(&format!("fn case() {{\n{lines}\n}}"), "order", "add")
+        };
+        for kept in [
+            "    order.add(1);\n    order.add(2);",
+            "    order.add(1);\n    readd(3);\n    order.address();",
+            "    order.add(1);\n    // other.add(2);\n    let s = \"x.add(1)\";",
+        ] {
+            assert!(!called(kept), "{kept}");
+        }
+        for refused in [
+            "    other.add(1);\n    order.add(1);",
+            "    let exp = { let mut o = Order::new(); o.add(4); o };\n    order.add(4);",
+            "    Order::add(&mut exp, 4);\n    order.add(4);",
+            "    let exp = Order::new().add(4).clone();\n    order.add(4);",
+            "    let exp = self.order.add(4);\n    order.add(4);",
+            "    let f = Order::add;\n    f(&mut exp, 4);\n    order.add(4);",
+            "    exp. add(4);\n    order.add(4);",
+            "    Order::new()\n        .add(4);\n    order.add(4);",
+        ] {
+            assert!(called(refused), "{refused}");
+        }
+    }
+
+    #[test]
+    fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
+        // The body starts at file line 10; the read sits on line 13.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let precedes = |lines: &str| owner_call_precedes_read(&body(lines), 10, "order", "add", 13);
+        assert!(precedes(
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.entries(), &[4]);"
+        ));
+        for refused in [
+            // Read before the call.
+            "    let mut order = Order::new();\n    assert_eq!(order.entries(), &[] as &[u32]);\n    order.add(4);",
+            // Rebound between the call and the read.
+            "    order.add(4);\n    let order = Order::new();\n    assert!(order.entries().is_empty());",
+            "    order.add(4);\n    let mut order = Order::new();\n    assert!(order.entries().is_empty());",
+            // A call in a comment or string, or on another binding.
+            "    let mut order = Order::new();\n    // order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            "    let mut order = Order::new();\n    let s = \"order.add(4)\";\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            "    let mut order = Order::new();\n    my_order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            // Rebound by a plain assignment, or by a shadow on the call's line.
+            "    order.add(4);\n    order = Order::new();\n    assert!(order.entries().is_empty());",
+            "    order.add(4); let order = Order::new();\n\n    assert!(order.entries().is_empty());",
+            // A call that may never run: in a closure, a branch or a loop.
+            "    let later = || order.add(4);\n\n    assert!(order.entries().is_empty());",
+            "    if false { order.add(4); }\n\n    assert!(order.entries().is_empty());",
+            "    for _ in 0..0 {\n        order.add(4);\n    assert!(order.entries().is_empty());",
+        ] {
+            assert!(!precedes(refused), "{refused}");
+        }
+        // A comparison of the binding is not an assignment.
+        assert!(precedes(
+            "    order.add(4);\n    let same = order == Order::new();\n    assert_eq!(order.entries(), &[4]);"
+        ));
+        // Rebinding another name between the call and the read is fine.
+        assert!(precedes(
+            "    order.add(4);\n    let orders = Order::new();\n    assert_eq!(order.entries(), &[4]);"
+        ));
+    }
     use std::path::PathBuf;
 
     fn related(name: &str, line: usize, reason: Option<RelationReason>) -> RelatedTest {
@@ -3442,6 +4076,8 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -3535,6 +4171,8 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -3885,6 +4523,8 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -3954,6 +4594,8 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -4230,6 +4872,7 @@ mod tests {
                 owner_callee: Some("route"),
                 arm_selector: None,
                 arm_inputs_readable: false,
+                arm_pattern_pinned: false,
                 owner_scoped_tokens: &empty,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
@@ -4891,12 +5534,65 @@ return Err(\"typed pin\".into());
     }
 
     #[test]
+    fn pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin() {
+        // RIPR-SPEC-0231 decision 4: a weak exact oracle never pins.
+        assert!(!pin_strength_admits(&oracle(
+            "assert_ne!(f(), Foo { a: 1 })",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Weak,
+        )));
+        assert!(!pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Medium,
+        )));
+        assert!(pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )));
+        // RIPR-SPEC-0197: the bool-owner `assert!` pin keeps its weak
+        // relational kind; `owner_pin` decides whether it pins.
+        assert!(pin_strength_admits(&oracle(
+            "assert!(!gate(9))",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        )));
+        // #6578: of the medium snapshots, only the inline expect-test
+        // comparison the owner pin reads like `assert_eq!`.
+        assert!(pin_strength_admits(&oracle(
+            "expect![[\"w12\"]].assert_eq(&render(4));",
+            OracleKind::Snapshot,
+            OracleStrength::Medium,
+        )));
+        for text in [
+            "insta::assert_snapshot!(render(4));",
+            "expect![[\"w12\"]].assert_debug_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ] {
+            assert!(
+                !pin_strength_admits(&oracle(text, OracleKind::Snapshot, OracleStrength::Medium)),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn probe_relative_oracle_strength_preserves_family_overrides() {
         let cases = [
             (
                 ProbeFamily::ErrorPath,
                 oracle("exact", OracleKind::ExactErrorVariant, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                oracle(
+                    "exact",
+                    OracleKind::ExactErrorVariant,
+                    OracleStrength::Medium,
+                ),
+                OracleStrength::Medium,
             ),
             (
                 ProbeFamily::ErrorPath,
@@ -4916,7 +5612,12 @@ return Err(\"typed pin\".into());
             (
                 ProbeFamily::ReturnValue,
                 oracle("exact", OracleKind::ExactValue, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                oracle("exact", OracleKind::ExactValue, OracleStrength::Medium),
+                OracleStrength::Medium,
             ),
             (
                 ProbeFamily::Predicate,
@@ -4945,7 +5646,7 @@ return Err(\"typed pin\".into());
                     OracleKind::WholeObjectEquality,
                     OracleStrength::Weak,
                 ),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
             ),
             (
                 ProbeFamily::CallDeletion,
@@ -4989,6 +5690,59 @@ return Err(\"typed pin\".into());
                 expected
             );
         }
+    }
+
+    /// RIPR-SPEC-0231 rule 1 (#6670 review): the classifier keeps
+    /// `assert_ne!(build(), Config { retries: 9 })` at
+    /// `whole_object_equality` / weak, and the family override that gives
+    /// that kind strong credit for equality must not lift the inequality.
+    #[test]
+    fn probe_relative_oracle_strength_never_promotes_an_inequality() {
+        let fact = |text: &str| {
+            let classification = crate::analysis::rust_index::classify_assertion(text);
+            oracle(text, classification.kind, classification.strength)
+        };
+        let inequality = fact("assert_ne!(build(), Config { retries: 9 });");
+        let debug_inequality = fact("debug_assert_ne!(build(), Config { retries: 9 });");
+        let equality = fact("assert_eq!(build(), Config { retries: 9 });");
+        assert_eq!(inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(inequality.strength, OracleStrength::Weak);
+        assert_eq!(debug_inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(debug_inequality.strength, OracleStrength::Weak);
+        assert_eq!(equality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(equality.strength, OracleStrength::Strong);
+        for family in [
+            ProbeFamily::ReturnValue,
+            ProbeFamily::Predicate,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::SideEffect,
+        ] {
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted an inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &debug_inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted a debug inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &equality),
+                OracleStrength::Strong,
+                "{family:?} lost equality's strong credit"
+            );
+        }
+        // A family override may still lower an inequality.
+        let smoke = oracle(
+            "assert_ne!(run(), Config { retries: 9 });",
+            OracleKind::SmokeOnly,
+            OracleStrength::Weak,
+        );
+        assert_eq!(
+            probe_relative_oracle_strength(&ProbeFamily::ReturnValue, &smoke),
+            OracleStrength::Smoke
+        );
     }
 
     fn owned_probe(family: ProbeFamily, expression: &str, owner: &str) -> Probe {
@@ -5481,6 +6235,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5535,6 +6291,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5560,6 +6318,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5604,6 +6364,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5650,6 +6412,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5821,6 +6585,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5849,6 +6615,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -5890,6 +6658,100 @@ return Err(\"typed pin\".into());
             "summary must name the reason: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0040 builder override (#6613): the related test and its
+    /// assertion for the retry builder shapes, with the assertion on body
+    /// line 2 (file line 3).
+    fn builder_override_test(statement: &str, assertion: &str) -> TestSummary {
+        test_with_body_assertions(
+            "override_sets_attempts",
+            &format!("fn override_sets_attempts() {{\n    {statement}\n    {assertion}\n}}"),
+            vec![OracleFact {
+                line: 3,
+                ..oracle(assertion, OracleKind::ExactValue, OracleStrength::Strong)
+            }],
+        )
+    }
+
+    fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
+        Probe {
+            owner: Some(SymbolId(
+                "src/settings.rs::impl RetryBuilder::new".to_string(),
+            )),
+            ..probe(family, expression)
+        }
+    }
+
+    /// RIPR-SPEC-0040 builder override (#6613): a struct literal, or one of
+    /// its field initializers, whose only confirming token is a field the
+    /// test overwrites on the owner's result (`.attempts(5)`) before reading
+    /// it does not reach the assertion, so the exact-value oracle cannot
+    /// read `exposed`.
+    #[test]
+    fn struct_literal_field_overridden_by_test_is_unverified() {
+        let test = builder_override_test(
+            "let retry = RetryBuilder::new().attempts(5).build();",
+            "assert_eq!(retry.attempts, 5);",
+        );
+        for probe in [
+            builder_override_probe(
+                ProbeFamily::ReturnValue,
+                "RetryBuilder { attempts: 4, delay_ms: 100 }",
+            ),
+            builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+        ] {
+            let (observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert_eq!(observe.state, StageState::Yes, "{}", probe.expression);
+            assert_eq!(discriminate.state, StageState::Weak, "{}", probe.expression);
+            assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
+            assert!(discriminate.summary.contains("(observation_unverified)"));
+        }
+    }
+
+    /// Controls for the builder override: reading the default with no
+    /// setter, a setter on another field, a discarded setter result, and a
+    /// setter inside an argument all still observe the changed literal.
+    #[test]
+    fn struct_literal_default_field_read_stays_exposed() {
+        for (statement, assertion) in [
+            (
+                "let retry = RetryBuilder::new().build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let retry = RetryBuilder::new().delay_ms(5).build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let builder = RetryBuilder::new(); builder.with_attempts(5); let retry = builder.build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let retry = RetryBuilder::new().with_other(other.attempts(5)).build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+        ] {
+            let test = builder_override_test(statement, assertion);
+            for probe in [
+                builder_override_probe(
+                    ProbeFamily::ReturnValue,
+                    "RetryBuilder { attempts: 4, delay_ms: 100 }",
+                ),
+                builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+            ] {
+                let (_observe, discriminate, _related) =
+                    reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Yes,
+                    "{statement} / {}: {}",
+                    probe.expression,
+                    discriminate.summary
+                );
+            }
+        }
     }
 
     /// A MatchArm probe whose expression DOES have a token that appears in the
@@ -6142,6 +7004,8 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
+                    setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             )
@@ -6416,6 +7280,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6505,6 +7371,8 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
+                    getter_reads_field: &|_, _, _| false,
                 },
                 None,
             );
@@ -6537,6 +7405,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -6887,6 +7757,8 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );
@@ -7184,6 +8056,8 @@ return Err(\"typed pin\".into());
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                getter_reads_field: &|_, _, _| false,
             },
             None,
         );

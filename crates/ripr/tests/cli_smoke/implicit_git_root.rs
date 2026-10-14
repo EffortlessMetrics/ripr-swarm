@@ -6,6 +6,94 @@ use std::path::{Path, PathBuf};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[cfg(unix)]
+#[test]
+fn broken_git_links_keep_implicit_check_and_cache_inside_the_project() -> TestResult {
+    for (label, target) in [("dangling", "missing-gitdir"), ("cycle", ".git")] {
+        let outer = unique_external_workspace(label)?;
+        let project = outer.join("project");
+        let cwd = project.join("src");
+        fs::create_dir_all(&cwd)?;
+        fs::create_dir_all(project.join("tests"))?;
+        fs::write(
+            outer.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"project\"]\n",
+        )?;
+        fs::write(outer.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")?;
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(cwd.join("lib.rs"), "pub fn price() -> u32 { 2 }\n")?;
+        fs::write(
+            project.join("tests/price.rs"),
+            "use pricing::price;\n#[test]\nfn exact_price() { assert_eq!(price(), 2); }\n",
+        )?;
+        let diff = project.join("change.diff");
+        fs::write(
+            &diff,
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price() -> u32 { 1 }\n+pub fn price() -> u32 { 2 }\n",
+        )?;
+        std::os::unix::fs::symlink(target, project.join(".git"))?;
+        let project_text = project.to_str().ok_or("project path must be UTF-8")?;
+        let diff_text = diff.to_str().ok_or("diff path must be UTF-8")?;
+        let check = |extra: &[&str], mode: &str| -> TestResult<Value> {
+            let mut args = vec!["check", "--diff", diff_text, "--format", "json"];
+            args.extend_from_slice(extra);
+            let output = run_command_with_env(
+                env!("CARGO_BIN_EXE_ripr"),
+                &cwd,
+                &args,
+                &[("RIPR_CACHE_DIR", "")],
+            )?;
+            assert!(
+                output.status.success(),
+                "{label}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            assert_eq!(report["mode"], mode, "{label}: enclosing policy leaked");
+            assert_eq!(report["summary"]["probes"], 1, "{label}: nonempty analysis");
+            assert_eq!(
+                report["summary"]["findings"], 1,
+                "{label}: nonempty analysis"
+            );
+            assert_eq!(
+                report["root"].as_str().map(Path::new),
+                Some(project.as_path()),
+                "{label}: analysis root escaped"
+            );
+            Ok(report)
+        };
+        let explicit = check(&["--root", project_text], "draft")?;
+        let implicit = check(&[], "draft")?;
+        assert_eq!(implicit["findings"], explicit["findings"]);
+        let cache = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &cwd,
+            &["cache", "status", "--json"],
+            &[("RIPR_CACHE_DIR", "")],
+        )?;
+        assert!(
+            cache.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cache.stderr)
+        );
+        let cache: Value = serde_json::from_slice(&cache.stdout)?;
+        assert_eq!(
+            cache["cache_dir"].as_str().map(Path::new),
+            Some(project.join("target/ripr/cache").as_path())
+        );
+
+        fs::write(project.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")?;
+        check(&[], "ready")?;
+        check(&["--mode", "draft"], "draft")?;
+        check(&["--root", project_text, "--mode", "instant"], "instant")?;
+        fs::remove_dir_all(outer)?;
+    }
+    Ok(())
+}
+
 fn python_fixture(label: &str) -> TestResult<(PathBuf, PathBuf)> {
     let sandbox = unique_external_workspace(label)?;
     let project = sandbox.join("project");

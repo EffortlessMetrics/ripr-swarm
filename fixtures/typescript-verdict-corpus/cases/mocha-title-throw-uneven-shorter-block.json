@@ -1,0 +1,48 @@
+{
+  "case_id": "mocha-title-throw-uneven-shorter-block",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-title-throw-uneven-shorter-block.diff",
+  "anchor": {
+    "file": "src/title.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": "control for `mocha-label-throw-uneven-shorter-block`: the same two-removed, one-added block, but the test pins the old message, so pairing the `throw` with its old line must not weaken the credit (#7524).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; edit applied by hand and `npx mocha` run on the whole package",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"title is blank\");",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "parseTitle rejects a blank title with its message",
+        "equivalence_review": "not equivalent: the thrown message changes from \"title must not be blank\" to \"title is blank\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The same two-removed, one-added block as mocha-label-throw-uneven-shorter-block, but the test pins the old message, `to.throw(\"title must not be blank\")`, which \"title is blank\" does not include, so the test fails on the edit. Under RIPR-SPEC-0243 rule 4 the payload matches exactly one of the two messages and stays exact; this case keeps the content pairing from downgrading a discriminating check (#7524).",
+  "labeling_observation": {
+    "ripr_commit": "38b0eae",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0243#14"
+  ]
+}

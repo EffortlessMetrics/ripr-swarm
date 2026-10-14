@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-pretty-line-struct-literal",
+  "subject_id": "authored-lib-pretty-assertions",
+  "diff": "cases/lib-pretty-line-struct-literal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "pretty_assertions_struct_literal_equality",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "label.to_owned()",
+        "mutated_line": "Line { label: label.to_owned(), cents }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::line_trims_the_label",
+        "equivalence_review": "not equivalent: the label stays \"  tea \""
+      },
+      {
+        "replacement": "label.trim_start().to_owned()",
+        "mutated_line": "Line { label: label.trim_start().to_owned(), cents }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::line_trims_the_label",
+        "equivalence_review": "not equivalent: the label is \"tea \""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "line_trims_the_label compares line(\"  tea \", 250) with a Line struct literal through pretty_assertions::assert_eq!, so not trimming or trimming only the start fails it.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -85,7 +85,7 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_RESULT_TOO_LARGE,
                     format!("serialize workspace status: {detail}"),
-                    "read narrower evidence instead of widening the response",
+                    workspace::RECOVERY_STATUS_TOO_LARGE,
                 );
                 return self.typed_failure(failure, workspace::SESSION_SCHEMA_VERSION);
             }
@@ -96,6 +96,7 @@ impl McpServer {
             envelope,
             workspace::SESSION_SCHEMA_VERSION,
             "serialize workspace status",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
         )
     }
 
@@ -153,6 +154,7 @@ impl McpServer {
             document,
             workspace::REFRESH_SCHEMA_VERSION,
             "serialize refresh result",
+            workspace::RECOVERY_REFRESH_TOO_LARGE,
         )
     }
 
@@ -160,10 +162,25 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["snapshot_id", "offset", "limit"])?;
+        reject_unknown_arguments(
+            &arguments,
+            &[
+                "snapshot_id",
+                "offset",
+                "limit",
+                "file",
+                "class",
+                "language",
+                "repair_ready",
+            ],
+        )?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let limit = optional_positive_argument(&arguments, "limit")?;
+        let file = optional_nonempty_string_argument(&arguments, "file")?;
+        let class = optional_nonempty_string_argument(&arguments, "class")?;
+        let language = optional_nonempty_string_argument(&arguments, "language")?;
+        let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
             requested.as_deref(),
@@ -171,11 +188,18 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
             },
+            &workspace::GapListFilter {
+                file,
+                class,
+                language,
+                repair_ready,
+            },
         ) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 gaps::GAP_LIST_SCHEMA_VERSION,
                 "serialize gap list",
+                workspace::RECOVERY_GAP_LIST_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_LIST_SCHEMA_VERSION),
         }
@@ -194,6 +218,7 @@ impl McpServer {
                 document,
                 gaps::GAP_SCHEMA_VERSION,
                 "serialize gap evidence",
+                workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_SCHEMA_VERSION),
         }
@@ -216,8 +241,50 @@ impl McpServer {
                 document,
                 repair::REPAIR_PACKET_SCHEMA_VERSION,
                 "serialize repair packet",
+                workspace::RECOVERY_REPAIR_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
+        }
+    }
+
+    async fn list_repair_attempts_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        request_id: &RequestId,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
+        let requested = optional_string_argument(&arguments, "inventory_id")?;
+        let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
+        let limit = optional_positive_argument(&arguments, "limit")?;
+        // Pinned rmcp adds JSON-RPC fields and modern resultType after the
+        // tool envelope is measured. Reserve those, the delimiter, and the
+        // actual JSON-escaped ID so near-cap pages keep structuredContent.
+        let id_bytes = serde_json::to_vec(request_id)
+            .map_err(|_error| ErrorData::internal_error("serialize inventory request id", None))?
+            .len();
+        let max_envelope_bytes =
+            super::MAX_RESPONSE_BYTES.saturating_sub(id_bytes.saturating_add(128));
+        let root = self.analysis_root.clone();
+        let root_identity = self.root_identity.clone();
+        let result = blocking_repair_read(move || {
+            super::attempt_inventory::list_document(
+                root.as_deref(),
+                root_identity.as_deref(),
+                requested.as_deref(),
+                offset,
+                limit,
+                max_envelope_bytes,
+            )
+        })
+        .await;
+        match result {
+            Ok(document) => self.bounded_tool_result(
+                document,
+                super::attempt_inventory::SCHEMA_VERSION,
+                "serialize durable attempt inventory",
+                super::attempt_inventory::RECOVERY_TOO_LARGE,
+            ),
+            Err(failure) => self.typed_failure(failure, super::attempt_inventory::SCHEMA_VERSION),
         }
     }
 
@@ -232,6 +299,7 @@ impl McpServer {
                 document,
                 repair::REPAIR_ATTEMPT_SCHEMA_VERSION,
                 "serialize repair attempt",
+                workspace::RECOVERY_REPAIR_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
         }
@@ -248,6 +316,7 @@ impl McpServer {
                 document,
                 repair::RECEIPT_STATUS_SCHEMA_VERSION,
                 "serialize receipt status",
+                workspace::RECOVERY_REPAIR_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, repair::RECEIPT_STATUS_SCHEMA_VERSION),
         }
@@ -321,6 +390,7 @@ impl McpServer {
                 document,
                 repair_card::REPAIR_CARD_SCHEMA_VERSION,
                 "serialize repair card",
+                workspace::RECOVERY_REPAIR_TOO_LARGE,
             ),
             Err(failure) => self.typed_failure(failure, repair_card::REPAIR_CARD_SCHEMA_VERSION),
         }
@@ -349,6 +419,7 @@ impl McpServer {
         document: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
+        recovery: &'static str,
     ) -> Result<CallToolResponse, ErrorData> {
         let envelope = match protocol::tool_result(document) {
             Ok(envelope) => envelope,
@@ -356,12 +427,12 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_RESULT_TOO_LARGE,
                     format!("{serialize_context}: {detail}"),
-                    "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+                    recovery,
                 );
                 return self.typed_failure(failure, failure_version);
             }
         };
-        self.bounded_tool_envelope(envelope, failure_version, serialize_context)
+        self.bounded_tool_envelope(envelope, failure_version, serialize_context, recovery)
     }
 
     /// The shared response bound for an already-built tool envelope, used
@@ -372,6 +443,7 @@ impl McpServer {
         envelope: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
+        recovery: &'static str,
     ) -> Result<CallToolResponse, ErrorData> {
         let bytes = serde_json::to_vec(&envelope)
             .map_err(|_error| ErrorData::internal_error(serialize_context, None))?;
@@ -383,7 +455,7 @@ impl McpServer {
                     bytes.len(),
                     super::MAX_RESPONSE_BYTES
                 ),
-                "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+                recovery,
             );
             return self.typed_failure(failure, failure_version);
         }
@@ -405,6 +477,40 @@ fn optional_string_argument(
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
+            None,
+        )),
+    }
+}
+
+/// A filter string (#7464): a non-empty JSON string. Empty strings stay
+/// invalid params instead of silently matching nothing or everything.
+fn optional_nonempty_string_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<String>, ErrorData> {
+    match optional_string_argument(arguments, name)? {
+        Some(value) if value.is_empty() => Err(ErrorData::invalid_params(
+            format!("{name} must be a non-empty string"),
+            None,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// nulls stay invalid params instead of silently coercing.
+fn optional_bool_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<bool>, ErrorData> {
+    let Some(arguments) = arguments else {
+        return Ok(None);
+    };
+    match arguments.get(name) {
+        None => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_other) => Err(ErrorData::invalid_params(
+            format!("{name} must be a boolean"),
             None,
         )),
     }
@@ -553,7 +659,7 @@ impl ServerHandler for McpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         match request.name.as_ref() {
             protocol::STATUS_TOOL_NAME => {
@@ -594,9 +700,13 @@ impl ServerHandler for McpServer {
             repair_card::GET_REPAIR_CARD_TOOL_NAME => {
                 self.get_repair_card_tool(request.arguments).await
             }
+            super::attempt_inventory::TOOL_NAME => {
+                self.list_repair_attempts_tool(request.arguments, &context.id)
+                    .await
+            }
             _other => Err(ErrorData::new(
                 ErrorCode::METHOD_NOT_FOUND,
-                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card",
+                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
                         protocol::STATUS_TOOL_NAME,
@@ -607,6 +717,7 @@ impl ServerHandler for McpServer {
                         protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
                         protocol::GET_RECEIPT_STATUS_TOOL_NAME,
                         repair_card::GET_REPAIR_CARD_TOOL_NAME,
+                        super::attempt_inventory::TOOL_NAME,
                     ]
                 })),
             )),
@@ -636,7 +747,11 @@ impl ServerHandler for McpServer {
         if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
             let session = self.session.lock().await;
             return match session.snapshot_document(snapshot_id) {
-                Ok(document) => self.resource_result(document, &request.uri),
+                Ok(document) => self.resource_result(
+                    document,
+                    &request.uri,
+                    workspace::RECOVERY_SNAPSHOT_TOO_LARGE,
+                ),
                 Err(failure) => Err(resource_failure(
                     "snapshot",
                     &failure,
@@ -650,19 +765,31 @@ impl ServerHandler for McpServer {
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
             return match session.get_gap(canonical_id, None) {
-                Ok(document) => self.resource_result(document, &request.uri),
+                Ok(document) => self.resource_result(
+                    document,
+                    &request.uri,
+                    workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                ),
                 Err(failure) => Err(resource_failure("gap", &failure, None)),
             };
         }
         if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
             return match self.repair_read_document(attempt_id, false).await {
-                Ok(document) => self.resource_result(document, &request.uri),
+                Ok(document) => self.resource_result(
+                    document,
+                    &request.uri,
+                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                ),
                 Err(failure) => Err(resource_failure("repair-attempt", &failure, None)),
             };
         }
         if let Some(receipt_id) = repair::receipt_resource_id(&request.uri) {
             return match self.repair_read_document(receipt_id, true).await {
-                Ok(document) => self.resource_result(document, &request.uri),
+                Ok(document) => self.resource_result(
+                    document,
+                    &request.uri,
+                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                ),
                 Err(failure) => Err(resource_failure("receipt", &failure, None)),
             };
         }
@@ -670,7 +797,11 @@ impl ServerHandler for McpServer {
             let session = self.session.lock().await;
             return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
             {
-                Ok(document) => self.resource_result(document, &request.uri),
+                Ok(document) => self.resource_result(
+                    document,
+                    &request.uri,
+                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                ),
                 Err(failure) => Err(resource_failure("repair-card", &failure, None)),
             };
         }
@@ -695,6 +826,7 @@ impl McpServer {
         &self,
         document: Value,
         uri: &str,
+        recovery: &'static str,
     ) -> Result<ReadResourceResponse, ErrorData> {
         // Resources pretty-print their document text while tool payloads
         // serialize compact (`bounded_tool_envelope`): the encodings differ
@@ -714,7 +846,7 @@ impl McpServer {
                     bytes.len(),
                     super::MAX_RESPONSE_BYTES
                 ),
-                "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+                recovery,
             );
             return Err(resource_failure("bounded", &failure, None));
         }

@@ -1,0 +1,54 @@
+#[derive(Debug, Clone, PartialEq)]
+pub struct Line {
+    pub sku: String,
+    pub qty: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tag {
+    pub label: String,
+    pub weight: u32,
+}
+
+#[derive(Default)]
+pub struct Order {
+    lines: Vec<Line>,
+    tags: Vec<Tag>,
+}
+
+impl Order {
+    pub fn add(&mut self, sku: &str, qty: u32) {
+        self.lines.push(Line { sku: sku.to_uppercase(), qty });
+    }
+
+    pub fn tag(&mut self, label: &str, weight: u32) {
+        self.tags.push(Tag { label: label.to_uppercase(), weight });
+    }
+
+    pub fn lines(&self) -> &[Line] {
+        &self.lines
+    }
+
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line() {
+        let mut order = Order::default();
+        order.add("bolt", 2);
+        assert_eq!(order.lines(), &[Line { sku: "BOLT".to_string(), qty: 2 }]);
+    }
+
+    #[test]
+    fn tag_adds_one_tag() {
+        let mut order = Order::default();
+        order.tag("rush", 1);
+        assert_eq!(order.tags().len(), 1);
+    }
+}

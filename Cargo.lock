@@ -534,6 +534,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "home"
+version = "0.5.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1486,6 +1495,7 @@ name = "ripr"
 version = "0.11.0"
 dependencies = [
  "fs2",
+ "home",
  "oxc_allocator",
  "oxc_ast",
  "oxc_parser",
@@ -1506,6 +1516,8 @@ dependencies = [
  "tower",
  "tower-lsp-server",
  "unicode-ident",
+ "unicode-segmentation",
+ "unicode-width",
  "winsafe",
 ]
 
@@ -2554,6 +2566,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "num-bigint",
  "ra_ap_syntax",
  "rayon",
  "repo-policy",

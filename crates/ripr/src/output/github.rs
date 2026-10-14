@@ -1970,7 +1970,7 @@ mod tests {
             "suggested_verify_command_confidence: high".to_string(),
         ];
         finding.related_tests = vec![RelatedTest {
-            name: "test_calculate_discount_above_threshold".to_string(),
+            name: "test_calculate_discount_threshold_boundary".to_string(),
             file: PathBuf::from("tests/test_pricing.py"),
             line: 6,
             oracle: Some("assert result".to_string()),

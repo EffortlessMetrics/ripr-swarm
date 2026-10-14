@@ -73,7 +73,10 @@ pub(crate) fn capture_retained_executable_with(
             path.display()
         )
     })?;
-    let result = (|| {
+    // `#[cfg(unix)]` arms inside this closure constrain nothing on Windows,
+    // so the closure's error type needs this explicit annotation to compile
+    // there (inherited from main, #7498; behavior unchanged on both).
+    let result: Result<CapturedFile, String> = (|| {
         writer(&mut file, bytes).map_err(|error| format!("write retained executable: {error}"))?;
         file.sync_all()
             .map_err(|error| format!("flush retained executable: {error}"))?;

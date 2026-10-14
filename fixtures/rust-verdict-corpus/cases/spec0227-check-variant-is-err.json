@@ -50,5 +50,11 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0227#5"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "broad_error",
+    "strength": "weak",
+    "test": "is_err_on_far_input",
+    "spec": "RIPR-SPEC-0227#5"
+  }
 }

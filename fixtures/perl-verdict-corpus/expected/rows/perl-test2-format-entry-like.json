@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-test2-format-entry-like",
+  "subject_id": "authored-perl-test2-ledger",
+  "origin": "authored",
+  "anchor": "lib/Ledger.pm:18",
+  "behavior_family": "return_value_format",
+  "test_shape": "test2_like_prefix_regex",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}

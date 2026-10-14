@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_deposit_adds_to_balance deposits 50 on 100 and checks balance_cents with self.assertEqual, an exact-value oracle, so overwriting or subtracting fails it. ripr reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "test_deposit_adds_to_balance deposits 50 on 100 and checks balance_cents with self.assertEqual, an exact-value oracle, so overwriting or subtracting fails it. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

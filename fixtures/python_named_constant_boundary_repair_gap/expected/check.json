@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/python_named_constant_boundary_repair_gap/input",
+  "config_path": "<cwd>/fixtures/python_named_constant_boundary_repair_gap/input/ripr.toml",
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
@@ -128,7 +129,7 @@
         "repair_action": "strengthen_existing_test",
         "changed_owner": "discounted_total",
         "changed_behavior": "predicate_boundary changed at src/pricing.py:5: `if amount >= DISCOUNT_THRESHOLD:`",
-        "current_test_evidence": "tests/test_pricing.py:4 test_no_discount_below_threshold currently has oracle_strength=strong, oracle_kind=exact_value: assert discounted_total(5_000) == 5_000",
+        "current_test_evidence": "tests/test_pricing.py:8 test_discount_far_above_threshold currently has oracle_strength=strong, oracle_kind=exact_value: assert discounted_total(20_000) == 18_000",
         "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
         "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `amount == DISCOUNT_THRESHOLD`. Keep the equality case as the minimum repair; optional pytest parameterization can add `DISCOUNT_THRESHOLD - 1`, `DISCOUNT_THRESHOLD`, and `DISCOUNT_THRESHOLD + 1` rows when expected values are clear.",
         "suggested_assertion": "Assert the owner result or effect at `amount == DISCOUNT_THRESHOLD` first. Optional pytest shape: @pytest.mark.parametrize(\"amount, expected\", [(DISCOUNT_THRESHOLD - 1, ...), (DISCOUNT_THRESHOLD, ...), (DISCOUNT_THRESHOLD + 1, ...)]); fill expected values from domain behavior only.",

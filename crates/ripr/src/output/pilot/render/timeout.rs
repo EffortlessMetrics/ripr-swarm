@@ -35,6 +35,11 @@ pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>
     }
     out.push_str("},\n");
 
+    // `outputs` stays the packet path map (intended locations) so the
+    // timeout JSON shape remains schema `0.3`. `outputs_written` is the
+    // authority for what this run produced; the timeout command removes
+    // the unwritten siblings so those paths do not still hold a prior run
+    // (#7425).
     out.push_str("  \"outputs\": {\n");
     push_path_field(
         &mut out,
@@ -105,7 +110,8 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     }
 
     out.push_str("## Outputs\n\n");
-    out.push_str("Analysis did not finish within the pilot budget, so repo exposure and agent seam packet files were not written.\n\n");
+    out.push_str("Analysis did not finish within the pilot budget, so repo exposure and agent seam packet files were not written.\n");
+    out.push_str("This directory does not keep leftover `repo-exposure.json`, `repo-exposure.md`, or `agent-seam-packets.json` files from an earlier run.\n\n");
     out.push_str(&format!(
         "- Pilot summary JSON: `{}`\n",
         display_path(&context.artifacts.pilot_summary_json)
@@ -162,6 +168,7 @@ pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) ->
         "  {}\n\n",
         display_path(&context.artifacts.pilot_summary_md)
     ));
+    out.push_str("This packet directory does not keep leftover repo-exposure or seam-packet files from an earlier run.\n\n");
     out.push_str("Next:\n");
     out.push_str(&format!("  {}\n", commands.retry));
     out

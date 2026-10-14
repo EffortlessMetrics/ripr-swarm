@@ -199,6 +199,18 @@ pub(crate) fn render_with_config(
         &crate::output::path::display_path(&output.root),
         true,
     );
+    // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run so
+    // JSON consumers and stderr-discarding CI logs can tell which file
+    // applied. Absent exactly when built-in defaults governed.
+    if let Some(path) = config.source_path() {
+        field(
+            &mut out,
+            1,
+            "config_path",
+            &crate::output::path::display_path(path),
+            true,
+        );
+    }
     if let Some(base) = &output.base {
         field(&mut out, 1, "base", base, true);
     }
@@ -1349,6 +1361,11 @@ struct RepairPlacement {
 }
 
 fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement> {
+    // Base-side evidence names a line the candidate no longer has, so it has
+    // no repair placement (RIPR-SPEC-0156, #7587).
+    if finding.source_currentness.is_base_side() {
+        return None;
+    }
     Some(RepairPlacement {
         suggested_test_file: evidence_value(finding, "suggested_test_file: ")?.to_string(),
         suggested_test_name: evidence_value(finding, "suggested_test_name: ")?.to_string(),
@@ -1838,6 +1855,39 @@ mod harness_projection_tests {
 
     fn parse(rendered: &str) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::from_str(rendered)
+    }
+
+    /// RIPR-SPEC-0255 (#7536): a loaded `ripr.toml` is named by the
+    /// top-level `config_path`; built-in defaults omit the member entirely.
+    #[test]
+    fn config_path_names_the_loaded_file_and_defaults_omit_it() -> TestResult {
+        let output = output_with(Vec::new());
+        let defaults = parse(&render_with_config(&output, &RiprConfig::default(), None))?;
+        assert!(defaults.get("config_path").is_none());
+
+        let loaded = RiprConfig {
+            source_path: Some(std::path::PathBuf::from("repo/ripr.toml")),
+            ..RiprConfig::default()
+        };
+        let rendered = parse(&render_with_config(&output, &loaded, None))?;
+        assert_eq!(
+            rendered.get("config_path").and_then(|value| value.as_str()),
+            Some("repo/ripr.toml")
+        );
+
+        // The machine field keeps the lossless envelope encoding (like
+        // `root`): a literal percent in the directory name is escaped, so
+        // distinct files stay distinct.
+        let percent = RiprConfig {
+            source_path: Some(std::path::PathBuf::from("repo/100%/ripr.toml")),
+            ..RiprConfig::default()
+        };
+        let rendered = parse(&render_with_config(&output, &percent, None))?;
+        assert_eq!(
+            rendered.get("config_path").and_then(|value| value.as_str()),
+            Some("repo/100%25/ripr.toml")
+        );
+        Ok(())
     }
 
     #[test]

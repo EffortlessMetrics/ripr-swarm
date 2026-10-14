@@ -39,7 +39,7 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
-    let mut probes = Vec::new();
+    let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
     // the RustIndex (built from the new file) expects (RANK-1 fix, #1222).
@@ -59,10 +59,22 @@ pub(crate) fn probes_for_file_with_relations(
         index,
         changed_nodes: &changed_nodes,
     };
-    let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
+    let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
+    let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
+        index,
+        &changed.path,
+        &changed.added_lines,
+    );
+    // Old-side line numbers of this file's removed lines whose positional
+    // replacement is a guard-only arm edit, one entry per such edit: that
+    // edit's predicate already carries the old guard as `before`.
+    let mut guard_edit_counterparts = Vec::<usize>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
-    let removed_bounds = removed_type_bounds(root, registrations, index, changed);
+    // Rebuilt once per file and shared by every reader of the old file (#7637).
+    let old_source = super::classify::old_source(index, changed);
+    let old_source = old_source.as_deref();
+    let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
         .as_ref()
@@ -90,6 +102,55 @@ pub(crate) fn probes_for_file_with_relations(
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
             continue;
         }
+        let propagation_subject = propagation_subjects.get(&added.new_side_line);
+        if let Some(subject) = propagation_subject {
+            let key = (
+                subject.start_byte,
+                ProbeFamily::ErrorPath.as_str().to_string(),
+            );
+            {
+                // A changed opening line may already have seeded this subject.
+                // Replace that seed so deduplication cannot discard the closing
+                // boundary origin (and its changed-exit activation requirement).
+                let previous = emitted_parser_shapes.get(&key).copied();
+                emitted_parser_shapes.insert(key, previous.unwrap_or(probes.len()));
+                let canonical = ChangedLine {
+                    line: subject.line,
+                    new_side_line: subject.line,
+                    text: subject.expression.clone(),
+                };
+                // Keep paired opening-side evidence when deduplication replaces a seed.
+                // An out-of-order closing line may precede that opening seed.
+                let before = previous
+                    .and_then(|position| probes[position].probe.before.clone())
+                    .or_else(|| {
+                        changed
+                            .added_lines
+                            .iter()
+                            .any(|line| line.new_side_line == subject.line)
+                            .then(|| replaced_line_counterpart(subject.line, changed))
+                            .flatten()
+                    });
+                // No old complete expression is invented from a closing fragment.
+                // Removed-side evidence retains its own original diff coordinate.
+                let mut probe = build_probe(
+                    &build_context,
+                    &canonical,
+                    ProbeFamily::ErrorPath,
+                    before,
+                    Some(subject.expression.clone()),
+                );
+                probe.location.column = subject.column;
+                probe.owner = Some(subject.owner.clone());
+                let mut seeded = SeededProbe::from_probe(probe);
+                seeded.propagation_origin = Some(added.clone());
+                if let Some(previous) = previous {
+                    probes[previous] = seeded;
+                } else {
+                    probes.push(seeded);
+                }
+            }
+        }
         let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
         let parser_shapes = parser_probe_shapes_for_changed_line_against(
             index,
@@ -101,6 +162,7 @@ pub(crate) fn probes_for_file_with_relations(
         let parser_shapes = parser_shapes
             .into_iter()
             .filter(|shape| shape.family != ProbeFamily::CallDeletion || shape.standalone_call)
+            .filter(|shape| propagation_subject.is_none() || shape.family != ProbeFamily::ErrorPath)
             .collect::<Vec<_>>();
         let canonical_shapes = parser_shapes
             .iter()
@@ -133,17 +195,45 @@ pub(crate) fn probes_for_file_with_relations(
                             })
                     })
             };
+            // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
+            // the guard's predicate finding: its boundary pairing is the
+            // discriminator the edit needs, and arm selection never
+            // evaluates guards. The arm head is dropped only when the
+            // predicate inside its guard holds the whole edit.
+            let guard_only_arm = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::MatchArm
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let removed = removed.trim();
+                        let arm = canonical_probe_text(text, shape.text);
+                        let Some(guard) = arm.find(" if ").map(|at| &arm[at + 4..]) else {
+                            return false;
+                        };
+                        canonical_shapes.iter().any(|other| {
+                            let predicate = canonical_probe_text(text, other.text);
+                            other.family == ProbeFamily::Predicate
+                                && guard.contains(predicate.as_str())
+                                && removed_span_of_shape(text, &predicate, removed).is_some()
+                        })
+                    })
+            };
+            // The positional counterpart's old-side line, not its text: an
+            // identical arm deleted elsewhere in the file keeps its probe.
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && canonical_shapes.iter().any(&guard_only_arm)
+            {
+                guard_edit_counterparts.push(removed.line);
+            }
             let canonical_shapes = canonical_shapes
                 .iter()
-                .filter(|shape| !unchanged_return(shape))
+                .filter(|shape| !unchanged_return(shape) && !guard_only_arm(shape))
                 .cloned()
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
                 let key = (shape.start_byte, shape.family.as_str().to_string());
-                if emitted_parser_shapes.iter().any(|current| current == &key) {
+                if emitted_parser_shapes.contains_key(&key) {
                     continue;
                 }
-                emitted_parser_shapes.push(key);
+                emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
                 let parser_span = parser_span_for_canonical_shape(&canonical_text, &shape);
                 let canonical_line = ChangedLine {
@@ -165,7 +255,39 @@ pub(crate) fn probes_for_file_with_relations(
                     if shape.family == ProbeFamily::MatchArm && line.matches("=>").count() > 1 {
                         return line;
                     }
-                    removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
+                    if shape.family == ProbeFamily::MatchArm
+                        && keeps_whole_old_arm(
+                            &line,
+                            &canonical_text,
+                            shape.start_line,
+                            changed,
+                            index,
+                        )
+                    {
+                        return with_old_arm_body(&line, changed, old_source);
+                    }
+                    match removed_span_of_shape(text, &canonical_text, &line) {
+                        // A cut that is the whole old head line (`1..=9 =>`
+                        // for `1..=8 =>`, maybe with a trailing comment) cut
+                        // nothing: its body is on the next old line, so it
+                        // is an uncut head too.
+                        Some(cut)
+                            if shape.family == ProbeFamily::MatchArm
+                                && head_ends_line(&cut, &line) =>
+                        {
+                            old_arm_with_body(&cut, &line, changed, old_source)
+                        }
+                        Some(cut) => cut,
+                        // An uncut old arm head (`0 =>`, its body on the next
+                        // old line) would read like a head cut, which arm
+                        // selection trusts as this arm with its body
+                        // unchanged (#5992). Joining the old body keeps it
+                        // reading as the whole old arm it was.
+                        None if shape.family == ProbeFamily::MatchArm => {
+                            with_old_arm_body(&line, changed, old_source)
+                        }
+                        None => line,
+                    }
                 });
                 let probe = build_probe(
                     &build_context,
@@ -180,17 +302,22 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
+                let before = removed_before(added.new_side_line, text, changed)
+                    .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
                     shape.family,
-                    removed_before(added.new_side_line, text, changed),
+                    before,
                     Some(text.to_string()),
                 )));
             }
             continue;
         }
-        let families = classify_changed_line(text);
+        let families = classify_changed_line(text)
+            .into_iter()
+            .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
+            .collect::<Vec<_>>();
         // #3294: a changed simple `let` initializer that only lands in the
         // static-unknown catch-all retargets to its same-function predicate
         // uses when the binding reaches them directly. The changed
@@ -205,11 +332,13 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         for family in families {
+            let before = removed_before(added.new_side_line, text, changed)
+                .map(|line| arm_before(&family, line, changed, old_source));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
                 family,
-                removed_before(added.new_side_line, text, changed),
+                before,
                 Some(text.to_string()),
             )));
         }
@@ -243,6 +372,12 @@ pub(crate) fn probes_for_file_with_relations(
             )
         };
         if is_test_evidence {
+            continue;
+        }
+        // A guard-only arm edit replaced this line, and its predicate holds
+        // the old guard; probing the old line again would read the same
+        // guard as deleted behavior.
+        if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -1043,6 +1178,126 @@ fn removed_before(
         .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
 }
 
+/// A match-arm probe's whole old line, with an uncut arm head joined to
+/// its body (`with_old_arm_body`); any other family's line as it was.
+fn arm_before(
+    family: &ProbeFamily,
+    line: String,
+    changed: &ChangedFile,
+    old_source: Option<&str>,
+) -> String {
+    if *family == ProbeFamily::MatchArm {
+        with_old_arm_body(&line, changed, old_source)
+    } else {
+        line
+    }
+}
+
+/// Whether a changed arm pattern keeps its whole old line instead of a
+/// head cut. Arm selection reads a head cut as this arm with only its
+/// pattern changed and the rest of the current `match` as the original
+/// one; when the diff also changes another arm line of the owner, that
+/// reading may be false, so the cut is not made (#5992 review). A guarded
+/// arm is never judged by arm selection and keeps its cut.
+fn keeps_whole_old_arm(
+    line: &str,
+    after: &str,
+    new_line: usize,
+    changed: &ChangedFile,
+    index: &RustIndex,
+) -> bool {
+    let guarded = |text: &str| {
+        text.split("=>")
+            .next()
+            .is_some_and(|head| head.split_whitespace().any(|word| word == "if"))
+    };
+    !guarded(line) && !guarded(after) && another_arm_changed(new_line, changed, index)
+}
+
+/// Whether the diff adds, or removes, more than one arm line (a line with
+/// `=>`) inside the function that owns `new_line`.
+fn another_arm_changed(new_line: usize, changed: &ChangedFile, index: &RustIndex) -> bool {
+    let Some(owner) = find_owner_function(index, &changed.path, new_line) else {
+        return false;
+    };
+    let arm_lines = |lines: &[ChangedLine]| {
+        lines
+            .iter()
+            .filter(|line| {
+                (owner.start_line..=owner.end_line).contains(&line.new_side_line)
+                    && line.text.contains("=>")
+            })
+            .count()
+    };
+    arm_lines(&changed.added_lines) > 1 || arm_lines(&changed.removed_lines) > 1
+}
+
+/// A whole old arm head that ends at `=>` (`0 =>`), joined with the line
+/// that follows it in the old file, removed or kept: the arm's old body.
+/// Arm selection trusts an old text ending at `=>` as a head cut anchored
+/// on this line's unchanged body (#5992), so an uncut head must not reach
+/// it bare. Any other old line comes back as it was.
+fn with_old_arm_body(line: &str, changed: &ChangedFile, old_source: Option<&str>) -> String {
+    if !line.trim_end().ends_with("=>") {
+        return line.to_string();
+    }
+    old_arm_with_body(line.trim(), line, changed, old_source)
+}
+
+/// Whether the old line holds nothing after the head `cut` but an optional
+/// comment, so its body sits on the next old line.
+fn head_ends_line(cut: &str, line: &str) -> bool {
+    if !cut.ends_with("=>") {
+        return false;
+    }
+    let Some(start) = line.find(cut) else {
+        return false;
+    };
+    let rest = line[start + cut.len()..].trim();
+    rest.is_empty() || rest.starts_with("//") || rest.starts_with("/*")
+}
+
+/// The old arm `head`, read from the removed `line`, joined with the old
+/// body on the next old line, or marked unread when that body is unknown.
+fn old_arm_with_body(
+    head: &str,
+    line: &str,
+    changed: &ChangedFile,
+    old_source: Option<&str>,
+) -> String {
+    let heads = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| removed.text.trim() == line.trim())
+        .map(|removed| removed.line)
+        .collect::<Vec<_>>();
+    // The paired line's identity is not carried here, so heads with this
+    // text elsewhere in the file must all share one old body; otherwise
+    // the body may be another arm's, and the head stays unread.
+    let body = old_source.and_then(|old| {
+        let bodies = heads
+            .iter()
+            .map(|head| {
+                // `line` is 1-based, so the next old line sits at index `line`.
+                old.lines()
+                    .nth(*head)
+                    .map(str::trim)
+                    .filter(|body| !body.is_empty())
+            })
+            .collect::<Option<std::collections::BTreeSet<_>>>()?;
+        match bodies.into_iter().collect::<Vec<_>>().as_slice() {
+            [body] => Some(body.to_string()),
+            _ => None,
+        }
+    });
+    match body {
+        Some(body) => format!("{head} {body}"),
+        // Without the old file the head stays unread as an arm: an old text
+        // with a trailing marker never passes for a head cut.
+        None => format!("{head} /* old body unread */"),
+    }
+}
+
 fn nearby_removed_line(
     added_new_side_line: usize,
     added: &str,
@@ -1283,6 +1538,184 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
+    /// `with_old_arm_body` over the old source rebuilt from `index`, as the
+    /// probe builder shares it per file.
+    fn joined_old_arm(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
+        let old = super::super::classify::old_source(index, changed);
+        with_old_arm_body(line, changed, old.as_deref())
+    }
+
+    /// #5992 review: an uncut old arm head is joined with the next old
+    /// line, removed or kept as context, so it never reads as a head cut of
+    /// the current line; other old lines come back unchanged.
+    #[test]
+    fn an_uncut_old_arm_head_carries_its_old_body() {
+        let line = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.to_string(),
+        };
+        // Old: `match n {` / `0 =>` / `0,` / `1..=4 =>` / `2,` / `_ => 0,` / `}`
+        // New: `match n {` / `1..=2 => 3,` / `1..=5 =>` / `2,` / `_ => 0,` / `}`
+        let new_source = "match n {\n    1..=2 => 3,\n    1..=5 =>\n        2,\n    _ => 0,\n}\n";
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![line(2, "    1..=2 => 3,"), line(3, "    1..=5 =>")],
+            removed_lines: vec![
+                line(2, "    0 =>"),
+                line(3, "        0,"),
+                line(4, "    1..=4 =>"),
+            ],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: new_source.into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        // The next old line was removed.
+        assert_eq!(joined_old_arm("0 =>", &changed, &index), "0 => 0,");
+        // The next old line was kept as context (review residual).
+        assert_eq!(joined_old_arm("1..=4 =>", &changed, &index), "1..=4 => 2,");
+        assert_eq!(joined_old_arm("_ => 0,", &changed, &index), "_ => 0,");
+        // Two heads with this text and different old bodies: which one was
+        // paired is not known, so the head is marked unread.
+        let mut duplicated = changed.clone();
+        duplicated.removed_lines.push(line(6, "    1..=4 =>"));
+        assert_eq!(
+            joined_old_arm("1..=4 =>", &duplicated, &index),
+            "1..=4 => /* old body unread */"
+        );
+        // One of the duplicated heads has no non-blank next old line.
+        let mut blank_after = changed.clone();
+        blank_after.removed_lines.push(line(8, "    1..=4 =>"));
+        assert_eq!(
+            joined_old_arm("1..=4 =>", &blank_after, &index),
+            "1..=4 => /* old body unread */"
+        );
+        // Without the old file the head is marked unread.
+        let unindexed = RustIndex::default();
+        assert_eq!(
+            joined_old_arm("1..=4 =>", &changed, &unindexed),
+            "1..=4 => /* old body unread */"
+        );
+    }
+
+    /// #5992 review: a head-only arm line whose "cut" is the whole old
+    /// line still reaches arm selection with its old body joined, never as
+    /// a bare head that reads like a cut of this line.
+    #[test]
+    fn a_whole_line_head_cut_carries_its_old_body() {
+        let probes = single_shape_probes(
+            "    1..=8 =>",
+            "    1..=9 =>",
+            ProbeShapeKind::MatchArm,
+            "1..=8 =>",
+            "match n {\n    0 => 0,\n    1..=8 =>\n        \"many\",\n    _ => \"x\",\n}\n",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("1..=9 => \"many\",")
+        );
+        // A trailing comment after the old head still leaves its body on
+        // the next line, and the joined text drops the comment.
+        let probes = single_shape_probes(
+            "    1..=8 => // many",
+            "    1..=9 => // many",
+            ProbeShapeKind::MatchArm,
+            "1..=8 =>",
+            "match n {\n    0 => 0,\n    1..=8 => // many\n        \"many\",\n    _ => \"x\",\n}\n",
+        );
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("1..=9 => \"many\",")
+        );
+    }
+
+    /// #5992 review: when the diff changes another arm of the same
+    /// function, a changed pattern keeps its whole old line, so arm
+    /// selection never reads the rest of the current `match` as the
+    /// original one.
+    #[test]
+    fn a_changed_pattern_keeps_its_whole_old_line_when_another_arm_changed() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.to_string(),
+        };
+        let function = FunctionFact {
+            id: SymbolId("f".to_string()),
+            name: "f".to_string(),
+            file: path.clone(),
+            start_line: 1,
+            end_line: 7,
+            body: String::new().into(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![function],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        // Old `9 =>` / `1..=8 =>` become new `0 =>` / `1..=9 =>`.
+        let both = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(3, "        0 => \"zero\","),
+                line(4, "        1..=9 => \"digit\","),
+            ],
+            removed_lines: vec![
+                line(3, "        9 => \"digit\","),
+                line(4, "        1..=8 => \"digit\","),
+            ],
+        };
+        let line8 = "        1..=8 => \"digit\",";
+        assert!(keeps_whole_old_arm(line8, "1..=9 =>", 4, &both, &index));
+        // A guarded arm keeps its cut: arm selection never judges it.
+        assert!(!keeps_whole_old_arm(
+            "        x if x < 8 => \"digit\",",
+            "x if x < 9 =>",
+            4,
+            &both,
+            &index
+        ));
+        // One changed arm keeps its cut.
+        let one = ChangedFile {
+            path,
+            added_lines: vec![line(4, "        1..=9 => \"digit\",")],
+            removed_lines: vec![line(4, line8)],
+        };
+        assert!(!keeps_whole_old_arm(line8, "1..=9 =>", 4, &one, &index));
+    }
+
     /// #7020: an edit inside a match arm's head cuts `before` to the old
     /// head (`x if x < 10 =>`), so the arm body does not read as deleted.
     #[test]
@@ -1485,6 +1918,75 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// A guard-only edit is the guard's predicate finding: the arm head adds
+    /// a selection question arm selection cannot answer through a guard,
+    /// and the old line is not probed again as deleted behavior
+    /// (grid-match-guard).
+    #[test]
+    fn guard_only_edit_keeps_only_the_guard_predicate() {
+        let probes = shapes_probes(
+            "n if 0 > n => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "n if 0 > n =>"),
+                (ProbeShapeKind::Predicate, "0 > n"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+        assert_eq!(probes[0].before.as_deref(), Some("n < 0"), "{probes:?}");
+    }
+
+    /// Control: an edit that also renames the arm's binding reaches past the
+    /// guard predicate, so the arm head keeps its probe.
+    #[test]
+    fn a_pattern_and_guard_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "m if 0 > m => -1,",
+            "n if n < 0 => -1,",
+            &[
+                (ProbeShapeKind::MatchArm, "m if 0 > m =>"),
+                (ProbeShapeKind::Predicate, "0 > m"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
+    }
+
+    /// Control: a predicate edit in the arm body is not a guard edit, so the
+    /// arm head stays.
+    #[test]
+    fn a_body_predicate_edit_keeps_the_arm_head() {
+        let probes = shapes_probes(
+            "Some(v) => v >= 4,",
+            "Some(v) => v > 4,",
+            &[
+                (ProbeShapeKind::MatchArm, "Some(v) =>"),
+                (ProbeShapeKind::Predicate, "v >= 4"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm
+                    && probe.after.as_deref() == Some("Some(v) =>")),
+            "{probes:?}"
+        );
     }
 
     #[test]

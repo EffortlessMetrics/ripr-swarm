@@ -46,7 +46,7 @@
       "limited"
     ]
   },
-  "reasoning": "The only test checks currency(); nothing calls apply_fee, so no mutant of it can fail a test. RIPR-SPEC-0114 example 3 (a crate with no tests at all) cannot be labeled, because verdict-corpus relabel needs at least one test to run. ripr lists the unrelated test as related while reading no_static_path, which the report counts as a no_static_path_with_related_tests contradiction (#6580). Spec cells: RIPR-SPEC-0115 example 3.",
+  "reasoning": "The only test checks currency(); nothing calls apply_fee, so no mutant of it can fail a test. RIPR-SPEC-0114 example 3 (a crate with no tests at all) cannot be labeled, because verdict-corpus relabel needs at least one test to run. ripr lists the unrelated test as related while reading no_static_path; its same_test_file relation does not reach the owner, so the report counts no contradiction (#6580, #7531). Spec cells: RIPR-SPEC-0115 example 3.",
   "labeling_observation": {
     "ripr_commit": "2059890",
     "full_checkout_verdict": "limited",

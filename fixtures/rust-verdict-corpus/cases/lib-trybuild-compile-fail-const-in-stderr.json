@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-trybuild-compile-fail-const-in-stderr",
+  "subject_id": "authored-lib-trybuild",
+  "diff": "cases/lib-trybuild-compile-fail-const-in-stderr.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "trybuild_compile_fail_const_eval_stderr",
+  "hard_case": "A compile-fail UI test discriminates a value: the const fn result is evaluated at compile time and printed into the committed .stderr ('expected an array with a size of 6').",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "4 + payload - 1",
+        "mutated_line": "4 + payload - 1",
+        "outcome": "tests_failed",
+        "failing_test": "ui",
+        "equivalence_review": "not equivalent: frame_len(2) gives 5, so the fail file compiles"
+      },
+      {
+        "replacement": "4 * payload",
+        "mutated_line": "4 * payload",
+        "outcome": "tests_failed",
+        "failing_test": "ui",
+        "equivalence_review": "not equivalent: frame_len(2) gives 8, stderr says size of 8 not 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "fail_frame_len.rs uses `[u8; frame_len(2)]`; rustc evaluates the const fn and the committed .stderr pins the size, so one mutant makes the file compile (compile_fail fails) and the other changes the diagnostic text.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

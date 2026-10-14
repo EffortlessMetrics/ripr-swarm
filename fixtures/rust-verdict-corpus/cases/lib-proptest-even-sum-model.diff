@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 159e349..64fc49f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -34,7 +34,7 @@
+ pub fn even_sum(values: &[u32]) -> u64 {
+     values
+         .iter()
+-        .filter(|v| *v & 1 == 0)
++        .filter(|v| (*v & 1) == 0)
+         .map(|v| u64::from(*v))
+         .sum()
+ }

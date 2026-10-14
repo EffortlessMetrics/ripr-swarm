@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-testmore-tax-table-loop",
+  "subject_id": "authored-perl-testmore-shop",
+  "origin": "authored",
+  "anchor": "lib/Shop/Pricing.pm:64",
+  "behavior_family": "return_value_selection",
+  "test_shape": "testmore_table_driven_loop",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}

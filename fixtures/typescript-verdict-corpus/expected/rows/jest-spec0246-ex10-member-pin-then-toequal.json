@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0246-ex10-member-pin-then-toequal",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/settingsCopy.ts:7",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_member_and_toequal_copy_not_identity",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

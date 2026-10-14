@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-title-throw-uneven-shorter-block",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/title.ts:4",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

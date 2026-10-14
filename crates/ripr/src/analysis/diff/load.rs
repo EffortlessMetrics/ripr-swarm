@@ -19,6 +19,22 @@ mod contract_tests;
 pub struct LoadedDiff {
     pub text: String,
     pub effective_base: Option<String>,
+    /// The commit id the loader itself already resolved for
+    /// `effective_base`, captured from its own base-verification probe
+    /// (the explicit `--base` path peels `<ref>^{commit}` and has the id
+    /// in hand). `None` when the loader resolved the base by name only
+    /// (the default-base search verifies candidates without keeping the
+    /// id) or when the load involves no base (`--diff`/stdin). The
+    /// analyzed-revisions naming reuses this id instead of spawning the
+    /// identical `rev-parse` again (#7716).
+    pub resolved_base_commit: Option<String>,
+    /// The merge-base commit the working-tree diff actually starts from —
+    /// the value `worktree_diff_origin` computed to load this diff.
+    /// `None` for every other load shape, which never computed one. Naming
+    /// the analyzed revisions from this value names the exact origin the
+    /// diff used, rather than re-deriving a merge base that could differ
+    /// from it if `HEAD` moved mid-analysis (#7716).
+    pub merge_base_origin: Option<String>,
 }
 
 /// Decode a supplied diff the same way the git-run path decodes its stdout
@@ -127,6 +143,8 @@ pub(crate) fn load_diff_with_effective_base_core(
             return Ok(LoadedDiff {
                 text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
+                resolved_base_commit: None,
+                merge_base_origin: None,
             });
         }
         // #4376(c): a directory is the common wrong `--diff` argument. On
@@ -152,6 +170,8 @@ pub(crate) fn load_diff_with_effective_base_core(
         return Ok(LoadedDiff {
             text: decode_diff_text(&format!("diff file {}", diff_file.display()), bytes)?,
             effective_base: None,
+            resolved_base_commit: None,
+            merge_base_origin: None,
         });
     }
 
@@ -169,7 +189,8 @@ pub(crate) fn load_diff_with_effective_base_core(
 
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let base = resolve_effective_base_core(root, base, git_timeout)?;
+    let (base, resolved_base_commit) =
+        resolve_effective_base_core_with_commit(root, base, git_timeout)?;
 
     let text = run_git_diff(
         root,
@@ -180,6 +201,8 @@ pub(crate) fn load_diff_with_effective_base_core(
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
+        resolved_base_commit,
+        merge_base_origin: None,
     })
 }
 
@@ -228,13 +251,20 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
 ) -> Result<LoadedDiff, CoreError> {
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let base = resolve_effective_base_core(root, base, git_timeout)?;
+    let (base, resolved_base_commit) =
+        resolve_effective_base_core_with_commit(root, base, git_timeout)?;
 
     let origin = worktree_diff_origin(root, &base, git_timeout)?;
     let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
+        resolved_base_commit,
+        // The origin IS the merge base of `base` and `HEAD` (see
+        // `worktree_diff_origin`); naming it again from a fresh probe would
+        // spawn the identical command and could even name a different merge
+        // base than the one this diff used (#7716).
+        merge_base_origin: Some(origin),
     })
 }
 
@@ -441,10 +471,28 @@ pub(crate) fn resolve_effective_base_core(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<String, CoreError> {
+    resolve_effective_base_core_with_commit(root, base, git_timeout)
+        .map(|(base, _resolved_commit)| base)
+}
+
+/// Typed core of [`resolve_effective_base_core`] that also returns the
+/// commit id the base verification itself produced, so the analyzed-revisions
+/// naming can reuse it instead of spawning the identical `rev-parse` probe
+/// again (#7716). `Some` only on the explicit-base arm's success, where the
+/// probe's stdout is the peeled commit id. The default-base arm resolves by
+/// name and carries no id, and a verification probe that could not run
+/// proves nothing, so both stay `None`.
+pub(crate) fn resolve_effective_base_core_with_commit(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<(String, Option<String>), CoreError> {
     let Some(explicit) = base else {
-        return resolve_default_base(root, git_timeout).map_err(|err| {
-            core_error_for_git_root_probe(probe_git_root(root, git_timeout), root, err)
-        });
+        return resolve_default_base(root, git_timeout)
+            .map(|resolved| (resolved, None))
+            .map_err(|err| {
+                core_error_for_git_root_probe(probe_git_root(root, git_timeout), root, err)
+            });
     };
 
     // No revision starts with `-`, and `git diff` would parse one as an option
@@ -471,7 +519,16 @@ pub(crate) fn resolve_effective_base_core(
                  run). {fetch} or pass `--base <ref>` for a ref this repository has."
             )))
         }
-        _ => Ok(explicit.to_string()),
+        Some(output) => {
+            let resolved = String::from_utf8(output.stdout)
+                .ok()
+                .map(|commit| commit.trim().to_string())
+                .filter(|commit| !commit.is_empty());
+            Ok((explicit.to_string(), resolved))
+        }
+        // The probe could not run; the loader's `git diff` decides, exactly
+        // as before this capture existed — and there is no id to carry.
+        None => Ok((explicit.to_string(), None)),
     }
 }
 
@@ -1410,21 +1467,43 @@ pub(crate) struct AnalyzedRevisions {
 /// verified by [`resolve_effective_base`]). Resolution is best effort: it
 /// only describes the run, so a failed probe leaves a field `None` rather
 /// than failing an analysis that already loaded its diff.
+///
+/// `loaded_base_commit` and `loaded_merge_base` carry the ids the diff
+/// loader itself already resolved while loading this diff (see
+/// [`LoadedDiff::resolved_base_commit`] and [`LoadedDiff::merge_base_origin`]);
+/// when present they are used as-is and the identical `rev-parse`/`merge-base`
+/// child processes are not spawned again (#7716). `None` falls back to the
+/// original best-effort probe. The loaded merge base is the exact origin the
+/// diff started from, so naming it is also more faithful than re-deriving
+/// one after the analysis.
 pub(crate) fn resolve_analyzed_revisions(
     root: &Path,
     base: &str,
     working_tree: bool,
     git_timeout: Option<Duration>,
+    loaded_base_commit: Option<&str>,
+    loaded_merge_base: Option<&str>,
 ) -> AnalyzedRevisions {
-    let base_commit = resolve_base_commit(root, Some(base), git_timeout);
+    let base_commit = loaded_base_commit
+        .map(str::to_string)
+        .filter(|commit| !commit.is_empty())
+        .or_else(|| resolve_base_commit(root, Some(base), git_timeout));
     let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout);
-    let merge_base_commit =
-        crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|commit| commit.trim().to_string())
-            .filter(|commit| !commit.is_empty() && Some(commit) != base_commit.as_ref());
+    let merge_base_commit = match loaded_merge_base {
+        Some(commit) if !commit.is_empty() => Some(commit.to_string()),
+        // No loaded origin (or an unusable one): fall back to the original
+        // best-effort probe, as before the loaded value existed.
+        _ => crate::git::run_git_output_with_deadline(
+            root,
+            &["merge-base", base, "HEAD"],
+            git_timeout,
+        )
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|commit| commit.trim().to_string()),
+    }
+    .filter(|commit| !commit.is_empty() && Some(commit) != base_commit.as_ref());
     AnalyzedRevisions {
         base_ref: base.to_string(),
         base_commit,
@@ -2304,6 +2383,80 @@ mod tests {
         );
         assert_eq!(resolve_base_commit(&dir, Some("missing-base"), None), None);
 
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_loader_carries_the_revisions_it_already_resolved() -> std::io::Result<()> {
+        let dir = unique_fixture_root("worktree-loaded-revisions")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // A second commit makes `HEAD~1` a resolvable explicit base.
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+
+        let loaded = load_worktree_diff_with_effective_base_core(&dir, Some("HEAD~1"), None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+        assert_eq!(loaded.effective_base.as_deref(), Some("HEAD~1"));
+        let expected_base = run_git_checked(
+            &dir,
+            &["rev-parse", "--verify", "--quiet", "HEAD~1^{commit}"],
+        )?;
+        assert_eq!(
+            loaded.resolved_base_commit.as_deref(),
+            Some(expected_base.as_str()),
+            "the loader must keep the commit id its own base verification produced; dropping              it would silently fall back to a second identical probe (#7716)"
+        );
+        // Linear history: the diff origin IS the base tip, and it must be
+        // the carried value, not a fresh derivation.
+        assert_eq!(
+            loaded.merge_base_origin.as_deref(),
+            Some(expected_base.as_str()),
+            "the worktree origin (the merge base the diff actually starts from) must be              carried for the analyzed-revisions naming (#7716)"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_analyzed_revisions_prefers_the_loader_ids_over_fresh_probes() -> std::io::Result<()>
+    {
+        let dir = unique_fixture_root("revisions-prefer-loaded")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        let real_head = run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "HEAD"])?;
+
+        // Fabricated loaded ids must win over what a fresh probe of this
+        // repository would return: the naming names the diff's own inputs,
+        // not a re-derivation that could diverge from them (#7716).
+        let fabricated_base = "000000000000000000000000000000000000000a";
+        let fabricated_merge_base = "000000000000000000000000000000000000000b";
+        let revisions = resolve_analyzed_revisions(
+            &dir,
+            "HEAD~1",
+            true,
+            None,
+            Some(fabricated_base),
+            Some(fabricated_merge_base),
+        );
+        assert_eq!(revisions.base_commit.as_deref(), Some(fabricated_base));
+        assert_eq!(
+            revisions.merge_base_commit.as_deref(),
+            Some(fabricated_merge_base)
+        );
+        // `HEAD` is never carried by the loader, so it always resolves fresh.
+        assert_eq!(revisions.head_commit.as_deref(), Some(real_head.as_str()));
+
+        // An empty loaded value is unusable and falls back to the probe.
+        let fallback = resolve_analyzed_revisions(&dir, "HEAD", true, None, Some(""), None);
+        assert_eq!(fallback.base_commit.as_deref(), Some(real_head.as_str()));
+        // And the naming contract survives the fallback path too: on linear
+        // history the merge base equals the base tip, so the field stays
+        // absent rather than repeating the base commit.
+        assert_eq!(fallback.merge_base_commit, None);
         ignore_remove_dir_all(&dir);
         Ok(())
     }

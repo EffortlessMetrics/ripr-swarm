@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6c3b406..cffb855 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -29,7 +29,7 @@
+ }
+ 
+ pub fn render_summary(count: usize) -> String {
+-    format!("items: {}\nhalf: {}\n", count, count / 2)
++    format!("items: {}\nhalf: {}\n", count, count >> 1)
+ }
+ 
+ #[cfg(test)]

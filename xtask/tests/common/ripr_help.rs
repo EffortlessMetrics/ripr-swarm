@@ -1,6 +1,5 @@
 //! Candidate-bound, offline subprocesses for guide and source-package checks.
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
@@ -10,18 +9,21 @@ pub fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+#[path = "help_capture_io.rs"]
+mod help_capture_io;
+
 pub struct Scratch(pub PathBuf);
 
 impl Scratch {
     pub fn new(label: &str) -> Result<Self, String> {
         let parent = std::env::temp_dir();
-        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        help_capture_io::ensure_parent(&parent)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
+            .map_err(|error| format!("scratch nonce clock relative to UNIX epoch: {error}"))?
             .as_nanos();
         let root = parent.join(format!("ripr-{label}-{}-{nonce}", std::process::id()));
-        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        help_capture_io::create_root(&root)?;
         Ok(Self(root))
     }
 }
@@ -54,23 +56,18 @@ pub(super) fn capture_with_cleanup(
     let scratch = Scratch::new("help-command")?;
     let stdout = scratch.0.join("stdout");
     let stderr = scratch.0.join("stderr");
-    let exclusive = |path: &Path| {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-    };
     command
         .stdin(Stdio::null())
-        .stdout(exclusive(&stdout).map_err(|e| e.to_string())?)
-        .stderr(exclusive(&stderr).map_err(|e| e.to_string())?);
+        .stdout(help_capture_io::exclusive_capture(&stdout)?)
+        .stderr(help_capture_io::exclusive_capture(&stderr)?);
     #[cfg(unix)]
     if group {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let mut child =
-        ripr::process_owner::OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
+    let spawn_context = help_capture_io::spawn_context(&command, &scratch.0);
+    let mut child = ripr::process_owner::OwnedProcess::spawn(command)
+        .map_err(|error| help_capture_io::io_error(&spawn_context, &scratch.0, error))?;
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -108,25 +105,10 @@ pub(super) fn capture_with_cleanup(
             }
         }
     };
-    let read = |path: &Path| -> Result<Vec<u8>, String> {
-        const CAP: u64 = 4 * 1024 * 1024;
-        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-        let mut bytes = Vec::new();
-        file.take(CAP + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() as u64 > CAP {
-            return Err(format!(
-                "{} exceeded the {CAP}-byte capture cap",
-                path.display()
-            ));
-        }
-        Ok(bytes)
-    };
     Ok(Output {
         status,
-        stdout: read(&stdout)?,
-        stderr: read(&stderr)?,
+        stdout: help_capture_io::read_capture(&stdout)?,
+        stderr: help_capture_io::read_capture(&stderr)?,
     })
 }
 

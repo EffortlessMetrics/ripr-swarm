@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 6: `parse_self_compare(\"1\") == parse_self_compare(\"1\")` compares the owner with itself, so every edit passes. The spec says relational_check and weakly_exposed; ripr today credits exposed, a false exposed verdict the spec's rule 1 removes.",
+  "reasoning": "RIPR-SPEC-0238 example 6: `parse_self_compare(\"1\") == parse_self_compare(\"1\")` compares the owner with itself, so every edit passes. The spec says relational_check and weakly_exposed; ripr today credits exposed, a false exposed verdict the spec's rule 1 removes. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",

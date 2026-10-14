@@ -1,0 +1,9 @@
+diff --git a/src/statement.ts b/src/statement.ts
+index 0000000..1111111 100644
+--- a/src/statement.ts
++++ b/src/statement.ts
+@@ -1,3 +1,3 @@
+ export function statementTotals(days: number): { days: number; fee: number } {
+-  return { days, fee: days * 2 };
++  return { days, fee: days * 3 };
+ }

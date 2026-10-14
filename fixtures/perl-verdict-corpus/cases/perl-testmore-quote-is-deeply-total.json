@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testmore-quote-is-deeply-total",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-quote-is-deeply-total.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 48
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "testmore_is_deeply_whole_hash",
+  "hard_case": "is_deeply compares the whole returned hash across several lines; the producer leaves observed_sink empty for the hash-field change, so ripr reads the strong exact oracle as observation_unconfirmed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "$quote{total} = $quote{shipping} - $quote{subtotal};",
+        "mutated_line": "$quote{total} = $quote{shipping} - $quote{subtotal};",
+        "outcome": "tests_failed",
+        "failing_test": "t/qualified.t: quote adds shipping to the discounted subtotal",
+        "equivalence_review": "not equivalent: total becomes -85"
+      },
+      {
+        "replacement": "$quote{total} = $quote{subtotal};",
+        "mutated_line": "$quote{total} = $quote{subtotal};",
+        "outcome": "tests_failed",
+        "failing_test": "t/qualified.t: quote adds shipping to the discounted subtotal",
+        "equivalence_review": "not equivalent: shipping is dropped from the total"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is_deeply pins subtotal, shipping and total, so any change to how total is computed fails the test. Spec cells: RIPR-SPEC-0064 hash_or_object_field, #5498 observation_unconfirmed.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-quote-is-deeply-total.json",
+    "sha256": "f1ea355e9890d43064ab4f8a0d3d7122c69d7f8ed73426607d2466a4bfac377a",
+    "provenance": "producer"
+  }
+}

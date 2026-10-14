@@ -1,0 +1,117 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/inequality_struct_assertion_not_exact/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:12ad0a2a904c591cde5c60253f49e97477d46072975d6500aca11538256c5d5a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:a4a69e05",
+      "canonical_gap_id": "gap:rust:src/lib.rs:build:field_construction:field_construction:retries_retries+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:build:field_construction:field_construction:retries_retries+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "build",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "retries_retries+1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:a4a69e05",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "retries: retries + 1"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach build: build_is_not_nine_retries"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: retries: retries + 1"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only weak oracle found, such as a broad relational assertion or non-empty check"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach build: build_is_not_nine_retries", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: retries: retries + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only weak oracle found, such as a broad relational assertion or non-empty check", "local flow reaches constructed field: retries: retries + 1 (line 8)", "related test src/lib.rs:17 build_is_not_nine_retries uses weak whole object equality oracle: assert_ne!(build(3), Config { retries: 9 });", "source assertion argument value 9 at line 18", "source function argument value retries = 3 at line 18", "missing discriminator retries: retries + 1: No field-value assertion observes the constructed field: retries: retries + 1"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"retries: retries + 1","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: retries: retries + 1", "Only weak oracle found, such as a broad relational assertion or non-empty check", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach build: build_is_not_nine_retries"],
+      "missing": ["Missing discriminator value: retries: retries + 1", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "18": "assert_ne!(build(3), Config { retries: 9 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 18,
+            "value": "9",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "retries = 3",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "retries: retries + 1",
+            "reason": "No field-value assertion observes the constructed field: retries: retries + 1",
+            "flow_sink": {"kind":"struct_field","text":"retries: retries + 1","line":8}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 18,
+          "value": "9",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "retries = 3",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "retries: retries + 1",
+          "reason": "No field-value assertion observes the constructed field: retries: retries + 1",
+          "flow_sink": {"kind":"struct_field","text":"retries: retries + 1","line":8}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "build_is_not_nine_retries",
+          "file": "src/lib.rs",
+          "line": 17,
+          "oracle_strength": "weak",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_ne!(build(3), Config { retries: 9 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

@@ -38,6 +38,27 @@ that — it contains the short predicate, not the long `before`.
 The default `--format human` digest is a different contract: it shows one
 selected finding, collapses and truncates for width, and routes the reader here.
 
+### Printable Unicode source
+
+The exhaustive source-fragment budget is 180 display cells including the
+10-cell label or continuation indent. Printable Unicode wraps between extended
+grapheme clusters: CJK characters use two cells, a combining accent stays with
+its letter, and a joined emoji stays intact. The source payload keeps the
+existing 170-cell budget on every original line, including later lines that
+start at the left margin. A single cluster wider than the budget stays intact
+as an exception so wrapping always preserves the source and makes progress.
+
+The literal CLI cases in `crates/ripr/tests/cli_smoke/source_unicode.rs` exercise
+the same owner with CJK, combining accents, emoji and ASCII, and the public
+finding renderer checks the `before` and `expr` branches. Stripping each label
+and continuation indent must reproduce the original source bytes. Expectations
+are literal boundaries, independent of the renderer's width helpers (#7595).
+
+This is the fixed source-fragment policy, not terminal-width discovery (#7442).
+Tabs keep their previous chunking cost; tab stops and final control escaping
+can expand displayed width. Terminal/font differences and other human sections
+are outside this bound.
+
 ## Must Not
 
 - Must not render the `before`/`after` expression at full source width; a 400+

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6c3b406..e52aaf7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,7 +18,7 @@
+ }
+ 
+ pub fn render_row(name: &str, score: u32) -> String {
+-    format!("{name}: {}", score + 1)
++    format!("{name}: {}", 1 + score)
+ }
+ 
+ pub fn render_report(title: &str, scores: &[u32]) -> String {

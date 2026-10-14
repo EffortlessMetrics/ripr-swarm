@@ -1,0 +1,9 @@
+diff --git a/lib/Checkout.pm b/lib/Checkout.pm
+--- a/lib/Checkout.pm
++++ b/lib/Checkout.pm
+@@ -5,4 +5,4 @@
+ sub total_cents {
+     my ($price_cents, $quantity) = @_;
+-    return $quantity * $price_cents;
++    return $price_cents * $quantity;
+ }

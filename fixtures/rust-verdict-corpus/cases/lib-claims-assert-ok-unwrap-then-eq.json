@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-claims-assert-ok-unwrap-then-eq",
+  "subject_id": "authored-lib-claims",
+  "diff": "cases/lib-claims-assert-ok-unwrap-then-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 22
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "claims_assert_ok_unwrap_then_assert_eq",
+  "hard_case": "`let q = assert_ok!(checked_div(17, 5)); assert_eq!(q, 3);` is a pinned value, but ripr flags the claims macro unresolved and reports reachable_unrevealed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "a / b + 1",
+        "mutated_line": "Ok(a / b + 1)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::division",
+        "equivalence_review": "not equivalent: checked_div(17,5) = Ok(4) instead of Ok(3)"
+      },
+      {
+        "replacement": "(a + b - 1) / b",
+        "mutated_line": "Ok((a + b - 1) / b)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::division",
+        "equivalence_review": "not equivalent: checked_div(17,5) = Ok(4) (ceiling) instead of Ok(3)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_ok! returns the Ok payload and the following std assert_eq! pins it to 3, so both arithmetic mutants fail.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

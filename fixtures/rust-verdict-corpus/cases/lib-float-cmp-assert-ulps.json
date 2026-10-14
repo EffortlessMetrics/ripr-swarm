@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-float-cmp-assert-ulps",
+  "subject_id": "authored-lib-float",
+  "diff": "cases/lib-float-cmp-assert-ulps.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "float_cmp_assert_approx_eq_ulps",
+  "hard_case": "float_cmp::assert_approx_eq!(f64, a, b, ulps = 2) is read as unknown/none, so a strict ulps oracle is only weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.iter().skip(1).sum::<f64>()",
+        "mutated_line": "xs.iter().skip(1).sum::<f64>() / xs.len() as f64",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mean_of_three",
+        "equivalence_review": "not equivalent: mean([1,2,4]) = 2.0 instead of 2.333"
+      },
+      {
+        "replacement": "xs.iter().map(|x| x * x).sum::<f64>()",
+        "mutated_line": "xs.iter().map(|x| x * x).sum::<f64>() / xs.len() as f64",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mean_of_three",
+        "equivalence_review": "not equivalent: mean([1,2,4]) = 7.0 instead of 2.333"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The float-cmp ulps = 2 comparison is near-exact, so any change to the sum is caught.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,534 @@
+# Spec-example coverage ledger for the TypeScript verdict corpus
+# (RIPR-SPEC-0245, using the RIPR-SPEC-0219 ledger contract).
+#
+# Every spec with numbered `## Acceptance Examples` items is listed here as
+# in or out of scope; `cargo xtask verdict-corpus validate --language
+# typescript` fails when one is missing, so a new spec cannot leave the
+# denominator silently. In scope means the examples describe TypeScript
+# analyzer verdict, oracle, probe or test-shape behavior that a corpus case
+# (a TypeScript diff plus runtime mutant truth from the subject's own tests)
+# can label: RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
+# RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256 and RIPR-SPEC-0258. An in-scope example a case cannot label is waived with a
+# reason; waived examples are accounted for, never covered. No example is
+# waived today: every in-scope example has a case, and a new spec's
+# uncovered examples stay visible as uncovered. Every RIPR-SPEC-0243 example has a case:
+# `jest-spec0243-ex33-two-files-one-mocked` labels example 33 (#7099),
+# `jest-spec0243-ex30-factory-db` example 30's non-literal `db`, and the
+# `nodetest-spec0243-ex34-*` and `-ex35-*` cases change the message their
+# payload pins (the older `nodetest-currency-throws-regex` and
+# `nodetest-charge-rejects-message` keep it unchanged, so they cite neither).
+# Case ids containing `spec0234` were named before the TypeScript rules were
+# renumbered; they cite today's RIPR-SPEC-0243.
+#
+# `floor` is the covered-example count `verdict-corpus check` protects. Raise
+# it when coverage grows; lowering it is a reviewed edit with a reason.
+
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 111
+
+# LSP Repair Packet Command
+[[spec]]
+id = "RIPR-SPEC-0077"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# LSP Top-Limitation Command
+[[spec]]
+id = "RIPR-SPEC-0078"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Canonical Receipt Command Contract
+[[spec]]
+id = "RIPR-SPEC-0079"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Route-Quality Standalone Report
+[[spec]]
+id = "RIPR-SPEC-0080"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# LSP Receipt-Status Command
+[[spec]]
+id = "RIPR-SPEC-0081"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Preview-Language Disclosure
+[[spec]]
+id = "RIPR-SPEC-0082"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Check No-Scope Disclosure
+[[spec]]
+id = "RIPR-SPEC-0083"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Default Base Resolution
+[[spec]]
+id = "RIPR-SPEC-0084"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# All-No-Path Disclosure
+[[spec]]
+id = "RIPR-SPEC-0090"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Pilot Artifact Size Bound
+[[spec]]
+id = "RIPR-SPEC-0091"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Disclose Unanalyzed Working Tree When Using `--base`
+[[spec]]
+id = "RIPR-SPEC-0112"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Honest `no_static_path` Messaging
+[[spec]]
+id = "RIPR-SPEC-0113"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Rust Transitive-Reach Limitation
+[[spec]]
+id = "RIPR-SPEC-0114"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust Transitive-Reach Witness
+[[spec]]
+id = "RIPR-SPEC-0115"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# `check --worktree` Mode
+[[spec]]
+id = "RIPR-SPEC-0116"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rust Macro-Reach Limitation
+[[spec]]
+id = "RIPR-SPEC-0117"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust Integration Public-API Path Limitation
+[[spec]]
+id = "RIPR-SPEC-0118"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust Direct Test Macro-Call Limitation
+[[spec]]
+id = "RIPR-SPEC-0119"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust Macro-Wrapped Assertion Limitation
+[[spec]]
+id = "RIPR-SPEC-0120"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Bounded Human Check Output
+[[spec]]
+id = "RIPR-SPEC-0122"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Targeted Rust Rerun
+[[spec]]
+id = "RIPR-SPEC-0123"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# LSP Diagnostic Delivery Stability
+[[spec]]
+id = "RIPR-SPEC-0124"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Rust missing-discriminator evidence fixtures
+[[spec]]
+id = "RIPR-SPEC-0125"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# LSP Diagnostic Code Catalog
+[[spec]]
+id = "RIPR-SPEC-0127"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Retired active-goal authority audit placeholder
+[[spec]]
+id = "RIPR-SPEC-0128"
+scope = "out"
+reason = "repository policy placeholder"
+
+# Assertion-Shaped Owner Guidance
+[[spec]]
+id = "RIPR-SPEC-0133"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Stable Cross-Platform Path Text
+[[spec]]
+id = "RIPR-SPEC-0170"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rust repair-trust route-yield ladder
+[[spec]]
+id = "RIPR-SPEC-0178"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Local result-bound usefulness feedback receipts
+[[spec]]
+id = "RIPR-SPEC-0179"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Governed identity registry and compatibility map
+[[spec]]
+id = "RIPR-SPEC-0182"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Typed public command catalog and parser/alias parity
+[[spec]]
+id = "RIPR-SPEC-0184"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# CLI analysis progress on stderr
+[[spec]]
+id = "RIPR-SPEC-0185"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rich command metadata projected into human help and inventories
+[[spec]]
+id = "RIPR-SPEC-0187"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Windows trailing-component root disclosure
+[[spec]]
+id = "RIPR-SPEC-0188"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Typed workflow catalog and bounded `help workflow` discovery
+[[spec]]
+id = "RIPR-SPEC-0189"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Versioned machine discovery via `ripr help --json`
+[[spec]]
+id = "RIPR-SPEC-0190"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# RepairCardV1 projected from shared repair authorities
+[[spec]]
+id = "RIPR-SPEC-0192"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard detail references and overflow disclosure
+[[spec]]
+id = "RIPR-SPEC-0193"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard as the default CLI agent handoff
+[[spec]]
+id = "RIPR-SPEC-0194"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# Repair-attempt store identity and resolver
+[[spec]]
+id = "RIPR-SPEC-0195"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard context measurement and default budget ratification
+[[spec]]
+id = "RIPR-SPEC-0196"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# RepairCard projection through standard LSP
+[[spec]]
+id = "RIPR-SPEC-0198"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Rust judged-panel analyzer feedback ledger
+[[spec]]
+id = "RIPR-SPEC-0199"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Blind journey prompt, intervention and transcript receipt contract
+[[spec]]
+id = "RIPR-SPEC-0200"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Shared behavior-evidence witness adapters and parity corpus
+[[spec]]
+id = "RIPR-SPEC-0204"
+scope = "out"
+reason = "parity between two internal evidence paths; no runtime-truth verdict"
+
+# Blind journey execution consumer
+[[spec]]
+id = "RIPR-SPEC-0205"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Installed Rust journey fixture
+[[spec]]
+id = "RIPR-SPEC-0207"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# LSP work-done progress consumes shared analysis stages
+[[spec]]
+id = "RIPR-SPEC-0208"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Installed Python journey fixture
+[[spec]]
+id = "RIPR-SPEC-0209"
+scope = "out"
+reason = "installed-package journey fixture (install, then run), not an analyzer verdict"
+
+# Installed TypeScript journey fixture
+[[spec]]
+id = "RIPR-SPEC-0210"
+scope = "out"
+reason = "installed-package journey fixture (install, then run), not an analyzer verdict"
+
+# MCP workspace session — status, refresh, bounded gap lists, and evidence resources
+[[spec]]
+id = "RIPR-SPEC-0211"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# npm Native Launcher Boundary
+[[spec]]
+id = "RIPR-SPEC-0212"
+scope = "out"
+reason = "npm launcher packaging, not an analyzer verdict"
+
+# MCP repair transaction projection — prepare, attempt reads, and receipt status
+[[spec]]
+id = "RIPR-SPEC-0214"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# MCP repair card projection
+[[spec]]
+id = "RIPR-SPEC-0215"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# Matched RIPR intervention-study preregistration
+[[spec]]
+id = "RIPR-SPEC-0216"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no edit with runtime mutant truth to label"
+
+# Repair-attempt discovery selection and fresh-process resume
+[[spec]]
+id = "RIPR-SPEC-0217"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# VS Code shared repair-attempt status and active-attempt resolution
+[[spec]]
+id = "RIPR-SPEC-0220"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Examined-test miss evidence
+[[spec]]
+id = "RIPR-SPEC-0224"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Whole-value equality credit for constructed fields
+[[spec]]
+id = "RIPR-SPEC-0225"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Findings on one line agree on shared facts
+[[spec]]
+id = "RIPR-SPEC-0226"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Result-side oracles (`is_err`, `is_ok`, `unwrap_err`, `should_panic`)
+[[spec]]
+id = "RIPR-SPEC-0227"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust field writes are probed and observed, not unknown
+[[spec]]
+id = "RIPR-SPEC-0228"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Match-arm selection names the unselected arm
+[[spec]]
+id = "RIPR-SPEC-0229"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Rust oracle kind and strength admission
+[[spec]]
+id = "RIPR-SPEC-0231"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Statically contradicted exact-value oracles
+[[spec]]
+id = "RIPR-SPEC-0233"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Perl fact-packet classification
+[[spec]]
+id = "RIPR-SPEC-0235"
+scope = "out"
+reason = "Perl analyzer rules; a TypeScript case cannot label them"
+
+# Seam grip classification order: opaque and activation_unknown
+[[spec]]
+id = "RIPR-SPEC-0236"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# Pilot seam ranking
+[[spec]]
+id = "RIPR-SPEC-0237"
+scope = "out"
+reason = "pilot presentation ordering, not an analyzer verdict"
+
+# Python oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "Python analyzer rules; a TypeScript case cannot label them"
+
+# `ripr plus` last-good receipt
+[[spec]]
+id = "RIPR-SPEC-0239"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# TypeScript oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0243"
+scope = "in"
+
+# TypeScript corpus oracle amendments
+[[spec]]
+id = "RIPR-SPEC-0246"
+scope = "in"
+
+# TypeScript literal matcher strength
+[[spec]]
+id = "RIPR-SPEC-0247"
+scope = "in"
+
+# TypeScript dropped additive term
+[[spec]]
+id = "RIPR-SPEC-0248"
+scope = "in"
+
+# TypeScript instance class pin
+[[spec]]
+id = "RIPR-SPEC-0249"
+scope = "in"
+
+# TypeScript match-object field pin
+[[spec]]
+id = "RIPR-SPEC-0250"
+scope = "in"
+
+# TypeScript default-import owner local
+[[spec]]
+id = "RIPR-SPEC-0251"
+scope = "in"
+
+# TypeScript node:test context assert
+[[spec]]
+id = "RIPR-SPEC-0252"
+scope = "in"
+
+# Local collect-all policy scans
+[[spec]]
+id = "RIPR-SPEC-0253"
+scope = "out"
+reason = "local repository scan/report command contract, not an analyzer verdict"
+
+# TypeScript lookup-table entry
+[[spec]]
+id = "RIPR-SPEC-0254"
+scope = "in"
+
+# TypeScript mock passed in an object argument
+[[spec]]
+id = "RIPR-SPEC-0256"
+scope = "in"
+
+# TypeScript committed snapshot entry
+[[spec]]
+id = "RIPR-SPEC-0258"
+scope = "in"
+
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
+# TypeScript Preview Static Facts
+[[unmeasured]]
+id = "RIPR-SPEC-0027"
+reason = "acceptance examples are prose, not numbered; TypeScript corpus cases cite the spec in their reasoning"
+
+# TypeScript Bounded Re-Export Test Discovery
+[[unmeasured]]
+id = "RIPR-SPEC-0095"
+reason = "acceptance examples are prose, not numbered; ts-vitest-line-total-reexport cites the spec in its reasoning"
+
+# TypeScript toThrow Exact-Payload Oracle Upgrade
+[[unmeasured]]
+id = "RIPR-SPEC-0097"
+reason = "acceptance examples are prose, not numbered; ts-vitest-add-line-message cites the spec in its reasoning"
+
+# TypeScript Exposed Observation Guard
+[[unmeasured]]
+id = "RIPR-SPEC-0098"
+reason = "acceptance examples are prose, not numbered; ts-nodetest-audit-log cites the spec in its reasoning"

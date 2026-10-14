@@ -127,6 +127,13 @@ functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
 
+The suspect prefilter ignores `mod` declarations inside comments and string
+literals (#6979); those mentions cannot spare an unchanged test file the
+authoritative module walk. Literal `#[path]` and `include!` hints still retain
+their conservative over-approximation, and an incomplete walk still keeps
+the file. Ordinary `cfg(test)` declarations and renamed literal-path modules
+retain their eligible tests, including nested fixture directories.
+
 At item granularity, the typed `FunctionSourceRole` model (#3531)
 classifies each function: `Production`, `TestAttribute` (exact
 supported test-defining attribute; registers an executable
@@ -200,6 +207,29 @@ seeding, repo seam inventory, LSP scope partition) consumes the same
 validated grant, so the degradation is identical everywhere, and the
 classified-seam caches bump their schema generations so pre-#3634
 entries cannot serve classifications that bypass the validation.
+
+The classified workspace key also binds raw Cargo configuration used by that
+metadata premise: both Cargo configuration filenames at the selected root and
+its ancestors, effective Cargo-home configuration, repository toolchain files,
+and the Cargo/toolchain command environment. Creation, edits, renames, deletion,
+and malformed bytes participate independently of HEAD and Rust source bytes.
+Cargo-home discovery follows Cargo's canonical resolver, including OS-home
+fallback for absent or empty environment values. Relative home paths resolve at
+the metadata command's selected root, independently of the RIPR caller's cwd.
+Only genuinely unavailable discovery withholds classified provenance and reuse;
+successful fallback still binds the discovered home's configuration bytes.
+Directory and parent authority use canonical paths when filesystem resolution
+succeeds, including Windows verbatim spelling. Failed resolution conservatively
+preserves the original spelling; the resolved home's parent never substitutes for
+the original home's configuration-relative parent. Distinct homes and symlink
+aliases with different parent contexts stay distinct. Raw command-environment
+values remain bound separately;
+changing the spelling of an actual environment value need not preserve the key.
+An unreadable, non-regular, or over-budget configuration identity cannot admit or
+publish full or compact classified evidence. Per-file parser facts remain usable;
+prior entries are preserved so reverting the configuration restores warm reuse.
+This identity does not apply the separate Anyhow eligibility policy or establish
+an atomic snapshot under concurrent filesystem changes.
 
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
@@ -288,6 +318,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Comment/string module mentions (#6979): an unchanged orphan named only
+  inside a block comment, nested block comment, doc comment, plain string or
+  raw string supplies no related test; real `cfg(test)` and renamed
+  literal-path modules retain their test, and incomplete walks retain credit.
 - Unresolved `#[path]` routes (#4435): a file reached only through a
   `cfg_attr` path target, its child, or the `cfg_attr`-only default
   resolution records the limitation naming the declaration, while a

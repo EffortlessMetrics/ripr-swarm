@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
+import { stageGenuineActionableQueue } from './actionableQueueFixture';
 
 function runGit(workspacePath: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -176,6 +177,11 @@ async function main() {
     const clipboardCapturePath = path.join(userDataPath, 'ripr-test-clipboard.txt');
     fs.rmSync(clipboardCapturePath, { force: true });
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
+    if (workspaceTrustMode === 'trusted' && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
+      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
+        path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
+      );
+    }
 
     // VS Code parses workspace trust switches before the workspace path.
     // This affects only the isolated extension-test host; production keeps

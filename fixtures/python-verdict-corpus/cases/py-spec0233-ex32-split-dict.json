@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 32: test_a asserts only the timeout key and test_b calls build_split() beside an unrelated whole-dict assert, so changing the port passes. The spec says weakly_exposed; ripr today credits exposed, a false exposed verdict that joins one test's identity with another's whole-collection gate.",
+  "reasoning": "RIPR-SPEC-0238 example 32: test_a asserts only the timeout key and test_b calls build_split() beside an unrelated whole-dict assert, so changing the port passes. The spec says weakly_exposed; ripr today credits exposed, a false exposed verdict that joins one test's identity with another's whole-collection gate. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",

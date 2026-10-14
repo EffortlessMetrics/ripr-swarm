@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-tokio-multi-thread-timeout-is-ok",
+  "subject_id": "authored-lib-tokio",
+  "diff": "cases/lib-tokio-multi-thread-timeout-is-ok.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "tokio_multi_thread_timeout_is_ok",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "1u64 << (i + 1)",
+        "mutated_line": "(1..=n).map(|i| 1u64 << (i + 1)).sum()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: backoff_total(3) = 28 instead of 14"
+      },
+      {
+        "replacement": "i as u64",
+        "mutated_line": "(1..=n).map(|i| i as u64).sum()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: backoff_total(3) = 6 instead of 14"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "In the multi_thread #[tokio::test], assert!(timeout(..).await.is_ok()) only checks completion, never the returned value.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

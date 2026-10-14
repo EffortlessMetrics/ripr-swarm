@@ -50,10 +50,44 @@ ripr_prepare_repair     → readiness-gated in-memory repair transaction
 ripr_get_repair_attempt → one session or durable attempt, read-only
 ripr_get_receipt_status → one attempt's receipt state, read-only
 ripr_get_repair_card    → one item's bounded repair card, read-only
+ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 ```
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+## Durable attempt discovery
+
+`ripr_list_repair_attempts` reads the default durable CLI attempt store through
+its canonical inventory/validation authority; it works before `ripr_refresh`.
+It never creates a missing store. MCP in-memory transactions are excluded:
+their IDs come from `ripr_prepare_repair`.
+The shared inventory includes manifest-bearing directories; an unpublished
+reservation without `attempt.json` is excluded. A manifest-bearing directory
+whose name cannot be represented as UTF-8 refuses the entire inventory with
+`attempt_invalid`, preserving identity rather than returning lossy or partial rows.
+
+The structured `ripr-mcp-repair-attempt-list-v1` document returns `inventory_id`,
+root identity, observed repository HEAD, `total`, `valid`, `invalid`, `omitted`,
+`items`, `page`, and continuation routes. Valid rows carry `attempt_id`, state,
+seam, repository HEAD, shared live currentness and receipt status, and links to
+the existing detail reads. Invalid rows carry only directory identity and a
+bounded `attempt_invalid` refusal; unvalidated manifest fields are never facts.
+`omitted` counts all rows outside this page, including earlier pages.
+
+Rows sort by identity/directory name, never modification time. `offset` defaults
+to zero; optional positive `limit` is capped at 256 rows and the full structured
+MCP envelope byte budget. Follow `continuation.next_page.arguments`, which pins
+`inventory_id` and advances by the number actually returned. The identity binds
+root, observed HEAD and all summary rows. Changed observations return typed
+`stale_inventory` with `current_inventory_id`; restart at offset zero without
+the old identity. A missing store is an empty inventory, an unavailable root is
+`workspace_unavailable`, and a store-level read refusal is `attempt_invalid`.
+
+This is a live observation, not an atomic filesystem snapshot. Output is bounded;
+canonical validation still reads the whole store. Receipt status retains the
+same currentness and completeness rules as `ripr_get_receipt_status`. Discovery
+runs no tests or verification and grants no execution or edit authority.
 
 ## What it exposes
 
@@ -61,12 +95,13 @@ a time through the tool or the resource.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (no arguments) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_repair_card` |
+| Tool (`inventory_id?`, `offset?`, `limit?`) | `ripr_list_repair_attempts` |
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
@@ -129,31 +164,55 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
+Gap-list responses use `ripr-mcp-gap-list-v2`, including typed refusals.
+The prior v1 success schema forbids unknown top-level properties, so the new
+`filtered` and `filters` fields require this version change. Strict v1 readers
+must rediscover `tools/list`, accept v2 explicitly and validate against the
+advertised `outputSchema`; callers may still omit all filter arguments.
+Other MCP document versions are unchanged.
+
 `ripr_list_gaps` returns the snapshot's deterministic bounded working set:
-`total` / `eligible` / `selected` / `omitted` counts, selected and complete
+`total` / `eligible` / `selected` / `filtered` counts, selected and complete
 serialized bytes, every omitted identity with its reason, the
-snapshot/profile/budget identity and selection basis, and one small summary
-per selected item. Selection is the shared CLI/LSP diagnostic-budget
-authority over the snapshot's canonical items; eligibility is the producer's
-candidate-actionability predicate captured at projection time, so
-non-actionable items appear as disclosed profile-filtered omissions. The
-adapter never re-ranks,
+snapshot/profile/budget identity and selection basis, the echoed `filters`,
+and one small summary per selected item. Each summary carries
+`canonical_id`, exposure `class`, `language`, `file`, `line`, plus the
+commit-time repair-readiness projection (`repair_packet_ready` with its typed
+`repair_ineligibility` reason, `null` when ready) — the same
+`repair_packet_ready` fact the item's `ripr_get_gap` readiness block reports,
+so actionable items sort without one evidence call per candidate. Selection
+is the shared CLI/LSP diagnostic-budget authority over the snapshot's
+canonical items; eligibility is the producer's candidate-actionability
+predicate captured at projection time, so non-actionable items appear as
+disclosed profile-filtered omissions. The adapter never re-ranks,
 never truncates silently, and infers no business risk. Overflow is disclosed
 with reasons and the continuation route (`ripr_get_gap`). Pass `snapshot_id`
 to bind the read to a specific snapshot: a mismatched identity fails closed
 with `stale_snapshot` and the current identity.
 
+Optional `file`, `class`, `language`, and `repair_ready` narrow the stored
+selection over already-projected commit-time facts before paging
+(conjunctive): `file` matches exact, prefix, or trailing-segment paths after
+ignoring one leading `./` on both sides, `class` takes an exposure-class wire
+token (for example `exposed`), `language` takes a language wire string (for
+example `rust`), and `repair_ready: true` (or `false`) selects the
+commit-time readiness projection. `selected` stays the full stored-selection
+count while `filtered` counts the narrowed set the page walks; an unknown
+filter value is an empty disclosed page, not an error. Empty filter strings
+and non-boolean `repair_ready` values are Invalid Params.
+
 Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
-selected items in snapshot order, disclosed through the `page` window
+narrowed items in snapshot order, disclosed through the `page` window
 (`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
 Optional tool fields must be omitted to use their defaults: explicit `null`
-is invalid for `snapshot_id`, `offset`, and `limit` (#7314). The server
+is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
+`language`, and `repair_ready` (#7314). The server
 returns `-32602` Invalid Params naming the field with the same request ID;
 correct the argument or omit it and retry on the same connection.
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot
-identity, so a refresh between pages fails closed with `stale_snapshot`
+identity and the caller filters, so a refresh between pages fails closed with `stale_snapshot`
 instead of silently mixing snapshots; walking `next_offset` covers the
 selection exactly once. Pages are sized so the complete structured result
 (`structuredContent`, per the tool's advertised `outputSchema`) measures

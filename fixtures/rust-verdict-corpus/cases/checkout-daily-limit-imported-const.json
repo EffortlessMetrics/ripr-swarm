@@ -8,7 +8,7 @@
   },
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
-  "test_shape": "boundary_via_imported_const",
+  "test_shape": "boundary_via_module_path_const",
   "hard_case": null,
   "truth": {
     "state": "discriminated",
@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test asserts both sides of the boundary using the imported DAILY_LIMIT, so each boundary shift fails it. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0035, RIPR-SPEC-0040.",
+  "reasoning": "The test asserts both sides of the boundary using DAILY_LIMIT imported through config::DAILY_LIMIT from an inline module in the same file, so each boundary shift fails it. This case does not exercise cross-file constant resolution. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0035, RIPR-SPEC-0040.",
   "labeling_observation": {
     "ripr_commit": "b0c6ef6",
     "full_checkout_verdict": "gap",

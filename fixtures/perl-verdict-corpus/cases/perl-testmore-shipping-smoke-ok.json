@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testmore-shipping-smoke-ok",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-shipping-smoke-ok.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 23
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_ok_truthy_smoke",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "if (20 <= $weight) {",
+        "mutated_line": "if (20 <= $weight) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a 20 kg parcel pays 15"
+      },
+      {
+        "replacement": "if (30 < $weight) {",
+        "mutated_line": "if (30 < $weight) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a 25 kg parcel pays 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok(shipping_fee(25)) only checks that the fee is truthy; both fees (5 and 15) pass, so no boundary mutant fails. Spec cells: RIPR-SPEC-0064 smoke_ok/weak_smoke.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-shipping-smoke-ok.json",
+    "sha256": "cf6155c6842096c6c05508851d6bb720f2c7e0909c3ee7a20af1b85f11e5baae",
+    "provenance": "producer"
+  }
+}

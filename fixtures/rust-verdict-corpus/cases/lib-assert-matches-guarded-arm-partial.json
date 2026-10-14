@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-assert-matches-guarded-arm-partial",
+  "subject_id": "authored-lib-assert-matches",
+  "diff": "cases/lib-assert-matches-guarded-arm-partial.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_matches_guarded_pattern",
+  "hard_case": "ripr classifies the guarded `Ok(n) if n > 10` pattern as exact_value strong; the gap verdict is right only by accident.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "level * 4 + 4",
+        "mutated_line": "Ok(level * 4 + 4)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: bonus(3) returns 16 instead of 15 (still > 10)"
+      },
+      {
+        "replacement": "level * 2 + 3",
+        "mutated_line": "Ok(level * 2 + 3)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bonus_is_large_enough",
+        "equivalence_review": "not equivalent: bonus(3) returns 9 instead of 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The match guard `if n > 10` is a relational bound, so a +1 mutant still satisfies it while a halving mutant drops below 10.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

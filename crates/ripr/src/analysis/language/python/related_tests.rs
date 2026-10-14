@@ -8,6 +8,9 @@ use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, Relate
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod verify_command_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
     SyntacticCall,
@@ -84,6 +87,7 @@ pub(super) struct PythonRepairPlacement {
     pub(super) repair_action: &'static str,
     pub(super) suggested_test_file: String,
     pub(super) suggested_test_name: String,
+    pub(super) suggested_test_line: Option<usize>,
     pub(super) suggested_test_node_id: Option<String>,
     pub(super) verify_command: String,
     pub(super) verify_command_confidence: &'static str,
@@ -198,7 +202,7 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
             ))
         }
         "unittest" => {
-            let module = shell_quote_file_arg(&unittest_module_for_path(&path));
+            let module = shell_quote_file_arg(&unittest_module_for_path(&path)?);
             Some(format!(
                 "python -m unittest {module}.{}",
                 test.qualified_name
@@ -208,10 +212,15 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
     }
 }
 
-fn unittest_module_for_path(path: &str) -> String {
-    path.strip_suffix(".py")
-        .unwrap_or(path)
-        .replace(['/', '\\'], ".")
+fn unittest_module_for_path(path: &str) -> Option<String> {
+    let module_path = path.strip_suffix(".py").unwrap_or(path);
+    // unittest splits every dot as a module separator. A literal path dot
+    // can therefore select a different file, even when shell quoting is
+    // correct. Keep that unresolved identity out of verification routes.
+    if module_path.contains('.') {
+        return None;
+    }
+    Some(module_path.replace(['/', '\\'], "."))
 }
 
 /// Quote one path or module token for a POSIX shell.
@@ -240,10 +249,23 @@ pub(super) fn python_repair_placement(
     if !matches!(class, ExposureClass::WeaklyExposed) {
         return None;
     }
-    let candidate = related_candidates
+    let (candidate, verify_command) = related_candidates
         .iter()
-        .find(|candidate| candidate.relation.uses_oracle())?;
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .find_map(|candidate| {
+            verify_command_for_test(candidate.test).map(|command| (candidate, command))
+        })?;
     let path = normalized_path(&candidate.test.file);
+    // Public rows use bare names, so two classes/frameworks in one file can
+    // share the same file/name identity. Carry the selected source line only
+    // where consumers need it to distinguish those rows.
+    let suggested_test_line = related_candidates
+        .iter()
+        .filter(|other| {
+            other.test.name == candidate.test.name && normalized_path(&other.test.file) == path
+        })
+        .nth(1)
+        .map(|_| candidate.test.line);
     match candidate.test.framework {
         "pytest" => {
             let node = candidate.test.qualified_name.replace('.', "::");
@@ -252,8 +274,9 @@ pub(super) fn python_repair_placement(
                 repair_action: "strengthen_existing_test",
                 suggested_test_file: path,
                 suggested_test_name: candidate.test.name.clone(),
+                suggested_test_line,
                 suggested_test_node_id: Some(node_id),
-                verify_command: verify_command_for_test(candidate.test)?,
+                verify_command,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
             })
@@ -262,8 +285,9 @@ pub(super) fn python_repair_placement(
             repair_action: "strengthen_existing_test",
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
+            suggested_test_line,
             suggested_test_node_id: None,
-            verify_command: verify_command_for_test(candidate.test)?,
+            verify_command,
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
         }),
@@ -278,7 +302,16 @@ pub(super) fn related_test_relation(
     if let Some(class) = dunder_method_class(owner) {
         return dunder_method_relation(test, owner, class);
     }
-    if body_calls_owner(&test.body_text, owner) {
+    if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
+        return Some(PythonRelationKind::SyntacticCall);
+    }
+    // The bounded list oracle already owns a parsed direct-call operand.
+    // Preserve its identity for valid spacing/grouping that text calls miss.
+    if test.assertions.iter().any(|assertion| {
+        assertion.oracle_strength == OracleStrength::Strong
+            && super::oracles::unittest_list::calls_owner(&assertion.text, Some(test), owner)
+                == Some(true)
+    }) {
         return Some(PythonRelationKind::SyntacticCall);
     }
     if import_alias_calls_owner(test, owner) {
@@ -520,6 +553,17 @@ pub(super) fn test_may_reach_owner_class(
                 || imports_owner_class(import, owner, top)
                 || module_contains_owner(&import.source_module, owner)
         })
+}
+
+/// RIPR-SPEC-0238 rule 13: an exception assertion passed the owner as its
+/// callable (`assertRaisesRegex(KeyError, 'empty', parse, '')`) calls it.
+fn exception_assertion_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.assertions.iter().any(|assertion| {
+        assertion
+            .callable_call
+            .as_deref()
+            .is_some_and(|call| body_calls_owner(call, owner))
+    })
 }
 
 pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {
@@ -1379,12 +1423,24 @@ fn construct_result_calls_method(text: &str, open_paren_idx: usize, method: &str
 /// `imported == class` form is identity-bearing: a different class aliased *to* the
 /// owner's name (`from m import Other as OwnerClass`) refers to `Other`, not the
 /// owner, so it must not contribute a local.
-fn owner_class_locals(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<String> {
+pub(super) fn owner_class_locals(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> Vec<String> {
     let mut locals = Vec::new();
     for import in &test.imports {
         if import.imported == class
             && !import.alias.is_empty()
             && !locals.contains(&import.alias)
+            && !test_rebinds_import_alias(test, &import.alias)
+            // A second import of the same name rebinds it at module level.
+            && test
+                .imports
+                .iter()
+                .filter(|other| other.alias == import.alias)
+                .count()
+                == 1
             && import_module_may_be_owners(import, owner, &test.file)
         {
             locals.push(import.alias.clone());

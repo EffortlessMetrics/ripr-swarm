@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..1ae6ee4 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -81,7 +81,7 @@ sub clamp_qty {
+ 
+ sub gift_wrap_fee {
+     my ($items) = @_;
+-    return $items * 3;
++    return 3 * $items;
+ }
+ 
+ 1;

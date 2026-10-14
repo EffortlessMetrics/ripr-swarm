@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2145ef3..2c844ab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@
+     let mut acc: u32 = 0;
+     for (i, c) in s.chars().enumerate() {
+         let d = c.to_digit(10).ok_or(ParseError::BadDigit { pos: i })?;
+-        acc = acc * 10 + d;
++        acc = d + acc * 10;
+     }
+     Ok(acc)
+ }

@@ -787,7 +787,9 @@ fn inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions() -> Resul
                 ..Default::default()
             });
             let admitted = if removed {
-                super::classify::removed_type_bounds(Path::new("."), &[], &index, &changed).lines
+                let old = super::classify::old_source(&index, &changed);
+                super::classify::removed_type_bounds(Path::new("."), &[], old.as_deref(), &changed)
+                    .lines
             } else {
                 super::classify::added_type_bound_lines(&index, &changed)
             };
@@ -863,8 +865,9 @@ fn removed_inline_test_bound_preserves_old_test_exclusion() -> Result<(), String
                 files: BTreeMap::from([(changed.path.clone(), facts)]),
                 ..Default::default()
             });
+            let old = super::classify::old_source(&index, &changed);
             let admission =
-                super::classify::removed_type_bounds(Path::new("."), &[], &index, &changed);
+                super::classify::removed_type_bounds(Path::new("."), &[], old.as_deref(), &changed);
             assert!(
                 admission.lines[subject_index],
                 "old inline item did not reach declaration admission: {item}"

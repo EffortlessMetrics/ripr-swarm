@@ -48,6 +48,19 @@ The report should:
   cargo-mutants` returns an error instead of rendering
   "All imported runtime mutants matched a static seam." Vacuous all-matched
   wording is reserved for imports that actually contained mutant records;
+- disclose join provenance on stderr the way `ripr outcome` discloses
+  snapshot heads: when the repo-exposure snapshot carries a head SHA, name
+  the subject the join assumes; when the cargo-mutants JSON names a
+  different head, flag the mismatch; when either artifact lacks a head
+  (the usual cargo-mutants case), print that the join cannot confirm the
+  pair came from the same repository or adjacent commits. This does not
+  refuse a coincidental file/line join;
+- disclose on the default Markdown Summary, and in `--help`, that a
+  `mutants.json`-only import (or any import whose records have no
+  observed runtime outcome) still counts those never-executed candidates
+  in `matched_total`. The rows keep `unknown` / `no_runtime_data`; the
+  Summary must not read as observed runtime corroboration. This does not
+  change the `matched_total` metric or refuse the join;
 - summarize static/runtime agreement in advisory buckets;
 - label imported static/runtime agreement as confidence context without changing
   static classifications;
@@ -224,6 +237,42 @@ recognized, and it does not render "All imported runtime mutants matched
 a static seam."
 ```
 
+### Cross-subject file/line joins disclose missing provenance
+
+```text
+Given a repo-exposure snapshot with no artifact.repository.head,
+and a cargo-mutants record from another subject that happens to sit on
+the same file:line as a static seam,
+when ripr calibrate cargo-mutants runs,
+then the record may still join by file_line (including a high-signal
+confidence label), and stderr warns that at least one artifact does not
+carry a head SHA so both artifacts must be from the same repository and
+adjacent commits.
+```
+
+### Mutants.json-only imports disclose the unexecuted denominator
+
+```text
+Given a repo-exposure snapshot,
+and --mutants-json is a directory or file that yields mutant records with
+no observed runtime outcome (mutants.json with no outcomes.json),
+when ripr calibrate cargo-mutants runs,
+then matched_total still counts the joined candidates, the default
+Markdown Summary (not only --format json) says the import has no
+observed runtime outcomes, and --help says a mutants.json-only import
+counts unexecuted candidates in matched_total.
+```
+
+### Headed snapshots name the assumed subject
+
+```text
+Given a repo-exposure snapshot that carries a full repository head SHA,
+and cargo-mutants JSON that does not,
+when ripr calibrate cargo-mutants runs,
+then stderr names that head as the subject the join assumes and still
+warns that the mutants file does not carry a head SHA.
+```
+
 ### Span containment picks the seam holding the mutated token
 
 ```text
@@ -299,6 +348,23 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::zero_recognized_mutant_records_fail_closed_instead_of_all_matched`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::empty_import_markdown_does_not_claim_all_mutants_matched`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::matched_import_still_may_say_all_imported_mutants_matched`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::foreign_same_line_mutant_still_joins_by_file_line`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::mutant_on_a_file_absent_from_the_snapshot_stays_unmatched`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_warns_when_neither_artifact_has_a_head`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_names_the_snapshot_head_when_mutants_have_none`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_flags_different_heads`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_reports_matching_heads_as_agreement`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_warns_when_only_mutants_name_a_head`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_a_placeholder_as_no_head`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head`
+- `crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head`
+- `crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::mutants_json_only_import_discloses_unexecuted_matched_total`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::mixed_import_names_how_many_matched_rows_lack_outcomes`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::unmatched_unknown_does_not_claim_matched_total_includes_it`
+- `crates/ripr/tests/cli_smoke.rs::calibrate_mutants_json_only_directory_discloses_unexecuted_denominator`
+- `crates/ripr/src/cli/help/reports.rs::tests::calibrate_help_discloses_mutants_json_only_denominator`
+- `crates/ripr/tests/cli_help_hierarchy.rs::calibrate_help_discloses_mutants_json_only_denominator`
 - `crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::parser_still_returns_empty_for_json_with_no_mutant_records`
 - `crates/ripr/src/cli/commands.rs::tests::calibrate_zero_recognized_mutant_records_fails_closed`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_refuses_a_same_line_seam_that_does_not_contain_the_mutant`

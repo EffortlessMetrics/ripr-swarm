@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..65f6d40 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -49,7 +49,7 @@ sub net_change {
+ sub close_month {
+     my (@amounts) = @_;
+     my $sum = summary(@amounts);
+-    return $sum->{total} >= 0 ? 'balanced' : 'short';
++    return 0 <= $sum->{total} ? 'balanced' : 'short';
+ }
+ 
+ 1;
