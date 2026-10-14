@@ -493,9 +493,11 @@ impl TypeScriptAssertion {
         matcher == "toBe"
     }
 
-    /// AVA `t.is` compares objects by identity (`Object.is`).
+    /// Receiver assertions that compare objects by identity: AVA `t.is`
+    /// (`Object.is`) and tape / node-style `t.strictEqual` (`===`).
+    /// `t.equal` and `t.deepEqual` stay false.
     pub(crate) fn ava_compares_reference_identity(matcher: &str) -> bool {
-        matcher == "is"
+        matches!(matcher, "is" | "strictEqual")
     }
 
     /// `node:assert` `strictEqual` compares with `===`.

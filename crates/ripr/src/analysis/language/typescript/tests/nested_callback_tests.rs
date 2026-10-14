@@ -318,6 +318,38 @@ fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String
     let finding = settings_finding("identity-copy-colliding-is", colliding, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
+    // Tape / node-style `t.strictEqual` is identity on the AVA receiver path;
+    // `t.deepEqual` is structural `exact_value` and must not pin.
+    let ava_strict = "import { ready } from \"../src/settings\";\ntest(\"ready\", (t) => {\n  const cfg = { ok: true };\n  t.strictEqual(ready(cfg), cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), ava_strict);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "strictEqual")
+        .ok_or_else(|| "expected a t.strictEqual assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::ExactValue);
+    assert!(
+        assertion.compares_reference_identity,
+        "t.strictEqual must pin identity, got {assertion:?}"
+    );
+    let finding = settings_finding("identity-copy-t-strictEqual", ava_strict, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    let ava_deep = "import { ready } from \"../src/settings\";\ntest(\"ready\", (t) => {\n  const cfg = { ok: true };\n  t.deepEqual(ready(cfg), cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), ava_deep);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "deepEqual")
+        .ok_or_else(|| "expected a t.deepEqual assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::ExactValue);
+    assert!(
+        !assertion.compares_reference_identity,
+        "t.deepEqual shares exact_value and must not pin identity, got {assertion:?}"
+    );
+    let finding = settings_finding("identity-copy-t-deepEqual", ava_deep, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
     // #7916 remains refused: a comment between `expect` and `.extend` is not
     // credited, so this PR must not loosen that guard to pass identity.
     let commented = "import { ready } from \"../src/settings\";\nexpect /* token */ .extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";
