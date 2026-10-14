@@ -1609,7 +1609,7 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         "fixtures/typescript-verdict-corpus/spec-coverage.toml"
     );
     assert!(
-        coverage.floor >= 103 && coverage.floor <= coverage.covered_examples,
+        coverage.floor >= 109 && coverage.floor <= coverage.covered_examples,
         "typescript ledger floor {} against {} covered",
         coverage.floor,
         coverage.covered_examples
