@@ -4,11 +4,12 @@ use crate::analysis::classify::{
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
-    fallible_literal_witness, getter_plainly_reads, has_same_test_boundary_oracle_pairing,
-    helper_only_reach, helper_pins_owner_call, infection_evidence_with_boundary_input,
-    local_flow_sinks, operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen,
-    package_prefix, propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    confidence_score, contains_as_whole_word, current_path_witness, direct_call_name,
+    fallible_check_receipt, fallible_literal_witness, getter_plainly_reads,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -760,7 +761,7 @@ impl ClassifiedProbeEvidence {
             refusal.is_analyzer_limit()
                 && refusal
                     .value_guard_subject()
-                    .is_none_or(|subject| body_contains_owner_call(subject, owner_name))
+                    .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
         };
         let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
             || discriminate.state != StageState::Yes)

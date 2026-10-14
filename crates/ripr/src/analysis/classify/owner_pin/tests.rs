@@ -4022,8 +4022,26 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
     assert!(found.is_some_and(|refusal| refusal.value_guard_subject().is_none()));
     let found = refusal("if weight(4) > 1000 { return; }\nassert_ne!(weight(4), 13);");
     assert!(found.is_none_or(|refusal| refusal.value_guard_subject().is_none()));
-    // Whitespace inside a literal argument is not layout (#7974 review).
+    // Whitespace inside a literal argument is not layout, and the compared
+    // value must be the call's own return: no projection, receiver or path
+    // (#7974 review).
     for (guard, pin) in [
+        (
+            "if weight(4).wrapping_sub(weight(4)) > 1000 { return; }",
+            "assert_eq!(weight(4).wrapping_sub(weight(4)), 0);",
+        ),
+        (
+            "if weight(4).min(5) > 1000 { return; }",
+            "assert_eq!(weight(4).min(5), 5);",
+        ),
+        (
+            "if other::weight(4) > 1000 { return; }",
+            "assert_eq!(other::weight(4), 12);",
+        ),
+        (
+            "if (weight(4)) > 1000 { return; }",
+            "assert_eq!((weight(4)), 12);",
+        ),
         (
             "if weight(\"a b\") > 1000 { return; }",
             "assert_eq!(weight(\"ab\"), 12);",
@@ -8522,4 +8540,24 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
     let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn a_direct_call_name_is_one_bare_call_ending_the_subject() {
+    for (subject, name) in [
+        ("weight(4)", Some("weight")),
+        (" weight ( 4 , [1, 2] ) ", Some("weight")),
+        ("_w(f(1))", Some("_w")),
+        ("weight(4).min(5)", None),
+        ("weight(4) + 1", None),
+        ("other::weight(4)", None),
+        ("x.weight(4)", None),
+        ("(weight(4))", None),
+        ("weight(4)(5)", None),
+        ("4weight(1)", None),
+        ("weight", None),
+        ("weight(4", None),
+    ] {
+        assert_eq!(direct_call_name(subject), name, "{subject}");
+    }
 }

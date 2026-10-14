@@ -57,7 +57,7 @@ pub(in crate::analysis) use helper_transfer::{
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
-    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
+    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     helper_pins_owner_call, pin_scope_needs, targeted_free_call_reaches_owner,
     targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };

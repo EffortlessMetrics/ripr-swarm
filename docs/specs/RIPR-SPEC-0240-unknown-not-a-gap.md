@@ -94,7 +94,8 @@ An earlier `return` is a gap-keeping shape, with one value-guard exception
 (trap-tally-reached-assert-control). The assertion is `assert_eq!(call, e)`
 with `e` an integer literal. The test body's only `return` (outside closures
 and nested items) is the whole body of a root statement
-`if call <op> k { return; }` with no `else`, where `call` is the same text,
+`if call <op> k { return; }` with no `else`, where `call` is the same text and one bare call `name(..)` (no path,
+receiver or projection around it),
 `k` is an integer literal and `<op>` is one comparison. If that condition
 does not hold at `e` and also spares at least one wrong value, the
 assertion runs for the value it expects and for some value it rejects, and
@@ -243,6 +244,7 @@ Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 - `refusals_that_can_keep_an_assertion_from_running_are_not_limits`
 - `an_outcome_settling_attribute_is_the_refusal_wherever_it_sits`
 - `a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit`
+- `a_direct_call_name_is_one_bare_call_ending_the_subject`
 
 Integration: `crates/ripr/tests/owner_pin_execution.rs`
 (`owner_pin_matched_static_and_runtime_controls`,

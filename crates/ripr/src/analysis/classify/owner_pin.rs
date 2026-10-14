@@ -7398,6 +7398,38 @@ fn single_element_index(operand: &str) -> Option<&str> {
     }
 }
 
+/// The callee of `subject` when it is one bare call `name(..)` whose first
+/// parenthesis closes at its end: no path, receiver, projection or operator
+/// around it (`weight(4).wrapping_sub(weight(4))`, `other::weight(4)`), so
+/// the compared value is the call's own return (#7974 review).
+pub(in crate::analysis) fn direct_call_name(subject: &str) -> Option<&str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let name = subject[..open].trim_end();
+    let mut chars = name.chars();
+    if !chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (at, byte) in subject.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (at + 1 == subject.len()).then_some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// trap-tally-reached-assert-control: the compared call when `assertion` is
 /// `assert_eq!(subject, e)` (either order, `e` an integer literal) and
 /// `condition` is `subject <op> k` or `k <op> subject` (one comparison,
@@ -7426,7 +7458,7 @@ fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a st
     };
     // `compact` drops whitespace inside a string or char literal too, so a
     // call with one stays out (#7974 review).
-    if !subject.ends_with(')')
+    if direct_call_name(subject).is_none()
         || subject.contains(['"', '\''])
         || ["&&", "||", "::<", "->"]
             .iter()
