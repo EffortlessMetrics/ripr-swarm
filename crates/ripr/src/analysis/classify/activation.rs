@@ -2823,9 +2823,15 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
+    // The keyword as a token, so `match(other) {` and a `match` ending
+    // its line count too.
     let matches = code
         .iter()
-        .map(|line| line.matches("match ").count())
+        .map(|line| {
+            line.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .filter(|word| *word == "match")
+                .count()
+        })
         .sum::<usize>();
     let guard = format!("{operand} if ");
     matches == 1
@@ -2872,8 +2878,9 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
 }
 
 /// `line` is a one-line guarded arm (`p if 100 <= p => ...`) whose
-/// binding `operand` appears only in the guard: never after the `=>` and
-/// never beside a closure parameter list in the guard.
+/// binding `operand` appears only in the guard, never after the `=>`, and
+/// whose guard is a plain expression: no block, statement or closure
+/// (`{ let p = other; 100 < p }`, `|p: i64|`) that could rebind it.
 fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool {
     let Some(rest) = line.strip_prefix(guard) else {
         return false;
@@ -2881,7 +2888,11 @@ fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool 
     let Some((condition, body)) = rest.split_once("=>") else {
         return false;
     };
-    !mentions_identifier(body, operand) && !condition.replace("||", "").contains('|')
+    let rebinds = condition.contains(['{', '}', ';', '|'])
+        || ["let", "for", "match", "while", "loop"]
+            .iter()
+            .any(|keyword| mentions_identifier(condition, keyword));
+    !mentions_identifier(body, operand) && !rebinds
 }
 
 fn mentions_identifier(line: &str, name: &str) -> bool {

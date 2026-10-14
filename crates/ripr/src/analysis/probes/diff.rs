@@ -210,9 +210,14 @@ pub(crate) fn probes_for_file_with_relations(
                         };
                         canonical_shapes.iter().any(|other| {
                             let predicate = canonical_probe_text(text, other.text);
+                            // A deleted or added conjunct (`a && 100 <= p` to
+                            // `100 < p`) is more than one comparison's edit,
+                            // so the arm head stays.
                             other.family == ProbeFamily::Predicate
                                 && guard.contains(predicate.as_str())
-                                && removed_span_of_shape(text, &predicate, removed).is_some()
+                                && !has_logical_connective(&predicate)
+                                && removed_span_of_shape(text, &predicate, removed)
+                                    .is_some_and(|span| !has_logical_connective(&span))
                         })
                     })
             };
@@ -1107,6 +1112,10 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
 /// whole old line. The shape text must occur once on the line: a repeat
 /// (`"a >= b"` in a literal before `if a >= b`) could align the cut with
 /// the wrong occurrence.
+fn has_logical_connective(text: &str) -> bool {
+    text.contains("&&") || text.contains("||")
+}
+
 fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
     if shape_text.is_empty() || added_line.matches(shape_text).count() != 1 {
         return None;

@@ -14353,6 +14353,9 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::a_guard_pattern_naming_a_constant_is_not_the_parameter",
   "crates/ripr/tests/match_guard_edit.rs::an_arm_body_binding_on_the_guard_line_is_not_the_guard_binding",
   "crates/ripr/tests/match_guard_edit.rs::a_closure_in_the_guard_is_not_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_nested_match_spelled_without_a_space_is_a_second_match",
+  "crates/ripr/tests/match_guard_edit.rs::a_block_guard_may_rebind_the_guard_binding",
+  "crates/ripr/tests/match_guard_edit.rs::a_deleted_guard_conjunct_keeps_the_arm_head",
 ]
 fixtures = [
   "fixtures/match_arm_blind",
