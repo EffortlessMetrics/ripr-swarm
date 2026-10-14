@@ -8240,6 +8240,9 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_json_outcomes_preserve_report_and_exit_contract",
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_human_unsupported_and_usage_keep_stream_contracts",
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_outcome_exit_preserves_subject_and_coverage",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::unsupported_check_keeps_rendered_formats_and_repo_scope",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_malformed_options_remain_empty_exit_two",
@@ -8302,7 +8305,9 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_marks_missing_producer_outcome_incomplete",
 ]
 code = [
+  "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/pipeline.rs",

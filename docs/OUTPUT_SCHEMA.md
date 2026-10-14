@@ -688,11 +688,13 @@ fixture goldens strip the member so analyzer contracts stay finding-shaped.
 the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
-The diff-scoped CLI exits `2` for `unsupported_input` after emitting this
+The diff-scoped `check` CLI exits `2` for `unsupported_input` after emitting this
 original report; it does not append or substitute a refusal document. Complete
 and `partial_with_limitations` reports remain advisory exit `0`. Outcome
 counts and identity remain available even when malformed input leaves retained
 findings. Empty input remains complete `no_scope`, rather than analyzed coverage.
+`ripr diff` applies the same exit mapping to its original `ripr_diff` report
+(schema version `0.1`); its diagnostic prose stays on stderr.
 
 `identity.config_identity` (#5988) is the fingerprint of the exact
 `ripr.toml` text loaded for the run. It is non-null exactly when a config

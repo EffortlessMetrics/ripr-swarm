@@ -51,9 +51,9 @@ document should branch on `exit`, not on free-text `stop_states`.
   (for example malformed input or a truncated declared hunk) exits `2`
   after writing its original report, including retained advisory findings,
   counts, input identity, limitations and recovery routes. JSON stdout remains
-  one ordinary check document, with `analysis_complete: false`; it is not
+  one ordinary check or diff document, with `analysis_complete: false`; it is not
   replaced by a refusal envelope. This changes the earlier unsupported-input
-  exit-`0` contract (#7440). Empty or whitespace-only input stays complete
+  exit-`0` contract (#7440 for check, #7793 for diff). Empty or whitespace-only input stays complete
   `no_scope` with exit `0`; it does not establish analyzed behavior.
   A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
