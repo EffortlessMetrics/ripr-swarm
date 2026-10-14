@@ -8077,6 +8077,129 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
     Ok(())
 }
 
+/// RIPR-SPEC-0265: an owner whose whole body is one closure in an iterator
+/// adaptor over a slice parameter, with one same-file test.
+fn adaptor_lib(tail: &str, test_items: &str) -> String {
+    format!(
+        "pub fn count_positive(xs: &[i32]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test_items}\n}}\n"
+    )
+}
+
+const FILTER_TAIL: &str = "xs.iter().filter(|&&x| x > 0).count()";
+
+fn adaptor_test(body: &str) -> String {
+    format!("    #[test]\n    fn counts() {{\n{body}\n    }}")
+}
+
+/// RIPR-SPEC-0265 rule 2: the pinned call must run the closure at least
+/// once on a literal sequence ripr reads.
+#[test]
+fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
+    let lib = adaptor_lib(
+        FILTER_TAIL,
+        &adaptor_test(
+            "        assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);\n        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[1, 2][..]), 2);\n        let v = [1, 2];\n        assert_eq!(count_positive(&v), 2);\n        assert_eq!(2, count_positive(&[5, 6]));",
+        ),
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count_positive", FILTER_TAIL);
+    assert!(pin.is_some(), "the adaptor tail must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);".to_string(),
+            "assert_eq!(2, count_positive(&[5, 6]));".to_string(),
+        ]
+    );
+}
+
+/// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
+/// non-empty sequence.
+#[test]
+fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
+    for (rows, admitted) in [
+        ("[(&[], 0), (&[1, -1], 1)]", true),
+        ("[(&[], 0), (&[], 0)]", false),
+        // One row ripr cannot read as a literal sequence refuses the pin,
+        // even beside a non-empty literal row.
+        ("[(&[1, -1], 1), (&[0; 2], 0)]", false),
+        ("[(&[1, -1], 1), (&[3u32], 1)]", false),
+    ] {
+        let lib = adaptor_lib(
+            FILTER_TAIL,
+            &adaptor_test(&format!(
+                "        let cases: [(&[i32], usize); 2] = {rows};\n        for (xs, want) in cases {{\n            assert_eq!(count_positive(xs), want);\n        }}"
+            )),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", FILTER_TAIL);
+        assert!(pin.is_some(), "the adaptor tail must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), admitted, "{rows}");
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2 owner side: only the admitted tail, changed as a
+/// whole, establishes the adaptor gate.
+#[test]
+fn adaptor_gate_refuses_tails_outside_the_rule() {
+    let test = adaptor_test("        assert_eq!(count_positive(&[1]), 1);");
+    for (tail, changed) in [
+        ("xs.iter().filter(|&&x| x > 0 && x < 9).count()", None),
+        (
+            "xs.iter().filter(|&&x| [1].iter().any(|&y| y == x)).count()",
+            None,
+        ),
+        (
+            "xs.iter().filter(|&&x| if x > 0 { true } else { false }).count()",
+            None,
+        ),
+        ("xs.iter().position(|&x| x > 0).unwrap_or(0)", None),
+        ("xs.iter().fold(0, |n, &x| n + usize::from(x > 0))", None),
+        ("xs.to_vec().iter().filter(|&&x| x > 0).count()", None),
+        // Consumers that drop closure values: `map` + `count` ignores
+        // them, `filter` + `sum` drops an additive identity unseen.
+        ("xs.iter().map(|&x| x > 0).count()", None),
+        ("xs.iter().filter(|&&x| x > 0).sum()", None),
+        // The predicate alone is not the owner's return value.
+        (FILTER_TAIL, Some("x > 0")),
+    ] {
+        let lib = adaptor_lib(tail, &test);
+        let index = index(&[(LIB, &lib)]);
+        assert!(
+            establish(&index, "count_positive", changed.unwrap_or(tail)).is_none(),
+            "{tail}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2: a `collect` into `Vec` pins only while the
+/// owner's file binds no other item to the name `Vec`.
+#[test]
+fn adaptor_gate_refuses_a_collect_into_a_rebound_vec() {
+    let tail = "xs.iter().map(|&x| x > 0).collect()";
+    let test = adaptor_test("        assert!(pos(&[0, 5]).len() > 0);");
+    for (items, admitted) in [
+        ("", true),
+        ("type Vec<T> = std::collections::BTreeSet<T>;\n", false),
+        ("use std::collections::BTreeSet as Vec;\n", false),
+        ("use other::Vec;\n", false),
+        ("pub struct Vec<T>(T);\n", false),
+        ("pub enum Vec { A }\n", false),
+    ] {
+        let lib = format!(
+            "pub fn pos(xs: &[i32]) -> Vec<bool> {{\n    {tail}\n}}\n{items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test}\n}}\n"
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert_eq!(
+            establish(&index, "pos", tail).is_some(),
+            admitted,
+            "{items}"
+        );
+    }
+}
+
 #[test]
 fn a_scalar_rendering_compared_with_exact_text_pins() {
     // trap-shine-debug-exact-control: the std `Debug` or `Display` text of
