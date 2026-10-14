@@ -3488,6 +3488,27 @@ mod tests {
         );
     }
 
+    /// A loop label `'a:` uses the same opener as a lifetime. Scanning it as
+    /// an unclosed character literal would skip `y`/`z` and falsely pair.
+    #[test]
+    fn short_name_label_replacement_does_not_repeat_the_removed_predicate() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x { 'a: { y(); } }", "    if x { 'a: { z(); } }", 6),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| { probe.expression.contains("y();") && probe.after.is_none() }),
+            "a label must not consume later code names: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression.contains("z();")),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
     /// Quotes and `//` inside a raw string must not hide later code names.
     #[test]
     fn short_name_raw_string_replacement_does_not_repeat_the_removed_predicate() {
