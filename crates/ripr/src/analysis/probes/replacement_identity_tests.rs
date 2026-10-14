@@ -585,3 +585,133 @@ fn equal_two_line_short_replacements_keep_exact_counterparts() -> Result<(), Str
     assert_eq!(identities(&fixture, false)?, vec![]);
     Ok(())
 }
+
+#[test]
+fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> Result<(), String> {
+    // Every token on the changed arm is at most two bytes: the short-name
+    // reconciliation, not the long-token fallback, must own these replacements.
+    let old_chain = "pub fn f(n: i32, m: i32) -> i8 {\n    match n {\n        n if m > 0 && n <= 0 => -1,\n        _ => 1,\n    }\n}\n";
+    let old_single = "pub fn f(n: i32, m: i32) -> i8 {\n    match n {\n        n if n <= 0 => -1,\n        _ => 1,\n    }\n}\n";
+    let new_chain = "pub fn f(n: i32, m: i32) -> i8 {\n    match n {\n        n if m > 0 && n < 0 => -1,\n        _ => 1,\n    }\n}\n";
+    let shifted_single = "// é\npub fn f(n: i32, m: i32) -> i8 {\n    match n {\n        n if n < 0 => -1,\n        _ => 1,\n    }\n}\n";
+    let deleted = "pub fn f(n: i32, m: i32) -> i8 {\n    match n {\n        _ => 1,\n    }\n}\n";
+    let fixture = git_probe_fixture(&[
+        ("src/a.rs", old_chain, shifted_single),
+        ("src/b.rs", old_single, new_chain),
+        ("src/c.rs", old_chain, new_chain),
+        ("src/d.rs", old_chain, deleted),
+    ])?;
+    assert!(fixture.patch.contains("@@ -0,0 +1 @@"), "{}", fixture.patch);
+    assert!(fixture.patch.contains("@@ -3 +4 @@"), "{}", fixture.patch);
+    assert!(fixture.patch.contains("@@ -3 +3 @@"), "{}", fixture.patch);
+    assert!(fixture.patch.contains("@@ -3 +2,0 @@"), "{}", fixture.patch);
+    assert_eq!(
+        fixture
+            .files
+            .iter()
+            .map(|file| (
+                file.path.to_str(),
+                file.removed_lines
+                    .iter()
+                    .map(|line| (line.line, line.new_side_line))
+                    .collect::<Vec<_>>(),
+                file.replacement_counterparts()
+                    .iter()
+                    .map(|(new, old)| (*new, old.line))
+                    .collect::<Vec<_>>(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("src/a.rs"), vec![(3, 4)], vec![(4, 3)]),
+            (Some("src/b.rs"), vec![(3, 3)], vec![(3, 3)]),
+            (Some("src/c.rs"), vec![(3, 3)], vec![(3, 3)]),
+            (Some("src/d.rs"), vec![(3, 2)], vec![]),
+        ]
+    );
+    // Added/deleted conjuncts retain current arm heads. The unchanged-chain
+    // twin has only its predicate. MatchArm bytes identify the => token;
+    // the UTF-8 prefix adds six bytes, not five, to a.rs's parser identities.
+    assert_eq!(
+        identities(&fixture, true)?,
+        vec![
+            LiteralIdentity {
+                file: "src/a.rs",
+                line: 4,
+                family: "match_arm",
+                expression: "n if n < 0 =>",
+                before: Some("n if m > 0 && n <= 0 =>"),
+                after: Some("n if n < 0 =>"),
+                start_byte: Some(72),
+                currentness: "candidate_current",
+            },
+            LiteralIdentity {
+                file: "src/a.rs",
+                line: 4,
+                family: "predicate",
+                expression: "n < 0",
+                before: Some("m > 0 && n <= 0"),
+                after: Some("n < 0"),
+                start_byte: Some(66),
+                currentness: "candidate_current",
+            },
+            LiteralIdentity {
+                file: "src/b.rs",
+                line: 3,
+                family: "match_arm",
+                expression: "n if m > 0 && n < 0 =>",
+                before: Some("n if n <= 0 =>"),
+                after: Some("n if m > 0 && n < 0 =>"),
+                start_byte: Some(75),
+                currentness: "candidate_current",
+            },
+            LiteralIdentity {
+                file: "src/b.rs",
+                line: 3,
+                family: "predicate",
+                expression: "m > 0 && n < 0",
+                before: Some("n <= 0"),
+                after: Some("m > 0 && n < 0"),
+                start_byte: Some(60),
+                currentness: "candidate_current",
+            },
+            LiteralIdentity {
+                file: "src/c.rs",
+                line: 3,
+                family: "predicate",
+                expression: "m > 0 && n < 0",
+                before: Some("m > 0 && n <= 0"),
+                after: Some("m > 0 && n < 0"),
+                start_byte: Some(60),
+                currentness: "candidate_current",
+            },
+        ]
+    );
+    // d.rs deletes the same old text/line that c.rs represents. A shared
+    // file/global marker pool must not consume its genuinely unpaired history.
+    assert_eq!(
+        identities(&fixture, false)?,
+        vec![
+            LiteralIdentity {
+                file: "src/d.rs",
+                line: 2,
+                family: "match_arm",
+                expression: "n if m > 0 && n <= 0 => -1,",
+                before: Some("n if m > 0 && n <= 0 => -1,"),
+                after: None,
+                start_byte: None,
+                currentness: "base_deleted",
+            },
+            LiteralIdentity {
+                file: "src/d.rs",
+                line: 2,
+                family: "predicate",
+                expression: "n if m > 0 && n <= 0 => -1,",
+                before: Some("n if m > 0 && n <= 0 => -1,"),
+                after: None,
+                start_byte: None,
+                currentness: "base_deleted",
+            },
+        ]
+    );
+    Ok(())
+}
