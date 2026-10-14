@@ -14,6 +14,7 @@ Linked issues:
 - #6297
 - #7063
 - #7794
+- #7820
 
 Linked PRs:
 
@@ -269,13 +270,20 @@ because it has the right oracle kind.
 This rule narrows only the existing kind-based effect confirmation branch;
 collection/field and token confirmation retain their authority. Proximity
 without an actual owner caller and opaque macro invocation retain their prior
-reading. Direct and helper effect observers retain credit. Unknown standard
+reading. Direct and helper effect observers retain credit. Indexed implicit
+trait dispatch retains the established effect-observer reading (#7820): owners
+reachable from known trait methods such as `Iterator::next` and `Add::add`
+are distinct from unknown standard calls and lexical containers. Free and
+inherent methods with those names do not gain this allowance, even beside
+a same-name trait declaration. Direct dispatch is bound to the actual owner;
+a reverse name path requires a unique indexed trait declaration. Unknown standard
 method dispatch does not itself establish that an equality observes the changed
 effect; this slice neither rules out that dispatch nor resolves value flow.
 This is separate from #7778's predicate/string-literal guard and preserves
 #3161's broader propagation limits.
 
 Proof: `sibling_effect_oracle` public API metamorphic and direct-effect controls,
+loop/operator preservation and free/inherent-name refusal controls,
 the exact consumer fixture `rust_sibling_effect_oracle`, and its independent
 honesty-corpus invariant. Native removal experiments are separate runtime
 evidence rather than a static mutation claim.

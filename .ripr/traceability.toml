@@ -7223,6 +7223,10 @@ spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md
 tests = [
   "crates/ripr/tests/sibling_effect_oracle.rs::parser_only_decoys_cannot_supply_aggregation_discrimination",
   "crates/ripr/tests/sibling_effect_oracle.rs::direct_effect_observer_retains_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_trait_effect_observers_retain_strong_credit",
+  "crates/ripr/tests/sibling_effect_oracle.rs::free_and_inherent_trait_method_names_do_not_admit_decoys",
+  "crates/ripr/tests/sibling_effect_oracle.rs::lone_proximity_retains_discrimination_with_weak_reach",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_effect_kind_cannot_confirm_beside_owner_caller",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order",

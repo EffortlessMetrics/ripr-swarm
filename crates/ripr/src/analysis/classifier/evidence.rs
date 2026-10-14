@@ -515,6 +515,13 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                owner_has_known_implicit_dispatch: &|| {
+                    context.owner_fn.is_some_and(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .has_known_implicit_dispatch(owner)
+                    })
+                },
                 proximity_may_reach_owner: &|test| {
                     context.owner_fn.is_none_or(|owner| {
                         owner_reach
