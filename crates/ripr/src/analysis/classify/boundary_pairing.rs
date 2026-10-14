@@ -89,7 +89,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     let Some(owner) = owner_fn else {
         return false;
     };
-    // RIPR-SPEC-0260: a changed closure body of an adaptor tail pairs only
+    // RIPR-SPEC-0265: a changed closure body of an adaptor tail pairs only
     // through the element path, which requires the compared operand to be
     // one whole owner call. Activation's element facts (`x == 0` on a call
     // line) must never make a call, a bound local or a helper call a
@@ -351,7 +351,7 @@ fn loan_pairs_boundary_call(
     })
 }
 
-/// RIPR-SPEC-0260 rule 1 pairing: the admitted adaptor tail whose closure
+/// RIPR-SPEC-0265 rule 1 pairing: the admitted adaptor tail whose closure
 /// body is the changed comparison, and the literal boundary the closure
 /// binding is compared with.
 fn adaptor_element_boundary(probe: &Probe, tail: AdaptorTail) -> Option<(AdaptorTail, String)> {
@@ -367,7 +367,7 @@ fn adaptor_element_boundary(probe: &Probe, tail: AdaptorTail) -> Option<(Adaptor
     super::owner_pin::closure_adaptor::literal_boundary(&boundary).map(|value| (tail, value))
 }
 
-/// RIPR-SPEC-0260 rule 1 same-test pairing: an admitted discriminating or
+/// RIPR-SPEC-0265 rule 1 same-test pairing: an admitted discriminating or
 /// owner-pinned assertion of `test` compares one whole owner call whose
 /// argument for the iterated parameter has a run that reaches the
 /// boundary, directly or through a borrowed helper assertion's loan.
@@ -438,7 +438,7 @@ fn loan_pairs_boundary_element(
 /// (`pos(&[0, 5])[1]`, `pos(xs).len()`, `pos(xs).is_empty()`) observes only
 /// a projection of the owner's result, which may not tell the changed
 /// closure value apart, so it never pairs with an element boundary
-/// (RIPR-SPEC-0260 rule 1).
+/// (RIPR-SPEC-0265 rule 1).
 fn whole_owner_call_operands(
     test: &TestSummary,
     assertion_text: &str,
@@ -1271,7 +1271,7 @@ mod tests {
     }
 
     /// [`pairing_with_admitted_oracles`] with the owner's file holding
-    /// `source`, which the RIPR-SPEC-0260 `Vec` gate reads.
+    /// `source`, which the RIPR-SPEC-0265 `Vec` gate reads.
     fn pairing_in_owner_file(
         probe: &Probe,
         owner: Option<&FunctionSummary>,
@@ -3423,7 +3423,7 @@ mod tests {
         assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
     }
 
-    /// RIPR-SPEC-0260 rule 1 pairing: an admitted assertion pairs with
+    /// RIPR-SPEC-0265 rule 1 pairing: an admitted assertion pairs with
     /// the element boundary when its owner call's literal sequence reaches
     /// the boundary; another run, an unread argument, a constant boundary
     /// or a consumer outside the rule does not pair.
@@ -3530,7 +3530,7 @@ mod tests {
         assert!(!pairs(any, "x > 0", "assert!(gate(&[-2, 0]) == false);"));
     }
 
-    /// RIPR-SPEC-0260: activation's element fact on a `let` line never
+    /// RIPR-SPEC-0265: activation's element fact on a `let` line never
     /// makes the bound local a boundary local; `r[1]` and `r.len()`
     /// observe projections that cannot tell `x > 0` from `x >= 0`.
     #[test]
@@ -3587,7 +3587,7 @@ mod tests {
         assert!(!pairs("assert_eq!(gate(xs)[1], true);", false));
     }
 
-    /// RIPR-SPEC-0260: a `collect` into a `Vec` the owner's file rebinds
+    /// RIPR-SPEC-0265: a `collect` into a `Vec` the owner's file rebinds
     /// pairs no element boundary, through the same gate as the pin.
     #[test]
     fn adaptor_element_boundary_refuses_a_rebound_vec() {

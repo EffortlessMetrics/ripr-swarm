@@ -1225,7 +1225,7 @@ fn missing_boundary_discriminator(
     })
 }
 
-/// RIPR-SPEC-0260 rule 1: a changed comparison that is the whole closure
+/// RIPR-SPEC-0265 rule 1: a changed comparison that is the whole closure
 /// body of an admitted iterator-adaptor tail, with one operand the closure
 /// binding read as an element of the iterated parameter.
 struct ElementView {
@@ -1251,7 +1251,7 @@ struct ElementRun {
 /// with no direct call, of the resolved helper chain's entry) passes the
 /// iterated parameter a literal sequence of literal values, directly or
 /// through a constant-row `for` table. Any other argument, or no call at
-/// all, answers `None`, which keeps the pre-0260 unresolved reading.
+/// all, answers `None`, which keeps the pre-0265 unresolved reading.
 fn adaptor_element_view(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -7187,7 +7187,7 @@ assert_eq!(input.amount, 100);"#
         assert_ne!(infection.state, StageState::Yes, "{}", infection.summary);
     }
 
-    /// RIPR-SPEC-0260 rule 1: the boundary reading of a closure binding
+    /// RIPR-SPEC-0265 rule 1: the boundary reading of a closure binding
     /// over the owner's literal-sequence test inputs.
     fn adaptor_boundary(
         tail: &str,
@@ -7316,7 +7316,7 @@ assert_eq!(input.amount, 100);"#
             );
             assert!(
                 gathered.unresolved_boundary.is_some(),
-                "{unreadable}: pre-0260 reading expected"
+                "{unreadable}: pre-0265 reading expected"
             );
             assert!(
                 !has_observed_boundary_equality(&gathered.activation),

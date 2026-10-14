@@ -1,4 +1,4 @@
-//! Public-API controls for RIPR-SPEC-0260 rule 3: an owner whose whole body
+//! Public-API controls for RIPR-SPEC-0265 rule 3: an owner whose whole body
 //! is one admitted iterator-adaptor tail returns that tail's value, so the
 //! changed tail completes a return witness and the changed closure
 //! comparison flows to the owner's return. Each case writes a small crate,
@@ -122,7 +122,7 @@ fn admitted_adaptor_tail_propagates_to_the_owner_return() -> Result<(), String> 
 }
 
 #[test]
-fn map_count_tail_keeps_the_pre_0260_reading() -> Result<(), String> {
+fn map_count_tail_keeps_the_pre_0265_reading() -> Result<(), String> {
     // `map` + `count` ignores the closure value: no rule applies.
     let (returned, predicate) = findings(
         "xs.iter().map(|&x| x > 0).count()",
@@ -175,7 +175,7 @@ fn element_boundary_pairs_only_the_whole_owner_call() -> Result<(), String> {
 }
 
 #[test]
-fn collect_into_a_rebound_vec_keeps_the_pre_0260_reading() -> Result<(), String> {
+fn collect_into_a_rebound_vec_keeps_the_pre_0265_reading() -> Result<(), String> {
     // A `Vec` the owner's file binds to a set loses order and multiplicity.
     let signature = "pos(xs: &[i32]) -> Vec<bool>";
     let new = "xs.iter().map(|&x| x > 0).collect()";

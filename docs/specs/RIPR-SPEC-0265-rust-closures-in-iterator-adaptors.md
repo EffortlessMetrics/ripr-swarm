@@ -1,4 +1,4 @@
-# RIPR-SPEC-0260: Rust closures in iterator adaptors
+# RIPR-SPEC-0265: Rust closures in iterator adaptors
 
 Status: proposed
 
@@ -83,7 +83,7 @@ An owner is in scope when its whole body is one tail expression
 P.iter().A(|PAT| E)            or            P.iter().A(|PAT| E).T()
 ```
 
-and every condition below holds. Anything else keeps the pre-0260 reading.
+and every condition below holds. Anything else keeps the pre-0265 reading.
 
 - The body holds no statement, no `return`, no `?`, and no macro outside
   the non-returning list the owner-return pin already trusts. The owner is
@@ -156,7 +156,7 @@ every related call:
   rebinding, no shadowed entry call).
 
 When some related call is unreadable, or none exists, the rule does not
-apply and the pre-0260 reading stands: the binding is an operand ripr
+apply and the pre-0265 reading stands: the binding is an operand ripr
 cannot map, so infection stays unknown.
 
 With every run read, the boundary's value must be visible (a literal or a
@@ -242,7 +242,7 @@ this edge's.
 ## Non-Goals
 
 - Other adaptors and consumers: `fold`, `flat_map`, `filter_map`, `find`,
-  `position`, `take_while`, `max_by_key` and the rest keep the pre-0260
+  `position`, `take_while`, `max_by_key` and the rest keep the pre-0265
   reading, as do the refused pairs (`map` + `count`, `filter` + `sum`,
   `map` + `sum` over a comparison or cast, and `collect` into anything not
   provably a `Vec`).

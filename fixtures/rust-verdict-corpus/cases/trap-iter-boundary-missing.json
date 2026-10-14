@@ -1,6 +1,6 @@
 {
   "case_id": "trap-iter-boundary-missing",
-  "subject_id": "authored-spec0260-iter-adaptor",
+  "subject_id": "authored-spec0265-iter-adaptor",
   "diff": "cases/trap-iter-boundary-missing.diff",
   "anchor": {
     "file": "src/lib.rs",
@@ -46,7 +46,7 @@
       "limited"
     ]
   },
-  "reasoning": "counts_two_positive_without_zero pins count_positive(&[3, 7]) to 2. The closure runs on 3 and 7, so the owner-return pin holds (RIPR-SPEC-0260 rule 2), but neither element is 0, so the boundary mutant x >= 0 survives; 2 of 3 listed mutants fail cargo test. The predicate must keep its missing x == 0 discriminator. Spec cells: RIPR-SPEC-0260 example 4.",
+  "reasoning": "counts_two_positive_without_zero pins count_positive(&[3, 7]) to 2. The closure runs on 3 and 7, so the owner-return pin holds (RIPR-SPEC-0265 rule 2), but neither element is 0, so the boundary mutant x >= 0 survives; 2 of 3 listed mutants fail cargo test. The predicate must keep its missing x == 0 discriminator. Spec cells: RIPR-SPEC-0265 example 4.",
   "labeling_observation": {
     "ripr_commit": "8485a79",
     "full_checkout_verdict": "gap",
@@ -57,6 +57,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0260#4"
+    "RIPR-SPEC-0265#4"
   ]
 }

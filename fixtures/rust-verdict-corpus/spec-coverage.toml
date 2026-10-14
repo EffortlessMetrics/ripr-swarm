@@ -21,7 +21,7 @@ floor = 118
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 40
+match_floor = 41
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
@@ -567,7 +567,7 @@ reason = "non-Rust language or packaging surface"
 
 # Rust closures in iterator adaptors
 [[spec]]
-id = "RIPR-SPEC-0260"
+id = "RIPR-SPEC-0265"
 scope = "in"
 
 # TypeScript strict custom matcher

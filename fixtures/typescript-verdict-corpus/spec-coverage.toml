@@ -509,7 +509,7 @@ scope = "in"
 
 # Rust closures in iterator adaptors
 [[spec]]
-id = "RIPR-SPEC-0260"
+id = "RIPR-SPEC-0265"
 scope = "out"
 reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 

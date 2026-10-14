@@ -230,7 +230,7 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
-    // RIPR-SPEC-0260 rule 3: a comparison that is the whole closure body of
+    // RIPR-SPEC-0265 rule 3: a comparison that is the whole closure body of
     // an admitted iterator-adaptor tail decides, per element, what the tail
     // (the owner's whole body) returns.
     if let Some((owner_fn, tail)) = owner_fn.and_then(|function| {

@@ -1,6 +1,6 @@
 {
   "case_id": "trap-iter-empty-slice",
-  "subject_id": "authored-spec0260-iter-adaptor",
+  "subject_id": "authored-spec0265-iter-adaptor",
   "diff": "cases/trap-iter-empty-slice.diff",
   "anchor": {
     "file": "src/lib.rs",
@@ -46,7 +46,7 @@
       "limited"
     ]
   },
-  "reasoning": "counts_nothing_in_an_empty_slice pins count_large(&[]) to 0. The closure never runs on an empty slice, so every listed mutant passes cargo test (0 of 3 fail); the owner-return pin must refuse an empty literal (RIPR-SPEC-0260 rule 2). Spec cells: RIPR-SPEC-0260 example 5.",
+  "reasoning": "counts_nothing_in_an_empty_slice pins count_large(&[]) to 0. The closure never runs on an empty slice, so every listed mutant passes cargo test (0 of 3 fail); the owner-return pin must refuse an empty literal (RIPR-SPEC-0265 rule 2). Spec cells: RIPR-SPEC-0265 example 5.",
   "labeling_observation": {
     "ripr_commit": "8485a79",
     "full_checkout_verdict": "gap",
@@ -56,6 +56,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0260#5"
+    "RIPR-SPEC-0265#5"
   ]
 }

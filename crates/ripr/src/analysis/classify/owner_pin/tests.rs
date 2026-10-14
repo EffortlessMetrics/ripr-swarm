@@ -3119,6 +3119,200 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
     }
 }
 
+/// #7857: a `std::`/`core::`-qualified `assert_eq!` runs as the standard
+/// macro unless its root may be rebound, so it is admitted like the bare
+/// form. The proof needs the package manifests (a Cargo rename of `std`),
+/// the test's own file (a rebinding module, import or `extern crate`
+/// rename, a glob from another file, `no_implicit_prelude`, the invocation
+/// of a macro that generates the test) and the usual execution path.
+#[test]
+fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-plain",
+        &[("Cargo.toml", &manifest(""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest(
+                "std = { package = \"fake-std\", version = \"1\" }\ncore = { package = \"fake-core\", version = \"1\" }\n",
+            ),
+        )],
+    )?;
+    let test = |assertion: &str| format!("#[test]\nfn weighs() {{\n    {assertion}\n}}\n");
+    let opaque = |path: &str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::OpaqueMacro(path.to_string()),
+        ))
+    };
+    for (tests, path) in [
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("::core::assert_eq!(weight(4), 12);")
+            ),
+            "::core::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("core::assert_eq!(weight(4), 12);")
+            ),
+            "core::assert_eq",
+        ),
+        // The parser keeps the spacing of the path.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std :: assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\nmod tests {{\n    use super::*;\n{}}}\n",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            None,
+            "{tests}"
+        );
+        // Without a manifest, or with `std`/`core` bound to another package,
+        // the root is unproved.
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&aliased)),
+            opaque(path),
+            "{tests}"
+        );
+        assert_eq!(weight_refusal(&tests, &[]), opaque(path), "{tests}");
+    }
+    // The fact reader already drops a call whose root the file rebinds.
+    for prefix in [
+        "mod std {}\n",
+        "use demo as std;\n",
+        "extern crate demo as std;\n",
+    ] {
+        let tests = format!(
+            "{prefix}use demo::weight;\n{}",
+            test("std::assert_eq!(weight(4), 12);")
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert!(index.tests().at(0).assertions.is_empty(), "{tests}");
+    }
+    for (tests, refusal) in [
+        // A glob from another file may bring a `std` item.
+        (
+            format!("use demo::*;\n{}", test("std::assert_eq!(weight(4), 12);")),
+            opaque("std::assert_eq"),
+        ),
+        (
+            format!(
+                "#![no_implicit_prelude]\nuse demo::weight;\n{}",
+                test("::std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("::std::assert_eq"),
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("if weight(1) > 9 { std::assert_eq!(weight(4), 12); }")
+            ),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ConditionalPath("an `if` branch"),
+            )),
+        ),
+        // `#![no_std]` without `extern crate std` leaves no `std` root.
+        (
+            format!(
+                "#![no_std]\nuse demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("std::assert_eq"),
+        ),
+        // Other drop-in roots need their own manifest check, which this
+        // gate does not make.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("pretty_assertions::assert_eq!(weight(4), 12);")
+            ),
+            opaque("pretty_assertions::assert_eq"),
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            refusal,
+            "{tests}"
+        );
+    }
+    // An unproved qualified call anywhere in the file may expand to an early
+    // return, so a later bare assertion is refused too (#7938 review).
+    let bare_after = |root: &Path| {
+        let tests = format!(
+            "use demo::weight;\n{}",
+            test("std::assert_eq!(1, 1);\n    assert_eq!(weight(4), 12);")
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| {
+            test.assertions
+                .iter()
+                .find(|assertion| assertion.text.starts_with("assert_eq!(weight"))
+        });
+        assert!(assertion.is_some(), "{tests}");
+        OwnerPinSyntax::default().refusal(test?, assertion?, &index)
+    };
+    assert_eq!(bare_after(&plain), None);
+    assert_eq!(bare_after(&aliased), opaque("std::assert_eq"));
+    // A generated test is checked against its expansion, which shows
+    // neither the file's glob nor the generating invocation; the real file
+    // shows both. The bare form is the control: the same generated test is
+    // admitted, so the refusal is the qualified root's.
+    let generated = |assertion: &str| {
+        let tests = format!(
+            "use demo::*;\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            {assertion}\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        assert!(
+            test.is_some_and(|test| !test.assertions.is_empty()),
+            "{tests}"
+        );
+        let test = test?;
+        OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    };
+    assert_eq!(generated("assert_eq!(weight(4), 12);"), None);
+    assert_eq!(
+        generated("std::assert_eq!(weight(4), 12);"),
+        opaque("std::assert_eq")
+    );
+    Ok(())
+}
+
 #[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
@@ -7883,7 +8077,7 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
     Ok(())
 }
 
-/// RIPR-SPEC-0260: an owner whose whole body is one closure in an iterator
+/// RIPR-SPEC-0265: an owner whose whole body is one closure in an iterator
 /// adaptor over a slice parameter, with one same-file test.
 fn adaptor_lib(tail: &str, test_items: &str) -> String {
     format!(
@@ -7897,7 +8091,7 @@ fn adaptor_test(body: &str) -> String {
     format!("    #[test]\n    fn counts() {{\n{body}\n    }}")
 }
 
-/// RIPR-SPEC-0260 rule 2: the pinned call must run the closure at least
+/// RIPR-SPEC-0265 rule 2: the pinned call must run the closure at least
 /// once on a literal sequence ripr reads.
 #[test]
 fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
@@ -7920,7 +8114,7 @@ fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
     );
 }
 
-/// RIPR-SPEC-0260 rule 2 through a constant-row table: some row must pass a
+/// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
 /// non-empty sequence.
 #[test]
 fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
@@ -7946,7 +8140,7 @@ fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
     }
 }
 
-/// RIPR-SPEC-0260 rule 2 owner side: only the admitted tail, changed as a
+/// RIPR-SPEC-0265 rule 2 owner side: only the admitted tail, changed as a
 /// whole, establishes the adaptor gate.
 #[test]
 fn adaptor_gate_refuses_tails_outside_the_rule() {
@@ -7980,7 +8174,7 @@ fn adaptor_gate_refuses_tails_outside_the_rule() {
     }
 }
 
-/// RIPR-SPEC-0260 rule 2: a `collect` into `Vec` pins only while the
+/// RIPR-SPEC-0265 rule 2: a `collect` into `Vec` pins only while the
 /// owner's file binds no other item to the name `Vec`.
 #[test]
 fn adaptor_gate_refuses_a_collect_into_a_rebound_vec() {

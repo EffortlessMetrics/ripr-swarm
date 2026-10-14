@@ -34,11 +34,13 @@ pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
-pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
+pub(in crate::analysis) use call_identity::{
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
-    recommended_next_step, stop_reasons,
+    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
+    missing_evidence, recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};

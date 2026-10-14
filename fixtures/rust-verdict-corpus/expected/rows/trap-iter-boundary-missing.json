@@ -1,6 +1,6 @@
 {
   "case_id": "trap-iter-boundary-missing",
-  "subject_id": "authored-spec0260-iter-adaptor",
+  "subject_id": "authored-spec0265-iter-adaptor",
   "origin": "authored",
   "anchor": "src/lib.rs:5",
   "behavior_family": "closure_in_iterator_adaptor",

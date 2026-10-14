@@ -1,6 +1,6 @@
 {
   "case_id": "trap-iter-empty-slice",
-  "subject_id": "authored-spec0260-iter-adaptor",
+  "subject_id": "authored-spec0265-iter-adaptor",
   "origin": "authored",
   "anchor": "src/lib.rs:9",
   "behavior_family": "closure_in_iterator_adaptor",

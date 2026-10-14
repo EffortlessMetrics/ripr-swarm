@@ -1,11 +1,11 @@
-//! RIPR-SPEC-0260: an owner whose whole body is one closure in an iterator
+//! RIPR-SPEC-0265: an owner whose whole body is one closure in an iterator
 //! adaptor over a slice parameter (`xs.iter().filter(|&&x| x > 0).count()`).
 //!
 //! The closure runs once per element of the parameter, so a test call whose
 //! argument for that parameter is a literal sequence of literal values shows
 //! exactly which values the closure binding takes (rule 1), and a non-empty
 //! such argument shows the pinned call evaluates the closure at least once
-//! (rule 2). Every other shape keeps the pre-0260 reading: the closure is a
+//! (rule 2). Every other shape keeps the pre-0265 reading: the closure is a
 //! part of the tail evaluated only on some inputs, and its binding is a value
 //! ripr cannot map to a test input.
 
@@ -24,7 +24,7 @@ const ADAPTORS: &[&str] = &["filter", "map", "any", "all"];
 /// Terminal calls that consume the adaptor without a closure of their own.
 const TERMINALS: &[&str] = &["count", "collect", "sum"];
 
-/// An owner tail `P.iter().A(|PAT| E)[.T()]` admitted by RIPR-SPEC-0260.
+/// An owner tail `P.iter().A(|PAT| E)[.T()]` admitted by RIPR-SPEC-0265.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::analysis::classify) struct AdaptorTail {
     /// The slice parameter `P` the adaptor iterates.
@@ -420,7 +420,7 @@ pub(in crate::analysis::classify) fn same_value(left: &str, right: &str) -> bool
             .is_some_and(|(left, right)| left == right)
 }
 
-/// RIPR-SPEC-0260 rule 2: whether the pinned owner call `call_text` passes
+/// RIPR-SPEC-0265 rule 2: whether the pinned owner call `call_text` passes
 /// the iterated parameter (argument `position`) a value whose every run
 /// ripr reads as a literal sequence, and at least one run is non-empty, so
 /// the closure runs at least once on the pinned input. The argument may be
@@ -485,7 +485,7 @@ pub(in crate::analysis::classify) fn argument_sequences(
 
 /// How many calls of `name` (the whole word followed by `(`) `text` holds,
 /// outside comments and strings. A line holding more than one cannot say
-/// which call a per-call fact meant, so RIPR-SPEC-0260 reads it as
+/// which call a per-call fact meant, so RIPR-SPEC-0265 reads it as
 /// unreadable (fail closed).
 pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize {
     let masked = mask_comments_and_strings(text);

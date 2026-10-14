@@ -298,7 +298,7 @@ pub(in crate::analysis) fn constant_tail_witness(
         return None;
     }
     let identity = normalize_semantic_text(&probe.expression);
-    // RIPR-SPEC-0260 rule 3: an admitted iterator-adaptor tail that is the
+    // RIPR-SPEC-0265 rule 3: an admitted iterator-adaptor tail that is the
     // owner's whole body is, like a constant tail, the value the owner
     // returns; whether the pinned input runs its closure is the owner pin's
     // question (rule 2), not this edge's.

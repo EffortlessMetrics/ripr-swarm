@@ -14724,9 +14724,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0260"
+id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
-spec = "docs/specs/RIPR-SPEC-0260-rust-closures-in-iterator-adaptors.md"
+spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_each_adaptor_over_a_slice_parameter",
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::refuses_shapes_outside_the_spec",
@@ -14743,9 +14743,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_only_consumers_that_keep_every_closure_value",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::adaptor_element_boundary_pairs_only_a_run_that_reaches_it",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::admitted_adaptor_tail_propagates_to_the_owner_return",
-  "crates/ripr/tests/iterator_adaptor_propagation.rs::map_count_tail_keeps_the_pre_0260_reading",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::map_count_tail_keeps_the_pre_0265_reading",
   "crates/ripr/tests/iterator_adaptor_propagation.rs::element_boundary_pairs_only_the_whole_owner_call",
-  "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0260_reading",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::collect_into_a_rebound_vec_keeps_the_pre_0265_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
 ]
 fixtures = [
@@ -14760,7 +14760,7 @@ code = [
   "crates/ripr/src/analysis/classify/flow.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0260-rust-closures-in-iterator-adaptors.md",
+  "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md",
 ]
 metrics = [
   "rust_iterator_adaptor_mismatch",
@@ -15304,6 +15304,7 @@ tests = [
   "crates/ripr/src/app/repair_card.rs::tests::canonical_decision_and_reference_agree",
   "crates/ripr/src/app/agent_status.rs::tests::canonical_decision_selects_the_status_arm",
   "crates/ripr/src/output/human/triage.rs::tests::check_adapter_binds_the_ranked_winner_with_bounded_alternatives",
+  "crates/ripr/src/output/human/triage.rs::tests::check_adapter_subject_root_uses_display_path_not_raw_display",
   "crates/ripr/src/repair_card_digest.rs::tests::canonical_decision_moves_remint_the_digest",
   "crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision",
 ]
@@ -15395,6 +15396,93 @@ outputs = [
   "docs/specs/RIPR-SPEC-0255-check-config-path-disclosure.md",
   "docs/OUTPUT_SCHEMA.md",
   "schemas/ripr/check.schema.json",
+]
+metrics = ["unit_test_pass_rate"]
+[[behavior]]
+id = "RIPR-SPEC-0259"
+name = "Next step follows the related oracle shape"
+spec = "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md"
+tests = [
+  "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_error_path",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_return_value",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::non_exact_oracle_keeps_the_family_template",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::missing_input_row_keeps_the_exact_oracle_step",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::downgraded_exact_strength_keeps_the_family_template",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::non_reach_rows_do_not_dictate_the_step",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::unconfirmed_observation_on_a_reach_row_keeps_the_step",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::missing_exact_assertion_row_keeps_the_family_template",
+]
+code = [
+  "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = ["unit_test_pass_rate"]
+[[behavior]]
+id = "RIPR-SPEC-0260"
+name = "Python guarded-arm activation gate for return-value credit"
+spec = "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md"
+tests = [
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_or_guard",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_not_guard",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_still_excludes_simple_false_comparison",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_rebound_parameter",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_equates_bool_like_python",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::keyword_outside_quotes_respects_word_boundaries",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_below_guard_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_with_activating_input_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::or_guard_with_activating_keyword_operand_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unreadable_strong_call_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::rebound_parameter_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::bool_numeric_guard_equality_follows_python",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_gate_stays_off_without_source",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_or_after_a_false_conjunct",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_leading_or_operand_order",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_confirms_simple_true_comparison",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_multi_character_augmented_rebinding",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_tuple_rebinding",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebound_scan_keeps_comparison_lines_readable",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_orders_large_integers_exactly",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::mixed_boolean_conjunct_guard_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multi_character_augmented_rebinding_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::tuple_rebinding_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::large_integer_guard_orders_exactly",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_scan_finds_parameter_later_on_the_line",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_after_guard_inside_loop_fails_open",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_scan_keeps_reads_and_attributes_readable",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_body_rebinding_after_guard_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::reversed_tuple_rebinding_keeps_oracle_credit",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/guard_activation.rs",
+  "crates/ripr/src/analysis/language/python/boundary.rs",
+  "crates/ripr/src/analysis/language/python/classify.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = ["unit_test_pass_rate"]
+[[behavior]]
+id = "RIPR-SPEC-0261"
+name = "Agent brief error-variant examples compile and name a runnable command"
+spec = "docs/specs/RIPR-SPEC-0261-agent-brief-error-variant-example.md"
+tests = [
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::error_variant_assertion_shape_with_owned_string_payload_binds_and_compares_literal",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::error_variant_assertion_shape_with_format_payload_stays_non_concrete",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::wellformed_string_literal_rejects_compound_expressions",
+  "crates/ripr/src/output/agent_brief.rs::tests::verification_omits_suggested_test_command_for_not_applicable_target",
+]
+code = [
+  "crates/ripr/src/output/agent_seam_packets.rs",
+  "crates/ripr/src/output/agent_brief.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0261-agent-brief-error-variant-example.md",
+  "docs/OUTPUT_SCHEMA.md",
 ]
 metrics = ["unit_test_pass_rate"]
 
