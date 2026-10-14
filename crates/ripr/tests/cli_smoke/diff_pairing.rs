@@ -6,7 +6,7 @@ use serde_json::Value;
 fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_external_workspace("short-predicate-pairing")?;
-    let result = (|| {
+    let result: Result<(), Box<dyn std::error::Error>> = (|| {
         std::fs::create_dir_all(root.join("src"))?;
         std::fs::write(
             root.join("Cargo.toml"),
@@ -78,13 +78,13 @@ fn short_predicate_pairing_is_file_local_and_uses_shifted_new_coordinates()
                     Some("./src/a.rs"),
                     Some(3),
                     Some("x >= 0"),
-                    Some("head_current")
+                    Some("candidate_current")
                 ),
                 (
                     Some("./src/b.rs"),
                     Some(2),
                     Some("n <= 0"),
-                    Some("head_current")
+                    Some("candidate_current")
                 ),
             ],
             "{report}"

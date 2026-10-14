@@ -17,7 +17,7 @@ fn git_probes(before: &str, after: &str) -> Result<Vec<SeededProbe>, String> {
         .map_err(|error| error.to_string())?
         .as_nanos();
     let root = std::env::temp_dir().join(format!("ripr-replacement-{stamp}"));
-    let result = (|| {
+    let result: Result<Vec<SeededProbe>, String> = (|| {
         std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         std::fs::write(root.join("src/lib.rs"), before).map_err(|error| error.to_string())?;
         fixture_git_ok(&root, &["init", "-q"])?;
@@ -133,19 +133,19 @@ fn a_replacement_without_the_old_family_keeps_deleted_error_behavior() -> Result
     assert_eq!(values.len(), 1, "{probes:?}");
     let seed = values.first().ok_or("missing Ok constructor")?;
     assert_eq!(seed.probe.after.as_deref(), Some("Ok(a)"));
-    assert_eq!(seed.parser_span.map(|span| span.start_byte), Some(39));
+    assert_eq!(seed.parser_span.map(|span| span.start_byte), Some(40));
     Ok(())
 }
 
 #[test]
 fn one_constructor_span_cannot_consume_two_old_constructor_edits() -> Result<(), String> {
     let probes = git_probes(
-        "pub fn f() -> (Option<u8>, Option<u8>) {\n    (Some(1), Some(2))\n}\n",
-        "pub fn f() -> (Option<u8>, Option<u8>) {\n    (Some(3), Some(4))\n}\n",
+        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let _ = (Some(1), Some(2));\n    (None, None)\n}\n",
+        "pub fn f() -> (Option<u8>, Option<u8>) {\n    let _ = (Some(3), Some(4));\n    (None, None)\n}\n",
     )?;
     assert_eq!(
         historical(&probes, ProbeFamily::ReturnValue),
-        vec!["(Some(1), Some(2))"],
+        vec!["let _ = (Some(1), Some(2));"],
         "{probes:?}"
     );
     // This bounded repair does not change the parser's one-shape-per-family selector.
@@ -153,7 +153,7 @@ fn one_constructor_span_cannot_consume_two_old_constructor_edits() -> Result<(),
         probes
             .iter()
             .any(|seed| seed.probe.after.as_deref() == Some("Some(3)")
-                && seed.parser_span.map(|span| span.start_byte) == Some(46)),
+                && seed.parser_span.map(|span| span.start_byte) == Some(54)),
         "{probes:?}"
     );
     Ok(())
