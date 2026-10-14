@@ -247,6 +247,10 @@ fn a_table_test_that_shadows_binds_or_borrows_does_not_expose_the_arm() -> Resul
             "an owner result bound on the expected side",
             BOUND_RESULT_TABLE,
         ),
+        (
+            "a helper whose parameter shares the column's name",
+            HELPER_NAMED_LIKE_THE_COLUMN,
+        ),
     ] {
         let repo = TempRepo::create(test)?;
         let output = repo.check()?;
