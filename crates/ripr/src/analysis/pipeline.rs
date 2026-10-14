@@ -310,11 +310,22 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     let loaded_base_commit = loaded.resolved_base_commit.clone();
     let loaded_merge_base = loaded.merge_base_origin.clone();
     let probe_token = cancellation::current_token();
+    // #7716 review: capture THIS invocation's test observer on the invoking
+    // thread, before the worker exists. Ordinary `Run` invocations running
+    // in sibling test threads have no observer registered, so their workers
+    // can never signal (or be waited on by) this test's seam — the seam is
+    // invocation-scoped, not process-global (#7799).
+    #[cfg(test)]
+    let probe_worker_observer = current_probe_worker_observer();
+    #[cfg(test)]
+    let observer_for_worker = probe_worker_observer.clone();
     std::thread::scope(|scope| {
         let probes = scope.spawn(move || {
             cancellation::with_optional_token(probe_token.as_ref(), || {
                 #[cfg(test)]
-                PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
+                if let Some(observer) = observer_for_worker.as_ref() {
+                    observer.observe_worker_started();
+                }
                 // RIPR-SPEC-0116: the working-tree diff covers tracked files
                 // only; name the untracked routed files it cannot contain so
                 // the output can say so.
@@ -337,7 +348,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             })
         });
         #[cfg(test)]
-        wait_for_probe_worker_for_test();
+        wait_for_probe_worker_for_test(probe_worker_observer.as_deref());
         let result = run_pipeline_for_diff_text_with_language_config(
             options,
             oracle_policy,
@@ -366,35 +377,108 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     })
 }
 
-/// #7292 test seam: when the wait flag is set, the worktree pipeline's
-/// analysis phase spins (bounded) until the disclosure-probe worker has
-/// started. Before the overlap fix the probes ran only after the analysis
-/// returned, so the flag stayed unset for the whole bound and the overlap
-/// test failed; with the overlap the worker starts immediately and the
-/// wait exits at once. Test-only: the flag is never set outside tests.
+/// #7292/#7716 test seam, invocation-scoped: the probe-worker observer the
+/// driving test installs on its own thread. The worktree pipeline captures
+/// the observer from the invoking thread before spawning the worker, so a
+/// worker signals only the observer of the invocation that spawned it — an
+/// ordinary parallel `Run` test registers nothing, and its worker can never
+/// satisfy (or be waited on by) another test's seam. This replaces the
+/// earlier process-global flag pair, whose unconditional worker-body store
+/// let sibling `Run` invocations flip a `Skip` test's "never started"
+/// assertion (P1 review on #7757, reproduction in #7799).
 #[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WAIT_FOR_WORKER: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-pub(crate) static PROBE_OVERLAP_WORKER_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-/// Serializes the tests that drive the probe-worker seams above: the flags
-/// are process-global, and the skip test's "the worker never started"
-/// assertion is only meaningful while no `Run`-path test can flip it
-/// concurrently (#7716).
-#[cfg(test)]
-pub(crate) static PROBE_OVERLAP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[derive(Default)]
+pub(crate) struct ProbeWorkerObserver {
+    /// When set, the pipeline's analysis phase spins (bounded) until the
+    /// worker of THIS invocation reports started — the pre-overlap behavior
+    /// left it unset for the whole bound and failed the overlap test.
+    wait_for_worker: std::sync::atomic::AtomicBool,
+    worker_started: std::sync::atomic::AtomicBool,
+}
 
 #[cfg(test)]
-fn wait_for_probe_worker_for_test() {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-    if !PROBE_OVERLAP_WAIT_FOR_WORKER.load(Ordering::Acquire) {
-        return;
+impl ProbeWorkerObserver {
+    /// An observer whose test requires the probes to overlap the analysis.
+    pub(crate) fn demanding_overlap() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            wait_for_worker: std::sync::atomic::AtomicBool::new(true),
+            worker_started: std::sync::atomic::AtomicBool::new(false),
+        })
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
+
+    /// An observer that only records whether this invocation's worker
+    /// started; the pipeline never waits on it.
+    pub(crate) fn observe_only() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    fn observe_worker_started(&self) {
+        self.worker_started
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the worker of the observed invocation started.
+    pub(crate) fn worker_started(&self) -> bool {
+        self.worker_started
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn wait_requested(&self) -> bool {
+        self.wait_for_worker
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROBE_WORKER_OBSERVER: std::cell::RefCell<
+        Option<std::sync::Arc<ProbeWorkerObserver>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn current_probe_worker_observer() -> Option<std::sync::Arc<ProbeWorkerObserver>> {
+    PROBE_WORKER_OBSERVER.with(|slot| slot.borrow().clone())
+}
+
+/// Owned registration of an observer for the installing test's thread; the
+/// registration is removed on drop, including through `?` early returns, so
+/// a failed test cannot leak its observer into later invocations.
+#[cfg(test)]
+pub(crate) struct ProbeWorkerObserverGuard;
+
+#[cfg(test)]
+impl ProbeWorkerObserverGuard {
+    pub(crate) fn install(observer: std::sync::Arc<ProbeWorkerObserver>) -> Self {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = Some(observer));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ProbeWorkerObserverGuard {
+    fn drop(&mut self) {
+        PROBE_WORKER_OBSERVER.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// How long the overlap seam waits for this invocation's worker. A
+/// pre-overlap regression keeps the worker unstarted for the whole bound and
+/// fails decisively; the bound is generous because a saturated host can
+/// delay the worker's first scheduling by tens of seconds without any
+/// overlap regression (#7799 validation).
+#[cfg(test)]
+const PROBE_WORKER_WAIT_BOUND: std::time::Duration = std::time::Duration::from_mins(2);
+
+#[cfg(test)]
+fn wait_for_probe_worker_for_test(observer: Option<&ProbeWorkerObserver>) {
+    use std::time::Instant;
+    let Some(observer) = observer.filter(|observer| observer.wait_requested()) else {
+        return;
+    };
+    let deadline = Instant::now() + PROBE_WORKER_WAIT_BOUND;
+    while !observer.worker_started() && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 
@@ -5852,17 +5936,14 @@ index 0000000..1111111 100644
     #[test]
     fn worktree_pipeline_probes_overlap_the_analysis() -> Result<(), String> {
         use crate::config::RustLanguageConfig;
-        use std::sync::atomic::Ordering;
-        use std::time::{Duration, Instant};
+        use std::sync::Arc;
+        use std::time::Instant;
 
-        // Hold the seam lock so the Skip test cannot observe this test's
-        // worker-start flag (see `PROBE_OVERLAP_TEST_LOCK`). A poisoned lock
-        // means a sibling test panicked; keep serializing anyway.
-        let _seam_guard = PROBE_OVERLAP_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
-        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+        // Invocation-scoped seam (#7799): this observer belongs to THIS
+        // invocation only. Sibling tests running ordinary `Run` pipelines
+        // register no observer and cannot satisfy or wait on this one.
+        let observer = ProbeWorkerObserver::demanding_overlap();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
 
         let root = temp_root("probe-overlap")?;
         let result = (|| -> Result<(), String> {
@@ -5908,7 +5989,7 @@ index 0000000..1111111 100644
             );
             let elapsed = started.elapsed();
 
-            let worker_started = PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire);
+            let worker_started = observer.worker_started();
             if !worker_started {
                 return Err(
                     "the probe worker never started during the analysis: the disclosure probes \
@@ -5916,10 +5997,13 @@ index 0000000..1111111 100644
                         .to_string(),
                 );
             }
-            // The seam's own bound is 30s; reaching it means the worker was
-            // still not observed while the analysis waited for it, which is
-            // the pre-fix behavior this test pins against.
-            if elapsed >= Duration::from_secs(25) {
+            // Elapsed past the seam's wait bound only when the wait provably
+            // expired without this invocation's worker starting — the
+            // pre-fix behavior this test pins against. Under a loaded host
+            // the wait can legitimately absorb tens of seconds before the
+            // worker is scheduled, so the threshold is the wait bound
+            // itself, not a smaller timing guess (#7799 validation).
+            if elapsed >= PROBE_WORKER_WAIT_BOUND {
                 return Err(format!(
                     "the analysis waited {:.1}s for the probe worker: the probes did not overlap \
                      the analysis",
@@ -5983,7 +6067,6 @@ index 0000000..1111111 100644
             }
             Ok(())
         })();
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
         let _ = fs::remove_dir_all(&root);
         result
     }
@@ -5993,25 +6076,20 @@ index 0000000..1111111 100644
     /// Before the skip existed, the #7292 worker spawned even for such
     /// consumers and its four git children could lose the overlap race on a
     /// loaded host, extending every refresh by the probes' full wall time.
-    /// With the skip the worker-start flag stays unset while the analysis
-    /// still completes, and the unrendered fields stay empty.
+    /// With the skip THIS invocation's observer stays unsignaled while the
+    /// analysis completes, and the unrendered fields stay empty. The
+    /// observer is invocation-scoped (#7799), so an ordinary parallel `Run`
+    /// test starting its own worker cannot flip it.
     #[test]
     fn worktree_pipeline_skip_disclosure_probes_spawns_no_probe_worker() -> Result<(), String> {
         use crate::config::RustLanguageConfig;
-        use std::sync::atomic::Ordering;
+        use std::sync::Arc;
 
-        // Hold the seam lock: the started flag is process-global, and a
-        // concurrent Run-path test would flip it and fail the assertion
-        // below for reasons this test does not own (#7716). A poisoned lock
-        // means a sibling test panicked; keep serializing anyway.
-        let _seam_guard = PROBE_OVERLAP_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        // Make the seam fail loudly if a probe worker ever starts: the Run
-        // path would wait for it here and the started flag would flip.
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
-        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+        // This observer would flip if, and only if, THIS invocation's
+        // pipeline started a probe worker (a regression of the Skip branch
+        // to the Run path), regardless of what sibling tests run.
+        let observer = ProbeWorkerObserver::observe_only();
+        let _seam_guard = ProbeWorkerObserverGuard::install(Arc::clone(&observer));
 
         let root = temp_root("probe-skip")?;
         let result = (|| -> Result<(), String> {
@@ -6054,7 +6132,7 @@ index 0000000..1111111 100644
             )
             .map_err(|err| format!("worktree pipeline failed: {err}"))?;
 
-            if PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) {
+            if observer.worker_started() {
                 return Err(
                     "the disclosure-probe worker started under Skip: a consumer that renders \
                      neither disclosure field must run no probe worker"
@@ -6093,7 +6171,6 @@ index 0000000..1111111 100644
             }
             Ok(())
         })();
-        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
         let _ = fs::remove_dir_all(&root);
         result
     }
