@@ -2357,6 +2357,47 @@
       ]
     },
     {
+      "id": "rust_bool_compared_inequality_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/bool_compared_inequality_not_exact",
+      "vector": "bool_compared_inequality_in_assert_eq_is_never_an_exact_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "score_is_nonzero",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_inequality_struct_assertion_not_exact",
       "language": "rust",
       "tier": "pure",

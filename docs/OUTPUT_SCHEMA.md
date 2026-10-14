@@ -19136,3 +19136,38 @@ classified cache generation 1.63 and compact/sharded generation 0.69 reject
 prior envelopes; eligible standalone packages also revalidate locked dependency
 and effective configuration identity before classified reuse. Public finding
 and oracle schemas are unchanged.
+
+## GitHub PR Status Provider Observations
+
+`cargo xtask gh-pr-status --pr <number>` collects `comments` as well as
+`latestReviews`. Its advisory JSON adds `provider_review_observations` with:
+
+- `snapshot_head`: the valid full head SHA observed while collecting the packet,
+  or an empty string if unavailable. This is not a response's original subject.
+- `scope: "observed_responses_only"`: only returned responses from the four
+  recognized provider identities are assessed; pagination completeness,
+  configured/required providers and review independence are not established.
+- `quota_notice_count`: the number of returned responses with a recognized
+  provider-specific leading quota notice, not the number of unavailable providers.
+- `responses`: original `author`, `source_kind` (`review` or `issue_comment`),
+  native review `state`, `timestamp`, `url` and unmodified `body`, plus
+  `disposition` (`quota_exhausted` or `substance_unknown`) and
+  `subject_attribution: "not_established"`.
+
+Detection recognizes the observed Sourcery weekly-limit paragraph, Gemini quota
+warning, Codex review-usage notice and CodeRabbit generated rate-limit marker.
+Unknown, changed or unsupported templates remain `substance_unknown`; this is
+never a completed or clean review. Native `APPROVED`/`COMMENTED` states alone do
+not establish substance. Other unavailable/skipped/completed response families
+remain outside this bounded detection slice.
+
+The Markdown section displays the same notice count and dispositions. Raw bodies and any returned
+source URLs and timestamps are preserved in JSON as untrusted source evidence;
+embedded instructions do not authorize actions. Historical notices remain
+visible alongside later reviews and do not establish current-head unavailability.
+This section does not replace exact-review subject attribution, create a new
+required gate, change `safe_next_action`, or grant merge authority. Issue #2432
+retains completion classification and configured-provider coverage follow-ups.
+
+Missing source URLs/timestamps remain empty strings; in particular the CLI
+latest-review summary does not supply a review URL. No identity is fabricated.

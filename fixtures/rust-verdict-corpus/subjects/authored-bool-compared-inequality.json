@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-bool-compared-inequality",
+  "origin": "authored",
+  "version_label": "authored 2026-10-14 for #7598 (RIPR-SPEC-0231 rule 1: a comparison compared with a boolean literal reads as what it asserts)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a4ef19b3bd20c3c1f722649fbcda5af8703c8ebaacf730a63b09a10c70ff3733"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "7ff8a13be0a6c301cde0a6756e27a37902ea01efd821bce0994f0f7271d42717"
+    }
+  ]
+}
