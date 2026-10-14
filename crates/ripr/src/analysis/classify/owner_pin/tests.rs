@@ -8288,6 +8288,12 @@ fn a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand() {
             false,
         ),
         (AND, "        assert_eq!(both_zero(0i32, 0), true);", false),
+        // An unread last argument fails closed too.
+        (
+            AND,
+            "        let y = 0;\n        assert_eq!(both_zero(0, y), true);",
+            false,
+        ),
         // A table row that runs both operands.
         (
             AND,

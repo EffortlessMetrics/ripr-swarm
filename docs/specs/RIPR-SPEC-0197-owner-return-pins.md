@@ -1370,7 +1370,8 @@ and only per pinned call:
    check helper (rule 7), the helper's parameter at each of the test's
    eager calls. On at least one run every operand but the last must take
    the value that does not short-circuit (`true` for `&&`, `false` for
-   `||`). A run with an argument ripr cannot read never counts.
+   `||`). A run with any argument ripr cannot read, the last operand's
+   included, never counts.
 3. Every other rule holds unchanged. The predicate twin pins through the
    same gate, as for any bool owner's whole tail.
 
@@ -1754,7 +1755,9 @@ assertions. This repair shares the existing callback without that larger migrati
   constant-row table, cross-module and cross-file helpers, generic helpers
   and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
-  only.
+  only. The one exception is a short-circuit tail (#7969), whose run check
+  reads the plain literal a test passes at each eager helper call; it
+  resolves no other helper value.
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and

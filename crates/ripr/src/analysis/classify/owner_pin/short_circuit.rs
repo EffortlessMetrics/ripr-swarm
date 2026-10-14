@@ -124,10 +124,13 @@ impl ShortCircuitTail {
             return false;
         };
         let continues = self.operator == "&&";
+        // A run counts only when every argument reads, the last operand's
+        // included: the spec's run check reads the whole call.
         runs.iter().any(|values| {
-            self.operands[..self.operands.len() - 1]
-                .iter()
-                .all(|operand| operand.evaluate(values) == Some(continues))
+            values.iter().all(Option::is_some)
+                && self.operands[..self.operands.len() - 1]
+                    .iter()
+                    .all(|operand| operand.evaluate(values) == Some(continues))
         })
     }
 }
