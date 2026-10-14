@@ -2363,9 +2363,18 @@ fn extract_parser_oracles(
         else {
             continue;
         };
-        if name != "unwrap" && name != "expect" {
-            continue;
-        }
+        // RIPR-SPEC-0227: `unwrap()` / `expect()` panic on the `Err` side
+        // and read smoke; an `unwrap_err()` whose value is never compared
+        // panics on the `Ok` side, so it observes the `Err` side
+        // (decision 2). Its statement shape is decided by the same
+        // `uncompared_unwrap_err` the line scanner uses.
+        let (kind, strength) = match name.as_str() {
+            "unwrap" | "expect" => (OracleKind::SmokeOnly, OracleStrength::Smoke),
+            "unwrap_err" if uncompared_unwrap_err_statement(&method_call, text) => {
+                (OracleKind::BroadError, OracleStrength::Weak)
+            }
+            _ => continue,
+        };
         let range = method_call.syntax().text_range();
         let text = slice_text(text, range.start(), range.end())
             .trim()
@@ -2373,8 +2382,8 @@ fn extract_parser_oracles(
             .to_string();
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
-            kind: OracleKind::SmokeOnly,
-            strength: OracleStrength::Smoke,
+            kind,
+            strength,
             observed_tokens: extract_identifier_tokens(&text),
             text,
             ok_value_observed: None,
@@ -2498,6 +2507,31 @@ fn extract_parser_oracles(
     assertions
 }
 
+/// Whether this `unwrap_err()` call is the whole value of a statement that
+/// never compares it (RIPR-SPEC-0227 decision 2): the statement text and the
+/// rest of the enclosing block go through `uncompared_unwrap_err`, so both
+/// adapters admit the same shapes.
+fn uncompared_unwrap_err_statement(method_call: &ast::MethodCallExpr, text: &str) -> bool {
+    let Some(statement) = method_call.syntax().parent() else {
+        return false;
+    };
+    if ast::LetStmt::cast(statement.clone()).is_none()
+        && ast::ExprStmt::cast(statement.clone()).is_none()
+    {
+        return false;
+    }
+    let range = statement.text_range();
+    let statement_text = slice_text(text, range.start(), range.end());
+    let block_end = statement
+        .parent()
+        .map_or(range.end(), |block| block.text_range().end());
+    let rest = slice_text(text, range.end(), block_end);
+    crate::analysis::extract::uncompared_unwrap_err(&statement_text, &rest).is_some_and(|value| {
+        let call = method_call.syntax().text().to_string();
+        value.split_whitespace().eq(call.split_whitespace())
+    })
+}
+
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
 /// one path segment at a time: the exact built-in assertion names plus the
 /// supported snapshot-macro naming boundary (`*_snapshot`). The
@@ -2552,6 +2586,124 @@ enum DropInScope {
     WholeFile,
     /// A re-parse of the function text alone: the file is not visible.
     Unknown,
+}
+
+/// Nonrecursive whole-file root proof for each qualified statement macro.
+/// Unknown glob roots remain unproved.
+pub(crate) fn assertion_root_binding_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+) -> bool {
+    drop_in_assertion_leaf(path).is_some()
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && node.ancestors().last().is_some_and(|file| {
+            !file
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
+}
+
+/// Whether a `std::`- or `core::`-qualified macro path (`std::assert_eq`,
+/// `::core::assert`) names the standard macro as far as its file shows
+/// (#7857). The root must pass the drop-in rebinding checks and be
+/// available, and every glob import in the file must read an in-file
+/// module (`self::*`, or `super::*` inside an inline module), so no glob
+/// brings a `std` or `core` item from another file. Other drop-in crates
+/// (`pretty_assertions::`) also need a manifest check, which this file-local
+/// proof cannot make, so they stay unproved here.
+pub(crate) fn std_macro_root_is_unrebound(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    matches!(unrooted.split_once("::"), Some(("std" | "core", leaf)) if !leaf.contains("::"))
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && assertion_root_is_available(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .filter(|tree| tree.star_token().is_some())
+                .all(|tree| glob_reads_in_file_module(&tree))
+        })
+}
+
+/// `use self::*;`, or `use super::*;` inside an inline module: a glob whose
+/// source module is in the same file. Any other glob shape, including one
+/// nested in a use list, is not established.
+fn glob_reads_in_file_module(tree: &ast::UseTree) -> bool {
+    let Some(path) = tree.path() else {
+        return false;
+    };
+    if !tree
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::Use::can_cast(parent.kind()))
+    {
+        return false;
+    }
+    match path.syntax().text().to_string().as_str() {
+        "self" => true,
+        "super" => tree
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .any(|module| module.item_list().is_some()),
+        _ => false,
+    }
+}
+
+/// Qualified operand capture requires every statement macro in the same
+/// function to retain its independently established binding.
+pub(crate) fn assertion_root_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
+) -> bool {
+    let function = node.ancestors().find_map(ast::Fn::cast);
+    assertion_root_binding_is_unrebound(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
+                .filter(crate::analysis::syntax::macro_call_is_statement)
+                .all(|call| statement_bound(&call))
+        })
+}
+
+/// Initial qualified capture keeps no-implicit-prelude contexts refused.
+/// A no_std root supplies std only through an explicit unrenamed declaration.
+pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some((root, _)) = path.strip_prefix("::").unwrap_or(path).split_once("::") else {
+        return false;
+    };
+    let Some(file) = node.ancestors().last() else {
+        return false;
+    };
+    let attributes: Vec<_> = node
+        .ancestors()
+        .flat_map(|ancestor| ancestor.children().filter_map(ast::Attr::cast))
+        .collect();
+    let mentions = |name: &str| {
+        attributes.iter().any(|attribute| {
+            attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .any(|token| token.text() == name)
+                && !cfg_predicates::attribute_is_known_inactive_prelude_flags(
+                    &attribute.syntax().text().to_string(),
+                )
+        })
+    };
+    !mentions("no_implicit_prelude")
+        && (root != "std"
+            || !mentions("no_std")
+            || file
+                .children()
+                .filter_map(ast::ExternCrate::cast)
+                .any(|krate| {
+                    krate.rename().is_none()
+                        && crate::analysis::syntax::supported_targeted_item_context(krate.syntax())
+                        && krate.name_ref().is_some_and(|name| name.text() == "std")
+                }))
 }
 
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)

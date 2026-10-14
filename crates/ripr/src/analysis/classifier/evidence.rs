@@ -393,6 +393,9 @@ impl ClassifiedProbeEvidence {
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
         };
+        let sibling_exclusion_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            pin_syntax.admits_assertion_context(test, assertion, context.index)
+        };
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
@@ -533,6 +536,7 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                sibling_exclusion_admitted: &sibling_exclusion_admitted,
                 proximity_may_reach_owner: &|test| {
                     context.owner_fn.is_none_or(|owner| {
                         owner_reach
@@ -650,6 +654,7 @@ impl ClassifiedProbeEvidence {
                         chain,
                         test_activation: &one_test_activation,
                     }),
+                context.index,
             ) {
             StageEvidence::new(
                 StageState::Weak,

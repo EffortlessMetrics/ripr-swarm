@@ -102,7 +102,16 @@ or `Err` (or `Some` or `None`):
 - `assert!(r.is_err())`, `assert!(r.is_ok())`, `assert!(!r.is_ok())` and the
   `Option` twins;
 - `assert!(matches!(r, Err(_)))`, `assert!(matches!(r, Ok(_)))`;
-- `r.unwrap_err()` or `r.expect_err(..)` whose value is never compared;
+- `r.unwrap_err()` or `r.expect_err(..)` whose value is never compared,
+  read directly off the call's result: only adapters that keep an `Ok` an
+  `Ok` (`map_err`, `map`, `as_ref`, `.await`) may sit between them, so
+  `check(x).and(Err(E::Other)).unwrap_err()` or `x.ok_or(E).unwrap_err()`
+  reads nothing. A parenthesized group is read through, not skipped:
+  `(check(x)).unwrap_err()` and `(check(x).map_err(f)).unwrap_err()` read
+  the call, while `(check(x).and(Err(E::Other))).unwrap_err()` reads
+  nothing. The call is on a plain path (raw identifiers such as `r#check`
+  and a `::<..>` turbofish included); a group around a comparison, range,
+  jump or tuple, or nested more than eight deep, reads nothing;
 - `r.unwrap()` or `r.expect(..)` whose value is never compared;
 - `#[should_panic]` without `expected`, only when unwrapping the owner result
   with `unwrap()` or `expect()` is the sole possible panic source on the
@@ -330,14 +339,27 @@ Source: `check` as in Problem.
   `?` line, a wrapped or unexecuted assertion and a file-local `assert!`
   macro do not). Corpus:
   `spec0227-total-question-mark-is-err` and `grid-try-exact`.
-- Planned: oracle-scan unit tests for bare `unwrap_err()` and `should_panic`.
-  Until those land, a bare `unwrap_err()` statement is no oracle and decision
-  4 cannot credit it.
+- Decision 2, bare `unwrap_err()`:
+  `classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle`
+  (the line scanner and the parser path read a discarded, `_`-bound or
+  never-used `unwrap_err()` as `broad_error` / weak; a binding a later
+  assertion compares adds nothing, and a method on the error is not
+  admitted). Corpus: `spec0227-check-variant-bare-unwrap-err` (example 7)
+  reads `weakly_exposed` with that oracle.
+- Planned: oracle-scan unit tests for `should_panic`. A bare
+  `expect_err(..)` keeps its older `expect_` admission, which reads it as
+  `mock_expectation` / medium; #7604 tracks reading it as decision 2 does.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs` and `classify.rs`: read
   bare `unwrap_err()` and `should_panic` as result-side oracles.
+  `scan.rs::uncompared_unwrap_err` decides which `unwrap_err()` statements
+  are uncompared; the line scanner and the parser path's method-call scan
+  (`syntax/ra.rs`, beside `unwrap()` / `expect()` as `smoke_only`) both admit
+  them as `broad_error` / weak. It is not a `classify_assertion` step, so a
+  compared extraction keeps its classifier reading. `should_panic` is not
+  read yet.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: side-flip pairing
   for rules 3 and 3b.
 - `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rules 3 and 3b

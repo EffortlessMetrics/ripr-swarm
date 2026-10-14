@@ -20,6 +20,7 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+mod targeted_calls;
 mod text;
 mod transitive_reach;
 mod value_transfer;
@@ -33,11 +34,13 @@ pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
-pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
+pub(in crate::analysis) use call_identity::{
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
-    recommended_next_step, stop_reasons,
+    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
+    missing_evidence, recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
@@ -73,10 +76,10 @@ pub(in crate::analysis) use reach::{
     reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, TargetedCallShape, body_contains_owner_call,
+    DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, targeted_call_shapes, test_calls_free_function,
+    owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
@@ -102,3 +105,5 @@ pub(in crate::analysis) use transitive_reach::{
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
     transitive_reach_witness_pointer,
 };
+
+pub(in crate::analysis) use targeted_calls::{TargetedCallShape, TargetedCallSyntax};

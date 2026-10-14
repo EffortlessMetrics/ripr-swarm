@@ -9,7 +9,8 @@ mod select;
 mod source_role;
 
 pub(crate) use assertion_dependency::{
-    AnyhowIdentity, config_snapshot_identity, eligible_manifest, verified_anyhow_identity,
+    AnyhowIdentity, LiteralJsonIdentity, config_snapshot_identity, eligible_json_root,
+    eligible_manifest, verified_anyhow_identity, verified_json_identity,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{

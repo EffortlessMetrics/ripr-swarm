@@ -128,7 +128,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:d9dae5de
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:d9dae5de
@@ -155,7 +155,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:a207aa93
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:a207aa93
@@ -181,7 +181,7 @@ Evidence
 Weakness
   - No exact error variant discriminator was detected
 Next step
-  - Assert the exact error variant or payload instead of only is_err().
+  - The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.
 Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:error_path:d71ee10b
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:error_path:d71ee10b

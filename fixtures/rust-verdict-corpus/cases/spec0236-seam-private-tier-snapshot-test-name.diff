@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index eeca2ab..9b830d7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ fn tier(total: u64) -> u64 {
+-    if total >= 100 { 20 } else { 0 }
++    if 100 <= total { 20 } else { 0 }
+ }
+ 
+ fn route(total: u64) -> u64 {
