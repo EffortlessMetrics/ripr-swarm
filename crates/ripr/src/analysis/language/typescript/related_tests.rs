@@ -756,7 +756,7 @@ pub(crate) fn owner_call_relation(
     // observed value is the fabrication, not the changed sink, so no trusted
     // owner-call relation may be credited. A bare spyOn (call-through) is
     // unaffected and still relates.
-    if test_spies_owner_with_fabrication(test, &owner.name) {
+    if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
     if contains_call_name(&test.body_text, &owner.name)
@@ -1275,7 +1275,16 @@ const SPY_FABRICATION_SHAPES: [&str; 4] = [
 /// own value still calls through to the owner and is NOT blocked, and a mock
 /// on an unrelated object (`logger.mockReturnValue(...)`) must never refuse
 /// the owner relation — the fabrication has to be tied to the owner spy.
-pub(crate) fn test_spies_owner_with_fabrication(test: &TypeScriptTest, owner_name: &str) -> bool {
+/// Includes the #7507 default-export shape `spyOn(mod, "default")` when
+/// the owner IS the module's default export. The fabrication (not the
+/// changed sink) is what assertions observe, so any owner-call credit
+/// through this test is mock-fabricated evidence. Kept conservative: any
+/// fabricated `"default"` spy blocks only default-export owners.
+pub(crate) fn test_spies_owner_with_fabrication_for_owner(
+    test: &TypeScriptTest,
+    owner_name: &str,
+    exported_as_default: bool,
+) -> bool {
     let body = &test.body_text;
     if !body.contains("spyOn(") {
         return false;
@@ -1283,7 +1292,8 @@ pub(crate) fn test_spies_owner_with_fabrication(test: &TypeScriptTest, owner_nam
     ["vi.spyOn(", "jest.spyOn(", "spyOn("].iter().any(|needle| {
         body.match_indices(needle).any(|(idx, _)| {
             let after_open = &body[idx + needle.len()..];
-            spy_call_targets_name(after_open, owner_name)
+            (spy_call_targets_name(after_open, owner_name)
+                || (exported_as_default && spy_call_targets_name(after_open, "default")))
                 && owner_spy_call_fabricated(body, idx, after_open)
         })
     })
@@ -2144,7 +2154,11 @@ pub(crate) fn legacy_candidate_observes_owner_call(
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         && !test_mocks_owner_module(test, owner, alias_map, workspace_root)
-        && !test_spies_owner_with_fabrication(test, &owner.name)
+        && !test_spies_owner_with_fabrication_for_owner(
+            test,
+            &owner.name,
+            owner.exported_as_default,
+        )
 }
 
 /// Build a candidate whose owner-path disposition comes from the same gates
@@ -2207,7 +2221,7 @@ pub(crate) fn owner_path_disposition(
     if test_mocks_owner_module(test, owner, alias_map, workspace_root) {
         return TypeScriptOwnerPathDisposition::RejectedOwnerModuleMock;
     }
-    if test_spies_owner_with_fabrication(test, &owner.name) {
+    if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return TypeScriptOwnerPathDisposition::RejectedSpyFabrication;
     }
     if import_binding.is_some() || destructure_binding.is_some() {
@@ -2946,7 +2960,7 @@ enum BodyScanState {
 /// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
     let scan = scan_body_lexical_facts(body_text, identifier);
-    scan.uses.iter().any(|use_offset| {
+    if scan.uses.iter().any(|use_offset| {
         scan.declarations.iter().any(|declaration| {
             declaration_scope_binds(
                 declaration
@@ -2955,7 +2969,422 @@ pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier
                 *use_offset,
             )
         })
-    })
+    }) {
+        return true;
+    }
+    // #7507: the line-start lexical walk above sees only a leading
+    // `const|let|var|function <name>` declarator. Catch parameters, arrow /
+    // function parameters, `for(-of|-in)` bindings and non-first declarators
+    // (`const x = 1, cost = ...`) also rebind the name inside the body, so a
+    // call through it reaches the shadow, not the owner. These shapes are
+    // rare in real tests; a conservative whole-body binding check (any
+    // binding of the name anywhere in the body counts as a shadow) errs
+    // toward withholding credit, which is the honest direction.
+    body_binds_shadow_identifier(body_text, identifier)
+}
+
+/// Conservative whole-body binding check behind
+/// `local_identifier_declared_in_test_body` (#7507). Returns `true` when the
+/// test body binds `identifier` through a shape the line-start lexical walk
+/// does not model: a `catch` parameter, an arrow/function parameter feeding
+/// an `=>` body, or a `for(-of|-in)` header binding. (Non-first
+/// `const|let|var` declarators are covered by the extended
+/// `declaration_line_declares_identifier` in the same walk.) Masked so string
+/// literals and comments cannot fabricate a binding; regex literals are not
+/// modeled (a miss there stays over-credit, disclosed as a residual).
+fn body_binds_shadow_identifier(body_text: &str, identifier: &str) -> bool {
+    if !is_safe_javascript_identifier(identifier) {
+        return false;
+    }
+    let masked = ts_body_mask_for_shadow_scan(body_text);
+    body_has_catch_binding(&masked, identifier)
+        || body_has_arrow_or_function_param_binding(&masked, identifier)
+        || body_has_loop_header_binding(&masked, identifier)
+}
+
+/// String/comment-masked body for the #7507 shadow scan. Reuses the shared
+/// literal/comment masker so `catch (cost)` inside a string never counts.
+fn ts_body_mask_for_shadow_scan(body_text: &str) -> String {
+    super::classifier::ts_mask_literals_and_comments(body_text)
+}
+
+/// `catch (cost)`, `catch ((cost))`, `catch ({ cost })`, `catch ([cost])`:
+/// any whole-identifier occurrence of the name between the `catch` parens.
+fn body_has_catch_binding(masked: &str, identifier: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(rel) = masked[from..].find("catch") {
+        let at = from + rel;
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        if !before_ok {
+            from = at + "catch".len();
+            continue;
+        }
+        let rest = masked[at + "catch".len()..].trim_start();
+        let Some(paren) = rest.strip_prefix('(') else {
+            from = at + "catch".len();
+            continue;
+        };
+        let mut depth = 1usize;
+        let mut end = None;
+        for (offset, c) in paren.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            from = at + "catch".len();
+            continue;
+        };
+        if super::classifier::ts_references_identifier(&paren[..end], identifier) {
+            return true;
+        }
+        from = at + "catch".len();
+    }
+    false
+}
+
+/// Arrow or function parameters that bind the name: `(cost) =>`,
+/// `(a, cost) =>`, `cost =>`, `function f(cost)`, `function (cost)`.
+/// Only a parameter list directly feeding `=>` (or a `function` keyword
+/// parameter list) counts, so a call argument `(cost)` never matches.
+fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> bool {
+    // Bare single-parameter arrow: `cost => ...`.
+    {
+        let needle = format!("{identifier} =>");
+        let mut from = 0usize;
+        while let Some(rel) = masked[from..].find(needle.as_str()) {
+            let at = from + rel;
+            let head = &masked[..at];
+            let before_ok = head
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.');
+            if before_ok {
+                // `: typeof price => x` spells a type-space use (a `typeof`
+                // type query or a type-annotation colon), not a bare
+                // parameter binding (PR #7651 review).
+                let run: String = head
+                    .chars()
+                    .rev()
+                    .skip_while(|ch: &char| ch.is_whitespace())
+                    .take_while(|ch: &char| is_javascript_identifier_char(*ch))
+                    .collect();
+                let word: String = run.chars().rev().collect();
+                if matches!(word.as_str(), "typeof" | "keyof") {
+                    from = at + needle.len();
+                    continue;
+                }
+                let precedes = head.chars().rev().find(|ch: &char| !ch.is_whitespace());
+                if precedes == Some(':') {
+                    from = at + needle.len();
+                    continue;
+                }
+                return true;
+            }
+            from = at + needle.len();
+        }
+    }
+    // Parenthesized parameter list directly feeding `=>`.
+    {
+        let mut from = 0usize;
+        while let Some(rel) = masked[from..].find("=>") {
+            let at = from + rel;
+            let before = masked[..at].trim_end();
+            if let Some(open) = before.rfind('(') {
+                // The balanced list inside the parens; a return type
+                // (`(x): typeof price =>`) may sit between `)` and `=>`.
+                let mut depth = 1usize;
+                let mut close = None;
+                for (offset, c) in before[open + 1..].char_indices() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + 1 + offset);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close) = close {
+                    let params = &before[open + 1..close];
+                    let between = before[close + 1..].trim_start();
+                    // The `(` must open a parameter list, not a call: the
+                    // token before it is not an identifier, `.`, `)`, or `]`.
+                    let paren_before = before[..open].trim_end().chars().next_back();
+                    if (between.is_empty() || between.starts_with(':'))
+                        && !params.contains(';')
+                        && params_bind_identifier(params, identifier)
+                        && paren_before.is_none_or(|ch| {
+                            !is_javascript_identifier_char(ch)
+                                && ch != '.'
+                                && ch != ')'
+                                && ch != ']'
+                        })
+                    {
+                        return true;
+                    }
+                }
+            }
+            from = at + "=>".len();
+        }
+    }
+    // `function` keyword parameter lists: `function f(cost)`,
+    // `function (cost)`, `async function (cost)`.
+    {
+        let mut from = 0usize;
+        while let Some(rel) = masked[from..].find("function") {
+            let at = from + rel;
+            let before_ok = masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch));
+            if !before_ok {
+                from = at + "function".len();
+                continue;
+            }
+            let mut rest = masked[at + "function".len()..].trim_start();
+            if let Some(stripped) = rest.strip_prefix('*') {
+                rest = stripped.trim_start();
+            }
+            // Optional function name.
+            if let Some(first) = rest.chars().next()
+                && (first.is_ascii_alphabetic() || first == '_' || first == '$')
+            {
+                let name_len: usize = rest
+                    .char_indices()
+                    .take_while(|(_, ch)| is_javascript_identifier_char(*ch))
+                    .map(|(i, ch)| i + ch.len_utf8())
+                    .last()
+                    .unwrap_or(0);
+                rest = rest[name_len..].trim_start();
+            }
+            let Some(paren) = rest.strip_prefix('(') else {
+                from = at + "function".len();
+                continue;
+            };
+            let mut depth = 1usize;
+            let mut end = None;
+            for (offset, c) in paren.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(offset);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end) = end
+                && params_bind_identifier(&paren[..end], identifier)
+            {
+                return true;
+            }
+            from = at + "function".len();
+        }
+    }
+    false
+}
+
+/// Whether a masked parameter list BINDS `identifier`. A binding is a plain
+/// identifier pattern (optionally optional `a?` or a rest `...name`), or any
+/// whole-identifier occurrence inside a destructuring pattern. A mention
+/// after a top-level `=` (default value) or `:` (type annotation) is a use,
+/// not a binding: `((f = price) => ...)` reads `price` and
+/// `((x): typeof price => ...)` names a type; neither rebinds it
+/// (PR #7651 review).
+fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
+    // The pattern is everything before the element's first top-level `=`
+    // (default) or `:` (type annotation); both are depth-aware so braces and
+    // brackets inside destructuring patterns never cut the pattern.
+    fn pattern_of(masked_element: &str) -> &str {
+        let mut depth = 0usize;
+        for (offset, c) in masked_element.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                '=' | ':' if depth == 0 => return masked_element[..offset].trim_end(),
+                _ => {}
+            }
+        }
+        masked_element.trim_end()
+    }
+    split_top_level_declarators(masked_params)
+        .iter()
+        .any(|element| {
+            let element = element.trim();
+            if element.is_empty() {
+                return false;
+            }
+            // A rest parameter binds its pattern: `...cost`.
+            let element = element
+                .strip_prefix("...")
+                .map(str::trim_start)
+                .unwrap_or(element);
+            let pattern = pattern_of(element).trim_start();
+            if pattern.starts_with('{') || pattern.starts_with('[') {
+                return super::classifier::ts_references_identifier(pattern, identifier);
+            }
+            let pattern = pattern.strip_suffix('?').unwrap_or(pattern).trim_end();
+            !pattern.is_empty()
+                && pattern.chars().all(is_javascript_identifier_char)
+                && pattern == identifier
+        })
+}
+
+/// `for (const cost of ...)`, `for (let cost = ...)`, `for (cost in ...)`,
+/// `for await (const cost of ...)`: any whole-identifier occurrence between
+/// the `for` parens counts as a binding (conservative: the initializer may
+/// also mention the name, which only errs toward withholding credit).
+fn body_has_loop_header_binding(masked: &str, identifier: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(rel) = masked[from..].find("for") {
+        let at = from + rel;
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        let after_ok = masked[at + "for".len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        if !before_ok || !after_ok {
+            from = at + "for".len();
+            continue;
+        }
+        let mut rest = masked[at + "for".len()..].trim_start();
+        if rest.starts_with("await") {
+            let after_await = &rest["await".len()..];
+            if after_await
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+            {
+                rest = after_await.trim_start();
+            } else {
+                from = at + "for".len();
+                continue;
+            }
+        }
+        let Some(paren) = rest.strip_prefix('(') else {
+            from = at + "for".len();
+            continue;
+        };
+        let mut depth = 1usize;
+        let mut end = None;
+        for (offset, c) in paren.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            from = at + "for".len();
+            continue;
+        };
+        // Only a declaration position binds: the C-style init clause before
+        // the first top-level `;`, or the `for-of`/`for-in` left side. A mere
+        // reference in the condition or update (`i < price(2)`) is a use, not
+        // a binding, and must not shadow the owner's assertions.
+        if header_declares_identifier(&paren[..end], identifier) {
+            return true;
+        }
+        from = at + "for".len();
+    }
+    false
+}
+
+/// Whether a `for(...)` header binds `identifier` in a declaration position:
+/// a `let|var|const` declarator in the C-style init clause, or the left side
+/// of `for-of`/`for-in`/`for-await`. References in the condition or update
+/// clause are uses, never bindings.
+fn header_declares_identifier(header: &str, identifier: &str) -> bool {
+    // Top-level `;` separates the C-style init clause (depth-aware; the
+    // header is already literal/comment-masked).
+    let mut depth = 0usize;
+    let mut init_end = None;
+    for (offset, c) in header.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                init_end = Some(offset);
+                break;
+            }
+            _ => {}
+        }
+    }
+    if let Some(end) = init_end {
+        let init = header[..end].trim();
+        return ["let ", "var ", "const "]
+            .iter()
+            .any(|keyword| init.starts_with(keyword))
+            && declaration_line_declares_identifier(init, identifier);
+    }
+    // No `;`: `for-of`/`for-in` — only a declared left side binds.
+    let left = split_for_of_left(header);
+    let left = left.trim();
+    ["let ", "var ", "const "]
+        .iter()
+        .any(|keyword| left.starts_with(keyword))
+        && declaration_line_declares_identifier(left, identifier)
+}
+
+/// The `for-of`/`for-in` left side: header text before the top-level `of`
+/// or `in` keyword. Whole-identifier matching so `info` does not split on
+/// its inner `in`; slicing only at char boundaries.
+fn split_for_of_left(header: &str) -> &str {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    let mut depth = 0usize;
+    for (offset, c) in header.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        for keyword in ["of", "in"] {
+            if header[offset..].starts_with(keyword) {
+                let before_ok = offset == 0
+                    || !is_ident_char(header[..offset].chars().next_back().unwrap_or(' '));
+                let after_ok = header[offset + keyword.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| !is_ident_char(next));
+                if before_ok && after_ok {
+                    return header[..offset].trim_end();
+                }
+            }
+        }
+    }
+    header
 }
 
 /// The visibility decision for one declaration's scope against one use
@@ -3156,22 +3585,69 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 }
 
 fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    // #7507: every PLAIN declarator of the list counts, not just the first:
+    // `const x = 1, cost = (a) => 140` rebinds `cost` exactly like a
+    // single-declarator `const cost = ...`. Destructuring patterns
+    // (`const { cost } = ...`, `let [cost] = ...`) are deliberately NOT
+    // plain declarations: their shadow depends on the source module, which
+    // `owner_name_destructured_from_unrelated_source` /
+    // `owner_name_destructured_from_owner_source` (and, for rename locals,
+    // `local_destructured_in_test_body`) already decide. Treating them here
+    // would collapse an owner-module-anchored destructure into a shadow.
     ["const ", "let ", "var ", "function "]
         .into_iter()
         .filter_map(|keyword| line.strip_prefix(keyword))
-        .filter_map(|after| {
-            after
-                .split(|ch: char| {
-                    ch == ':'
-                        || ch == '='
-                        || ch == '('
-                        || ch == ','
-                        || ch == ';'
-                        || ch.is_whitespace()
-                })
-                .find(|part| !part.is_empty())
+        .any(|after| {
+            // A pattern-led declaration (`{ cost } = ...`, `[cost] = ...`)
+            // belongs to the source-aware destructure checks, not here.
+            if after.trim_start().starts_with(['{', '[']) {
+                return false;
+            }
+            split_top_level_declarators(after).iter().any(|declarator| {
+                // A declarator whose own pattern opens a destructuring
+                // (`x = 1, { cost } = h`) is source-aware too; only a plain
+                // leading identifier counts here. Cut at `(` as well so a
+                // `function price(a) {` declarator is not mistaken for a
+                // destructuring because of its body brace.
+                let pattern = declarator
+                    .split(['=', ':', '('])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if pattern.starts_with(['{', '[']) {
+                    return false;
+                }
+                declarator
+                    .split(|ch: char| {
+                        ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
+                    })
+                    .find(|part| !part.is_empty())
+                    .is_some_and(|declared| declared == identifier)
+            })
         })
-        .any(|declared| declared == identifier)
+}
+
+/// Split a `const|let|var` declaration remainder (`x = 1, cost = f, ...`)
+/// on top-level commas, so commas inside `()`, `[]`, `{}`, strings,
+/// templates and regexes never split a declarator.
+fn split_top_level_declarators(after: &str) -> Vec<&str> {
+    let masked = super::classifier::ts_mask_literals_and_comments(after);
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (offset, c) in masked.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(after[start..offset].trim());
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(after[start..].trim());
+    parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
 pub(crate) fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {

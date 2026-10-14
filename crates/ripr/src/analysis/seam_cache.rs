@@ -433,15 +433,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.67`: `#[rstest]` fixture parameters admit owner-return pins, with a
 /// fixture receiver typed by its annotation (#6578). Old entries would keep
 /// those tests refused.
+/// `1.68`: identity-bound literal JSON construction admission (#7776).
 /// `1.69`: inline expect-test comparisons pin owner returns, a `format!`
 /// owner tail has a direct propagation witness, and an owner-body `expect!`
 /// keeps its return paths open (#6578). Old entries keep those verdicts.
 /// `1.68` is allocated to #7828's JSON admission, so neither change can
 /// read a cache the other produced.
+/// `1.70`: compose #7776 literal JSON with #6578 expect-test/format evidence.
 /// `1.71`: a changed operand beside an unchanged closure in a returned tail
 /// is neither conditional for the owner-return pin nor opaque for the
 /// propagation witness (#6578). Old entries keep those seams unrevealed.
-/// `1.70` is allocated to #7828.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.71";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -553,10 +554,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.71";
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.74`: same literal JSON admission as full `1.68`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-/// `0.77`: same unchanged-closure tail evidence as full `1.71` (`0.76` is
-/// #7828's).
+/// `0.76`: same composed evidence as full `1.70`.
+/// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -670,10 +672,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 /// `0.71`: same `#[tokio::test]` admission as full `1.65` (#5040).
 /// `0.72`: same `#[rstest]` case-table admission as full `1.66`.
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
+/// `0.74`: same literal JSON admission as full `1.68`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-/// `0.77`: same unchanged-closure tail evidence as full `1.71` (`0.76` is
-/// #7828's).
+/// `0.76`: same composed evidence as full `1.70`.
+/// `0.77`: same unchanged-closure tail evidence as full `1.71`.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -839,11 +842,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot report a requested name (#5363). `1.32` facts lack them.
 /// `1.34`: `call_deletion` shapes record whether the call's value is
 /// consumed (#6677). Older facts would read every call as unconsumed.
+/// `1.35`: binding candidates retain constructor name `json` (#7776).
 /// `1.36`: parser-backed oracles include inline expect-test comparisons
 /// (`expect![..].assert_eq(..)`, graded from the parsed shape), and
 /// `expect` joins the trusted macro names a binding site may report
 /// (#6578). `1.34` facts lack both; `1.35` is #7828's allocation.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.36";
+/// `1.37`: compose JSON binding candidates with expect-test parser facts.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.37";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1376,6 +1381,19 @@ impl WorkspaceKeyContext<'_> {
                 );
             hash_str(&format!(
                 "{workspace_manifests_hash}:fallible-check:{dependency}"
+            ))
+        } else {
+            workspace_manifests_hash
+        };
+        let workspace_manifests_hash = if super::workspace::eligible_json_root(self.workspace_root)
+        {
+            let identity = super::workspace::verified_json_identity(self.workspace_root)
+                .map_or_else(
+                    || "unverified".to_string(),
+                    |receipt| receipt.validation_digest,
+                );
+            hash_str(&format!(
+                "{workspace_manifests_hash}:literal-json:{identity}"
             ))
         } else {
             workspace_manifests_hash
@@ -4292,7 +4310,8 @@ mod tests {
         // 1.33 -> 1.34: consumed-call shape flag (#6677).
         // 1.34 -> 1.36: inline expect-test oracles and trusted `expect`
         // (#6578); 1.35 is allocated to #7828.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.36");
+        // 1.36 -> 1.37: combine expect-test facts and JSON binding candidates.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.37");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4386,8 +4405,8 @@ mod tests {
         // 1.66 -> 1.67: #[rstest] fixture owner-return pins (#6578).
         // 1.67 -> 1.69: expect-test inline pins and format! tails (#6578);
         // 1.68 is allocated to #7828.
-        // 1.69 -> 1.71: unchanged closures in returned tails (#6578); 1.70
-        // is allocated to #7828.
+        // 1.69 -> 1.70: combine JSON and expect-test/format evidence.
+        // 1.70 -> 1.71: unchanged closures in returned tails (#6578).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.71");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -4450,7 +4469,8 @@ mod tests {
         // 0.71 -> 0.72: same #[rstest] case-table admission as full 1.66.
         // 0.72 -> 0.73: same #[rstest] fixture admission as full 1.67.
         // 0.73 -> 0.75: same evidence as full 1.69 (0.74 is #7828's).
-        // 0.75 -> 0.77: same evidence as full 1.71 (0.76 is #7828's).
+        // 0.75 -> 0.76: composed evidence as full 1.70.
+        // 0.76 -> 0.77: same evidence as full 1.71.
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
     }

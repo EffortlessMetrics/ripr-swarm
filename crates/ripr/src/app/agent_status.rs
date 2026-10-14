@@ -598,7 +598,9 @@ fn status_repair_attempt(
                     (
                         "awaiting_edit",
                         "resumable",
-                        Some(manifest.next_command.clone()),
+                        Some(crate::agent::human_after_phase_follow_up(
+                            &manifest.next_command,
+                        )),
                     ),
                 ),
                 Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
@@ -3170,11 +3172,13 @@ mod tests {
                 "an awaiting attempt must name its retained after command".to_string()
             })?;
             if next.step != "repair_attempt_after"
+                || !next.command.starts_with("ripr continue --root ")
                 || !next.command.contains("--attempt")
                 || !next.command.contains(attempt_id.as_str())
+                || next.command.contains("--phase after")
             {
                 return Err(format!(
-                    "next action was not the retained after command: {next:?}"
+                    "next action must name ordinary `ripr continue`, not `--phase after`: {next:?}"
                 ));
             }
 

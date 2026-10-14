@@ -41,11 +41,17 @@ const PLAIN_KEYS: &[&str] = &[
     "public",
 ];
 
+type LiteralJsonMemo = Option<(
+    String,
+    Option<crate::analysis::workspace::LiteralJsonIdentity>,
+)>;
+
 /// Per-analysis cache of drop-in crate verdicts, keyed by the importing
 /// file's directory. Clones share the cache.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
+    json: Arc<Mutex<LiteralJsonMemo>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
     standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
@@ -54,9 +60,49 @@ impl DropInManifests {
     pub(crate) fn new(root: &Path) -> Self {
         Self {
             root: Some(root.to_path_buf()),
+            json: Arc::default(),
             verdicts: Arc::default(),
             standard_roots: Arc::default(),
         }
+    }
+
+    /// Closed literal json! admission requires a fresh resolved registry edge
+    /// and the same strict ambient/source-replacement snapshot as rule 7a.
+    pub(crate) fn verified_literal_json(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        if !crate::analysis::workspace::eligible_json_root(root) {
+            return false;
+        }
+        let directory = root.join(file).parent().map(Path::to_path_buf);
+        let Some(directory) = directory else {
+            return false;
+        };
+        let Some(snapshot) = crate::analysis::workspace::config_snapshot_identity(root) else {
+            return false;
+        };
+        let Ok(mut memo) = self.json.lock() else {
+            return false;
+        };
+        if memo
+            .as_ref()
+            .is_none_or(|(previous, _)| *previous != snapshot)
+        {
+            let identity = crate::analysis::workspace::verified_json_identity(root);
+            if crate::analysis::workspace::config_snapshot_identity(root).as_ref()
+                != Some(&snapshot)
+            {
+                return false;
+            }
+            *memo = Some((snapshot, identity));
+        }
+        if crate::analysis::workspace::config_snapshot_identity(&directory).is_none() {
+            return false;
+        }
+        memo.as_ref()
+            .and_then(|(_, identity)| identity.as_ref())
+            .is_some_and(|identity| identity.admits_file(root, file))
     }
 
     /// Whether `krate`, imported by `file`, is the plain registry package of

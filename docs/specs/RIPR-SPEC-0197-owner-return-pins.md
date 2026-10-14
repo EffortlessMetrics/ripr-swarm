@@ -2014,3 +2014,45 @@ assertions. This repair shares the existing callback without that larger migrati
 - `owner_return_pin_false_exposed` — zero: no fixture or replay finding
   gains `exposed` through the pin unless its confirming assertion is a
   complete call that names the owner on the changed return path.
+
+
+## Literal JSON construction admission (#7776)
+
+A bare `json!` with a visible unchanged canonical `use serde_json::json`
+(or grouped import) may construct data before an equality or inside its operands.
+This supplies execution context only; owner, path activation, propagation and
+value discrimination still require their existing witnesses.
+
+The initial closed grammar accepts Rust-valid JSON string/boolean/null literals, unsuffixed i32 integers,
+finite float literals, arrays and string-keyed objects. It refuses interpolated expressions,
+calls, nested macros, raw/byte/suffixed literals, split numeric tokens, trailing
+commas and unsupported syntax. A constructor name never supplies an oracle.
+
+Registry authority is limited to serde_json 1.0.151, crates.io checksum
+`c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+whose macro expansion has no enclosing-function exit for this literal grammar.
+The analysis root must declare this dependency directly or in its workspace
+package table. Offline locked Cargo metadata must resolve one canonical package
+and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
+conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
+rule 7a's existing bounded metadata process and strict configuration snapshot;
+ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
+lock identity is rechecked and affects classified-cache reuse.
+
+Visible local, imported, cross-file namespace and workspace macro bindings
+remain subject to the shared fail-closed admission checks. An unavailable or
+unsupported receipt retains the execution/binding refusal; uncalled closures,
+shadowed assertions/owners and alternate return paths retain their existing stops.
+Ordinary Cargo executable/registry-cache integrity remains an instrument
+assumption, as in rule 7a; this does not authenticate a hostile compiler or SDK.
+
+Matched fixtures preserve the didSave #17745 literal constructor test body and
+root/nested controls. Correct and deliberately wrong callback libraries execute
+one unignored test each. The fake constructor emits `return` and lets the wrong
+callback pass; the eight ineffective fixture controls have independent honesty
+corpus entries. The documentHighlight `range()` interpolation remains unsupported.
+A nested literal is admitted for observation but remains weakly exposed when the
+existing owner-call argument pin is unavailable; this leaf does not relax that
+authority. Withheld diff-index source bindings receive the same constructor scan.
+Full frozen consumer replay is separate from fixture admission and never clears
+consumer gates, missing IDs or unrelated propagation residuals by absence.

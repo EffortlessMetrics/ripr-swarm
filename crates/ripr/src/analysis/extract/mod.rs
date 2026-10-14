@@ -11,8 +11,11 @@ pub(crate) use calls::{
     attribute_ranges, call_name_bounds_before_paren, extract_call_facts, runs_its_arguments,
 };
 pub(crate) use literals::{extract_literal_facts, extract_literals};
+// `string_literal_spans` offsets index the unmasked text: a literal's
+// contents are `text[open + 1..close]`, escapes unprocessed (#7133).
 pub(crate) use mask::{
     mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
+    string_literal_spans,
 };
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;
