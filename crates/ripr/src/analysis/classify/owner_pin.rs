@@ -929,6 +929,28 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        Some(match self.context_refusal(test, assertion, index)? {
+            AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition)) => {
+                match value_guard_subject(&condition, &assertion.text) {
+                    Some(subject) => AssertionRefusal::ValueGuard {
+                        condition,
+                        subject: subject.to_string(),
+                    },
+                    None => {
+                        AssertionRefusal::Syntax(AssertionContextRefusal::GuardedReturn(condition))
+                    }
+                }
+            }
+            refusal => refusal,
+        })
+    }
+
+    fn context_refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -1240,9 +1262,24 @@ pub(in crate::analysis) enum AssertionRefusal {
         name: String,
         site: Option<(PathBuf, MacroBindingSite)>,
     },
+    /// The test's only `return` sits under `if <condition> { return; }`,
+    /// whose condition compares `subject` (the call the assertion compares)
+    /// with a literal and does not hold for the value the assertion
+    /// expects: the assertion runs for that value, and whether it runs for
+    /// another depends on a value ripr does not evaluate.
+    ValueGuard { condition: String, subject: String },
 }
 
 impl AssertionRefusal {
+    /// The call a [`Self::ValueGuard`] reads, so a caller can require it to
+    /// be the owner's.
+    pub(in crate::analysis) fn value_guard_subject(&self) -> Option<&str> {
+        match self {
+            Self::ValueGuard { subject, .. } => Some(subject),
+            _ => None,
+        }
+    }
+
     /// Whether the refusal rests on a limit of ripr's own reading (the file,
     /// module, test identity, or a binding that only *may* rebind), rather
     /// than on a shape that can keep the assertion from running or rebind it
@@ -1252,6 +1289,9 @@ impl AssertionRefusal {
     pub(in crate::analysis) fn is_analyzer_limit(&self) -> bool {
         match self {
             Self::LexicalFallback | Self::UnresolvedModule(_) | Self::IncludedFile { .. } => true,
+            // trap-tally-reached-assert-control: the guard spares the
+            // expected value, so the assertion's reach is value-dependent.
+            Self::ValueGuard { .. } => true,
             // A gated `mod` declaration may be `cfg(any())`, which never runs.
             Self::ModuleDeclaration { .. } => false,
             Self::Syntax(refusal) => match refusal {
@@ -1269,6 +1309,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::MacroOperandExit(_)
                 | AssertionContextRefusal::ClosureExit
                 | AssertionContextRefusal::ConditionalPath(_)
+                | AssertionContextRefusal::GuardedReturn(_)
                 | AssertionContextRefusal::MacroBinding(_) => false,
             },
             // A definition or `use` of the name in reach is a real rebinding;
@@ -1344,6 +1385,9 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ConditionalPath(construct) => {
                     format!("the assertion is inside {construct}")
                 }
+                AssertionContextRefusal::GuardedReturn(condition) => format!(
+                    "the assertion is inside a block that an earlier `if {condition} {{ return; }}` can skip"
+                ),
                 AssertionContextRefusal::MacroBinding(name) => {
                     format!("`{name}!` may be redefined somewhere in the workspace")
                 }
@@ -1351,6 +1395,9 @@ impl AssertionRefusal {
                     "the test's source changed while ripr was reading it".into()
                 }
             },
+            Self::ValueGuard { condition, subject } => format!(
+                "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
+            ),
             Self::MacroBinding { name, site } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
@@ -7361,6 +7408,159 @@ fn single_element_index(operand: &str) -> Option<&str> {
         [call, rest] if rest.trim().is_empty() => Some(call.trim()),
         _ => None,
     }
+}
+
+/// The callee of `subject` when it is one bare call `name(..)` whose first
+/// parenthesis closes at its end: no path, receiver, projection or operator
+/// around it (`weight(4).wrapping_sub(weight(4))`, `other::weight(4)`), so
+/// the compared value is the call's own return (#7974 review).
+pub(in crate::analysis) fn direct_call_name(subject: &str) -> Option<&str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let name = subject[..open].trim_end();
+    let mut chars = name.chars();
+    if !chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (at, byte) in subject.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (at + 1 == subject.len()).then_some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// trap-tally-reached-assert-control: the compared call when `assertion` is
+/// `assert_eq!(subject, e)` (either order, `e` an integer literal) and
+/// `condition` is `subject <op> k` or `k <op> subject` (one comparison,
+/// `k` an integer literal) that does not hold at `e`, so an
+/// `if condition { return; }` before it spares the expected value. `None`
+/// when the guard fires at `e` (left to the guarded-return refusal) or
+/// either shape is anything else.
+fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a str> {
+    let integer = |text: &str| -> Option<i128> {
+        let text = text.trim();
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        (digits.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && digits.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
+        .then(|| text.replace('_', "").parse().ok())
+        .flatten()
+    };
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    if !is_plain_macro(assertion, "assert_eq") {
+        return None;
+    }
+    let operands = assertion_comparison_operands(assertion)?;
+    let (subject, expected) = match (integer(operands[0]), integer(operands[1])) {
+        (None, Some(expected)) => (operands[0].trim(), expected),
+        (Some(expected), None) => (operands[1].trim(), expected),
+        _ => return None,
+    };
+    // `compact` drops whitespace inside a string or char literal too, so a
+    // call with one stays out (#7974 review).
+    if direct_call_name(subject).is_none()
+        || subject.contains(['"', '\''])
+        || ["&&", "||", "::<", "->"]
+            .iter()
+            .any(|op| condition.contains(op))
+    {
+        return None;
+    }
+    // The one comparison operator outside brackets.
+    let bytes = condition.as_bytes();
+    let mut depth = 0usize;
+    let mut found = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b'<' | b'>' | b'=' | b'!' if depth == 0 => {
+                let width = if bytes.get(at + 1) == Some(&b'=') {
+                    2
+                } else {
+                    1
+                };
+                let operator = &condition[at..at + width];
+                if !matches!(operator, "<" | ">" | "<=" | ">=" | "==" | "!=") || found.is_some() {
+                    return None;
+                }
+                found = Some((at, operator));
+                at += width;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let (at, operator) = found?;
+    let (left, right) = (&condition[..at], &condition[at + operator.len()..]);
+    // Read the guard as `subject <op> k`; `k < subject` is `subject > k`.
+    let (operator, bound) = if compact(left) == compact(subject) {
+        (operator, integer(right)?)
+    } else if compact(right) == compact(subject) {
+        let flipped = match operator {
+            "<" => ">",
+            ">" => "<",
+            "<=" => ">=",
+            ">=" => "<=",
+            same => same,
+        };
+        (flipped, integer(left)?)
+    } else {
+        return None;
+    };
+    // The guard must spare a wrong value, or the assertion runs only when
+    // it passes and the test is a certain gap (#7932 tally review): `!=`
+    // returns for every wrong value. ripr does not know the integer type,
+    // so `e - 1` counts only where every type holding `e` holds it too
+    // (`e >= 1`, or a negative `e` above every signed minimum), and
+    // `e + 1` only where `e` is no type's maximum; a neighbour on the
+    // threshold's side is a value of the guard's own type.
+    let maxima: [i128; 9] = [
+        i8::MAX.into(),
+        u8::MAX.into(),
+        i16::MAX.into(),
+        u16::MAX.into(),
+        i32::MAX.into(),
+        u32::MAX.into(),
+        i64::MAX.into(),
+        u64::MAX.into(),
+        i128::MAX,
+    ];
+    let minima: [i128; 5] = [
+        i8::MIN.into(),
+        i16::MIN.into(),
+        i32::MIN.into(),
+        i64::MIN.into(),
+        i128::MIN,
+    ];
+    let below = expected >= 1 || (expected < 0 && !minima.contains(&expected));
+    let above = !maxima.contains(&expected);
+    let spares_wrong = match operator {
+        // Fires only at `k`: every other wrong value runs the assertion.
+        "==" => bound != expected,
+        // Spares `v <= k`, or `v <= k - 1` for `>=`.
+        ">" => expected < bound || (expected == bound && below),
+        ">=" => expected < bound && (expected.checked_add(1)? < bound || below),
+        // Spares `v >= k`, or `v >= k + 1` for `<=`.
+        "<" => expected > bound || (expected == bound && above),
+        "<=" => expected > bound && (expected.checked_sub(1)? > bound || above),
+        _ => false,
+    };
+    spares_wrong.then_some(subject)
 }
 
 /// A plain `"..."` string literal with no escapes or inner quotes.
