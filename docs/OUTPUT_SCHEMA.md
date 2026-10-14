@@ -13116,7 +13116,7 @@ Report packet index field contract:
 Field contract:
 
 - `queue_disposition[].disposition` is advisory. It may be
-  `merge_candidate`, `needs_rebase`, `needs_review`, `close_duplicate`,
+  `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
   `do_not_touch_wrong_lane`.
 - `queue_disposition[]` never closes, updates, merges, comments on, or mutates
