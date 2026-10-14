@@ -1,0 +1,65 @@
+# Golden Output Changes
+
+## Pending — propagated_error_closing_early_path (1)
+
+Reason:
+RIPR-SPEC-0197: complete parser-owned propagation identity cannot certify the sibling early-error path; source ripr issue 1715 owns this closing-line slice.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagated_error_closing_early_path (2)
+
+Reason:
+RIPR-SPEC-0197: include the full human evidence for independent non-promotion validation of source ripr issue 1715.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (3)
+
+Reason:
+RIPR-SPEC-0197: changed propagation activation requires path-specific inspection despite an existing exact sibling-error oracle.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (4)
+
+Reason:
+RIPR-SPEC-0197: whitespace-clean diff context changes only the input identity digest; mutation, coordinates, evidence and verdicts remain unchanged.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — propagated_error_closing_early_path (5)
+
+Reason:
+RIPR-SPEC-0197: inspect existing tests before adding a propagation-path test; oracle strength and unconfirmed activation are distinct.
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

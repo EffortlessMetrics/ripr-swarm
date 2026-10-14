@@ -1,0 +1,4 @@
+[package]
+name = "propagated_error_closing_early_path_fixture"
+version = "0.1.0"
+edition = "2024"
