@@ -11,12 +11,12 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const IDS: [&str; 7] = [
     "probe:src_lib.rs:match_arm:6b71a4f5",
-    "probe:src_lib.rs:match_arm:35759cb1",
     "probe:src_lib.rs:predicate:27488362",
     "probe:src_lib.rs:return_value:d9dae5de",
-    "probe:src_lib.rs:return_value:a207aa93",
     "probe:src_lib.rs:error_path:d71ee10b",
     "probe:src_lib.rs:match_arm:d87ff4a4",
+    "probe:src_lib.rs:error_path:74b21350",
+    "probe:src_lib.rs:match_arm:2d449d20",
 ];
 
 fn fixture(scratch: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -113,10 +113,10 @@ fn human_full_shared_real_git_diff_keeps_every_finding_and_replays_commands() ->
             assert_eq!(finding["id"], id);
             assert_eq!(finding["classification"], "weakly_exposed");
         }
-        assert_eq!(findings[1]["source_currentness"], "base_deleted");
-        assert_eq!(findings[4]["source_currentness"], "base_deleted");
-        assert_eq!(findings[2]["missing_discriminators"][0]["value"], "p == 0");
-        assert_eq!(findings[2]["related_tests"][0]["miss"], "missing_input");
+        assert_eq!(findings[5]["source_currentness"], "base_deleted");
+        assert_eq!(findings[6]["source_currentness"], "base_deleted");
+        assert_eq!(findings[1]["missing_discriminators"][0]["value"], "p == 0");
+        assert_eq!(findings[1]["related_tests"][0]["miss"], "missing_input");
         assert_eq!(
             findings[0]["related_tests"][0]["miss"],
             "observation_unconfirmed"
@@ -165,8 +165,8 @@ fn human_full_shared_real_git_diff_keeps_every_finding_and_replays_commands() ->
                 &human,
                 "related test src/lib.rs:14 parses_valid_port uses strong exact value oracle"
             )?,
-            vec![vec![1, 4, 6, 7], vec![2, 5]],
-            "candidate/history attribution; predicate remains local"
+            vec![vec![1, 3, 4, 5], vec![6, 7]],
+            "candidate/history attribution; predicate remains local; historical facts are the unpaired deleted catch-all"
         );
 
         let commands: Vec<_> = human

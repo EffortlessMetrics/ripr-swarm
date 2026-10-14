@@ -3,10 +3,10 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/owner_return_pin_identity_traps/input",
-  "summary": {"changed_rust_files":1,"probes":6,"findings":6,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":5,"findings":5,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:bc6abb090bba59291e0964a6bbc5720e91a29d5411c7e36af7d4a4842b1cb010","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":6,"finding_count":6},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:bc6abb090bba59291e0964a6bbc5720e91a29d5411c7e36af7d4a4842b1cb010","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":5,"finding_count":5},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -530,98 +530,6 @@
       "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "language": "rust",
       "source_currentness": "candidate_current"
-    },
-    {
-      "id": "probe:src_lib.rs:static_unknown:958a6a2b",
-      "canonical_gap_id": "gap:rust:src/lib.rs:scaled:static_unknown:static_unknown:x*5",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:scaled:static_unknown:static_unknown:x*5",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "scaled",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "x*5"
-
-      },
-      "classification": "static_unknown",
-      "severity": "note",
-      "confidence": 0.50,
-      "probe": {
-        "id": "probe:src_lib.rs:static_unknown:958a6a2b",
-        "family": "static_unknown",
-        "delta": "unknown",
-        "file": "./src/lib.rs",
-        "line": 55,
-        "expression": "x * 5"
-       },
-      "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner"},
-        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
-       },
-      "evidence_path": ["reach yes: Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink: unknown sink (line 55)", "related test tests/trap_tests.rs:20 local_scaled_binding_shadows_the_owner uses unknown exact value oracle: assert_eq!(scaled(3), 30);", "source assertion argument value 30 at line 22", "source function argument value x = 3 at line 22"],
-      "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":55}
-      ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner"],
-      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
-      "assertion_texts": {
-        "22": "assert_eq!(scaled(3), 30);"
-      },
-      "activation": {
-        "observed_values": [
-          {
-            "line": 22,
-            "value": "30",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 22,
-            "value": "x = 3",
-            "context": "function_argument"
-          }
-        ],
-        "missing_discriminators": [
-        ]
-      },
-      "observed_values": [
-        {
-          "line": 22,
-          "value": "30",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 22,
-          "value": "x = 3",
-          "context": "function_argument"
-        }
-      ],
-      "missing_discriminators": [
-      ],
-      "related_tests_total": 1,
-      "related_tests": [
-        {
-          "name": "local_scaled_binding_shadows_the_owner",
-          "file": "tests/trap_tests.rs",
-          "line": 20,
-          "oracle_strength": "unknown",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(scaled(3), 30);",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        }
-      ],
-      "stop_reasons": ["static_probe_unknown"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "unknown",
-      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "language": "rust",
-      "source_currentness": "base_deleted"
     }
   ]
 }

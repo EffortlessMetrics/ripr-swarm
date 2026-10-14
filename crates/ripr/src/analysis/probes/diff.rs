@@ -952,27 +952,76 @@ fn has_matching_added_line(
     added_bounds: &[bool],
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
-    !removed_tokens.is_empty()
-        && changed.added_lines.iter().enumerate().any(|(index, line)| {
-            let run_start = added_run_start(line.new_side_line, changed);
-            if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
-                && !lines_are_adjacent(removed_line.new_side_line, run_start)
-            {
-                return false;
-            }
-            let added_families = if added_bounds[index] {
-                vec![ProbeFamily::StaticUnknown]
-            } else {
-                classify_changed_line(line.text.trim())
-            };
-            if !added_families.iter().any(|family| family == removed_family) {
-                return false;
-            }
-            let added_tokens = extract_identifier_tokens(&line.text);
-            added_tokens
+    changed.added_lines.iter().enumerate().any(|(index, line)| {
+        let run_start = added_run_start(line.new_side_line, changed);
+        if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
+            && !lines_are_adjacent(removed_line.new_side_line, run_start)
+        {
+            return false;
+        }
+        let added_families = if added_bounds[index] {
+            vec![ProbeFamily::StaticUnknown]
+        } else {
+            classify_changed_line(line.text.trim())
+        };
+        if !added_families.iter().any(|family| family == removed_family) {
+            return false;
+        }
+        let added_tokens = extract_identifier_tokens(&line.text);
+        if !removed_tokens.is_empty() {
+            return added_tokens
                 .iter()
-                .any(|token| removed_tokens.iter().any(|other| other == token))
-        })
+                .any(|token| removed_tokens.iter().any(|other| other == token));
+        }
+        // #7807: `extract_identifier_tokens` drops names shorter than three
+        // characters, so `if x > 0 {` never paired with `if x >= 0 {` and
+        // the old line was probed again as deleted behavior. Fall back to
+        // those short names only when both sides have no long name, and
+        // only when the short-name sets match, so a renamed binding or a
+        // changed constructor keeps its removed probe.
+        if !added_tokens.is_empty() {
+            return false;
+        }
+        let removed_short = short_pairing_tokens(&removed_line.text);
+        let added_short = short_pairing_tokens(&line.text);
+        !removed_short.is_empty() && removed_short == added_short
+    })
+}
+
+/// Identifier-like tokens of one or two characters used only when a line
+/// has no long pairing name. Keywords (`if`, `fn`, `as`, `in`) and pure
+/// digits or underscores are not names, so they cannot pair unrelated
+/// lines that merely share punctuation or literals.
+fn short_pairing_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            if is_short_pairing_token(&current) {
+                tokens.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if is_short_pairing_token(&current) {
+        tokens.push(current);
+    }
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn is_short_pairing_token(token: &str) -> bool {
+    if token.is_empty() || token.len() > 2 {
+        return false;
+    }
+    if token.chars().all(|ch| ch.is_ascii_digit() || ch == '_') {
+        return false;
+    }
+    !matches!(token, "as" | "fn" | "if" | "in")
 }
 
 /// #6675: a removed line whose adjacent added replacement holds exactly the
@@ -2855,6 +2904,230 @@ mod tests {
         assert_eq!(
             probes[0].after,
             Some("if amount >= threshold {".to_string())
+        );
+    }
+
+    fn replacement(removed: &str, added: &str, new_side_line: usize) -> ChangedFile {
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: new_side_line,
+                new_side_line,
+                text: added.to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: new_side_line,
+                new_side_line,
+                text: removed.to_string(),
+            }],
+        }
+    }
+
+    /// #7807: a replaced predicate whose names are all shorter than three
+    /// characters still pairs with its adjacent added line, so the old text
+    /// is not probed again as deleted behavior.
+    #[test]
+    fn short_name_replacement_does_not_repeat_the_removed_predicate() {
+        let changed = replacement("    if x > 0 {", "    if x >= 0 {", 6);
+        assert!(
+            extract_identifier_tokens("    if x > 0 {").is_empty(),
+            "fixture: the removed line must have no long identifier"
+        );
+        assert!(
+            extract_identifier_tokens("    if x >= 0 {").is_empty(),
+            "fixture: the added line must have no long identifier"
+        );
+        assert_eq!(
+            classify_changed_line("if x > 0 {"),
+            vec![ProbeFamily::Predicate],
+            "fixture: both sides must share the predicate family"
+        );
+        assert_eq!(
+            classify_changed_line("if x >= 0 {"),
+            vec![ProbeFamily::Predicate]
+        );
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert_eq!(
+            probes.len(),
+            1,
+            "short-name replacement must keep one probe: {probes:?}"
+        );
+        assert_eq!(probes[0].family, ProbeFamily::Predicate);
+        assert_eq!(probes[0].before.as_deref(), Some("if x > 0 {"));
+        assert_eq!(probes[0].after.as_deref(), Some("if x >= 0 {"));
+        assert!(
+            probes.iter().all(|probe| probe.expression != "if x > 0 {"),
+            "the old predicate must not be probed as deleted: {probes:?}"
+        );
+    }
+
+    /// A renamed short binding is not the same subject, so the removed
+    /// predicate stays. Sharing only `if` must not pair the lines.
+    #[test]
+    fn short_name_replacement_keeps_a_renamed_binding() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x > 0 {", "    if y >= 0 {", 6),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression == "if x > 0 {" && probe.after.is_none()),
+            "renamed short binding must keep the removed probe: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression == "if y >= 0 {"),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// Same short names on a distant hunk are not this replacement.
+    #[test]
+    fn short_name_pairing_does_not_borrow_a_nonadjacent_line() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 6,
+                new_side_line: 6,
+                text: "    if x >= 0 {".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 20,
+                new_side_line: 20,
+                text: "    if x > 0 {".to_string(),
+            }],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression == "if x > 0 {" && probe.after.is_none()),
+            "a non-adjacent short-name line must stay deleted: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression == "if x >= 0 {"),
+            "the added predicate must still be probed: {probes:?}"
+        );
+    }
+
+    /// Distinct families that happen to share `x` are not one replacement.
+    #[test]
+    fn short_name_pairing_requires_the_same_probe_family() {
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    if x > 0 {", "    return x;", 6),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::Predicate && probe.after.is_none()),
+            "a predicate replaced by a return must keep the removed probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
+            "the added return must still be probed: {probes:?}"
+        );
+    }
+
+    /// `A { n: 1 }` vs `B { n: 1 }` share the short field name and the
+    /// field-construction family, but the constructor identity changed.
+    #[test]
+    fn short_name_pairing_keeps_a_changed_constructor() {
+        assert_eq!(
+            classify_changed_line("A { n: 1 }"),
+            vec![ProbeFamily::FieldConstruction]
+        );
+        assert_eq!(
+            classify_changed_line("B { n: 1 }"),
+            vec![ProbeFamily::FieldConstruction]
+        );
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement("    A { n: 1 }", "    B { n: 1 }", 4),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression == "A { n: 1 }"
+                && probe.family == ProbeFamily::FieldConstruction
+                && probe.after.is_none()),
+            "a changed constructor must keep the removed field probe: {probes:?}"
+        );
+        assert!(
+            probes.iter().any(|probe| probe.expression == "B { n: 1 }"
+                && probe.family == ProbeFamily::FieldConstruction),
+            "the added constructor must still be probed: {probes:?}"
+        );
+    }
+
+    /// Guard-only match-arm edits with only short names are the same
+    /// replacement as `if x > 0`; the old arm is not a second subject.
+    #[test]
+    fn short_name_match_arm_replacement_does_not_repeat_the_removed_arm() {
+        let removed = "        n if n < 0 => -1,";
+        let added = "        n if 0 > n => -1,";
+        assert!(
+            extract_identifier_tokens(removed).is_empty()
+                && extract_identifier_tokens(added).is_empty(),
+            "fixture: both arms must have no long identifier"
+        );
+        let probes = probes_for_file(
+            Path::new("workspace"),
+            &replacement(removed, added, 4),
+            &RustIndex::default(),
+        );
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.expression.trim() != removed.trim()),
+            "the old short-name arm must not be probed as deleted: {probes:?}"
+        );
+        assert!(
+            !probes.is_empty(),
+            "the replacement arm must still be probed: {probes:?}"
+        );
+    }
+
+    /// A genuinely unpaired deletion next to an unrelated short-name
+    /// addition keeps its historical probe.
+    #[test]
+    fn unpaired_short_name_deletion_stays_historical() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "        Ok(p) if p > 0 => Ok(p),".to_string(),
+            }],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 3,
+                    text: "        Ok(p) => Ok(p),".to_string(),
+                },
+                ChangedLine {
+                    line: 5,
+                    new_side_line: 6,
+                    text: "        _ => Err(\"closed\"),".to_string(),
+                },
+            ],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.contains("closed") && probe.after.is_none()),
+            "a deleted catch-all must stay historical: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.expression.trim() != "Ok(p) => Ok(p),"),
+            "the replaced Ok(p) arm must not be re-probed as deleted: {probes:?}"
         );
     }
 

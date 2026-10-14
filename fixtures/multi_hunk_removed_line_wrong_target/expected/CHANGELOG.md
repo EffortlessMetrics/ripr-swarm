@@ -401,3 +401,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (16)
+
+Reason:
+RIPR-SPEC-0151: short-name replacements pair as one probe so the old line is not re-probed as deleted behavior
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

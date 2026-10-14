@@ -167,3 +167,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (15)
+
+Reason:
+RIPR-SPEC-0151: short-name replacements pair as one probe so the old line is not re-probed as deleted behavior
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

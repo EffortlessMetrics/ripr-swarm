@@ -352,3 +352,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — plain_diff_multifile_boundary (15)
+
+Reason:
+RIPR-SPEC-0151: short-name replacements pair as one probe so the old line is not re-probed as deleted behavior
+
+Command:
+`cargo xtask goldens bless plain_diff_multifile_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

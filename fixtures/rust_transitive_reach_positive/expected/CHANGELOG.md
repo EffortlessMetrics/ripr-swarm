@@ -513,3 +513,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_positive (15)
+
+Reason:
+RIPR-SPEC-0151: short-name replacements pair as one probe so the old line is not re-probed as deleted behavior
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

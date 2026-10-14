@@ -5,11 +5,13 @@ Spec: RIPR-SPEC-0122
 ## Given
 
 The #7394 reproduction changes `parse_port` from accepting every parsed port
-to an `Ok(p) if p > 0` guard and a new `Err("zero port")` arm. Its one test
-asserts `parse_port("8080").unwrap() == 8080`. `before.rs`, `input/src/lib.rs`
-and `diff.patch` retain the actual two-commit Git reproduction. The original
-audit repository was not attached to the issue; these bytes reproduce its
-reported function, assertion, diff and seven-finding/265-line shape.
+to an `Ok(p) if p > 0` guard and a new `Err("zero port")` arm, and deletes
+the unpaired `_ => Err("closed")` catch-all so human-full sharing still has
+genuinely historical `base_deleted` facts after #7807 pairs short-name
+replacements. Its one test asserts `parse_port("8080").unwrap() == 8080`.
+`before.rs`, `input/src/lib.rs` and `diff.patch` retain the two-commit Git
+reproduction. The original audit repository was not attached to the issue;
+these bytes keep the reported function, assertion, and seven-finding shape.
 
 ## When
 

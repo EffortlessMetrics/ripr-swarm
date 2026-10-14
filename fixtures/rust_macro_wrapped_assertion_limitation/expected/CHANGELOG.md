@@ -406,3 +406,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (18)
+
+Reason:
+RIPR-SPEC-0151: short-name replacements pair as one probe so the old line is not re-probed as deleted behavior
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
