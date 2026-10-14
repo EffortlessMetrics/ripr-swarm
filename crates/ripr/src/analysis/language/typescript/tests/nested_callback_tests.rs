@@ -258,7 +258,11 @@ fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String
 
     // `toEqual` is also `exact_value` / strong and must not pin identity.
     let structural = extract_tests(Path::new("tests/settings.test.ts"), STRUCTURAL_TEST);
-    let to_equal = &structural[0].assertions[0];
+    let to_equal = structural
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "toEqual")
+        .ok_or_else(|| "expected a toEqual assertion".to_string())?;
     assert_eq!(to_equal.matcher, "toEqual");
     assert_eq!(to_equal.oracle_kind, OracleKind::ExactValue);
     assert!(
