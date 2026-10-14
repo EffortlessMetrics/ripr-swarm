@@ -4862,6 +4862,140 @@ const STD_VALUE_CONTAINERS: &[&str] = &[
     "HashSet",
 ];
 
+/// Bind a directly constructed test root's one field to the existing value
+/// equality authority. A callee's `&mut Vec<_>` alone does not establish the
+/// asserted field: a custom collection can coerce through `DerefMut`.
+pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
+    constructor: &str,
+    field: &str,
+    receiver_type: &str,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &RustIndex,
+) -> bool {
+    if owner.file != test.file || targeted_type_name_is_unresolved(test, index, constructor) {
+        return false;
+    }
+    let Some(source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| &*facts.data().source)
+    else {
+        return false;
+    };
+    if !index
+        .drop_in_manifests
+        .unbound_standard_root(&test.file, "std")
+        || index.files().values().any(|facts| {
+            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+            let modules = declared_module_names(&masked);
+            let imports = file_use_statements(&masked);
+            STD_ROOTS.iter().any(|root| {
+                modules.contains(root)
+                    || declares_type(&masked, root)
+                    || binds_extern_crate(&masked, root)
+                    || file_renames_to(&masked, root)
+                    || imports
+                        .iter()
+                        .any(|item| use_statement_binds_name(item, root))
+            })
+        })
+    {
+        return false;
+    }
+    let scope = OwnerScope::new(&owner.name, owner.start_line, &owner.file);
+    if !matches!(
+        named_or_slice(constructor, test, Some(source), index,
+            &|_, name| file_imports_foreign_callee_name(source, name, &index.package_names), scope),
+        Some(ReceiverType::Named(name)) if name == constructor
+    ) {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    // The type namespace does not rule out a callable/value that shadows a
+    // tuple constructor. A competing local, function, constant or static
+    // keeps this deliberately bounded binding unestablished.
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    if parse.tree().syntax().descendants().any(|node| {
+        ast::Fn::cast(node.clone())
+            .and_then(|item| item.name())
+            .is_some_and(|name| names_constructor(name.text().to_string()))
+            || ast::Const::cast(node.clone())
+                .and_then(|item| item.name())
+                .is_some_and(|name| names_constructor(name.text().to_string()))
+            || ast::Static::cast(node.clone())
+                .and_then(|item| item.name())
+                .is_some_and(|name| names_constructor(name.text().to_string()))
+            || ast::IdentPat::cast(node)
+                .and_then(|item| item.name())
+                .is_some_and(|name| names_constructor(name.text().to_string()))
+    }) {
+        return false;
+    }
+    let definitions: Vec<_> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|item| {
+            item.name()
+                .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+        .collect();
+    if !matches!(definitions.as_slice(), [ast::Adt::Struct(_)]) {
+        return false;
+    }
+    let Some(facts) = local_type_equality(source, constructor) else {
+        return false;
+    };
+    if facts.generic_params || facts.other_attributes {
+        return false;
+    }
+    let selected = if let Ok(position) = field.parse::<usize>() {
+        facts
+            .fields
+            .get(position)
+            .filter(|field| field.name.is_none())
+    } else {
+        facts
+            .fields
+            .iter()
+            .find(|candidate| candidate.name.as_deref() == Some(field))
+    };
+    let Some(selected) = selected.filter(|field| !field.has_attributes) else {
+        return false;
+    };
+    // Raw type bindings denote the same names. Give the existing lexical
+    // equality authority their normalized spelling, without changing source.
+    let declaring = mask_comments_and_strings(source).replace("r#", "");
+    let standard_vec = |ty: &str| {
+        let ty = collapse_whitespace(ty);
+        let (path, arguments) = ty.split_once('<')?;
+        let arguments = arguments.strip_suffix('>')?;
+        let elements = top_level_arguments(arguments);
+        let [element] = elements.as_slice() else {
+            return None;
+        };
+        (path_base_name(path) == Some("Vec")
+            && INTEGER_TYPES.contains(element)
+            && !index.files().values().any(|facts| {
+                declares_type(
+                    &mask_comments_and_strings(&facts.source).replace("r#", ""),
+                    element,
+                )
+            })
+            && !declares_type(&declaring, "Vec")
+            && !type_declared_in_workspace("Vec", index)
+            && type_compares_by_value(&ty, &declaring, index, 0))
+        .then_some(collapse_whitespace(arguments))
+    };
+    standard_vec(&selected.ty)
+        .zip(standard_vec(receiver_type))
+        .is_some_and(|(field, receiver)| field == receiver)
+}
+
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a
 /// standard value type, a reference, tuple, array or standard container of
 /// such types, or a workspace type with derived equality whose own fields

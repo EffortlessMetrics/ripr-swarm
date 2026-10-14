@@ -19453,6 +19453,14 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
         ("alias", StageState::Weak),
         ("ambiguous", StageState::Weak),
         ("guarded", StageState::Weak),
+        ("unrelated", StageState::Weak),
+        ("computed_expected", StageState::Weak),
+        ("custom_equality", StageState::Weak),
+        ("coerced_equality", StageState::Weak),
+        ("constructor_shadow", StageState::Weak),
+        ("qualified_vec", StageState::Yes),
+        ("root_shadow", StageState::Weak),
+        ("raw_type_alias", StageState::Weak),
     ] {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../fixtures/collection_argument_{case}/input"));
@@ -19461,7 +19469,10 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
         let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
         let seam = seams
             .iter()
-            .find(|seam| seam.kind() == SeamKind::SideEffect)
+            .find(|seam| {
+                seam.kind() == SeamKind::SideEffect
+                    && seam.expression().trim().trim_end_matches(';') == "v.push(x * 1)"
+            })
             .ok_or_else(|| format!("{case}: missing actual push seam"))?;
         let evidence = evidence_for_seam(seam, &index);
         // Negative fixtures still contain a strong literal equality. It must

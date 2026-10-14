@@ -6,26 +6,34 @@ use ripr::{
 };
 use std::path::Path;
 
-const CASES: &[(&str, bool, bool)] = &[
-    ("tuple", true, true),
-    ("named", true, true),
-    ("plain", true, true),
-    ("wrong_field", false, false),
-    ("wrong_receiver", false, false),
-    ("unrelated", false, false),
-    ("rebound", false, false),
-    ("mutated", false, false),
-    ("raw_mutated", false, false),
-    ("raw_rebound", false, false),
-    ("alias", false, true),
-    ("ambiguous", false, false),
-    ("guarded", false, false),
-    ("computed_expected", false, false),
+// Independent literals: case, observation credited, wrong value rejected,
+// deleted push rejected. Custom length equality has deliberately asymmetric grip.
+const CASES: &[(&str, bool, bool, bool)] = &[
+    ("tuple", true, true, true),
+    ("named", true, true, true),
+    ("plain", true, true, true),
+    ("wrong_field", false, false, false),
+    ("wrong_receiver", false, false, false),
+    ("unrelated", false, false, false),
+    ("rebound", false, false, false),
+    ("mutated", false, false, false),
+    ("raw_mutated", false, false, false),
+    ("raw_rebound", false, false, false),
+    ("alias", false, true, true),
+    ("ambiguous", false, false, false),
+    ("guarded", false, false, false),
+    ("computed_expected", false, false, false),
+    ("custom_equality", false, false, true),
+    ("coerced_equality", false, false, true),
+    ("constructor_shadow", false, false, true),
+    ("qualified_vec", true, true, true),
+    ("root_shadow", false, false, true),
+    ("raw_type_alias", false, false, true),
 ];
 
 #[test]
 fn field_projected_collection_public_check_pins_exact_observation() -> Result<(), String> {
-    for &(case, credited, _) in CASES {
+    for &(case, credited, _, _) in CASES {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../fixtures/collection_argument_{case}"));
         let report = check_workspace(CheckInput {
@@ -93,19 +101,27 @@ fn field_projected_collection_public_check_pins_exact_observation() -> Result<()
 
 #[test]
 fn field_projected_collection_compiling_behavioral_mutants() -> Result<(), String> {
-    for &(case, _, catches_mutant) in CASES {
+    for &(case, _, catches_wrong_value, catches_deleted_push) in CASES {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
             "../../fixtures/collection_argument_{case}/input/src/lib.rs"
         ));
-        let original = std::fs::read_to_string(fixture).map_err(|error| error.to_string())?;
+        let original = std::fs::read_to_string(&fixture).map_err(|error| error.to_string())?;
         assert_eq!(original.matches("v.push(x * 1);").count(), 1, "{case}");
         for (version, replacement, expected_success) in [
             ("neutral", "v.push(x * 1);", true),
-            ("wrong_value", "v.push(x + 1);", !catches_mutant),
-            ("deleted_push", "let _ = x;", !catches_mutant),
+            ("wrong_value", "v.push(x + 1);", !catches_wrong_value),
+            ("deleted_push", "let _ = x;", !catches_deleted_push),
         ] {
             let scratch = Scratch::create()?;
             let source = scratch.0.join("lib.rs");
+            let companion = fixture
+                .parent()
+                .ok_or("fixture parent missing")?
+                .join("std.rs");
+            if companion.is_file() {
+                std::fs::copy(&companion, scratch.0.join("std.rs"))
+                    .map_err(|error| error.to_string())?;
+            }
             let executable = scratch
                 .0
                 .join(format!("control{}", std::env::consts::EXE_SUFFIX));

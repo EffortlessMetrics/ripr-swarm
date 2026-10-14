@@ -7,7 +7,7 @@ use crate::analysis::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSu
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
-    ast::{self, HasArgList, HasAttrs, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
 /// A narrow extension of the bare collection observer: a sole, unconditional
@@ -41,7 +41,10 @@ fn observed_projection(
     }
     let owner_tree = parse_clean_source_file(&owner.body)?.tree();
     let function = owner_tree.syntax().descendants().find_map(ast::Fn::cast)?;
-    if function.async_token().is_some() || function.gen_token().is_some() {
+    if function.async_token().is_some()
+        || function.gen_token().is_some()
+        || function.generic_param_list().is_some()
+    {
         return None;
     }
     let parameters: Vec<_> = function.param_list()?.params().collect();
@@ -139,6 +142,33 @@ fn observed_projection(
         || !matches!(
             initializer,
             ast::Expr::CallExpr(_) | ast::Expr::RecordExpr(_)
+        )
+    {
+        return None;
+    }
+    let constructor = match &initializer {
+        ast::Expr::CallExpr(call) => {
+            let ast::Expr::PathExpr(path) = call.expr()? else {
+                return None;
+            };
+            compact(&path.syntax().text().to_string())
+        }
+        ast::Expr::RecordExpr(record) => compact(&record.path()?.syntax().text().to_string()),
+        _ => return None,
+    };
+    let (_, field) = subject.split_once('.')?;
+    let ast::Type::RefType(receiver_type) = parameters.get(parameter)?.ty()? else {
+        return None;
+    };
+    if definition.ty().is_some()
+        || !super::is_bare_ident(&constructor)
+        || !crate::analysis::classify::owner_pin::projected_collection_has_value_equality(
+            &constructor,
+            field,
+            &receiver_type.ty()?.syntax().text().to_string(),
+            owner,
+            test,
+            index,
         )
     {
         return None;

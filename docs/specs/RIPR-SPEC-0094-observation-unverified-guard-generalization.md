@@ -256,6 +256,13 @@ projection passed by `&mut` in a direct owner call, for example
 (`b.items`) use the same rule. This credit requires:
 
 - the owner body contains only the unconditional parameter `push`;
+- the asserted single tuple/named field and receiver referent are the same
+  standard `Vec` of unshadowed integer types admitted by the shared
+  value-equality authority. Raw type bindings retain the same name identity.
+  The same-file root is a uniquely bound direct struct construction, without
+  competing constructor calls/values, generic declarations or field attributes.
+  Standard-library root bindings and the closed manifest authority must also
+  admit standard identity; qualified spelling alone is insufficient;
 - the shared free-call binding authority admits that exact called owner;
 - the test constructs the root value, then calls the owner and compares the
   same projection in an admitted top-level `assert_eq!`;
@@ -269,6 +276,7 @@ projection passed by `&mut` in a direct owner call, for example
 
 A different field or receiver, an unrelated or self-computed assertion,
 aliases, rebinding, intervening mutation, indexed/dynamic projections,
+custom equality, receiver coercion from a custom field, constructor shadowing,
 conditional/attributed pushes and deferred owners grant no new credit. This
 bounded rule does not extend guarded-input inference (#7964) or iterator
 closure projection (#7858). Plain-local observation keeps its existing rule.
