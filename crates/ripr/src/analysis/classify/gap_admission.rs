@@ -305,10 +305,16 @@ fn captured_and_asserted_around(
 /// scan so a literal inside a comment (nested block comments included) or a
 /// quote in a character literal is never live. A raw literal's value is its
 /// contents; a cooked literal is unescaped, and one with an escape
-/// [`unescape`] does not decode is left out.
+/// [`unescape`] does not decode is left out, and so is a `format!` /
+/// `format_args!` template, whose text is not the value it produces.
 fn string_literal_contents(code: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(code);
     crate::analysis::extract::string_literal_spans(code)
         .into_iter()
+        .filter(|(open, _, _)| {
+            let before = masked.get(..*open).unwrap_or_default().trim_end();
+            !before.ends_with("format!(") && !before.ends_with("format_args!(")
+        })
         .filter_map(|(open, close, raw)| {
             let contents = &code[open + 1..close];
             if raw {
@@ -498,6 +504,7 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
     let mut fragments = Vec::new();
     let mut current = String::new();
     let mut chars = template.chars().peekable();
+    let mut arguments: Vec<String> = Vec::new();
     while let Some(ch) = chars.next() {
         match ch {
             '{' if chars.peek() == Some(&'{') => {
@@ -510,10 +517,22 @@ fn log_template(expression: &str) -> Option<LogTemplate> {
             }
             '{' => {
                 fragments.push(std::mem::take(&mut current));
+                let mut argument = String::new();
                 for inner in chars.by_ref() {
                     if inner == '}' {
                         break;
                     }
+                    argument.push(inner);
+                }
+                // A named or positional argument used twice (`"{0} by {0}"`)
+                // ties two placeholders together, which independent gaps
+                // cannot express; such a template is not bound.
+                let name = argument.split(':').next().unwrap_or_default().trim();
+                if !name.is_empty() {
+                    if arguments.iter().any(|seen| seen == name) {
+                        return None;
+                    }
+                    arguments.push(name.to_string());
                 }
             }
             _ => current.push(ch),
@@ -1307,6 +1326,21 @@ mod tests {
             "log::info!(\"{} audited {} \", a, b);",
             "x audited 42 y"
         ));
+        // A named or positional argument used twice is not bound; used once,
+        // it is an ordinary placeholder.
+        assert_eq!(log_template("log::info!(\"{0} audited {0}\", u);"), None);
+        assert_eq!(log_template("log::info!(\"{who} audited {who:?}\");"), None);
+        assert!(matches(
+            "log::info!(\"{who} audited {0}\", n);",
+            "alice audited 4"
+        ));
+        // A `format!` template in the assertion is not asserted text.
+        assert!(
+            string_literal_contents("vec![format!(\"map {}\", m), \"map {}\".into()]")
+                .iter()
+                .eq(["map {}"])
+        );
+        assert!(string_literal_contents("format_args!(\"a {}\", b)").is_empty());
         // An escape that is not decoded leaves the template unbound.
         assert_eq!(log_template("log::info!(\"\\u{61}udited {}\", n);"), None);
         // A raw template is not read; the gap stays.
