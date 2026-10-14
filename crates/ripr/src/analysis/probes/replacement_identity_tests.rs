@@ -17,6 +17,7 @@ fn git_probes(before: &str, after: &str) -> Result<Vec<SeededProbe>, String> {
 
 struct GitProbeFixture {
     root: PathBuf,
+    patch: String,
     files: Vec<ChangedFile>,
     probes: Vec<SeededProbe>,
 }
@@ -77,6 +78,7 @@ fn git_probe_fixture(sources: &[(&str, &str, &str)]) -> Result<GitProbeFixture, 
             .collect();
         Ok(GitProbeFixture {
             root: root.clone(),
+            patch,
             files,
             probes,
         })
@@ -459,14 +461,24 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         "/// The sign of `n`.\npub fn sign(n: i64) -> i8 {\n    match n {\n        n if 0 > n => -1,\n        0 => 0,\n        _ => 1,\n    }\n}\n\n/// Second.\npub fn sign2(n: i64) -> i8 {\n    match n {\n        0 => 0,\n        _ => 1,\n    }\n}\n",
     )])?;
     let changed = &fixture.files[0];
+    assert_eq!(
+        fixture
+            .patch
+            .lines()
+            .filter_map(|line| line.strip_prefix("@@")?.split_once("@@"))
+            .map(|(range, _)| range.trim())
+            .collect::<Vec<_>>(),
+        vec!["-4 +4", "-13 +12,0"]
+    );
     // Equal text is not equal identity: old 4 has a counterpart; old 13 does not.
+    // A zero-length new range anchors the deletion at the preceding new line12.
     assert_eq!(
         changed
             .removed_lines
             .iter()
             .map(|line| (line.line, line.new_side_line, line.text.trim()))
             .collect::<Vec<_>>(),
-        vec![(4, 4, "n if n < 0 => -1,"), (13, 13, "n if n < 0 => -1,")]
+        vec![(4, 4, "n if n < 0 => -1,"), (13, 12, "n if n < 0 => -1,")]
     );
     assert_eq!(
         changed
@@ -496,7 +508,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         vec![
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 13,
+                line: 12,
                 family: "match_arm",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
@@ -506,7 +518,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
             },
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 13,
+                line: 12,
                 family: "predicate",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
