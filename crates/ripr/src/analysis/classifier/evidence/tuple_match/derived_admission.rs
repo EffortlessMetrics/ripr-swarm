@@ -9,9 +9,9 @@
 use crate::analysis::classify::ProbeContext;
 use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
 use crate::analysis::rust_index::find_file_facts;
-use crate::analysis::syntax::macro_binding_scan;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::source_declares_value_name;
+use crate::analysis::syntax::{macro_binding_scan, macro_call_is_statement};
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
@@ -38,17 +38,59 @@ pub(super) fn terminal_namespace_unambiguous(context: &ProbeContext<'_>) -> bool
                 }
             }
             !facts.used_lexical_fallback
-                && (facts
-                    .macro_candidates
-                    .as_deref()
-                    .is_some_and(|candidates| !candidates.may_bind("format"))
-                    || macro_binding_scan(&facts.source, &owned, &["format"], &|_| false)
-                        .is_empty())
+                && constructor_expansions_unambiguous(&facts.source)
+                && (facts.macro_candidates.as_deref().is_some_and(|candidates| {
+                    TERMINAL_STANDARD_MACROS
+                        .iter()
+                        .all(|name| !candidates.may_bind(name))
+                }) || macro_binding_scan(
+                    &facts.source,
+                    &owned,
+                    TERMINAL_STANDARD_MACROS,
+                    &|_| false,
+                )
+                .is_empty())
                 && ["Some", "Ok", "None"].iter().all(|name| {
                     !facts.source.contains(name) || !source_declares_value_name(&facts.source, name)
                 })
         })
 }
+
+/// The parser cannot inspect item-producing expansions. A macro can emit a
+/// constructor without spelling its name at the invocation, so declaration
+/// scans and formatter binding scans alone cannot establish constructor authority.
+/// Reuse the shared expression/statement boundary: expression expansions cannot
+/// introduce caller-visible items. Standard expression/statement macros retain
+/// their useful paths; their rebinding remains covered by the indexed authority.
+fn constructor_expansions_unambiguous(source: &str) -> bool {
+    let Some(root) = parsed(source) else {
+        return false;
+    };
+    root.syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .all(|call| {
+            !macro_call_is_statement(&call)
+                || call.syntax().parent().is_some_and(|parent| {
+                    ast::MacroExpr::can_cast(parent.kind())
+                        && call.path().is_some_and(|path| {
+                            TERMINAL_STANDARD_MACROS
+                                .contains(&path.syntax().text().to_string().as_str())
+                        })
+                })
+        })
+}
+
+const TERMINAL_STANDARD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "format",
+    "vec",
+];
 
 pub(super) fn terminal_owner_match(function: &ast::Fn) -> Option<ast::MatchExpr> {
     terminal_flow::owner_match(function)
@@ -748,3 +790,33 @@ mod tests {
 #[cfg(test)]
 #[path = "derived_admission/return_boundary_tests.rs"]
 mod return_boundary_tests;
+
+#[cfg(test)]
+mod constructor_expansion_tests {
+    use super::constructor_expansions_unambiguous;
+
+    #[test]
+    fn opaque_item_and_statement_expansions_refuse_constructor_authority() {
+        for source in [
+            "generate!();",
+            "mod root { generate!(); }",
+            "fn owner() { generate!(); }",
+            "macro_rules! generate { () => { fn Some() {} }; } generate!();",
+            "macro_rules! generate { () => { fn r#Some() {} }; } generate!();",
+        ] {
+            assert!(!constructor_expansions_unambiguous(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn ordinary_constructors_and_confined_expression_expansions_keep_authority() {
+        for source in [
+            "fn owner() { let value = Some(1); let other = Ok::<_, ()>(value); }",
+            "fn owner() { let value = expression!(); }",
+            "fn owner() { assert_eq!(Some(1), Some(1)); let values = vec![1]; }",
+            "macro_rules! unused { () => { fn Some() {} }; }",
+        ] {
+            assert!(constructor_expansions_unambiguous(source), "{source}");
+        }
+    }
+}

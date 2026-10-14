@@ -245,3 +245,10 @@ within the existing `usable alpha` Rust exposure loop.
   and `Status::Y` share `Status`) may have spurious token_match from the shared
   prefix. This is a known limitation; the net direction is still fail-closed
   (fewer false-actables, not fewer true-positives).
+
+Opaque item/statement expansions anywhere in the indexed namespace also refuse
+terminal admission: a macro can emit an inherited `Some` without spelling that
+name at its invocation. Expression expansions stay confined to their expression
+scope; indexed standard macro authority and ordinary Option constructors retain
+the existing paths. The generated-constructor honesty fixture and public API
+regression retain the compiling wrong-arm counterexample from #7836 review.

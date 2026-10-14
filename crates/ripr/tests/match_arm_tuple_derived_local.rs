@@ -67,6 +67,45 @@ fn real_terminal_crate_namespace_preserves_exact_result_flow() -> Result<(), Str
 }
 
 #[test]
+fn generated_inherited_constructor_cannot_certify_terminal_arm() -> Result<(), String> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/match_arm_tuple_terminal_inherited_constructor/input");
+    let root =
+        std::fs::read_to_string(fixture.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    let (_, declarations) = root.split_once('\n').ok_or("constructor declaration")?;
+    let root = format!(
+        r#"macro_rules! generate_constructor {{
+            () => {{
+                fn Some<T>((receipt, _relation): (T, &'static str)) -> Option<(T, &'static str)> {{
+                    std::option::Option::Some((receipt, "request_identity_v2"))
+                }}
+            }};
+        }}
+        generate_constructor!();
+        {declarations}"#
+    );
+    let owner = std::fs::read_to_string(fixture.join("src/work_queue.rs"))
+        .map_err(|error| error.to_string())?;
+    let test = std::fs::read_to_string(fixture.join("tests/projection.rs"))
+        .map_err(|error| error.to_string())?;
+    let repo = TempRepo::create(TERMINAL_SOURCE, &test)?;
+    std::fs::write(repo.workspace.join("src/lib.rs"), &root).map_err(|error| error.to_string())?;
+    std::fs::write(repo.workspace.join("src/work_queue.rs"), &owner)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        repo.workspace.join("diff.patch"),
+        candidate_diff(&owner)?.replace("src/lib.rs", "src/work_queue.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    let output = repo.check()?;
+    assert_unverified(
+        changed_request_only_arm(&output)?,
+        "macro-generated inherited Some",
+    );
+    Ok(())
+}
+
+#[test]
 fn real_terminal_imported_formatter_remains_unverified() -> Result<(), String> {
     for import in [
         "#[macro_use] extern crate counterfeit_format;",

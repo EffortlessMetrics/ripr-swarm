@@ -7201,6 +7201,9 @@ tests = [
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_replaced_formatter_remains_unverified",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_imported_formatter_remains_unverified",
   "crates/ripr/tests/match_arm_tuple_derived_local.rs::real_terminal_crate_namespace_preserves_exact_result_flow",
+  "crates/ripr/tests/match_arm_tuple_derived_local.rs::generated_inherited_constructor_cannot_certify_terminal_arm",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission.rs::constructor_expansion_tests::opaque_item_and_statement_expansions_refuse_constructor_authority",
+  "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission.rs::constructor_expansion_tests::ordinary_constructors_and_confined_expression_expansions_keep_authority",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/terminal_flow.rs::tests::terminal_literal_tokens_preserve_whitespace_and_ignore_only_trivia",
   "crates/ripr/src/analysis/classifier/evidence/tuple_match/derived_admission/terminal_flow.rs::tests::terminal_maps_refuse_duplicate_keys_and_nonliteral_values"
 ]
@@ -7210,7 +7213,8 @@ fixtures = [
   "fixtures/match_arm_observer",
   "fixtures/match_arm_tuple_derived_return_before_assertion",
   "fixtures/match_arm_tuple_terminal_imported_formatter",
-  "fixtures/match_arm_tuple_terminal_inherited_constructor"
+  "fixtures/match_arm_tuple_terminal_inherited_constructor",
+  "fixtures/match_arm_tuple_terminal_generated_constructor"
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
