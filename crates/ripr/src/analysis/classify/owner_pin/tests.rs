@@ -6575,7 +6575,7 @@ fn a_path_that_may_leave_the_owners_crate_is_not_a_pin() {
         "assert_eq!(heavy::weight(4), 12);",
         "assert_eq!(::demo::weight(4), 12);",
         // Something after the call.
-        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(crate::weight(4) + 1, 13);",
         // A segment that is not a declared module.
         "assert_eq!(crate::fast::weight(4), 12);",
         // `super` only leads.
@@ -7887,7 +7887,7 @@ fn associated_function_pin_refuses_other_names_for_the_type() {
         ("use demo::Gauge;", "assert_ne!(Gauge::reading(), 41);"),
         (
             "use demo::Gauge;",
-            "assert_eq!(Gauge::reading().min(99), 42);",
+            "assert_eq!(Gauge::reading().saturating_sub(1), 41);",
         ),
     ] {
         let tests = gauge_test(prelude, body);
@@ -8328,4 +8328,135 @@ fn a_short_circuit_tail_refuses_impure_or_mixed_chains() {
         let index = index(&[(LIB, &lib)]);
         assert!(establish(&index, "both_zero", tail).is_none(), "{tail}");
     }
+}
+
+#[test]
+fn an_integer_projection_that_keeps_the_value_pins() {
+    // trap-ceiling-wide-min-control / trap-muffle-times-one-control: a
+    // result below a `.min` bound (above a `.max` bound) is the call's own
+    // value, and `* 1` / `+ 0` keep every value.
+    for body in [
+        "assert_eq!(crate::weight(4).min(100), 12);",
+        "assert_eq!(12, crate::weight(4).min(1_000));",
+        "assert_eq!(crate::weight(4)\n            .min(100), 12);",
+        "assert_eq!(crate::weight(4).max(3), 12);",
+        "assert_eq!(crate::weight(4) * 1, 12);",
+        "assert_eq!(1 * crate::weight(4), 12);",
+        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(0 + crate::weight(4), 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // The bound clamps, or the projection loses the value.
+        "assert_eq!(crate::weight(4).min(12), 12);",
+        "assert_eq!(crate::weight(4).min(1), 1);",
+        "assert_eq!(crate::weight(4).max(12), 12);",
+        "assert_eq!(crate::weight(4).max(20), 20);",
+        "assert_eq!(crate::weight(4) * 0, 0);",
+        "assert_eq!(crate::weight(4) * 10, 120);",
+        "assert_eq!(crate::weight(4) + 10, 22);",
+        "assert_eq!(crate::weight(4) - 0, 12);",
+        "assert_eq!(crate::weight(4) / 1, 12);",
+        // A bound or expected value ripr does not read as a literal.
+        "assert_eq!(crate::weight(4).min(LIMIT), 12);",
+        "assert_eq!(crate::weight(4).min(100), TWELVE);",
+        "assert_eq!(crate::weight(4).min(100u32), 12);",
+        "assert_eq!(crate::weight(4).min(0x64), 12);",
+        // A leading `_` names a const or binding, not a literal.
+        "assert_eq!(crate::weight(4).min(_100), 12);",
+        "assert_eq!(crate::weight(4).max(3), _12);",
+        // Something else around the call.
+        "assert_eq!(crate::weight(4).min(100).min(50), 12);",
+        "assert_eq!(crate::weight(4) / 2 * 1, 6);",
+        "assert_ne!(crate::weight(4).min(100), 13);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // Floats and other non-integer returns keep only the bare call.
+    let body = "assert_eq!(crate::weight(4).min(100), 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A float or bool owner is a scalar but not an integer.
+    for returned in ["f64", "bool"] {
+        let lib = unit_tests("", body).replace("-> u32", &format!("-> {returned}"));
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    }
+    // #7932 review: `.min`/`.max` are the prelude `Ord`'s only while nothing
+    // rebinds them. A local `trait Ord` shadows the prelude's, and an import
+    // of `Ord`, a foreign glob, or a workspace `fn min` may supply another.
+    let rebinding = [
+        "trait Ord {\n    fn min(self, k: u32) -> u32;\n}\nimpl Ord for u32 {\n    fn min(self, _k: u32) -> u32 {\n        12\n    }\n}\n\n",
+        "use other::Ord;\n\n",
+        "use other::{\n    Ord,\n};\n\n",
+        "pub struct Span;\nimpl Span {\n    pub fn min(&self) -> u32 {\n        0\n    }\n}\n\n",
+    ];
+    for prelude in rebinding {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+        // `* 1` keeps std's operator impl, which coherence fixes.
+        let lib = unit_tests(prelude, "assert_eq!(crate::weight(4) * 1, 12);");
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{lib}");
+    }
+    // A foreign glob may import an `Ord`; it already refuses every pin.
+    let lib = unit_tests("use other::*;\n\n", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    let max = "assert_eq!(crate::weight(4).max(3), 12);";
+    let lib = unit_tests("pub fn max(a: u32) -> u32 {\n    a\n}\n\n", max);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A longer name, or the other method, rebinds nothing.
+    for prelude in [
+        "pub fn minimum(a: u32) -> u32 {\n    a\n}\n\n",
+        "pub fn max(a: u32) -> u32 {\n    a\n}\n\n",
+        "use std::collections::BTreeMap;\n\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{lib}");
+    }
+}
+
+#[test]
+fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
+    // trap-pile-first-element-control: `vec![call][0]` is the call's value.
+    for body in [
+        "assert_eq!(vec![crate::weight(4)][0], 12);",
+        "assert_eq!(12, vec![crate::weight(4)][0]);",
+        "assert_eq!(vec![crate::weight(4),][0], 12);",
+        "assert_eq!(vec![\n            crate::weight(4),\n        ][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
+        // A `;` inside a string argument is not the repeat separator.
+        "assert_eq!(vec![crate::weight(\"a;b\".len() as u32)][0], 9);",
+        // A `vec!` in the expected value or message leaves the bare call.
+        "assert_eq!(crate::weight(4), vec![12][0]);",
+        "assert_eq!(crate::weight(4), 12, \"{:?}\", vec![1]);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Another element, index, repeat form or projection.
+        "assert_eq!(vec![crate::weight(4), 1][0], 12);",
+        "assert_eq!(vec![1, crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4); 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4) ; 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0] + 1, 13);",
+        "assert_eq!(vec![crate::weight(4)].len(), 1);",
+        "assert_eq!(vec![crate::weight(4)], vec![12]);",
+        // A qualified `vec!`, another nested macro, or another assertion.
+        "assert_eq!(std::vec![crate::weight(4)][0], 12);",
+        "assert_eq!(vec![dbg!(crate::weight(4))][0], 12);",
+        "assert_eq!(vec![format!(\"{}\", crate::weight(4))][0], \"12\");",
+        "assert_ne!(vec![crate::weight(4)][0], 13);",
+        "assert!(vec![crate::weight(4)][0] == 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // A non-scalar owner keeps only the bare call.
+    let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }
