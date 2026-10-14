@@ -102,6 +102,33 @@ fn number_pins_loosely(value: f64) -> bool {
         && value.to_bits() != 1.0_f64.to_bits()
 }
 
+/// The text of `expected` when it is a finite number literal, optionally
+/// negated, parenthesized or under `as`: `0`, `-1`, `(1 as number)` reads
+/// `1`. Rule 2 leaves `0` and `1` weak because a boolean or string coerces
+/// to them; against an owner declared to return `number` they still pin the
+/// value (`ts_typed_loose_number_facts`), and this text is the expected
+/// value the pin records.
+pub(crate) fn finite_number_literal_text<'s>(
+    expected: &Argument<'_>,
+    source: &'s str,
+) -> Option<&'s str> {
+    let inner = expected.as_expression()?.get_inner_expression();
+    let finite = match inner {
+        Expression::NumericLiteral(literal) => literal.value.is_finite(),
+        Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::UnaryNegation => {
+            matches!(
+                unary.argument.get_inner_expression(),
+                Expression::NumericLiteral(literal) if literal.value.is_finite()
+            )
+        }
+        _ => false,
+    };
+    let span = inner.span();
+    finite
+        .then(|| source.get(span.start as usize..span.end as usize))
+        .flatten()
+}
+
 /// `true` when `matcher_call` is `toMatchInlineSnapshot` with exactly one
 /// argument that is a non-empty literal without interpolation (rule 3).
 pub(crate) fn inline_snapshot_is_literal(

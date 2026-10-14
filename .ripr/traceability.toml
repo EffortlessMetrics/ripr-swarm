@@ -14787,6 +14787,12 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::inline_snapshot_with_literal_text_reads_strong",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::chai_loose_equal_reads_like_legacy_node_assert",
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::loose_equality_reads_a_test_local_literal_const",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::number_return_annotation_reads_only_an_exact_number",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_literal_marks_only_weak_loose_equality",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_pin_exposes_a_number_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_pin_stays_weak_without_a_number_owner_or_whole_result",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_facts_refuse_a_shadowed_owner_and_a_method_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs::loose_number_facts_bind_the_observed_call_to_the_owner_import",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -14797,6 +14803,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+  "crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md",

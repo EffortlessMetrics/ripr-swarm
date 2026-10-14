@@ -1161,6 +1161,38 @@ fn loose_equality_reads_a_test_local_literal_const() {
             None,
         ),
         (
+            "const the then callback declares itself",
+            "return load().then((result) => {\n    const want = 30;\n    assert.equal(result, want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "const a forEach callback declares itself",
+            "[10].forEach((input) => {\n    const want = 30;\n    assert.equal(tier(input), want);\n  });",
+            true,
+            Some("30"),
+        ),
+        (
+            "parent const in a forEach callback",
+            "const want = 30;\n  [10].forEach((input) => {\n    assert.equal(tier(input), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            // Known under-credit: a zero-parameter callback is walked as a
+            // nested block, which reads no constants, even its own.
+            "own const in a zero-parameter then callback",
+            "return load().then(() => {\n    const want = 30;\n    assert.equal(tier(10), want);\n  });",
+            false,
+            None,
+        ),
+        (
+            "parent const in a then callback with a parameter",
+            "const want = 30;\n  return load().then((result) => {\n    assert.equal(result, want);\n  });",
+            false,
+            None,
+        ),
+        (
             "assertion in a nested block a redeclaration could shadow",
             "const want = 30;\n  if (ready) {\n    assert.equal(tier(10), want);\n  }",
             false,
