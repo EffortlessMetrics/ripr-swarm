@@ -15,8 +15,9 @@ The matched runtime test separately executes the correct and wrong callback.
 
 ## Then
 
-The current `Ok(())` return receives an admitted equality oracle.
-The positive fails on the wrong callback.
+The current `Ok(())` return receives an admitted equality oracle but remains
+weakly exposed because the owner-call argument pin is missing.
+The wrong callback fails at the equality.
 Every runtime subject compiles and executes one unignored test.
 
 ## Must Not
