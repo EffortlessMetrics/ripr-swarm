@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "integration_test_via_macro",
-  "hard_case": "Seam class matches example 23: `tier` reach opaque, summary names rust_macro_reach_unresolved (`runs_large_order` calls `run`, which reaches macro `priced!` that names `tier`), class opaque. Known gap: the limitation categories still include macro_generated_value beside opaque_static_evidence, where the example adopts opaque_static_evidence only. The diff finding reads no_static_path with no related test, although the test kills two of three mutants.",
+  "hard_case": "Seam class matches example 23: `tier` reach opaque, summary names rust_macro_reach_unresolved (`runs_large_order` calls `run`, which reaches macro `priced!` that names `tier`), class opaque. Known gap: the limitation categories still include macro_generated_value beside opaque_static_evidence, where the example adopts opaque_static_evidence only. The diff finding reads no_static_path with no related test, although the test kills two of three mutants. Category deviation tracked in #7958.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

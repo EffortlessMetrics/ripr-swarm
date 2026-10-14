@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "integration_test_public_chain_named_mock",
-  "hard_case": "Probe c4 with the test named `mock_checkout` (RIPR-SPEC-0236 example 22): `tier` reach opaque, summary names rust_integration_public_api_path_unresolved and `mock_checkout` (tests/checkout.rs:2) calls `checkout`; class opaque. Known gap: the reach limitation category reads unsupported_mock_shape, chosen from the test name in the summary, where the example adopts opaque_static_evidence (only the class-level opaque entry reads opaque_static_evidence today). The diff finding reads no_static_path with no related test, although the integration test kills two of three mutants.",
+  "hard_case": "Probe c4 with the test named `mock_checkout` (RIPR-SPEC-0236 example 22): `tier` reach opaque, summary names rust_integration_public_api_path_unresolved and `mock_checkout` (tests/checkout.rs:2) calls `checkout`; class opaque. Known gap: the reach limitation category reads unsupported_mock_shape, chosen from the test name in the summary, where the example adopts opaque_static_evidence (only the class-level opaque entry reads opaque_static_evidence today). The diff finding reads no_static_path with no related test, although the integration test kills two of three mutants. Only the `mock_checkout` test-name variant of example 22 is realized here; the `generated_route` entry-name variant has no case. Category deviation tracked in #7958.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

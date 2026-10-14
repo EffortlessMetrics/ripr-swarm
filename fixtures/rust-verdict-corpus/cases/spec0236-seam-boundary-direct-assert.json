@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "direct_exact_assert",
-  "hard_case": "Seam class matches example 17: weakly_gripped with all five stages yes. Spec deviation: the evidence record reads static_limitation, not the actionable_related_test_extension the example names, and the missing discriminator reads `1 (equality boundary)`.",
+  "hard_case": "Seam class matches example 17: weakly_gripped with all five stages yes. Spec deviation: the evidence record reads static_limitation, not the actionable_related_test_extension the example names, and the missing discriminator reads `1 (equality boundary)`. Evidence-record deviation tracked in #7958.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
