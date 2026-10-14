@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0263-one-call-enters-guard",
+  "subject_id": "authored-spec0263-one-call-enters-guard",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_mixed_inputs",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

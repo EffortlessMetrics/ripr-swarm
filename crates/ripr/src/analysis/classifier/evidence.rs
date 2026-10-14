@@ -430,6 +430,23 @@ impl ClassifiedProbeEvidence {
                             pin_syntax.exact_pattern_pin_value(test, assertion, context.index)
                         },
                     )
+                    // RIPR-SPEC-0229 decision 5: a check helper's borrowed
+                    // assertion (#6482) under the owner pin's helper
+                    // identity gates, as boundary pairing reads it.
+                    .with_helper_loans(
+                        context.related_tests.iter().map(|(test, _)| *test),
+                        |test, assertion| {
+                            pin_syntax
+                                .helper_loan(test, assertion, context.index)
+                                .filter(|loan| {
+                                    helper_pins_owner_call(
+                                        &loan.helper,
+                                        &mask_comments_and_strings(&test.body),
+                                        context.owner_fn.map_or("", |owner| owner.name.as_str()),
+                                    )
+                                })
+                        },
+                    )
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.

@@ -1,0 +1,28 @@
+/// Hands a small value back to `add` ten higher.
+macro_rules! again {
+    ($v:expr, $x:expr) => {
+        if $x < 20 {
+            add($v, $x + 10);
+        }
+    };
+}
+
+/// Records `x` only when it is large.
+pub fn add(v: &mut Vec<u32>, x: u32) {
+    if x > 10 {
+        v.push(x);
+    }
+    again!(v, x);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_values_come_back_large() {
+        let mut v = Vec::new();
+        add(&mut v, 4);
+        assert_eq!(v, vec![14, 24]);
+    }
+}

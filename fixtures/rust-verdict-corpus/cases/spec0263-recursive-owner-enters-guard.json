@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0263-recursive-owner-enters-guard",
+  "subject_id": "authored-spec0263-recursive-owner-enters-guard",
+  "diff": "cases/spec0263-recursive-owner-enters-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "direct_collection_equality_recursive_entry",
+  "hard_case": "Fail-closed witness: the test literal misses the guard, but the owner re-enters it at runtime, so naming the guard here would be a false gap.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.push(depth + 1);",
+        "mutated_line": "v.push(depth + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::walks_from_the_root",
+        "equivalence_review": "not equivalent: walk(&mut v, 0) records 5 and 6"
+      },
+      {
+        "replacement": "let _ = depth;",
+        "mutated_line": "let _ = depth;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::walks_from_the_root",
+        "equivalence_review": "not equivalent: walk(&mut v, 0) records nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "walks_from_the_root calls walk(&mut v, 0); 0 misses `depth > 3`, but walk calls itself up to depth 5, which enters the guard, so v is [4, 5] and both mutants fail the equality. Spec cells: RIPR-SPEC-0263 example 6: a recursive owner names no guard, so the literal 0 must not read as unentered.",
+  "labeling_observation": {
+    "ripr_commit": "46faff1e7",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#6"
+  ]
+}

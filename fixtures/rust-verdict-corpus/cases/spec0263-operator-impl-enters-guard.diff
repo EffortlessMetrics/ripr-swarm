@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1c7dba2..c34555e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ /// Records `x` only when it is large.
+ pub fn add(v: &mut Vec<u32>, x: u32) {
+     if x > 10 {
+-        v.push(x);
++        v.push(x * 1);
+     }
+ }
+ 
