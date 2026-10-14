@@ -259,11 +259,35 @@ fn changed_opening_and_closing_lines_retain_the_propagation_origin() -> Result<(
 #[test]
 fn paired_opening_evidence_survives_closing_canonicalization() -> Result<(), String> {
     let path = PathBuf::from("src/lib.rs");
-    let source = "fn check(value: Option<Result<(), &str>>) -> Result<(), &str> {\n    value .ok_or(\n        \"missing\"\n    )?\n}\n";
+    let source = "enum Failure { Missing }\nfn check(value: Option<Result<(), Failure>>) -> Result<(), Failure> {\n    value .ok_or(\n        Failure::Missing\n    )?\n}\n";
     let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
     let mut index = RustIndex::default();
     index.insert_file(path.clone(), facts, true);
-    for order in [[2, 4], [4, 2]] {
+    let opening_only = ChangedFile {
+        path: path.clone(),
+        added_lines: vec![ChangedLine {
+            line: 3,
+            new_side_line: 3,
+            text: "    value .ok_or(".to_string(),
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 3,
+            new_side_line: 3,
+            text: "    value.ok_or(".to_string(),
+        }],
+    };
+    let opening_seeds =
+        super::diff::probes_for_file_with_relations(Path::new("."), &opening_only, &index, &[]);
+    let opening_error = opening_seeds
+        .iter()
+        .find(|seed| seed.probe.family == ProbeFamily::ErrorPath)
+        .ok_or("setup must emit an opening ErrorPath seed")?;
+    assert_eq!(
+        opening_error.probe.before.as_deref().map(str::trim),
+        Some("value.ok_or(")
+    );
+    assert!(opening_error.propagation_origin.is_none());
+    for order in [[3, 5], [5, 3]] {
         let changed = ChangedFile {
             path: path.clone(),
             added_lines: order
@@ -282,13 +306,13 @@ fn paired_opening_evidence_survives_closing_canonicalization() -> Result<(), Str
                 .collect::<Result<Vec<_>, String>>()?,
             removed_lines: vec![
                 ChangedLine {
-                    line: 2,
-                    new_side_line: 2,
+                    line: 3,
+                    new_side_line: 3,
                     text: "    value.ok_or(".to_string(),
                 },
                 ChangedLine {
-                    line: 4,
-                    new_side_line: 4,
+                    line: 5,
+                    new_side_line: 5,
                     text: "    )".to_string(),
                 },
             ],
@@ -305,14 +329,14 @@ fn paired_opening_evidence_survives_closing_canonicalization() -> Result<(), Str
             error.probe.before.as_deref().map(str::trim),
             Some("value.ok_or(")
         );
-        assert_eq!(error.probe.location.line, 2);
+        assert_eq!(error.probe.location.line, 3);
         assert!(error.probe.expression.ends_with(")?"));
         assert_eq!(
             error
                 .propagation_origin
                 .as_ref()
                 .map(|line| line.new_side_line),
-            Some(4)
+            Some(5)
         );
         assert!(
             error.parser_span.is_none(),
