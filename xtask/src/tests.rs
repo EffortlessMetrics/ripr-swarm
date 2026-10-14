@@ -29773,8 +29773,11 @@ fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Resu
     assert!(finding_section.contains(&format!("Recommended action:\n\n```text\n{expected}\n```")));
     let queue_section = remaining_sections
         .split_once("\n## Open PRs\n\n")
-        .ok_or("board must contain the open PR section")?.0;
-    let queue_row = queue_section.lines().find(|row| row.starts_with("| #2 |"))
+        .ok_or("board must contain the open PR section")?
+        .0;
+    let queue_row = queue_section
+        .lines()
+        .find(|row| row.starts_with("| #2 |"))
         .ok_or("board must contain this PR's disposition row")?;
     assert!(queue_row.ends_with(&format!(" | {expected} |")));
     assert!(!markdown.contains("needs_rebase"));
@@ -29794,9 +29797,12 @@ fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Resu
         .find(|f| f["category"] == "behind main")
         .ok_or("board must retain the behind observation")?;
     assert_eq!(encoded_behind["recommended_action"], expected);
-    let recommended_actions = json["recommended_actions"].as_array()
+    let recommended_actions = json["recommended_actions"]
+        .as_array()
         .ok_or("board recommended actions must be an array")?;
-    let behind_action = recommended_actions.iter().find(|a| a["category"] == "behind main")
+    let behind_action = recommended_actions
+        .iter()
+        .find(|a| a["category"] == "behind main")
         .ok_or("board must recommend a next step for the behind observation")?;
     assert_eq!(behind_action["action"], expected);
     Ok(())
