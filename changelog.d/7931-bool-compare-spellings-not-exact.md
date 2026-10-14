@@ -8,6 +8,8 @@
   `assert_eq!(PartialEq::eq(&r, &Err(E::Bad)), false)` and
   `assert!(matches!(r, Err(E::Bad)).then(|| false).unwrap_or(true))` now read
   `relational_check` / weak. An `eq` method or a literal spelling asserted
-  true (`assert_eq!(r.eq(&Err(E::Bad)), true)`) keeps its exact reading
+  true (`assert_eq!(r.eq(&Err(E::Bad)), true)`) keeps its exact reading, and
+  a doubled negation through these spellings now reads as the comparison it
+  asserts (`assert_eq!(&(r == Err(E::Bad)) == &false, false)`)
   (RIPR-SPEC-0231 rule 1, example 32;
   [#7931](https://github.com/EffortlessMetrics/ripr-swarm/issues/7931)).

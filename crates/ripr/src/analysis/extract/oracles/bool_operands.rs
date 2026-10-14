@@ -186,12 +186,13 @@ fn literal_compared_operand(text: &str) -> Option<(&str, bool)> {
 }
 
 /// The value of a boolean literal through the spellings that keep it: a
-/// reference, a one-expression block, a `bool` cast or `bool::from`
-/// (`&false`, `{ false }`, `false as bool`, `bool::from(false)`; #7931).
-/// `side` is masked.
+/// reference, a one-expression block, a `bool` cast or `bool::from`, each
+/// through grouping parentheses (`&false`, `{ false }`, `(false as bool)`,
+/// `bool::from(false)`; #7931). `side` is masked.
 fn literal_spelling_value(side: &str) -> Option<bool> {
     let mut text = side.trim();
     loop {
+        text = unwrap_parentheses(text);
         if let Some(value) = boolean_literal_value(text) {
             return Some(value);
         }
@@ -241,10 +242,14 @@ fn method_comparison(text: &str) -> Option<&'static str> {
 /// A comparison spelled as one call: its method name and its two sides,
 /// either a receiver and an argument (`score(2).ne(&0)`) or the two
 /// arguments of a `PartialEq` or `PartialOrd` path call
-/// (`PartialEq::eq(&r, &x)`).
+/// (`PartialEq::eq(&r, &x)`). A method call binds tighter than any operator,
+/// so the receiver must be one operand (`flag && r.eq(&x)` calls `eq` on
+/// `r` only) and the path call must start the text.
 fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
+    // A trailing comment is masked to spaces; the call ends at its `)`.
+    let masked = masked.trim_end();
     if !masked.ends_with(')') {
         return None;
     }
@@ -265,7 +270,7 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
     }
     let open = open?;
     let head = masked.get(..open)?.trim_end();
-    let arguments = text.get(open + 1..text.len() - 1)?;
+    let arguments = text.get(open + 1..masked.len() - 1)?;
     const NAMES: [&str; 6] = ["eq", "ne", "lt", "le", "gt", "ge"];
     for name in NAMES {
         let Some(rest) = head.strip_suffix(name) else {
@@ -273,7 +278,11 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
         };
         if let Some(receiver) = rest.trim_end().strip_suffix('.') {
             let receiver = text.get(..receiver.len())?.trim();
-            if !receiver.is_empty() {
+            // A leading unary operator applies to the call's result
+            // (`!x.eq(&y)` is `!(x.eq(&y))`), so it is not the receiver.
+            let unary = receiver.starts_with(['!', '&', '*', '-'])
+                && unwrap_parentheses(receiver).len() == receiver.len();
+            if !receiver.is_empty() && !unary && is_single_operand(receiver) {
                 return Some((name, receiver, arguments.trim()));
             }
         }
@@ -282,11 +291,9 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
         } else {
             "PartialOrd::"
         };
-        let starts_path = rest.strip_suffix(path).is_some_and(|before| {
-            before.is_empty()
-                || before.ends_with("::")
-                || !before.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_')
-        });
+        let starts_path = rest
+            .strip_suffix(path)
+            .is_some_and(|before| before.is_empty() || before.ends_with("::"));
         if starts_path {
             return split_two_arguments(arguments).map(|(left, right)| (name, left, right));
         }
@@ -294,16 +301,30 @@ fn comparison_call(text: &str) -> Option<(&'static str, &str, &str)> {
     None
 }
 
-/// The two arguments of a call's argument list when it holds exactly two.
+/// The two arguments of a call's argument list when it holds exactly two,
+/// allowing a trailing comma (`PartialEq::eq(&r, &x,)`). Commas inside
+/// brackets or turbofish generics (`::<K, V>`) do not separate arguments.
 fn split_two_arguments(arguments: &str) -> Option<(&str, &str)> {
     let masked = mask_comments_and_strings(arguments);
+    let trimmed = masked.trim_end();
+    let end = trimmed.strip_suffix(',').map_or(trimmed.len(), str::len);
+    let arguments = arguments.get(..end)?;
+    let bytes = masked.as_bytes();
     let mut depth = 0usize;
+    let mut generics = 0usize;
     let mut comma = None;
-    for (index, byte) in masked.bytes().enumerate() {
+    for (index, &byte) in bytes.iter().enumerate().take(end) {
         match byte {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b',' if depth == 0 => {
+            b'<' if index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..]) => {
+                generics += 1;
+            }
+            // `->` inside generics (`Fn() -> T`) closes nothing.
+            b'>' if generics > 0 && (index == 0 || bytes.get(index - 1) != Some(&b'-')) => {
+                generics -= 1;
+            }
+            b',' if depth == 0 && generics == 0 => {
                 if comma.is_some() {
                     return None;
                 }

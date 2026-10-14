@@ -920,6 +920,16 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!((r == Err(E::Bad)) as bool, false);",
         "assert_eq!(bool::from(r == Err(E::Bad)), false);",
         "assert_eq!(flag && r.ne(&Err(E::Bad)), true);",
+        // Review of #7992: grouped literal spellings, a trailing comma,
+        // a trailing comment, and a receiver or path call after `&&`.
+        "assert_eq!(r == Err(E::Bad), (false as bool));",
+        "assert_eq!(r == Err(E::Bad), (bool::from(false)));",
+        "assert_eq!(PartialEq::eq(&r, &Err(E::Bad),), false);",
+        "assert_eq!(PartialEq::eq(&HashMap::<u8, u8>::new(), &m), false);",
+        "assert_eq!(r.eq(&Err(E::Bad)) /* checked */, false);",
+        "assert_eq!(flag && r.eq(&Err(E::Bad)).eq(&false), false);",
+        "assert_eq!(flag && (r == Err(E::Bad)).eq(&false), false);",
+        "assert_eq!(flag && PartialEq::eq(&(r == Err(E::Bad)), &false), false);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));

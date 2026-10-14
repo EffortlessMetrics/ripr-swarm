@@ -282,7 +282,14 @@ Two pattern terms are used below.
    `bool::from(..)` is that literal; and the operand through a
    one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
    (`assert_eq!({ r == Err(E::Bad) }, false)`,
-   `assert_eq!(bool::from(r == Err(E::Bad)), false)`).
+   `assert_eq!(bool::from(r == Err(E::Bad)), false)`). Grouping
+   parentheses around these spellings change nothing (`(false as bool)`). A
+   method call binds tighter than any operator, so its receiver is one
+   operand: `flag && r.eq(&x).eq(&false)` is a chain whose last conjunct is
+   the call. Peeling a spelling can raise a doubled negation to the
+   comparison's own reading (`assert_eq!((r == Err(E::Bad)) == false as bool,
+   false)` and `assert_eq!(&(r == Err(E::Bad)) == &false, false)` assert
+   `r == Err(E::Bad)`).
    `^` and a
    single `|` over an operand holding a `matches!` or a comparison, with no
    top-level comparison of their own, also cap (`assert_eq!((r ==
