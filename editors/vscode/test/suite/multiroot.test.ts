@@ -184,7 +184,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
     teardown(function () {
       if (this.currentTest?.state === 'failed') {
         outcome = 'failed';
-        stages.push({ phase, failure: String(this.currentTest.err) });
+        const failure = this.currentTest.err;
+        stages.push({ phase, failure: String(failure) });
+        // Re-tag the reported failure with the journey phase: mocha reports
+        // hook and test failures identically, and the phase is the first
+        // question every reader of a CI log asks.
+        if (failure instanceof Error && !failure.message.includes(`[phase: ${phase}]`)) {
+          this.currentTest.err = new Error(`[phase: ${phase}] ${failure.message}`, { cause: failure });
+        }
       }
     });
 
@@ -285,8 +292,18 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.strictEqual(diagnostic.message,
         `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
       assert.strictEqual(diagnostic.range.start.line, 1);
-      const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
-        'vscode.executeCodeActionProvider', uri, diagnostic.range);
+      let actions: Array<vscode.CodeAction | vscode.Command>;
+      try {
+        actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+          'vscode.executeCodeActionProvider', uri, diagnostic.range);
+      } catch (error) {
+        // executeCodeActionProvider throws a bare illegal-argument when the
+        // URI has no open text model; disclose the open-document set so the
+        // failing point is diagnosable from the CI log alone.
+        throw new Error(`code actions for ${uri} failed: ${String(error)}`
+          + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
+          + ` phase=${phase}`);
+      }
       const commands = (actions ?? []).flatMap(action => {
         const command = typeof action.command === 'string' ? action as vscode.Command : action.command;
         return command?.command.startsWith('ripr.') ? [command] : [];
