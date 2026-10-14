@@ -369,7 +369,9 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 // A byte-invalid cwd can still select a UTF-8 parent. Resolve
                 // real filesystem traversal, without lexically collapsing `..`
                 // across symlinks or replacing an already-lossless alias.
-                let resolved = root.canonicalize().map_err(|_| error)?;
+                let resolved = root.canonicalize().map_err(|resolve_error| {
+                    format!("{error}; cannot resolve selected root: {resolve_error}")
+                })?;
                 output::path::command_root_display(root, &resolved)
             }) {
                 Ok(root) => root,
