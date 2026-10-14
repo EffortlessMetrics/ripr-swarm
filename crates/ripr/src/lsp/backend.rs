@@ -10806,6 +10806,9 @@ mod delivery_selection_parity_tests {
         sorted
     }
 
+    // Keep the payload oracles separate from the selected-ID-only tests.
+    mod omission_tests;
+
     #[test]
     fn input_change_reset_clears_component_degradation_dedup() -> Result<(), String> {
         // #1997 review: the degradation-dedup state belongs to the old
