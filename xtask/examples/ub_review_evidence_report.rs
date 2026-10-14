@@ -344,7 +344,9 @@ fn render(root: &Path) -> String {
                 );
                 if !matches!(
                     status,
-                    "selected_with_lease" | "answered_by_existing_receipt"
+                    "selected_with_lease"
+                        | "answered_by_existing_receipt"
+                        | "satisfied_by_existing_evidence"
                 ) || recorded.is_empty()
                     || recorded.iter().any(|id| {
                         receipts
@@ -590,6 +592,28 @@ mod tests {
         assert!(!report.contains("MISSING EVIDENCE:"));
         assert!(report.contains("matching recorded receipts=1"));
         assert!(report.contains("HEAD-only success does not establish red/green discrimination"));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_existing_evidence_needs_a_linked_matching_receipt() -> Result<(), String> {
+        let p = Packet::new()?;
+        p.write(
+            "review/proof_receipts.json",
+            json!([receipt("shared", "head_passed")]),
+        )?;
+        let mut task = portfolio(&["snippet"], "satisfied_by_existing_evidence", &["shared"]);
+        task["candidate_tasks"][0]["kind"] = json!("focused-head");
+        task["decisions"][0]["kind"] = json!("focused-head");
+        p.write("review/proof_portfolio.json", task.clone())?;
+        assert!(!render(&p.0).contains("MISSING EVIDENCE:"));
+        task["decisions"][0]["receipt_ids"] = json!(["absent"]);
+        p.write("review/proof_portfolio.json", task.clone())?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
+        task["decisions"][0]["receipt_ids"] = json!(["shared"]);
+        task["decisions"][0]["status"] = json!("future_status");
+        p.write("review/proof_portfolio.json", task)?;
+        assert!(render(&p.0).contains("MISSING EVIDENCE: snippet:"));
         Ok(())
     }
 
