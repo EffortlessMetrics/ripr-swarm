@@ -963,10 +963,22 @@ fn analyze_related_assertions(
             // expression (#7094 review).
             || error_construction_path.is_some()));
 
+    // #7763: a reason string also occurs in unrelated plan/gate values.
+    // When another test reaches the owner, proximity alone cannot make that
+    // shared literal an oracle for its predicate. Preserve possible opaque or
+    // transitive owner calls, and retain the uncredited row for explanation.
+    let shared_string_predicate = matches!(probe.family, ProbeFamily::Predicate)
+        && !rust_string_literals(&probe.expression).is_empty();
+
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = credits(*reason);
+        let credits_oracle = credits(*reason)
+            && !(shared_string_predicate
+                && owner_reaching_related
+                && is_proximity_only(*reason)
+                && !invokes_opaque_macro(&test.body)
+                && !(return_admission.proximity_may_reach_owner)(test));
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
