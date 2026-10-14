@@ -29,6 +29,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "coverage.yml",
             "cargo test -p repo-policy --lib coverage_diagnostics",
         ),
+        ("ub-review.yml", "uses: EffortlessMetrics/ub-review@"),
     ];
     let prepared = |text: &str, command: &str| {
         let setup = "      - uses: dtolnay/rust-toolchain@v1\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview";
@@ -46,6 +47,10 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         );
         assert!(!prepared(
             &text.replace("components: llvm-tools-preview", "components: clippy"),
+            command
+        ));
+        assert!(!prepared(
+            &text.replace("components: llvm-tools-preview", ""),
             command
         ));
         assert!(!prepared(
