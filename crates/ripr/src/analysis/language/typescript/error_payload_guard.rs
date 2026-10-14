@@ -372,13 +372,17 @@ fn split_message_argument(throw: &[LineToken]) -> Option<(usize, usize)> {
             .chars()
             .next()
             .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
-        && !callee.contains('.')
     {
+        if callee.contains('.') {
+            return None;
+        }
         start += 2;
-    } else if constructed {
+    } else if constructed
+        || matches!(throw.get(start), Some(LineToken::Other(callee)) if callee.contains('.') || matches!(throw.get(start + 1), Some(LineToken::Other(next)) if next == "<"))
+    {
         // `new errors.ParseError(...)` (the tokenizer keeps the dotted path
-        // as one word) or `new X<T>(...)`: the class is not one name, so
-        // the split is refused.
+        // as one word) or `new X<T>(...)`: the class/callee is not one
+        // undotted name, so the split is refused.
         return None;
     }
     let mut depth = 0usize;
@@ -724,6 +728,16 @@ mod tests {
             r#"throw new errors.B("bad");"#,
         );
         assert!(!member_changed.message_only);
+        let member_fn_changed = ErrorChangeFacts::read(
+            Some(r#"throw errors.A("bad");"#),
+            r#"throw errors.B("bad");"#,
+        );
+        assert!(!member_fn_changed.message_only);
+        let member_fn = ErrorChangeFacts::read(
+            Some(r#"throw errors.ParseError("bad " + x);"#),
+            r#"throw errors.ParseError("bad ");"#,
+        );
+        assert!(!member_fn.message_only);
         // A change in another argument, or after the call, is not.
         let cause = ErrorChangeFacts::read(
             Some(r#"throw new Error("bad", { cause: a });"#),
