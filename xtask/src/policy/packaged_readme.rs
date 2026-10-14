@@ -185,7 +185,11 @@ fn names_version(text: &str, version: &str) -> bool {
 fn documents_cascade_start(readme: &str) -> bool {
     readme
         .lines()
-        .any(|line| line.split(';').any(clause_documents_cascade_start))
+        .any(|line| claim_clauses(line).any(clause_documents_cascade_start))
+}
+
+fn claim_clauses(line: &str) -> impl Iterator<Item = &str> {
+    line.split([';', ','])
 }
 
 fn clause_documents_cascade_start(clause: &str) -> bool {
@@ -248,7 +252,7 @@ fn teaches_origin_main_default(readme: &str) -> bool {
     readme.lines().any(|line| {
         let trimmed = line.trim().trim_start_matches('$').trim();
         let whole = command_text(trimmed);
-        (!negated_instruction(trimmed) && ripr_check_teaches_origin_main(whole))
+        (!negated_instruction(whole) && ripr_check_teaches_origin_main(whole))
             || taught_inline_origin_main(trimmed)
     })
 }
@@ -833,6 +837,22 @@ ripr check --base origin/main
     }
 
     #[test]
+    fn comma_joined_negation_does_not_hide_cascade_start() {
+        let readme = CURRENT_LIKE.replace(
+            "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
+            "`origin/main` is not the default, and the cascade starts at `origin/HEAD`",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
+            "comma-joined cascade-start clause must still count; got {violations:?}"
+        );
+    }
+
+    #[test]
     fn unrelated_origin_head_mention_is_not_the_cascade_start() {
         let readme = CURRENT_LIKE.replace(
             "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
@@ -877,6 +897,20 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
             "negated obsolete-command warning must not fail the cut; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_does_not_hide_taught_origin_main() {
+        let readme =
+            CURRENT_LIKE.replace("ripr check\n", "ripr check --base origin/main # obsolete\n");
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
+            "trailing comment must not hide a taught command; got {violations:?}"
         );
     }
 
