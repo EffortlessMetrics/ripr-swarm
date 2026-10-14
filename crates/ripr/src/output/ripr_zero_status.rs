@@ -2264,6 +2264,104 @@ mod tests {
     }
 
     #[test]
+    fn ripr_zero_status_withholds_achieved_on_analyzer_version_identity_discontinuity()
+    -> Result<(), String> {
+        // Issue #7421: a delta whose only "movement" is one analyzer-version
+        // identity-discontinuity item must not read "RIPR 0: achieved". The
+        // old delta shape (the same entry silently counted `resolved`) is the
+        // control that still achieves, so this pair pins the exact boundary.
+        let achieved_delta = r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "kind": "baseline_debt_delta",
+          "baseline": {"path": ".ripr/gate-baseline.json", "entries": 1},
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "resolved", "identity": {"canonical_gap_id": "gap:19fe16a568d1c87e"}, "path": "src/lib.rs", "line": 10, "static_class": "activation_unknown", "repair": {}}
+          ],
+          "warnings": []
+        }"#;
+        let discontinuity_delta = r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "kind": "baseline_debt_delta",
+          "baseline": {"path": ".ripr/gate-baseline.json", "entries": 1},
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 1,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [
+            {"bucket": "stale_baseline_entry", "identity": {"canonical_gap_id": "gap:19fe16a568d1c87e"}, "path": "src/lib.rs", "line": 10, "static_class": "activation_unknown", "reason": "Reviewed baseline identity is absent from current gate-decision evidence, but the producing analyzer build changed (baseline `none recorded` -> current `0.11.0+9c88b`); the identity may have been invalidated by the upgrade rather than the debt resolved. Re-create the baseline with the current build (`ripr baseline create --from <current gate-decision> --force`) or verify the gap is genuinely fixed before treating it as resolved.", "analyzer_version_discontinuity": {"baseline_analyzer_version": null, "current_analyzer_version": "0.11.0+9c88b"}, "repair": {"action": "inspect_or_refresh_baseline_entry"}}
+          ],
+          "warnings": [
+            "baseline entry gap:19fe16a568d1c87e is absent from current evidence but the producing analyzer build changed (baseline `none recorded` -> current `0.11.0+9c88b`); treated as stale identity discontinuity, not resolved debt"
+          ]
+        }"#;
+
+        let control = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: Some(".ripr/gate-baseline.json".to_string()),
+            delta_path: "target/ripr/reports/baseline-debt-delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(achieved_delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&control)?;
+        assert!(rendered.contains("\"state\": \"achieved\""), "{rendered}");
+
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: Some(".ripr/gate-baseline.json".to_string()),
+            delta_path: "target/ripr/reports/baseline-debt-delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(discontinuity_delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"not_yet\""), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        assert!(
+            rendered.contains("stale identity discontinuity, not resolved debt"),
+            "{rendered}"
+        );
+        let markdown = render_ripr_zero_status_markdown(&report);
+        assert!(markdown.contains("RIPR 0: not_yet"), "{markdown}");
+        assert!(!markdown.contains("RIPR 0: achieved"), "{markdown}");
+        Ok(())
+    }
+
+    #[test]
     fn ripr_zero_status_reports_not_yet_with_metadata_and_repair_route() -> Result<(), String> {
         let baseline = r#"{
           "schema_version": "0.1",

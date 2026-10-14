@@ -1,0 +1,66 @@
+schema_version = "2.0"
+id = "ripr.slice.baseline-analyzer-version-identity.v1"
+generation = 1
+
+source_issue = "issue:7421"
+design_reference = "RIPR-SPEC-0016"
+change_class = "behavior_change"
+
+claim_boundary = """
+Makes the baseline debt join build-aware so an analyzer upgrade that changes
+identity derivation can no longer read identity loss as resolved debt:
+`baseline create` persists the source gate decision's
+`subject.analyzer_version` (issue #5474) into the `gate_baseline` ledger
+under an additive `subject` block and warns when the source predates build
+identity, and `baseline diff` classifies an unmatched baseline entry across a
+provable analyzer-build boundary (both sides recorded and differing, or
+exactly one side recorded) as a disclosed stale identity-discontinuity item
+carrying both versions, a per-entry warning, and an exhaustive Markdown
+section instead of silently counting it `resolved`. `zero status` therefore
+withholds `RIPR 0: achieved` while such entries are outstanding, because the
+item stays in the `stale_baseline_entry` bucket that `all_clear` already
+requires to be zero. Same-build diffs and both-sides-unversioned (old-vs-old)
+diffs keep the legacy `resolved` classification, and canonical identities
+that survive an upgrade still join normally.
+"""
+
+non_goals = [
+  "changing gate decision computation, blocking behavior, or the pass/fail authority",
+  "changing baseline update matching or adding an update-side version refusal (shrink-only `--remove-resolved` keeps its documented behavior)",
+  "a baseline schema-version bump or any non-additive ledger change",
+  "recording full subject input hashes in the baseline ledger",
+  "mutation testing, runtime verification, or new gate authority",
+]
+
+return_conditions = [
+  "Return to root if shrink-only `baseline update --remove-resolved` must also refuse version-crossing removals to stop ledger data loss across upgrades.",
+  "Return to root if downstream consumers need the discontinuity as a dedicated bucket or count instead of the shared `stale_baseline_entry` vocabulary.",
+  "Return to root if a version-crossing join needs a fallback refresh route beyond re-creating the baseline.",
+]
+
+owned_seams = [
+  "seam:ripr:output:baseline-analyzer-version-identity",
+]
+
+shared_seams = [
+  "seam:ripr:output:gate-decision-contract",
+  "seam:ripr:specs:baseline-debt-delta",
+]
+
+forbidden_seams = [
+  "seam:ripr:repo:workflows",
+  "seam:ripr:output:check-json-contract",
+]
+
+[[requirement_delta]]
+requirement_id = "issue:7421#baseline-analyzer-version-identity"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
