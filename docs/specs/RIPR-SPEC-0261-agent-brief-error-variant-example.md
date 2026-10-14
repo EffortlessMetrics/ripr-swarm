@@ -56,11 +56,16 @@ applicable targets.
 - A changed `Err(format!("port {} busy", port))` payload no longer emits
   `matches!(err, format!("port {} busy", port))` as a concrete example; the
   assertion shape reads `unresolved` and the brief records why.
-- A changed `Err(io::Error::new(..))` whose payload text is an owned string
-  emits `matches!(err, message if message == "port busy")` with the label
-  escaped, compile-ready.
-- A seam packet for a `not_applicable` repair target emits
-  `"suggested_test_command": null`.
+- A changed `Err("port busy".to_string())` payload emits
+  `matches!(err, message if message == "port busy")` with the label
+  escaped, compile-ready. Call payloads such as `io::Error::new(..)` stay
+  `unresolved`: `error_variant_payload_pattern` accepts only a nameable
+  variant path or a well-formed string literal with an optional
+  `.to_string()` / `.to_owned()` / `.into()` suffix.
+- An agent brief for a `not_applicable` repair target emits
+  `"verification": {"suggested_test_command": null}`; the null change is
+  rendered by `agent_brief.rs::verification_json`, not the seam packet
+  path.
 
 ## Test Mapping
 
@@ -77,10 +82,12 @@ applicable targets.
 
 - `crates/ripr/src/output/agent_seam_packets.rs` owns the example
   derivation (including `wellformed_string_literal` and
-  `owned_string_literal_payload`) and the `suggested_test_command`
-  emission.
+  `owned_string_literal_payload`).
 - `crates/ripr/src/output/agent_brief.rs` renders the brief fields the
-  packet supplies.
+  packet supplies, including the `suggested_test_command` emission:
+  `verification_json` writes a literal `null` for a `not_applicable`
+  repair target instead of a `cargo test not_applicable` command that
+  would silently match zero tests.
 
 ## Metrics
 

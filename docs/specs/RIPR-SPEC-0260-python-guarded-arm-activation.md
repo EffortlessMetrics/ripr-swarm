@@ -38,25 +38,36 @@ bind:
 - A row with an unevaluable guard is never excluded: one unreadable input
   keeps the existing verdict. Shapes that fail open (keep the pre-gate
   verdict) include `else` arms, `elif` chains read by their own condition,
-  guards containing `or`/`not` boolean syntax, a parameter the owner
-  rebinds before the guard (plain, augmented, annotated, or `for`-target
-  assignment), computed operands, non-literal call rows, a strong related
-  call that binds no row (a `*args` unpack or unreadable argument list),
-  and entries without source (repo mode, deleted lines, the old test
-  harness).
+  guards containing `or`/`not` boolean syntax anywhere in the WHOLE
+  condition (the check runs before any `and` conjunct is evaluated, so a
+  false leading conjunct cannot exclude a row a later `or` lets in,
+  #7874), a parameter the owner rebinds before the guard (plain,
+  single- or multi-character augmented, annotated, destructuring-target,
+  or `for`-target assignment), computed operands, non-literal call rows, a
+  strong related call that binds no row (a `*args` unpack or unreadable
+  argument list), and entries without source (repo mode, deleted lines,
+  the old test harness).
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
 - Ordering comparisons never order across kinds (a string against a number
-  is unreadable, which fails open).
+  is unreadable, which fails open). Integer literals order exactly as
+  Python does beyond f64 precision (`9007199254740993 > 9007199254740992`
+  holds): both integer-form operands compare as `i128`, refusing on
+  overflow, while float literals keep the f64 path because Python rounds
+  them at parse time too (#7874).
 
 ## Required Evidence
 
-Unit tests cover the fail-open shapes (`or` and `not` guards, a rebound
-parameter, bool/numeric equality) and the end-to-end classification: an
-arm-entering input, an unreadable strong call, and a rebinding owner keep
-`exposed`; only the all-rows-excluded case downgrades. Fixture goldens
-record the emitted missing-discriminator text and observed values.
+Unit tests cover the fail-open shapes (`or` and `not` guards whole-condition
+and after a false conjunct in both operand orders, a rebound parameter
+including multi-character augmented and destructuring-target assignments,
+comparison-line negative controls, bool/numeric equality, and exact
+large-integer ordering) and the end-to-end classification: an
+arm-entering input, an unreadable strong call, a rebinding owner, and each
+#7874 counterexample keep `exposed`; only the all-rows-excluded case
+downgrades. Fixture goldens record the emitted missing-discriminator text
+and observed values.
 
 ## Non-Goals
 

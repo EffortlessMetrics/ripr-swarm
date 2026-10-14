@@ -15123,6 +15123,17 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::rebound_parameter_keeps_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::bool_numeric_guard_equality_follows_python",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_gate_stays_off_without_source",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_or_after_a_false_conjunct",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_fails_open_on_leading_or_operand_order",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_confirms_simple_true_comparison",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_multi_character_augmented_rebinding",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::eval_comparison_fails_open_on_tuple_rebinding",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebound_scan_keeps_comparison_lines_readable",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::compare_literal_values_orders_large_integers_exactly",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::mixed_boolean_conjunct_guard_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multi_character_augmented_rebinding_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::tuple_rebinding_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::large_integer_guard_orders_exactly",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

@@ -1151,6 +1151,66 @@ fn rebound_parameter_keeps_oracle_credit() -> Result<(), String> {
     Ok(())
 }
 
+// #7874 counterexamples end to end: each call below enters the guarded arm
+// at runtime and its assertion discriminates the changed return, so the
+// verdict must stay `exposed` rather than a false `weakly_exposed`.
+
+#[test]
+fn mixed_boolean_conjunct_guard_keeps_oracle_credit() -> Result<(), String> {
+    // `quote(100.0, True, False)` enters `(total > 1000 and ready) or force`
+    // through `force`; the first conjunct evaluating false must not exclude
+    // the row before the whole-condition `or` is noticed.
+    let finding = classify_added_case(
+        "def quote(total, force, ready):\n    if total > 1000 and ready or force:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0, True, False) == 102.0\n",
+        3,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn multi_character_augmented_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // `total **= 2` rebinds the parameter before the guard reads it.
+    let finding = classify_added_case(
+        "def quote(total):\n    total **= 2\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 10200.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn tuple_rebinding_keeps_oracle_credit() -> Result<(), String> {
+    // `total, other = 2000, 0` rebinds `total` through a destructuring
+    // target, so the call binding cannot exclude the row.
+    let finding = classify_added_case(
+        "def quote(total):\n    total, other = 2000, 0\n    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 2040.0\n",
+        4,
+        "        return round(total * 1.02, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn large_integer_guard_orders_exactly() -> Result<(), String> {
+    // Python orders `9007199254740993 > 9007199254740992` exactly; rounding
+    // both through f64 would falsely exclude the discriminating call.
+    let finding = classify_added_case(
+        "def quote(total):\n    if total > 9007199254740992:\n        return 42\n    return 0\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(9007199254740993) == 42\n",
+        3,
+        "        return 42",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 #[test]
 fn bool_numeric_guard_equality_follows_python() -> Result<(), String> {
     // Python enters `flag == 1` for `flag=True`; mixed-kind literal equality

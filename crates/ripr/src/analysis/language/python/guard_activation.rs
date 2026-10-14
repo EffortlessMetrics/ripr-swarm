@@ -271,16 +271,18 @@ fn condition_holds(
     owner_source: &str,
     owner_start: usize,
 ) -> Option<bool> {
+    // `or` and `not` change when the condition is true without changing the
+    // single comparison this reader extracts: `total > 1000 or force` is
+    // true through `force` alone, and `not total > 1000` reverses the
+    // comparison. The check must run on the WHOLE condition before any
+    // conjunct is evaluated: `total > 1000 and ready or force` parses as
+    // `(total > 1000 and ready) or force`, and a row entering through
+    // `force` must not be excluded by an early false conjunct (#7874).
+    if has_boolean_operator(condition) {
+        return None;
+    }
     for conjunct in condition.split(" and ") {
         let conjunct = conjunct.trim();
-        // `or` and `not` change when the condition is true without changing
-        // the single comparison this reader extracts: `total > 1000 or force`
-        // is true through `force` alone, and `not total > 1000` reverses the
-        // comparison. Evaluating the comparison alone could exclude a row
-        // that entered the arm, so these guards are unreadable (fail open).
-        if has_boolean_operator(conjunct) {
-            return None;
-        }
         match eval_comparison(
             conjunct,
             condition_line,
@@ -339,11 +341,32 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// True when `line` contains an assignment `=` — one not part of `==`,
+/// `!=`, `<=`, or `>=`. Conservative text check used only to refuse
+/// destructuring-target exclusions; it never awards credit.
+fn line_is_assignment(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'=' {
+            continue;
+        }
+        if bytes.get(index + 1) == Some(&b'=') {
+            continue;
+        }
+        if index > 0 && matches!(bytes[index - 1], b'=' | b'!' | b'<' | b'>') {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 /// True when the owner body assigns the parameter a new value between the
 /// owner header and the guard line, so a call binding no longer predicts the
 /// value the guard reads. Deliberately conservative (clear assignment forms
-/// only: `name = ..`, augmented and annotated assignment, a `for` target);
-/// anything subtler keeps the existing limitation.
+/// only: `name = ..`, single- and multi-character augmented assignment,
+/// annotated assignment, destructuring targets, a `for` target); anything
+/// subtler keeps the existing limitation.
 fn parameter_rebound_before(
     owner_source: &str,
     owner_start: usize,
@@ -354,12 +377,25 @@ fn parameter_rebound_before(
     for raw in lines.get(owner_start..guard_line).unwrap_or(&[]) {
         let trimmed = raw.trim();
         if let Some(rest) = trimmed.strip_prefix(name).map(str::trim_start) {
+            // Multi-character augmented assignments (`total **= 2`,
+            // `total //= 2`, `total >>= 1`, `total <<= 1`, `total |= 1`,
+            // `total &= 1`, `total ^= 1`) rebind the parameter just like the
+            // single-character forms below (#7874).
+            if ["**=", "//=", ">>=", "<<=", "|=", "&=", "^="]
+                .iter()
+                .any(|op| rest.starts_with(op))
+            {
+                return true;
+            }
             let mut chars = rest.chars();
             match chars.next() {
                 // `name = ..`; `name == ..` is a comparison, not a binding.
                 Some('=') if chars.next() != Some('=') => return true,
                 // Annotated assignment `name: T = ..`.
                 Some(':') => return true,
+                // Destructuring target: `total, other = 2000, 0` rebinds
+                // `total` whenever the line is an assignment.
+                Some(',') if line_is_assignment(trimmed) => return true,
                 Some(op)
                     if ['+', '-', '*', '/', '%'].contains(&op) && chars.next() == Some('=') =>
                 {
@@ -477,17 +513,50 @@ fn comparison_operator(text: &str) -> Option<(usize, usize)> {
     found
 }
 
+/// True when a literal's own text is an integer literal (optional `-` then
+/// ASCII digits, no fraction), so Python orders it exactly and i128
+/// comparison is faithful. Reads the original text, not the canonical
+/// decimal: `100.0` canonicalizes to `100` but is a float literal that
+/// Python rounds at parse time.
+fn is_integer_literal(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
 /// Compare two resolved literal values with `op`. Equality uses Python
 /// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
 fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
+    let (left_text, right_text) = (left, right);
     match op {
         "==" => Some(guard_literals_equal(left, right)),
         "!=" => Some(!guard_literals_equal(left, right)),
         "<" | "<=" | ">" | ">=" => {
-            let left: f64 = canonical_decimal(left)?.parse().ok()?;
-            let right: f64 = canonical_decimal(right)?.parse().ok()?;
+            let left = canonical_decimal(left)?;
+            let right = canonical_decimal(right)?;
+            // Integer literals order exactly in Python beyond f64 precision
+            // (`9007199254740993 > 9007199254740992` holds; both round to the
+            // same f64), so compare integer-form operands as i128 and refuse
+            // (fail open) on overflow rather than excluding through a wrong
+            // rounded comparison (#7874). The integer check reads the
+            // ORIGINAL literal text: `9007199254740993.0` is a float literal
+            // that Python also rounds to ...992.0, so it keeps the f64 path
+            // and compares equal there. Non-integer operands keep the f64
+            // path: Python rounds float literals to f64 too, so the parsed
+            // comparison matches the runtime.
+            if is_integer_literal(left_text) && is_integer_literal(right_text) {
+                let left: i128 = left.parse().ok()?;
+                let right: i128 = right.parse().ok()?;
+                return Some(match op {
+                    "<" => left < right,
+                    "<=" => left <= right,
+                    ">" => left > right,
+                    _ => left >= right,
+                });
+            }
+            let left: f64 = left.parse().ok()?;
+            let right: f64 = right.parse().ok()?;
             Some(match op {
                 "<" => left < right,
                 "<=" => left <= right,
@@ -700,5 +769,126 @@ mod tests {
             eval_comparison("total > 1000", 1, &row, &[], plain, 0),
             Some(false)
         );
+    }
+
+    #[test]
+    fn condition_holds_fails_open_on_or_after_a_false_conjunct() {
+        // #7874: `total > 1000 and ready or force` parses as
+        // `(total > 1000 and ready) or force`. The whole-condition boolean
+        // check must run before any conjunct is evaluated, so the first
+        // conjunct returning false cannot exclude a row that enters through
+        // `force`.
+        let source = "def quote(total, force, ready):\n    if total > 1000 and ready or force:\n        return 42\n";
+        let row = test_row(&[("total", "100.0"), ("force", "True"), ("ready", "False")]);
+        assert_eq!(
+            condition_holds("total > 1000 and ready or force", 1, &row, &[], source, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn condition_holds_fails_open_on_leading_or_operand_order() {
+        // The reversed operand order names `force` first; it is the same
+        // whole-condition `or` and must fail open the same way (#7874).
+        let source = "def quote(total, force, ready):\n    if force or total > 1000 and ready:\n        return 42\n";
+        let row = test_row(&[("total", "100.0"), ("force", "True"), ("ready", "False")]);
+        assert_eq!(
+            condition_holds("force or total > 1000 and ready", 1, &row, &[], source, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn condition_holds_confirms_simple_true_comparison() {
+        // The passing sibling of the #7874 controls: a plain true guard
+        // still holds, so a discriminating row keeps its credit.
+        let source = "def quote(total):\n    if total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "2000.0")]);
+        assert_eq!(
+            condition_holds("total > 1000", 1, &row, &[], source, 0),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn eval_comparison_fails_open_on_multi_character_augmented_rebinding() {
+        // #7874: `**=`, `//=`, shifts and bitwise augmented assignments
+        // rebind the parameter exactly like `+=`, so the call binding cannot
+        // exclude the row.
+        for assignment in [
+            "total **= 2",
+            "total //= 2",
+            "total >>= 1",
+            "total <<= 1",
+            "total |= 1",
+            "total &= 1",
+            "total ^= 1",
+        ] {
+            let source = format!(
+                "def quote(total):\n    {assignment}\n    if total > 1000:\n        return 42\n"
+            );
+            let row = test_row(&[("total", "100.0")]);
+            assert_eq!(
+                eval_comparison("total > 1000", 2, &row, &[], &source, 0),
+                None,
+                "{assignment} must fail open"
+            );
+        }
+    }
+
+    #[test]
+    fn eval_comparison_fails_open_on_tuple_rebinding() {
+        // #7874: `total, other = 2000, 0` rebinds `total` through a
+        // destructuring target.
+        let source = "def quote(total):\n    total, other = 2000, 0\n    if total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "100.0")]);
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], source, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn rebound_scan_keeps_comparison_lines_readable() {
+        // Negative controls for the conservative scan: comparisons and
+        // unrelated assignments never rebind the parameter.
+        let source = "def quote(total):\n    seen = total != 2000\n    if total > 1000:\n        return 42\n";
+        let row = test_row(&[("total", "100.0")]);
+        assert_eq!(
+            eval_comparison("total > 1000", 2, &row, &[], source, 0),
+            Some(false)
+        );
+        // A destructuring comparison (`==`) is not an assignment either.
+        let tuple_compare = "def quote(total, other):\n    if total > 1000:\n        return 42\n";
+        assert_eq!(
+            eval_comparison("total > 1000", 1, &row, &[], tuple_compare, 0),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn compare_literal_values_orders_large_integers_exactly() {
+        // #7874: integers beyond 2^53 keep exact Python ordering instead of
+        // collapsing to the same f64.
+        assert_eq!(
+            compare_literal_values("9007199254740993", ">", "9007199254740992"),
+            Some(true)
+        );
+        assert_eq!(
+            compare_literal_values("9007199254740992", "<", "9007199254740993"),
+            Some(true)
+        );
+        assert_eq!(
+            compare_literal_values("9007199254740992", ">=", "9007199254740992"),
+            Some(true)
+        );
+        // Float literals round at parse time in Python too: both become
+        // 9007199254740992.0, so the f64 path keeps them unordered.
+        assert_eq!(
+            compare_literal_values("9007199254740993.0", ">", "9007199254740992.0"),
+            Some(false)
+        );
+        // Mixed integer/float forms still order by value.
+        assert_eq!(compare_literal_values("100", ">", "99.5"), Some(true));
     }
 }
