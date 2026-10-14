@@ -362,12 +362,17 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         }
     }
     if wrote_any {
-        // #7791: follow-ups keep the directory init selected, including a
-        // relative root, when copied from another working directory.
-        let bound = crate::agent::loop_commands::bound_root_path(root);
-        let root_arg = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::root_path_display(&bound),
-        );
+        // #7830: a UTF-8 argument can select a non-UTF-8 cwd. Never render
+        // a lossy root as an executable command for a different repository.
+        let root_display = match output::path::absolute_command_root_display(root) {
+            Ok(root) => root,
+            Err(error) => {
+                println!();
+                println!("Init completed; follow-up commands omitted: {error}.");
+                return Ok(());
+            }
+        };
+        let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
         let doctor = format!("ripr doctor --root {root_arg}");
         let check = format!("ripr check --root {root_arg}");
         println!();

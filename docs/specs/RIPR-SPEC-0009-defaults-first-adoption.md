@@ -39,6 +39,9 @@ The default contract is:
 - Successful `ripr init` follow-up commands for `doctor` and `check` bind
   the selected root, including a relative or implicit root, so copying them
   from another directory still inspects the repository that was configured.
+  If no lossless portable spelling is available, completed writes and success
+  status remain truthful while executable follow-ups are omitted with an
+  actionable UTF-8-parent/alias remedy.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -431,6 +434,10 @@ when init selects A through an absolute, relative, or implicit root,
 then its printed doctor and check commands still inspect A when replayed in B,
 including when A's path contains spaces or an apostrophe.
 A successful command that reports B's configuration is not accepted.
+If a UTF-8 implicit-root argument resolves through a non-UTF-8 cwd,
+then init still writes the intended config and succeeds, but omits doctor/check
+follow-ups that would target a replacement-character directory.
+A valid UTF-8 absolute alias to the physical root still yields usable follow-ups.
 ```
 
 ### Init does not overwrite accidentally
@@ -614,6 +621,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_refuses_existing_workflow_without_force`
 - `crates/ripr/tests/cli_smoke.rs::init_writes_conservative_config_and_doctor_loads_it`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`
 - `crates/ripr/tests/cli_smoke.rs::init_dry_run_prints_config_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing`
 - `crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow`

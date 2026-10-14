@@ -115,6 +115,10 @@ ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 After writing, `init` prints `doctor` and `check` commands with the selected
 root bound explicitly. Copy those commands to inspect the same repository
 from another directory, including when `init` used a relative `--root`.
+If the selected root cannot be represented losslessly in a portable command,
+`init` keeps its completed writes and success status, omits the follow-ups,
+and names the UTF-8-parent/alias remedy. A lossless absolute UTF-8 alias to a physical root
+with non-UTF-8 bytes still provides a usable command spelling.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
