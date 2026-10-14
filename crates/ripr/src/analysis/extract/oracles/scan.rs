@@ -9,7 +9,7 @@ use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
     is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_unwrap_err_bound_error_assertion,
+    is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -57,11 +57,10 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             };
             guard_condition_tail = Some((condition_end_line, tail));
         }
-        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` whose value is never
-        // compared panics only when `r` is `Ok`, so it observes the `Err`
-        // side. `expect_err` lines keep their `expect_` admission below
-        // (#7604 tracks that reading).
-        if trimmed.ends_with("unwrap_err();")
+        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` or `r.expect_err(..)`
+        // whose value is never compared panics only when `r` is `Ok`, so it
+        // observes the `Err` side.
+        if (trimmed.ends_with("unwrap_err();") || trimmed.contains(".expect_err("))
             && !is_assertion_line(&trimmed)
             && starts_statement(body, offset)
         {
@@ -2439,7 +2438,9 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
     if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
         return None;
     }
-    if !ends_with_unwrap_err(value) || !receiver_keeps_call_error(&masked) {
+    if !(ends_with_unwrap_err(value) || ends_with_expect_err(value))
+        || !receiver_keeps_call_error(&masked)
+    {
         return None;
     }
     let discarded =
@@ -2502,12 +2503,21 @@ fn is_call_path(callee: &str) -> bool {
 /// Whether `.unwrap_err()` reads the error side of the statement's first
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
-/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+/// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 fn receiver_keeps_call_error(masked: &str) -> bool {
-    masked
-        .trim_end()
-        .strip_suffix(".unwrap_err()")
-        .is_some_and(|receiver| keeps_call_result(receiver, 0))
+    let masked = masked.trim_end();
+    let receiver = masked.strip_suffix(".unwrap_err()").or_else(|| {
+        // `.expect_err(<message>)` must be the last call: its argument
+        // group closes the expression. The first such call is the outer
+        // one, so an `expect_err` nested in the message is not mistaken
+        // for it.
+        masked
+            .match_indices(".expect_err(")
+            .map(|(start, call)| (start, start + call.len() - 1))
+            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .map(|(start, _)| &masked[..start])
+    });
+    receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
 }
 
 /// Whether `expr` is a call followed only by Ok-preserving adapters. A
@@ -2582,7 +2592,7 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
-fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
+pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0_i64;
     for (index, byte) in text.bytes().enumerate().skip(open) {
         match byte {
@@ -2619,9 +2629,11 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`
+    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
+    // zero-argument `expect_err()` is a mock's expectation for a method
+    // named `err`, not `Result::expect_err`.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') {
+    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
         return false;
     }
     // Find last `.expect_err(`
@@ -2767,7 +2779,7 @@ fn is_assertion_line(line: &str) -> bool {
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)
-        || line.contains("expect_")
+        || mask_comments_and_strings(&without_expect_err(line)).contains("expect_")
         || line.contains(".expect(")
         || line.contains(".unwrap(")
         || line.contains("should_panic")

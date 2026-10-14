@@ -654,6 +654,7 @@ impl ClassifiedProbeEvidence {
                         chain,
                         test_activation: &one_test_activation,
                     }),
+                context.index,
             ) {
             StageEvidence::new(
                 StageState::Weak,
