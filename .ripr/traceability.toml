@@ -15233,3 +15233,35 @@ outputs = [
   "schemas/ripr/check.schema.json",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0263"
+name = "Guarded side effect no test input enters"
+spec = "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md"
+tests = [
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::a_literal_that_misses_the_guard_names_it_and_is_not_exposed",
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::an_input_that_enters_the_guard_keeps_the_exposed_reading",
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::one_entering_call_or_one_unread_input_names_no_guard",
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::an_unreadable_guard_names_nothing",
+  "crates/ripr/tests/guarded_side_effect_unentered.rs::recursion_a_same_line_else_or_a_helper_names_no_guard",
+  "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::parameter_comparison_reads_one_literal_bound_either_way_round",
+  "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::comparison_holds_like_rust",
+  "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs::tests::a_loop_or_rebinding_before_the_guard_refuses",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/arm_selection/guard_entry.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/infection.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/output/human/explain.rs",
+  "crates/ripr/src/output/related_test_miss.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md",
+  "fixtures/rust-verdict-corpus/expected/rows/rust-guarded-push-unentered-branch.json",
+]
+metrics = ["unit_test_pass_rate"]

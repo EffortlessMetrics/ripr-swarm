@@ -507,6 +507,12 @@ scope = "in"
 id = "RIPR-SPEC-0258"
 scope = "in"
 
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
+
 # TypeScript Preview Static Facts
 [[unmeasured]]
 id = "RIPR-SPEC-0027"
