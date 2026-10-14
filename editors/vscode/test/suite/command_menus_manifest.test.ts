@@ -108,6 +108,22 @@ suite('Command Menus Manifest', () => {
     assert.strictEqual(new Set(actualTitles).size, expectedTitles.length, 'receipt copy commands must remain distinguishable');
   });
 
+  test('receipt-status command title matches the current public command inventories', async () => {
+    const manifest = await readManifest();
+    const command = (manifest.contributes?.commands ?? [])
+      .find((entry) => entry.command === 'ripr.copyReceiptCommand');
+    assert.ok(command?.title, 'receipt-status copy command must have a contributed title');
+    const expectedRows = [
+      { file: 'CONFIGURATION.md', row: `| \`ripr.copyReceiptCommand\` | ${command.title} |` },
+      { file: 'EDITOR_EXTENSION.md', row: `- \`${command.title}\`` },
+      { file: 'LSP_AGENT_REPAIR_WORKFLOW.md', row: `| \`${command.title}\` | \`ripr.copyReceiptCommand\` |` }
+    ];
+    for (const expected of expectedRows) {
+      const document = await fs.readFile(path.resolve(__dirname, '../../../../../docs', expected.file), 'utf8');
+      assert.ok(document.includes(expected.row), `${expected.file} receipt-status inventory must match the palette`);
+    }
+  });
+
   test('editor/context surfaces the repair-loop commands gated on ripr languages', async () => {
     const manifest = await readManifest();
     const entries = manifest.contributes?.menus?.['editor/context'] ?? [];
