@@ -269,14 +269,19 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         runStatus !== 'stale' && runStatus !== 'seams_deferred';
       const sampleStatus = async () => (await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
-      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string } })
+      }), 'framed workspace status') as { analysis_status?: { attempt_id?: string; run_status?: string; effective_root?: string } })
         .analysis_status;
       const evidenceReady = async () => {
         if (!seamPresent()) {
           return false;
         }
         const status = await sampleStatus();
-        return seamRetainingRunStatus(status?.run_status);
+        // The evidence must be published AND bound to THIS root under a
+        // seam-retaining run status: an unbound/restarting server projects
+        // no effective_root, and a stale-or-deferred snapshot does not
+        // retain the seam inventory the copy cites.
+        return status?.effective_root?.replace(/\\/g, '/') === expected.root.replace(/\\/g, '/')
+          && seamRetainingRunStatus(status?.run_status);
       };
       const seamDeadline = Date.now() + 90_000;
       let attemptAfterRefresh = attemptBeforeRefresh?.attempt_id;
