@@ -3122,7 +3122,8 @@ fn lsp_message(finding: &Finding) -> String {
         .then(|| DiagnosticWitness::from_finding(finding))
         .flatten()
         .and_then(|witness| {
-            let missing = witness.missing_discriminators.first()?.value.as_str();
+            let first = witness.missing_discriminators.first()?;
+            let missing = first.value.as_str();
             let subject = match witness.expected_sink.as_deref() {
                 Some("error_variant") => "Exact error variant",
                 Some("return_value") => "Exact return value",
@@ -3139,6 +3140,16 @@ fn lsp_message(finding: &Finding) -> String {
                 Some(site) => format!("`{}` has no producer-supplied oracle text", site.test_name),
                 None => "the exact fix site is unavailable".to_string(),
             };
+            // A guard no test enters is a missing input, not a missing
+            // assertion (RIPR-SPEC-0263): the fix is an input that enters it.
+            if first
+                .reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+            {
+                return Some(format!(
+                    "No related test input enters `{missing}`; {detail}."
+                ));
+            }
             Some(format!("{subject} `{missing}` is not observed; {detail}."))
         });
     if finding.recommended_next_step.is_none()
@@ -4772,6 +4783,28 @@ mod diagnostic_policy_tests {
             return Err("actionable profile published a static unknown".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn an_unentered_guard_reads_as_a_missing_input_not_an_assertion() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "if x > 10".to_string(),
+            reason: format!(
+                "{} `if x > 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        let message = lsp_message(&finding);
+        assert!(
+            message.starts_with("No related test input enters `if x > 10`;"),
+            "{message}"
+        );
+        assert!(!message.contains("is not observed"), "{message}");
     }
 
     #[test]

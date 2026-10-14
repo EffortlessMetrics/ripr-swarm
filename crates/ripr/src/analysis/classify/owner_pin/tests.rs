@@ -3834,6 +3834,39 @@ fn each_refusal_names_the_gate_that_failed() {
             AssertionContextRefusal::OpaqueMacro("t".to_string())
         ))
     );
+    // trap-shine-debug-exact-control: a plain nested `format!` expands
+    // to a call over its own operands, which the scan reads for exits.
+    assert_eq!(
+        refusal("assert_eq!(format!(\"{}\", weight(4)), \"12\");", ""),
+        None
+    );
+    for body in [
+        "assert_eq!(format!(\"{}\", weight({ return; 4 })), \"12\");",
+        "assert_eq!(std::format!(\"{}\", weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", dbg!(weight(4))), \"12\");",
+        // `::` inside a token tree lexes as two `:` tokens.
+        "assert_eq!(std::matches!(weight(4), 12), true);",
+    ] {
+        assert_eq!(
+            refusal(body, ""),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroOperandExit("assert_eq".to_string())
+            )),
+            "{body}"
+        );
+    }
+    assert!(matches!(
+        weight_refusal(
+            "use demo::weight;\n#[test]\nfn weighs() {\nassert_eq!(format!(\"{}\", weight(4)), \"12\");\n}\n",
+            &[(
+                "src/other.rs",
+                "macro_rules! format { ($($t:tt)*) => { String::new() } }"
+            )],
+        ),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
     assert_eq!(
         refusal("assert_eq!(weight({ return; 4 }), 12);", ""),
         Some(AssertionRefusal::Syntax(
@@ -4449,6 +4482,99 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+}
+
+/// Only a `use` or `extern crate` item, a macro's arguments or an attribute
+/// renames. A cast to the field's type (`letters as u32`) elsewhere in the
+/// workspace binds no name, so it leaves `u32` the standard type, and a
+/// qualified path (`<Window as Clone>`) leaves `Clone` the standard trait.
+/// The same name renamed in a `use` group, a function-local `use`, a macro
+/// body, a macro invocation's arguments or an attribute still refuses
+/// (spot-window-clone-field-whole-equality, #7926 review).
+#[test]
+fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
+    let glob_tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let with = |extra: &str| format!("{WINDOW_LIB}{glob_tests}{extra}");
+    for (lib, credits) in [
+        (with(""), true),
+        (
+            with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Both used to read as renames of `Clone` and `PartialEq`.
+        (
+            with("pub fn dup(w: &Window) -> Window {\n    <Window as Clone>::clone(w)\n}\n"),
+            true,
+        ),
+        (
+            with(
+                "pub fn same(a: &Window, b: &Window) -> bool {\n    <Window as PartialEq>::eq(a, b)\n}\n",
+            ),
+            true,
+        ),
+        // Precise capturing is not an import, so the cast after it stays a cast.
+        (
+            with("pub fn width(letters: usize) -> impl Sized + use<> {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Rooted in `std`, so the use-statement scan admits the path and
+        // only the rename itself refuses.
+        (with("use std::{num::Wrapping as u32};\n"), false),
+        (
+            with("pub fn f() {\n    use std::num::Wrapping as u32;\n}\n"),
+            false,
+        ),
+        (
+            with(
+                "macro_rules! bind {\n    () => {\n        use std::num::Wrapping as u32;\n    };\n}\n",
+            ),
+            false,
+        ),
+        (with("extern crate other as u32;\n"), false),
+        // A macro may expand its arguments into a `use`.
+        (
+            with(
+                "macro_rules! import {\n    ($p:path as $n:ident) => {\n        use $p as $n;\n    };\n}\nimport!(std::num::Wrapping as u32);\n",
+            ),
+            false,
+        ),
+        (with("reexport! { std::num::Wrapping as u32 }\n"), false),
+        (
+            with("#[import(std::num::Wrapping as u32)]\npub fn f() {}\n"),
+            false,
+        ),
+        // A Unicode macro name expands its arguments too.
+        (with("δ!(std::num::Wrapping as u32);\n"), false),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+    // A non-ASCII identifier before a macro `!` must not split a character.
+    let (_, pin) = clone_field_pin(
+        &with(
+            "pub fn größe() -> u32 {\n    let maß = 3;\n    maß as u32\n}\nmacro_rules! größe_m { () => {} }\npub fn g() { größe_m!(); }\n",
+        ),
+        WINDOW_TESTS,
+    );
+    assert!(pin.is_some());
+    // Another workspace file: `use super::*;` reaches the workspace-wide
+    // re-export scan, which reads every file's renames but not its casts.
+    let lib = format!("{WINDOW_LIB}{glob_tests}");
+    for (other, credits) in [
+        (
+            "pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n",
+            true,
+        ),
+        ("extern crate other as u32;\n", false),
+    ] {
+        let index = index(&[
+            (LIB, lib.as_str()),
+            ("src/score.rs", other),
+            (TESTS, WINDOW_TESTS),
+        ]);
+        let pin = field_pin(&index, &lib, "start: self.start,", "start: self.start,");
+        assert_eq!(pin.is_some(), credits, "{other}");
     }
 }
 
@@ -7668,4 +7794,65 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
         assert_eq!(refused, Some(0), "{label}");
     }
     Ok(())
+}
+
+#[test]
+fn a_scalar_rendering_compared_with_exact_text_pins() {
+    // trap-shine-debug-exact-control: the std `Debug` or `Display` text of
+    // a primitive scalar names its value, so exact text pins it.
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(\"12\", format!(\"{}\", crate::weight(4)));",
+        "assert_eq!(format!(\"{}\", crate::weight(4),), \"12\");",
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\", \"rendered\");",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Flags, width, padding and extra text or arguments.
+        "assert_eq!(format!(\"{:x}\", crate::weight(4)), \"c\");",
+        "assert_eq!(format!(\"{:#?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{:>3}\", crate::weight(4)), \" 12\");",
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
+        "assert_eq!(format!(\"{}{}\", crate::weight(4), 1), \"121\");",
+        // The other side is not plain literal text.
+        "let want = String::from(\"12\");\n        assert_eq!(format!(\"{}\", crate::weight(4)), want);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), format!(\"{}\", 12));",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"1\\x32\");",
+        // A qualified or other nested macro, or a projection of the call.
+        "assert_eq!(std::format!(\"{}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
+        "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // #7905: every NaN payload renders as `NaN`, so that text pins no
+    // single float value; finite float text still does.
+    let float_tests = |body: &str| {
+        let lib = unit_tests("", body).replace("-> u32 {\n    x * 3", "-> f64 {\n    x * 3");
+        assert!(lib.contains("-> f64 {"), "{lib}");
+        lib
+    };
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
+        "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+    ] {
+        assert!(
+            path_admitted(&float_tests(body), "x * 3", None).is_empty(),
+            "{body}"
+        );
+    }
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12.0\");";
+    assert_eq!(path_admitted(&float_tests(body), "x * 3", None), [body]);
+    // A non-primitive return type may render many values the same way.
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }

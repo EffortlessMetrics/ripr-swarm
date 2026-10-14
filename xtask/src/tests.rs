@@ -3083,15 +3083,13 @@ fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
         }
 }
 
-#[test]
-fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
-    let case = semver_external_case_for_test();
-    let check_json = serde_json::json!({
+fn semver_limitation_check_json() -> serde_json::Value {
+    // A `--diff` launch has no revision `base` by construction (#3952, #7880).
+    serde_json::json!({
         "schema_version": "0.2",
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 1},
         "findings": [
             {
@@ -3116,12 +3114,91 @@ fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape()
                 ]
             }
         ]
-    });
+    })
+}
+
+#[test]
+fn pinned_semver_honesty_patch_hunk_counts_match_declared_extents() -> Result<(), String> {
+    let patch_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff");
+    let patch = std::fs::read_to_string(&patch_path).map_err(|err| {
+        format!(
+            "read pinned semver honesty patch {}: {err}",
+            patch_path.display()
+        )
+    })?;
+    if !patch.contains("@@ -69,8 +69,8 @@") {
+        return Err(format!(
+            "pinned semver patch must declare eight old/new lines, got:\n{patch}"
+        ));
+    }
+    if !patch.contains("-            if ver.patch != patch {") {
+        return Err("pinned semver patch must keep the intended != removal".to_string());
+    }
+    if !patch.contains("+            if ver.patch >= patch {") {
+        return Err("pinned semver patch must keep the intended >= insertion".to_string());
+    }
+
+    let mut old = 0usize;
+    let mut new = 0usize;
+    let mut in_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'-') => old += 1,
+            Some(b'+') => new += 1,
+            Some(b' ') | None => {
+                old += 1;
+                new += 1;
+            }
+            Some(b'\\') => {}
+            other => {
+                return Err(format!(
+                    "unsupported pinned semver hunk line {other:?}: {line}"
+                ));
+            }
+        }
+    }
+    if old != 8 {
+        return Err(format!("old hunk body must match @@ -69,8, counted {old}"));
+    }
+    if new != 8 {
+        return Err(format!("new hunk body must match @@ +69,8, counted {new}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
+    let case = semver_external_case_for_test();
+    let check_json = semver_limitation_check_json();
 
     let violations = super::evidence_promotion_external_semantic_violations(&case, &check_json);
     assert!(
         violations.is_empty(),
         "expected semver external limitation shape to pass, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_pinned_external_without_diff_still_requires_base() {
+    let mut case = semver_external_case_for_test();
+    case.external_command = "ripr check --root {checkout} --mode fast --json".to_string();
+    case.external_patch = PathBuf::new();
+    let check_json = semver_limitation_check_json();
+
+    let report =
+        super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
+    assert!(
+        report.contains("must_disclose_scope") && report.contains("base"),
+        "a pinned-external launch without --diff provenance must still require base, got {report}"
     );
 }
 
@@ -3218,7 +3295,6 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 0},
         "findings": [
             {
@@ -52748,10 +52824,10 @@ fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<()
     let workflow = routed_rust_workflow_text()?;
     let reusable = reusable_rust_workflow_text()?;
     let routed_count = workflow.matches("cargo xtask precommit").count();
-    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask ci-policy").count();
     if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once as ci-policy in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
@@ -53619,4 +53695,64 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
         return Err(format!("empty inventory must stay empty, got {changes:?}"));
     }
     Ok(())
+}
+
+#[test]
+fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
+    assert_eq!(
+        XtaskCommand::parse(["ci-policy".to_string()]),
+        XtaskCommand::CiPolicy
+    );
+    assert!(matches!(
+        XtaskCommand::parse(["ci-policy".to_string(), "--skip".to_string()]),
+        XtaskCommand::Unknown(_)
+    ));
+    let required =
+        "jobs:\n  policy:\n    steps:\n      - name: Policy\n        run: cargo xtask ci-policy\n";
+    let mut enforced = super::ci_enforced_xtask_invocations(required);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        assert!(
+            enforced.contains(&(gate.to_string(), String::new())),
+            "missing {gate}"
+        );
+    }
+    for advisory in [
+        required.replace("ci-policy", "ci-policy || true"),
+        required.replace(
+            "- name: Policy",
+            "- name: Policy\n        continue-on-error: true",
+        ),
+    ] {
+        let mut enforced = super::ci_enforced_xtask_invocations(&advisory);
+        super::expand_precommit_ci_invocations(&mut enforced);
+        assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Result<(), String> {
+    with_temp_cwd("ci-policy-local-report", |root| {
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|e| e.to_string())?;
+        let local = reports.join("precommit.md");
+        std::fs::write(&local, "local report witness").map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            "local report witness"
+        );
+        super::publish_precommit_policy_report(false)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            super::precommit_report_body()
+        );
+        std::fs::remove_file(&local).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&local).map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert!(local.is_dir());
+        assert!(super::publish_precommit_policy_report(false).is_err());
+        Ok(())
+    })
 }
