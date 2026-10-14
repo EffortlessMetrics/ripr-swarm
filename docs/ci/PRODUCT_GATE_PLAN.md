@@ -22,7 +22,7 @@ product meaning.
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
-| `product.repository.precommit` | `cargo xtask precommit` | required | repository policy |
+| `product.repository.precommit` | `cargo xtask ci-policy` | required | repository policy |
 | `product.evidence.promotion_honesty` | `cargo xtask check-evidence-promotion-honesty` | required | evidence |
 | `product.repository.agent_skills` | `cargo policy preflight` | required | repository policy |
 | `product.repository.dependencies` | `cargo xtask check-dependencies` | required | repository policy |
@@ -143,7 +143,8 @@ required check is rerouted.
 its small JSON/hash dependency graph. It runs the existing workflow policy
 (including composite actions, assistant-loop corpus, routed workflow and scratch
 lease contracts) and agent-skill policy. Both the reusable Rust lane and docs lane
-run it before `cargo xtask precommit`. The latter consumes
+run it before the shared policy composition (`cargo xtask ci-policy` in Rust CI,
+`cargo xtask precommit` in the docs lane). Both consume
 `RIPR_POLICY_PREFLIGHT_RECEIPT` only after checking its exact input, implementation
 and compiler identities. Missing, unreadable or stale receipts fail closed.
 Without that environment variable, local precommit retains its workflow check.
@@ -165,3 +166,40 @@ alias before either binary runs. Invoke from the repository root, or use
 `cargo run --locked --manifest-path /path/to/repository/Cargo.toml -p repo-policy -- preflight`
 with the actual repository manifest when working inside such a fixture. The alias
 does not promise to override nested Cargo package selection.
+
+
+## Hosted policy composition (#7826)
+
+The stable `product.repository.precommit` identity now runs `cargo xtask ci-policy`
+through the existing dispatcher and precommit report owner. All 41 predicates in
+`PRECOMMIT_GATE_COMMANDS` are retained. The existing nine-check collect-all
+producer runs once, before compilation-bearing file-policy enumeration; its
+individual reports and errors remain authoritative. Remaining predicates run in
+the shared aggregate. Ordinary local precommit retains its original fail-fast
+policy order and selected Clippy.
+
+Both compositions validate repository/HEAD/base identity, committed/staged/worktree
+NUL change records and rename pairs, untracked inputs, completeness and applicable
+Cargo metadata. Both run committed, staged and worktree `git diff --check`.
+Rust CI consumes its source/toolchain/input-bound workflow/agent-skill receipt;
+wrong, missing, stale or partial proof returns failure before file-policy work.
+The CI report explicitly identifies `ci_policy`, records that selected Clippy is
+outside its scope, and writes `ci-policy.{json,md}` without replacing the local
+`precommit-v2` receipt. Neither report grants authority to skip the later CI lint.
+
+| Predicate/result | Producer | Consumer |
+| --- | --- | --- |
+| Workflow and agent skills | `cargo policy preflight` | shared policy receipt verifier; `agent_skills` outcome |
+| 41 policy predicates and three whitespace checks | shared aggregate plus existing nine-scan producer | `precommit` step outcome; existing leaf reports and CI composition report |
+| Evidence promotion honesty | standalone existing command (absent from the table) | `promotion_honesty` outcome |
+| Formatting, dependencies, process and network | existing aggregate and retained standalone steps | existing step outcomes and summary |
+| Full default-feature workspace/all-target strict Clippy | explicit unchanged `cargo clippy --workspace --all-targets -- -D warnings` | `clippy` outcome |
+
+The four later standalone policy steps were audited: dependency/process/network
+are already in the table; evidence-promotion honesty is separate. No standalone
+policy execution is removed here, and no duplicate-policy savings is claimed.
+The only removed lint phase is the convenience route's impact-selected Clippy.
+Tests, doctests, all-features checks, platform routes, event admission, stable
+required-check identity, runner configuration, diagnostics and owned process
+draining are unchanged. A bounded trace can establish argv/count composition;
+only matched native complete-lane measurements can establish runtime savings.

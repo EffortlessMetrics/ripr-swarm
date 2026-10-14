@@ -6,7 +6,7 @@ Owner: xtask / repo-infra
 
 Created: 2026-10-12
 
-Linked issues: #5073
+Linked issues: #5073, #7826
 
 Linked PRs: #7521
 
@@ -23,8 +23,9 @@ support-tier promotion.
 Policy impact:
 
 - Register this contract in the spec index, document-artifact ledger, and
-  traceability manifest. No leaf predicate, policy allowance, hosted workflow,
-  required gate, or CI cadence changes.
+  traceability manifest. The original standalone command changes no leaf
+  predicate, policy allowance, hosted workflow, required gate, or CI cadence.
+  The later #7826 composition reuse is described below.
 
 ## Problem
 
@@ -154,3 +155,12 @@ that a test symbol exists or ran. See [Spec-test-code traceability](../SPEC_TEST
   executed/failed/ignored counts retained in the test output.
 - Literal nine-check membership and first/sixth failure counts are contract
   assertions, not new telemetry counters or timing budgets.
+
+## Composition reuse (#7826)
+
+Hosted `cargo xtask ci-policy` reuses this producer before compilation-bearing
+file policy, preserving these nine predicates and attributable errors. The
+`ci_policy_collects_real_cheap_failures_before_expensive_work` actual-dispatch
+test retains two independent failures, later leaf output, stale-pass replacement
+and local-receipt isolation. This reuse changes no standalone command semantics;
+the complete hosted composition remains in the canonical product-gate plan.

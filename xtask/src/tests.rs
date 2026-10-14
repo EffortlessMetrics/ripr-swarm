@@ -52748,10 +52748,10 @@ fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<()
     let workflow = routed_rust_workflow_text()?;
     let reusable = reusable_rust_workflow_text()?;
     let routed_count = workflow.matches("cargo xtask precommit").count();
-    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask ci-policy").count();
     if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once as ci-policy in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
@@ -53617,6 +53617,36 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     add_porcelain_bytes(&mut changes, b"")?;
     if !changes.is_empty() {
         return Err(format!("empty inventory must stay empty, got {changes:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
+    assert_eq!(
+        XtaskCommand::parse(["ci-policy".to_string()]),
+        XtaskCommand::CiPolicy
+    );
+    assert!(matches!(
+        XtaskCommand::parse(["ci-policy".to_string(), "--skip".to_string()]),
+        XtaskCommand::Unknown(_)
+    ));
+    let required = "jobs:\n  policy:\n    steps:\n      - run: cargo xtask ci-policy\n";
+    let mut enforced = super::ci_enforced_xtask_invocations(required);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        assert!(
+            enforced.contains(&(gate.to_string(), String::new())),
+            "missing {gate}"
+        );
+    }
+    for advisory in [
+        required.replace("ci-policy", "ci-policy || true"),
+        required.replace("- run:", "- continue-on-error: true\n        run:"),
+    ] {
+        let mut enforced = super::ci_enforced_xtask_invocations(&advisory);
+        super::expand_precommit_ci_invocations(&mut enforced);
+        assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
     }
     Ok(())
 }
