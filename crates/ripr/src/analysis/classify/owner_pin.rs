@@ -7403,8 +7403,8 @@ fn single_element_index(operand: &str) -> Option<&str> {
 /// `condition` is `subject <op> k` or `k <op> subject` (one comparison,
 /// `k` an integer literal) that does not hold at `e`, so an
 /// `if condition { return; }` before it spares the expected value. `None`
-/// when the guard fires at `e` (the assertion never runs for the value it
-/// expects) or either shape is anything else.
+/// when the guard fires at `e` (left to the guarded-return refusal) or
+/// either shape is anything else.
 fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a str> {
     let integer = |text: &str| -> Option<i128> {
         let text = text.trim();
@@ -7424,7 +7424,10 @@ fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a st
         (Some(expected), None) => (operands[1].trim(), expected),
         _ => return None,
     };
+    // `compact` drops whitespace inside a string or char literal too, so a
+    // call with one stays out (#7974 review).
     if !subject.ends_with(')')
+        || subject.contains(['"', '\''])
         || ["&&", "||", "::<", "->"]
             .iter()
             .any(|op| condition.contains(op))

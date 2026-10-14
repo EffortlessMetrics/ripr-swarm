@@ -109,10 +109,15 @@ type's maximum. `if count() > 0 { return; }` before
 wrong value but `k`, including a default-like `k` such as `0` (#7932 tally
 review). `AssertionRefusal::ValueGuard` is then an analyzer limit, and the
 classifier counts it only when `call` is the owner's call. When the
-condition holds at `e`, the assertion never runs for the value it expects,
-so the refusal stays a gap: its twin `trap-steps-early-return`
-(`if steps(2) < 1000 { return; }` before `assert_eq!(steps(2), 14)`) stays
-`reachable_unrevealed`. Both cases' labeled mutants were run (runtime mutant
+condition holds at `e`, this exception does not apply and the existing
+guarded-return refusal stands: its twin `trap-steps-early-return`
+(`if steps(2) < 1000 { return; }` before `assert_eq!(steps(2), 14)`, which
+also returns early for every wrong value below 1000) stays
+`reachable_unrevealed`. A guard that holds at `e` but at no wrong value
+(`== e`) lets every wrong value reach the assertion; it still reads as a
+gap and is a separate, pre-existing case (#7044). A call with a
+string or char literal argument stays out, since matching the guard's
+call ignores whitespace. Both cases' labeled mutants were run (runtime mutant
 kill truth in the verdict corpus). An unconditional `return;` before the
 assertion, which the runtime controls pin, is untouched.
 

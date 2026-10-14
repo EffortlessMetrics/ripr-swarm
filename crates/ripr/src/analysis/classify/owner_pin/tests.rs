@@ -3980,7 +3980,8 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
         );
     }
     for guard in [
-        // The guard fires at the expected value: the assertion never runs.
+        // The guard fires at the expected value: left to the guarded-return
+        // refusal.
         "if weight(4) < 1000 { return; }",
         "if weight(4) == 12 { return; }",
         "if weight(4) >= 12 { return; }",
@@ -4021,6 +4022,23 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
     assert!(found.is_some_and(|refusal| refusal.value_guard_subject().is_none()));
     let found = refusal("if weight(4) > 1000 { return; }\nassert_ne!(weight(4), 13);");
     assert!(found.is_none_or(|refusal| refusal.value_guard_subject().is_none()));
+    // Whitespace inside a literal argument is not layout (#7974 review).
+    for (guard, pin) in [
+        (
+            "if weight(\"a b\") > 1000 { return; }",
+            "assert_eq!(weight(\"ab\"), 12);",
+        ),
+        (
+            "if weight(' ') > 1000 { return; }",
+            "assert_eq!(weight(' '), 12);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.value_guard_subject().is_none()),
+            "{guard}"
+        );
+    }
     // ripr does not know the type, so a neighbour of `e` outside the guard's
     // spared side may not exist: an unsigned count at 0, a `u8` at 255.
     for (guard, pin) in [
