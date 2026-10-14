@@ -90,12 +90,14 @@ file may register or replace it:
   a function, a name, or a literal. JavaScript evaluates the properties in
   order, so any other value could write a parameter before `pass` runs;
 - `X` is a `&&` chain one of whose terms is `received === expected` (either
-  order), and no term may write
-  anything. A term writes when its text holds an `=` outside `==`, `===`,
-  `!=`, `!==`, `<=` and `>=` (so arrows, `<<=`, `>>=` and `||=` count),
-  `++`, `--`, or the word `eval` or `arguments`, which reach the
-  parameters without naming them. Every other term can only make the
-  matcher fail more often;
+  order), and every term is built only from names, literals, templates,
+  member reads, calls, and unary, binary, logical, conditional and comma
+  operators. Rebinding a parameter needs an assignment, an update, a
+  nested function or class (a `for (r of ...)` loop or a static block) or
+  the name `eval` or `arguments`, so any of those, or any other form,
+  refuses. A call to a function declared outside the matcher cannot
+  rebind its parameters, so such a term can only make the matcher fail
+  more often;
 - every `expect.extend` object in the file has only plain keyed entries,
   the word `extend` occurs in the file exactly as often as those
   top-level calls, `<name>` is registered once, and `<name>` is not a
@@ -105,13 +107,17 @@ file may register or replace it:
   mention of the word `expect` is `expect(`, `expect.` or a plain
   `import { expect }`; it has no namespace import, dynamic `import(` or
   `import` mention beyond its import declarations; no `[` after a name,
-  `)`, `]`, `!` or `?.` holds anything but a number (so no computed member
-  can build `"ext" + "end"`); and it never names `global` (outside
-  `declare global`), `globalThis`, `window`, `self`, `this`, `document`,
-  `constructor`, `Reflect`, `Function`, `eval`, `require`,
-  `requireActual`, `requireMock`, `importActual`, `importMock` or
-  `createMockFromModule`, each of which holds `expect` or runs code under
-  a spelling the scan cannot see. Comments and strings count too, so a
+  `)`, `]`, `!`, `?.` or a non-ASCII character holds anything but a
+  number (so no computed member can build `"ext" + "end"`; a keyword
+  counts as a name after `.`); and it never names `global` (outside the
+  whole phrase `declare global`), `globalThis`, `window`, `self`, `this`,
+  `document`, `constructor`, `Reflect`, `Function`, `eval`, `require`,
+  `requireActual`, `requireMock`, `importActual`, `importMock`,
+  `createMockFromModule`, `valueOf`, `getOwnPropertyDescriptor`,
+  `getOwnPropertyDescriptors`, `Symbol` or `chai`, each of
+  which holds `expect`, the runner's matcher table or the Vitest
+  assertion prototype, or runs code, under a spelling the scan cannot
+  see. Comments and strings count too, so a
   mention only refuses;
 - the assertion passes exactly one argument, which is not a spread, and
   uses no `.not` or `.rejects` modifier.
@@ -135,8 +141,11 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    only turn a pass into a fail, so the matcher is at least as strict as
    `toBe`. `||`, `!` and loose `==` are refused because they can pass a
    changed value.
-4. **Refuse writes by text.** The reader has no scope analysis, so a term
-   that may write anything refuses even when the write is harmless.
+4. **Refuse writes by shape.** The reader has no scope analysis, so a
+   term that may write anything refuses even when the write is harmless.
+   The term is checked against a short list of expression forms rather
+   than scanned for write tokens, because a nested function or class can
+   rebind a parameter with no `=` in sight.
    Rejected: allow writes to names other than the parameters, which needs
    scope resolution the adapter does not have.
 5. **Refuse every route to `expect` that does not name it.** A hook may
@@ -160,9 +169,10 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
 - An imported function that registers the name again
   (`import { install } from "./matchers"; beforeAll(install);`) is not
   seen, because the registration is in another file.
-- The route list is closed, not complete. A file that builds code at
-  runtime and runs it through a path the list does not name (a timer
-  given a code string, for example) is not seen.
+- The route list is closed, not complete. It refuses the routes review
+  found, ordinary and reflective. A file that builds code at runtime, or
+  reaches the runner's matcher table through a reflective path the list
+  does not name (a timer given a code string, for example), is not seen.
 - `Object.is(received, expected)` stays `unknown`.
 - A matcher whose comparison goes through a helper (`equals(r, e)`,
   `this.equals`) or another statement stays `unknown`.
@@ -188,13 +198,16 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    finding is `exposed`. The same matcher as `return { pass: e === r }`,
    as `function (r, e) { return { pass: r === e }; }`, as a
    block-bodied arrow with `r > 0 && (r === e)`, with inert `message`,
-   name and literal values beside `pass`, or in a file with a plain
+   name and literal values beside `pass`, with `typeof`, call and template
+   terms (one holding `"a=b"`), or in a file with a plain
    `import { expect }`, array patterns, `number[]`, `xs[0]` and
    `declare global`: strong.
 2. `r == e`, `r !== e`, `r === e || r === 0`, `!(r === e)`,
    `Math.round(r) === e`, a term that writes a parameter (`r = e`,
    `[r] = [e]`, `r >>= 0`, `r <<= 0`, `r ||= e`, `r++`, `r--`, an `eval`, an
-   `arguments` write, an arrow that assigns), another property or an
+   `arguments` write, an arrow that assigns, a function running
+   `for (r of [e])`, a class whose static block runs `for (r in ...)`), an
+   object literal in a term, another property or an
    earlier `pass` evaluated before the comparison (`pre: (r = e)`,
    `pre: fix(r)`, `pass: (r = e), pass: r === e`, `pass: true, pass: r === e`),
    `Object.is(r, e)`, a default `e = r` or `r = 150`, an escaped
@@ -212,8 +225,11 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    a default import indexed as `g["exp" + "ect"]`), a hook registration
    beside a top-level `expect.ext\u0065nd`, a hook that calls every value
    of `expect`, of a namespace import, of a dynamic import or of any
-   refused root, `import { expect as e }`, or `import { fake as expect }`:
-   `unknown`. A matcher named `toBe` keeps the built-in reading.
+   refused root (`expect.valueOf()`, `Object.getOwnPropertyDescriptor`,
+   `Symbol.for`, `chai.Assertion` among them), a `global` beside
+   a comment `declare global_x`, a default import indexed after a
+   keyword-named property (`.of[`) or through a non-ASCII name,
+   `import { expect as e }`, or `import { fake as expect }`: `unknown`. A matcher named `toBe` keeps the built-in reading.
 4. `toBeCents(150, 2)`, `toBeCents(...args)` or
    `await expect(p).rejects.toBeCents(150)`: `unknown`. `.not.toBeCents(150)`
    records no `toBeCents` assertion. A file that shadows `expect` reaches

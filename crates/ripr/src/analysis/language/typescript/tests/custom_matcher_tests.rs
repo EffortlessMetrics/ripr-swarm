@@ -44,6 +44,9 @@ fn strict_equality_custom_matcher_reads_exact() {
         "expect.extend({ toBeCents: (r, e) => { return { pass: r > 0 && (r === e) }; } });\n",
         // Inert values beside `pass`: a function, a name, a literal.
         "expect.extend({ toBeCents(r, e) { return { message: () => \"\", actual: r, kind: `cents`, n: 1, pass: r === e }; } });\n",
+        // Terms of names, literals, member reads, calls and operators, an
+        // `=` inside a string among them.
+        "expect.extend({ toBeCents(r, e) { return { pass: typeof r === \"number\" && !Number.isNaN(r) && `${r}` !== \"a=b\" && (r === e) }; } });\n",
         // A plain `import { expect }`, array patterns, literals and types.
         "import { expect, test } from \"@jest/globals\";\nconst [a, b]: number[] = [1, 2];\nconst xs = [a, b][0];\nexpect.extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
     ] {
@@ -79,6 +82,13 @@ fn custom_matcher_that_may_pass_without_strict_equality_stays_unknown() {
         "expect.extend({ toBeCents(r, e) { return { pass: eval(\"r\\x3de\") && r === e }; } });\n",
         "expect.extend({ toBeCents: function (r, e) { return { pass: Object.assign(arguments, [e, e]) && r === e }; } });\n",
         "expect.extend({ toBeCents(r, e) { return { pass: ((() => { r = e; })(), true) && r === e }; } });\n",
+        // A nested function or class rebinds a parameter without `=`.
+        "expect.extend({ toBeCents(r, e) { return { pass: (function () { for (r of [e]); return true; })() && r === e }; } });\n",
+        "expect.extend({ toBeCents(r, e) { return { pass: (class { static { for (r in { x: 1 }); } }) && r === e }; } });\n",
+        // `arguments` aliases the parameters in sloppy mode.
+        "expect.extend({ toBeCents: function (r, e) { return { pass: Array.prototype.fill.call(arguments, e) && r === e }; } });\n",
+        // Any form outside the listed ones, here an object literal.
+        "expect.extend({ toBeCents(r, e) { return { pass: Boolean({ v: r }) && r === e }; } });\n",
         // Another property, or an earlier `pass`, evaluated before the
         // comparison.
         "expect.extend({ toBeCents(r, e) { return { pre: (r = e), pass: r === e }; } });\n",
@@ -167,6 +177,11 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
         "vi.importActual(\"@jest/globals\")",
         "vi.importMock(\"@jest/globals\")",
         "jest.createMockFromModule(\"@jest/globals\")",
+        "expect.valueOf()",
+        "Object.getOwnPropertyDescriptor(g, \"de\" + \"fault\")",
+        "Object.getOwnPropertyDescriptors(g)",
+        "Symbol.for(\"x\")",
+        "chai",
     ] {
         let import = if root == "g" {
             "import * as g from \"@jest/globals\";\n"
@@ -186,6 +201,20 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
     // reach no runner matcher, and the registration is not read either.
     let renamed = format!("import {{ fake as expect }} from \"./fake\";\n{CENTS_MATCHER}");
     assert!(strict_equality_matchers_of(&renamed).is_empty());
+    // `declare global` counts as a whole phrase, so `declare global_x`
+    // cannot excuse a real `global`.
+    let balanced = format!(
+        "// declare global_x\n{CENTS_MATCHER}beforeAll(() => {{ for (const f of Object.values(global)) try {{ f({{ toBeCents: () => ({{ pass: true }}) }}); }} catch {{}} }});\n{CENTS_TEST}"
+    );
+    assert_eq!(cents_oracles(&balanced), unknown());
+    // A keyword used as a property name, and a non-ASCII name, still index.
+    for indexed in [
+        "beforeAll(() => { ({ of: g }).of[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        "beforeAll(() => { const gé = g; gé[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+    ] {
+        let source = format!("import g from \"./g\";\n{CENTS_MATCHER}{indexed}{CENTS_TEST}");
+        assert_eq!(cents_oracles(&source), unknown(), "{indexed}");
+    }
     // `declare global` alone keeps the reading.
     let declared = format!(
         "{CENTS_MATCHER}declare global {{ namespace jest {{ interface Matchers<R> {{ toBeCents(e: number): R; }} }} }}\n{CENTS_TEST}"

@@ -34,7 +34,7 @@ pub(crate) fn strict_equality_matchers(
                 return Vec::new();
             }
             let strict = matcher_function(&property.value)
-                .is_some_and(|(params, body)| passes_only_on_strict_equality(params, body, source));
+                .is_some_and(|(params, body)| passes_only_on_strict_equality(params, body));
             registered.push((name.to_string(), strict));
         }
     }
@@ -121,7 +121,7 @@ fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, sour
         .count();
     other_mentions == imported_expect
         && word_mentions(source, "import") == imports
-        && word_mentions(source, "global") == source.matches("declare global").count()
+        && word_mentions(source, "global") == word_mentions(source, "declare global")
         && GLOBAL_ROOTS
             .iter()
             .all(|word| word_mentions(source, word) == 0)
@@ -145,6 +145,11 @@ const GLOBAL_ROOTS: &[&str] = &[
     "importActual",
     "importMock",
     "createMockFromModule",
+    "valueOf",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
+    "Symbol",
+    "chai",
 ];
 
 /// `true` when `source` holds a `[` that may index a value by a name other
@@ -180,6 +185,9 @@ fn computed_member_access(source: &str) -> bool {
         let Some(last) = before.chars().next_back() else {
             return false;
         };
+        if !last.is_ascii() {
+            return true;
+        }
         if is_identifier(last) {
             let word_start = before
                 .char_indices()
@@ -187,9 +195,13 @@ fn computed_member_access(source: &str) -> bool {
                 .take_while(|(_, ch)| is_identifier(*ch))
                 .last()
                 .map_or(0, |(start, _)| start);
-            if before
-                .get(word_start..)
-                .is_some_and(|word| KEYWORDS.contains(&word))
+            let after_dot = before
+                .get(..word_start)
+                .is_some_and(|text| text.trim_end().ends_with('.'));
+            if !after_dot
+                && before
+                    .get(word_start..)
+                    .is_some_and(|word| KEYWORDS.contains(&word))
             {
                 return false;
             }
@@ -273,12 +285,11 @@ fn matcher_function<'s, 'a>(
 
 /// `true` when the body is `return { pass: X, ... }` or
 /// `const pass = X; return { pass, ... }`, with `X` a `&&` chain one of whose
-/// terms is `received === expected` (either order), and no term assigns or
-/// updates anything.
+/// terms is `received === expected` (either order), and no term may write
+/// (`may_write`).
 fn passes_only_on_strict_equality(
     [received, expected]: [&str; 2],
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
 ) -> bool {
     let pass = match body.as_slice() {
         [Statement::ReturnStatement(returned)] => returned_pass(returned, None),
@@ -309,11 +320,7 @@ fn passes_only_on_strict_equality(
     terms
         .iter()
         .any(|term| is_strict_equality(term, received, expected))
-        && terms.iter().all(|term| {
-            source
-                .get(term.span().start as usize..term.span().end as usize)
-                .is_some_and(|text| !writes_anything(text))
-        })
+        && terms.iter().all(|term| !may_write(term))
 }
 
 /// The `pass` expression of `return { pass: X, ... }`, or `declared` when
@@ -412,32 +419,45 @@ fn is_strict_equality(term: &Expression<'_>, received: &str, expected: &str) -> 
             || (is_name(&binary.left, expected) && is_name(&binary.right, received)))
 }
 
-/// `true` when `text` may assign or update anything: an `=` outside `==`,
-/// `===`, `!=`, `!==`, `<=` and `>=` (so `=>`, `<<=`, `>>=`, `||=` and the
-/// like count), `++`, `--`, or the words `eval` and `arguments`,
-/// which reach the parameters without naming them.
-fn writes_anything(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let at = |index: Option<usize>| index.and_then(|index| bytes.get(index)).copied();
-    let assigns = bytes.iter().enumerate().any(|(index, byte)| {
-        if *byte != b'=' {
-            return false;
+/// `true` unless `expression` is built only from names, literals, member
+/// reads, calls and operators. Rebinding a parameter needs an assignment,
+/// an update, a nested function or class (a `for (r of ...)` loop or a
+/// static block), or the names `eval` and `arguments`; every one of them,
+/// and any form not listed, refuses. A call to a function declared
+/// elsewhere cannot rebind the matcher's parameters.
+fn may_write(expression: &Expression<'_>) -> bool {
+    let argument = |argument: &oxc_ast::ast::Argument<'_>| match argument {
+        oxc_ast::ast::Argument::SpreadElement(spread) => may_write(&spread.argument),
+        other => other.as_expression().is_none_or(may_write),
+    };
+    match expression.get_inner_expression() {
+        // `eval` is refused for the whole file (`GLOBAL_ROOTS`).
+        Expression::Identifier(identifier) => identifier.name == "arguments",
+        Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::RegExpLiteral(_)
+        | Expression::StringLiteral(_) => false,
+        Expression::TemplateLiteral(template) => template.expressions.iter().any(may_write),
+        Expression::StaticMemberExpression(member) => may_write(&member.object),
+        Expression::ComputedMemberExpression(member) => {
+            may_write(&member.object) || may_write(&member.expression)
         }
-        let before = at(index.checked_sub(1));
-        let after = at(index.checked_add(1));
-        if before == Some(b'=') || after == Some(b'=') {
-            return false;
+        Expression::CallExpression(call) => {
+            may_write(&call.callee) || call.arguments.iter().any(argument)
         }
-        match before {
-            Some(b'!') => false,
-            Some(b'<') | Some(b'>') => at(index.checked_sub(2)) == before,
-            _ => true,
+        Expression::BinaryExpression(binary) => may_write(&binary.left) || may_write(&binary.right),
+        Expression::LogicalExpression(logical) => {
+            may_write(&logical.left) || may_write(&logical.right)
         }
-    });
-    assigns
-        || text.contains("++")
-        || text.contains("--")
-        || ["eval", "arguments"]
-            .iter()
-            .any(|word| word_mentions(text, word) > 0)
+        Expression::UnaryExpression(unary) => may_write(&unary.argument),
+        Expression::ConditionalExpression(conditional) => {
+            may_write(&conditional.test)
+                || may_write(&conditional.consequent)
+                || may_write(&conditional.alternate)
+        }
+        Expression::SequenceExpression(sequence) => sequence.expressions.iter().any(may_write),
+        _ => true,
+    }
 }
