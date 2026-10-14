@@ -1,0 +1,65 @@
+{
+  "kind": "public_metadata_only_bridge",
+  "verified_at": "2026-10-14T23:14:09Z",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "issue": 7415,
+  "candidate": {
+    "sha": "6b382125783a05e9b3353131837ed215fce70247",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "branch_observed": "rook/7415-private-target-attribution",
+    "review_artifacts": [
+      "review.md",
+      "review-receipt.json"
+    ],
+    "reviewer_binary_version": "ripr 0.11.0 (6b382125783a05e9b3353131837ed215fce70247)"
+  },
+  "published": {
+    "sha": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "commit_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/f6aab7639b88be1a21c757be74baef833e636f17",
+    "pull_request": {
+      "number": 8004,
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8004",
+      "state_at_observation": "open",
+      "draft_at_observation": true,
+      "head_sha": "f6aab7639b88be1a21c757be74baef833e636f17",
+      "base_sha": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+      "mergeable_at_observation": true
+    },
+    "combined_status_observation": {
+      "context": "CodeRabbit",
+      "state": "pending"
+    }
+  },
+  "bridge_checks": {
+    "candidate_and_published_tree_equal": true,
+    "candidate_and_published_sole_parent_equal": true,
+    "git_diff_tree_exit_code": 0,
+    "git_diff_tree_name_status_equal": true,
+    "changed_path_count_each": 9,
+    "candidate_worktree_clean_at_observation": true,
+    "public_commit_confirmed_by_github_api": true,
+    "published_sha_confirmed_as_pr_head": true,
+    "tests_rerun": false,
+    "candidate_modified": false,
+    "remote_tracking_ref_contained_published_sha": false
+  },
+  "applicability": {
+    "same_source_snapshot_and_reviewed_parent": true,
+    "prior_source_review_and_recorded_test_outcomes_apply_to_identical_tracked_tree": true,
+    "fresh_execution_at_published_commit_sha_established": false,
+    "hosted_qualification_established": false,
+    "current_pr_base_composition_qualified": false,
+    "build_identity_is_commit_bound": true
+  },
+  "open_gaps": [
+    "Aggregate check-fast/lib-test SIGKILL remains unresolved.",
+    "The inherited golden failure remains unresolved.",
+    "Hosted qualification is incomplete; the observed CodeRabbit status was pending.",
+    "The PR base is 0e8d006e9845339a58902bb2baa28dbc4fd23c18, newer than the reviewed parent; current-base composition has not been qualified by this bridge.",
+    "Broader #7415 residuals documented in the prior review remain open."
+  ],
+  "disposition": "Metadata-only tree/parent bridge verified. REVIEW_INCOMPLETE remains. No Ready or merge clearance."
+}

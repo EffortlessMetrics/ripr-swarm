@@ -1,0 +1,143 @@
+{
+  "candidate": "6b382125783a05e9b3353131837ed215fce70247",
+  "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+  "producer": {
+    "path": "/workspace/scratch/2e70149a8e59/private-target-7415-evidence/ripr-6b382125-default",
+    "sha256": "9707ca93255f5b2c02753ddcfafa9c0a74d7ab58db24b1bdea36ebea1a70074a",
+    "version": "ripr 0.11.0 (6b382125783a05e9b3353131837ed215fce70247)",
+    "features": "default",
+    "toolchain": "Rust/Cargo1.95.0",
+    "jobs": 2,
+    "incremental": 0,
+    "debug": "default development profile"
+  },
+  "fixtures": [
+    {
+      "fixture": "basic",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "d6a3315af4632b2d063481400e883d06bc5516aea04dc9b8747161938d0ecd8a",
+        "compact": "086a0bdd5c3807079118c99024e61cdab8ee9a68d996da653740520d7d0d1d03"
+      }
+    },
+    {
+      "fixture": "raw-comment",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "5755c7ec2cd55af957bdaedbcf87cf6b6728c207d8706dd12aff1c923e6294e1",
+        "compact": "36a3a8a254858704d643bb140f059937b60e8147e72288935cd72b37a78dea64"
+      }
+    },
+    {
+      "fixture": "expired-binding",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "a37f415ef916c83e384c7157e82f9c062d4eed10bb8ebaf31e2164d96a83f875",
+        "compact": "db79401f384df42770090895f87843e82e834ee033e191c0360328437753a3db"
+      }
+    },
+    {
+      "fixture": "while-binding",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "5f1ae01d2c28b6de8b567ccd41d609dc09a7301a436c218f023d2bc3c3bfc94a",
+        "compact": "9c1d3d3d3ed9d8e1778a7fc76615bc3cff943400211af22520aaf6705de1efba"
+      }
+    },
+    {
+      "fixture": "const-binding",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "20eed93bc7fc63e31c800f1e43f76dcf558aed90318e256f94dd1866872626fa",
+        "compact": "843ee91738052f9a1b8286864855f541b736699e3a53389c8ba763eaf8ce79bf"
+      }
+    },
+    {
+      "fixture": "import-binding",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "3b2797ce32c78c9626304f624d867c7a841faedf8371f0eb9115cdf25da120d2",
+        "compact": "d79296e668b88abfd6b4b6096d3d85de0d829642327cb6d05d2537d1cb913e35"
+      }
+    },
+    {
+      "fixture": "operand-item",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "43a556186ad1efa2cac130638cf2da49041d7b627c58f5f0f4047ec4ea829ab5",
+        "compact": "2118d2b66b4f6c8f944770ef014cce46d934bf46dd2ab970eedafb1061dfbbbc"
+      }
+    },
+    {
+      "fixture": "mixed-helper",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 4,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "c45c121ae9bc8d1420c508aa7b501e06f7e8a533463850dfecfdbe39e7d78923",
+        "compact": "f7e4951a382166670f98941fef1c3b49f7e29efb44e3c3776f01a063913e406d"
+      }
+    },
+    {
+      "fixture": "public-inherent",
+      "seams": 5,
+      "full_relation_invariants": "passed",
+      "compact_metric_parity": "passed",
+      "actual_direct_high_rows": 8,
+      "refused_direct_helper_rows": 8,
+      "genuine_mixed_helper_rows": 0,
+      "public_direct_rows": 1,
+      "reports": {
+        "repo": "21ceeb648381b9f072bcbfb7d7fc56707854f99349b84ffd4dbad7361f857c29",
+        "compact": "efa398a3bd3317756b93242139e5683baaa265ac54831a9547b708387c2ab10b"
+      }
+    }
+  ],
+  "compact_relation_unit_gap": "NOT_ESTABLISHED: default lib-harness compilation SIGKILL; public summary parity is distinct"
+}

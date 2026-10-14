@@ -1,0 +1,49 @@
+{
+  "candidate": "6b382125783a05e9b3353131837ed215fce70247",
+  "goldens_exit": 1,
+  "fixture_errors": 0,
+  "fixture_count": 425,
+  "drifted_fixtures": [
+    "owner_return_pin_fallible_literal"
+  ],
+  "surface_drift_count": 3,
+  "baseline_producer": {
+    "head": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "sha256": "e9f26175806fd8a7936e37083e7fc5c04341c1cb491cee15ef58ac6e19cc4a13"
+  },
+  "candidate_producer": {
+    "head": "6b382125783a05e9b3353131837ed215fce70247",
+    "sha256": "9707ca93255f5b2c02753ddcfafa9c0a74d7ab58db24b1bdea36ebea1a70074a"
+  },
+  "argv": [
+    "check",
+    "--root",
+    "fixtures/owner_return_pin_fallible_literal/input",
+    "--diff",
+    "fixtures/owner_return_pin_fallible_literal/diff.patch",
+    "--mode",
+    "fast",
+    "--json"
+  ],
+  "normalization": "remove canonical_next_action as the production golden normalizer does; compare all remaining JSON fields",
+  "exact_baseline_candidate_normalized_document_equal": true,
+  "candidate_new_drift": "none observed in corpus; aggregate remains failed on inherited fixture",
+  "fixture_classification": "weakly_exposed",
+  "nonempty_findings": 1,
+  "related_relation": "observes_answer direct_owner_call/high, observation_unconfirmed",
+  "blessing": "none; expected outputs/source unchanged",
+  "receipts": {
+    "exact-head-goldens.log": "eab17c9db324b6672b4f7bdf4d02f080e3cea5465bb375c1980af76718a36b41",
+    "exact-head-goldens.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "exact-head-goldens.md": "322b821636a4e7328bcb88879fbef39e524c0002ab440484b0388911d31feea2",
+    "exact-head-golden-drift.md": "7517ca5b646948b81d6e74de2cbe159ad5b1ea9ff968689481cab9285fab983d",
+    "exact-head-golden-drift.json": "7a3840ee85c42819cbdb6043d7ccb4271e237af963f6f4bf3769be1caa7b6313",
+    "owner-return-pin-baseline-fast.json": "6f51ac9ee79940c1f19ac5af13ae186aea756f1229410803157332ccbe95a513",
+    "owner-return-pin-baseline-fast.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "owner-return-pin-baseline-normalized.json": "6a1c98d4e23206f807439e140fd4ae8db4ab52c5e5586d19ac8f0f13338fd79a",
+    "owner-return-pin-candidate-check.json": "54c4517398711b8c4138acf30128e9acf0f6372ec0acbff4c514bf24097b8d4d",
+    "owner-return-pin-candidate-normalized.json": "6a1c98d4e23206f807439e140fd4ae8db4ab52c5e5586d19ac8f0f13338fd79a",
+    "owner-return-pin-candidate-human.txt": "c0b5c68970329b22116e91bdffc24405f0f35d21602f5f27f3f9e193bd4671a5",
+    "owner-return-pin-candidate-human-full.txt": "4e2b71c32e140e1d359bcd0b3c2746ffddd7f895cab455a7851be77b0860da3a"
+  }
+}

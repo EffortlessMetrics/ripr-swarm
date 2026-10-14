@@ -1,0 +1,173 @@
+{
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+      "counts": {
+        "candidate_line_count": 1,
+        "changed_file_count": 2,
+        "changed_line_count": 17,
+        "finding_count": 1,
+        "probe_count": 1
+      },
+      "identity": {
+        "base_revision": null,
+        "config_identity": null,
+        "git_candidate_subject": null,
+        "input_identity": "sha256:31b178c31e72c54361892c3d3766ea86397071fad0e324a6cb1c37800f3eece7",
+        "repository_identity": null,
+        "root_identity": null,
+        "snapshot_identity": null
+      },
+      "kind": "complete_with_findings",
+      "limitations": [],
+      "schema_version": "0.1"
+    }
+  },
+  "findings": [
+    {
+      "activation": {
+        "missing_discriminators": [],
+        "observed_values": [
+          {
+            "context": "assertion_argument",
+            "line": 5,
+            "value": "7"
+          }
+        ]
+      },
+      "assertion_texts": {
+        "5": "ensure!(actual == 7);"
+      },
+      "canonical_gap": {
+        "behavior_kind": "return_value",
+        "file": "src/lib.rs",
+        "id": "gap:rust:src/lib.rs:answer:return_value:return_value:7",
+        "language": "rust",
+        "normalized_discriminator": "7",
+        "owner": "answer",
+        "probe_kind": "return_value"
+      },
+      "canonical_gap_group_size": 1,
+      "canonical_gap_id": "gap:rust:src/lib.rs:answer:return_value:return_value:7",
+      "classification": "weakly_exposed",
+      "confidence": 0.92,
+      "evidence": [
+        "A related test observes a value or effect near the changed behavior",
+        "Complete propagation witness reaches returned value: 7",
+        "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+        "Reachable tests can plausibly activate this changed behavior",
+        "Related tests appear to reach answer: observes_answer"
+      ],
+      "evidence_path": [
+        "reach yes: Related tests appear to reach answer: observes_answer",
+        "infection yes: Reachable tests can plausibly activate this changed behavior",
+        "propagation yes: Complete propagation witness reaches returned value: 7",
+        "observation yes: A related test observes a value or effect near the changed behavior",
+        "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+        "local flow reaches returned value: 7 (line 1)",
+        "related test src/test_support.rs:10 observes_answer uses strong exact value oracle: ensure!(actual == 7);",
+        "source assertion argument value 7 at line 5"
+      ],
+      "flow_sinks": [
+        {
+          "kind": "return_value",
+          "line": 1,
+          "text": "7"
+        }
+      ],
+      "id": "probe:src_lib.rs:return_value:b4958fd8",
+      "language": "rust",
+      "missing": [
+        "No strong discriminator was detected"
+      ],
+      "missing_discriminators": [],
+      "observed_values": [
+        {
+          "context": "assertion_argument",
+          "line": 5,
+          "value": "7"
+        }
+      ],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "probe": {
+        "delta": "value",
+        "expression": "7",
+        "family": "return_value",
+        "file": "./src/lib.rs",
+        "id": "probe:src_lib.rs:return_value:b4958fd8",
+        "line": 1
+      },
+      "recommended_next_step": "The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "related_tests": [
+        {
+          "file": "src/test_support.rs",
+          "line": 10,
+          "miss": "observation_unconfirmed",
+          "name": "observes_answer",
+          "oracle": "ensure!(actual == 7);",
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "relation_confidence": "high",
+          "relation_reason": "direct_owner_call",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "related_tests_total": 1,
+      "ripr": {
+        "discriminate": {
+          "confidence": "medium",
+          "state": "weak",
+          "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        "infect": {
+          "confidence": "medium",
+          "state": "yes",
+          "summary": "Reachable tests can plausibly activate this changed behavior"
+        },
+        "observe": {
+          "confidence": "medium",
+          "state": "yes",
+          "summary": "A related test observes a value or effect near the changed behavior"
+        },
+        "propagate": {
+          "confidence": "high",
+          "state": "yes",
+          "summary": "Complete propagation witness reaches returned value: 7"
+        },
+        "reach": {
+          "confidence": "medium",
+          "state": "yes",
+          "summary": "Related tests appear to reach answer: observes_answer"
+        }
+      },
+      "severity": "warning",
+      "source_currentness": "candidate_current",
+      "stop_reasons": [],
+      "suggested_next_action": "The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion."
+    }
+  ],
+  "mode": "fast",
+  "root": "fixtures/owner_return_pin_fallible_literal/input",
+  "schema_version": "0.2",
+  "summary": {
+    "changed_files_by_language": [
+      {
+        "files": 2,
+        "language": "rust"
+      }
+    ],
+    "changed_rust_files": 2,
+    "exposed": 0,
+    "findings": 1,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 1,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 1
+  },
+  "tool": "ripr"
+}

@@ -1,0 +1,18 @@
+{
+  "isolated-wrong": {
+    "native_subjects": 5,
+    "complete_diff_probes": 3,
+    "complete_repo_seams": 5,
+    "expected_strongly_gripped": 1,
+    "full_compact_class_count_parity": true,
+    "private_seam_helper_invariant": true
+  },
+  "isolated-mixed": {
+    "native_subjects": 6,
+    "complete_diff_probes": 3,
+    "complete_repo_seams": 5,
+    "expected_strongly_gripped": 5,
+    "full_compact_class_count_parity": true,
+    "private_seam_helper_invariant": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Cargo.toml": "5921fd62d9aeb92d90bfcddf3678f48f3ed74cb2a1713a8f2e91ec637b65dfc3",
+  "Cargo.lock": "7549be66d7626ad21e380afa851cc3d370050aa10232af7ccad8653d850212f5",
+  "src/main.rs": "c80adff72e069cb3d4c0a26938afaaea5904d9884ec64b4539ee7cd13a941a7e",
+  "src/reader.rs": "08354898c1faa5eac8ad27ada03d470aa1d165dbe1abc732093a309d4663934e",
+  "xtask/main.rs": "701c5c226f6a845286ca0f1864012ea404780bc53bda1306d964c3ea79c42a05",
+  "src/lib.rs": "913ccf39e1320b036d8beaa5990570283d36107ca7b7bb39d1b242b42e793e77",
+  "tests/public_library.rs": "4df165c11b4b2fd720a990fb1f9cab2e0203c4d76186a450d8d91064865ce2bf",
+  "diff.patch": "bc2a7c741f9b5820e5ecf78e4adaa75e0123ced7c4ff13cc3829802750601eeb",
+  "baseline.json": "db01c263e3d05b25b00ac60268a30693343e2b40be7904adfc348e046acb2920",
+  "native.log": "3df2a6ccc533fbbea94034c875089ac3da198a0a73dd7967cfcbbec88579f41a"
+}

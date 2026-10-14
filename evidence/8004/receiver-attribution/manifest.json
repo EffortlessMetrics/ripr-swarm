@@ -1,0 +1,1022 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Compact public proof bundle for EffortlessMetrics/ripr-swarm Draft PR #8004, issue #7415.",
+  "publication_scope": "Evidence packaging only; no public GitHub mutation, source edit, test rerun or binary publication was performed for this packet.",
+  "identity": {
+    "repository": "EffortlessMetrics/ripr-swarm",
+    "issue": 7415,
+    "pull_request": 8004,
+    "published_head": "f6aab7639b88be1a21c757be74baef833e636f17",
+    "reviewed_local_head": "6b382125783a05e9b3353131837ed215fce70247",
+    "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+    "reviewed_parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+    "pr_base_at_bridge": "0e8d006e9845339a58902bb2baa28dbc4fd23c18",
+    "bridge_observed_at": "2026-10-14T23:14:09Z",
+    "bridge_scope": "identical tracked source tree and parent; no fresh CLI binary executed at published SHA and no current-base/hosted qualification established by the bridge"
+  },
+  "proof_lanes": {
+    "author_default_feature": {
+      "producer_sha256": "9707ca93255f5b2c02753ddcfafa9c0a74d7ab58db24b1bdea36ebea1a70074a",
+      "features": "default",
+      "toolchain": "Rust/Cargo 1.95.0",
+      "jobs": 2,
+      "incremental": false,
+      "nine_fixture_pairs": "completed; 5 seams each; full relation invariants and compact metric parity passed",
+      "cli_rerun": {
+        "passed": 16,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 503,
+        "exit": 0
+      },
+      "aggregate_check_fast": {
+        "exit": 1,
+        "reason": "all-target Clippy lib-test metadata process SIGKILL; policy phases passed"
+      },
+      "prior_default_lib_test": {
+        "exit": 101,
+        "reason": "SIGKILL during lib-test compilation before full harness completion"
+      },
+      "focused_unit_recovery_at_published_sha": {
+        "producer_binary_sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6",
+        "features": [
+          "default",
+          "lang-rust",
+          "lang-typescript",
+          "lang-python"
+        ],
+        "jobs": 1,
+        "incremental": false,
+        "debug": 0,
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 10814,
+        "elapsed_seconds": 339.061,
+        "exit": 0,
+        "scope": "two named full/compact receiver unit tests only; not the complete lib-test suite"
+      },
+      "goldens": {
+        "fixtures": 425,
+        "fixture_errors": 0,
+        "exit": 1,
+        "inherited_fixture": "owner_return_pin_fallible_literal",
+        "surface_drift_count": 3,
+        "baseline_candidate_normalized_json_equal": true,
+        "candidate_new_drift": "none observed",
+        "blessed": false
+      }
+    },
+    "independent_reviewer_rust_only": {
+      "producer_sha256": "814c6373c78aad5acbb57a6c70084eb0b18a43fe3acadf5ee0207218f10172aa",
+      "features": "--no-default-features --features lang-rust",
+      "toolchain": "Rust/Cargo 1.95.0; Linux x86_64",
+      "jobs": 1,
+      "incremental": false,
+      "debug": 0,
+      "private_inherent_receiver_integration": {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      },
+      "native_path_roots_linux": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0,
+        "native_windows_established": false
+      },
+      "independent_native_control_subjects": 15,
+      "isolated_control_cases": 10,
+      "isolated_cli_reports": 30,
+      "source_mutation_by_reviewer": false,
+      "hosted_checks_reviewed": false
+    }
+  },
+  "claim_boundary": {
+    "bounded_claim": "deny-only receiver admission for parser-established inherent methods with self using nominal receiver plus real expression/visible simple-binding evidence; true direct positives and separate genuine helper route retained in recorded controls",
+    "not_established": [
+      "exact Cargo-target identity",
+      "complete Rust type identity",
+      "fresh CLI binary build/run at published SHA",
+      "full/default lib-test suite pass",
+      "all-target Clippy pass",
+      "current PR base composition qualification",
+      "hosted-check completion",
+      "Ready or merge clearance",
+      "#7415 closure"
+    ],
+    "residuals": [
+      "qualified terminal-name collisions and constructor assumptions",
+      "aliases, factories, parameters, general value flow",
+      "nested/custom/file-scope macro expansion",
+      "arbitrary target roots",
+      "general helper last-hop receiver identity",
+      "unsupported receiver evidence may remain unknown"
+    ],
+    "nonblocking_review_note": "memoization of repeated parser work is a source-derived suggestion without a measured performance result"
+  },
+  "included_files": [
+    {
+      "path": "README.md",
+      "bytes": 5900,
+      "sha256": "6900f178fa09205964c4ba6961e99ac4186f501b8722d70cb7ca69008eb14c6f",
+      "source": "assembled from frozen-candidate.json, post-freeze-validation.json, exact/default receipts, independent review and public bridge",
+      "transformation": "public-oriented summary; excludes scratch/coordination details"
+    },
+    {
+      "path": "author/candidate-integration-and-native-path-green.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/production-combined-green.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/candidate-integration-and-native-path-green.log",
+      "bytes": 1553,
+      "sha256": "4e6532730240c1d1195db23c57fdf6847d7357cf6dbdc2f7361385831c46b84f",
+      "source": "author-evidence/production-combined-green.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/default-feature-nine-fixture-receipt.json",
+      "bytes": 5092,
+      "sha256": "8adaeae430a005a8772f82ac48ac8fe80d553d36d54323dc42bf0abdb2bfde38",
+      "source": "author-evidence/default-exact-nine-fixture-receipt.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/default-feature-nine-fixture-verification.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/default-exact-nine-fixture-verification.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/default-feature-nine-fixture-verification.log",
+      "bytes": 345,
+      "sha256": "563f80327a8cb2825da094260edfe17ce5fd851ee00311b61648eada9046aa71",
+      "source": "author-evidence/default-exact-nine-fixture-verification.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/exact-head-check-fast-report.md",
+      "bytes": 1226,
+      "sha256": "e6b9affa834a935f228785173746edd37ac264f69c8673650a45e26a53a0363d",
+      "source": "author-evidence/exact-head-check-fast-report.md",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/exact-head-check-fast.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "source": "author-evidence/exact-head-check-fast.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/exact-head-check-fast.log",
+      "bytes": 46448,
+      "sha256": "2db4c8999d6c3bcccfee31692a13d8b34e3de76783eb874e9a0c448aa3c0acad",
+      "source": "author-evidence/exact-head-check-fast.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/exact-head-cli-rerun.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/exact-head-cli-rerun.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/exact-head-cli-rerun.log",
+      "bytes": 1830,
+      "sha256": "8285c42d30d0922366a7f58fde32092d96b1f8858dca1db5b7371e605ae86053",
+      "source": "author-evidence/exact-head-cli-rerun.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/initial-production-adversarial-red.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+      "source": "author-evidence/production-adversarial-red.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/initial-production-adversarial-red.log",
+      "bytes": 1934,
+      "sha256": "a5aa37f97c577ccc2848f467181f18a3bdc3cf480dfd621848f4ddebe1e84433",
+      "source": "author-evidence/production-adversarial-red.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/prior-default-lib-test-sigkill.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+      "source": "author-evidence/repo-regression-resumed-green.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/prior-default-lib-test-sigkill.log",
+      "bytes": 6631,
+      "sha256": "4021b95fc3f1f9ba5149714b5ef40122e8a46a97a957e1690f1ccb5fc2adb670",
+      "source": "author-evidence/repo-regression-resumed-green.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/published-sha-focused-unit-tests.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "published-sha-evidence/default-lib-test.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/published-sha-focused-unit-tests.log",
+      "bytes": 7973,
+      "sha256": "1648d4aa45bf211c7fd218af2d83be3a23461e217699d3671e07ce1ca7cbeaa9",
+      "source": "published-sha-evidence/default-lib-test.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "author/published-sha-focused-unit-tests.receipt.json",
+      "bytes": 1420,
+      "sha256": "140e467ae7d155d86fe41dcac6411a8075d252dc2b42204ed7b8e58014ffe9f9",
+      "source": "published-sha-evidence/default-lib-test.receipt.json",
+      "transformation": "public receipt projection; dropped environment variables and resource-sampling chatter, kept source identity, command, features, profile, result and binary digest"
+    },
+    {
+      "path": "fixtures/initial-baseline-input-manifest.json",
+      "bytes": 866,
+      "sha256": "50cf046b0e7ab9509e5b2fb75f6cdb4bbc370bd071cddba7abb56f2ae51a8d1f",
+      "source": "author-evidence/manifest.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/baseline-normalized.json",
+      "bytes": 6143,
+      "sha256": "6a1c98d4e23206f807439e140fd4ae8db4ab52c5e5586d19ac8f0f13338fd79a",
+      "source": "author-evidence/owner-return-pin-baseline-normalized.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/candidate-normalized.json",
+      "bytes": 6143,
+      "sha256": "6a1c98d4e23206f807439e140fd4ae8db4ab52c5e5586d19ac8f0f13338fd79a",
+      "source": "author-evidence/owner-return-pin-candidate-normalized.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/exact-head-golden-drift.md",
+      "bytes": 3391,
+      "sha256": "7517ca5b646948b81d6e74de2cbe159ad5b1ea9ff968689481cab9285fab983d",
+      "source": "author-evidence/exact-head-golden-drift.md",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/exact-head-goldens.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "source": "author-evidence/exact-head-goldens.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/exact-head-goldens.log",
+      "bytes": 2554,
+      "sha256": "eab17c9db324b6672b4f7bdf4d02f080e3cea5465bb375c1980af76718a36b41",
+      "source": "author-evidence/exact-head-goldens.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "goldens/goldens-baseline-comparison.json",
+      "bytes": 2601,
+      "sha256": "ded2d3b43378d994f42dfa67c08afcff4db69a225c3c2a6e00561af9c84beddd",
+      "source": "author-evidence/goldens-baseline-comparison.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "identity/candidate-source-manifest.json",
+      "bytes": 2199,
+      "sha256": "8921131bea33b59adfea14564db10c8904f666fa712625e6682720a87482f1c0",
+      "source": "author-evidence/frozen-candidate.json",
+      "transformation": "public identity/source-hash fields only; omitted local branch/worktree and failed-run scratch metadata"
+    },
+    {
+      "path": "identity/public-bridge-receipt.json",
+      "bytes": 2814,
+      "sha256": "9742873f350a8d12cb1d02811af8ea13a17af3fa40036f9e499813afe56994e1",
+      "source": "independent-review-evidence/public-bridge-receipt.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "identity/public-bridge.md",
+      "bytes": 3782,
+      "sha256": "33185dc106c44452610a0ef26695ecca25f7bd606c7d4ef9752648308fa43a08",
+      "source": "independent-review-evidence/public-bridge.md",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-compact.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/default-exact-basic-compact.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-compact.json",
+      "bytes": 2157,
+      "sha256": "086a0bdd5c3807079118c99024e61cdab8ee9a68d996da653740520d7d0d1d03",
+      "source": "author-evidence/default-exact-basic-compact.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-compact.stderr",
+      "bytes": 352,
+      "sha256": "d449299b02238dae10c5e8ee6b204056bc9b6b24ed9f4c37dbd1d58965d1f0d2",
+      "source": "author-evidence/default-exact-basic-compact.stderr",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/default-exact-basic-repo.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-full.json",
+      "bytes": 31312,
+      "sha256": "d6a3315af4632b2d063481400e883d06bc5516aea04dc9b8747161938d0ecd8a",
+      "source": "author-evidence/default-exact-basic-repo.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/author-default-basic-full.stderr",
+      "bytes": 344,
+      "sha256": "25ae0f264b36eb3f3dd892d830965682cfbc32a60c0bb7dd95e85cd4f3e79fea",
+      "source": "author-evidence/default-exact-basic-repo.stderr",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-mixed-helper-compact.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/isolated-mixed-compact.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-mixed-helper-compact.json",
+      "bytes": 2167,
+      "sha256": "0bee637fc90a74a904f08823f577dcd885487289a29e7efa42ce0e2a7c2e4cc8",
+      "source": "independent-review-evidence/isolated-mixed-compact.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-mixed-helper-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/isolated-mixed-repo.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-mixed-helper-full.json",
+      "bytes": 34186,
+      "sha256": "d7cb593d148688c1e1e291f4fb6aa2c753c9fbbab4c3b2b3767716e7ffe15b25",
+      "source": "independent-review-evidence/isolated-mixed-repo.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-wrong-compact.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/isolated-wrong-compact.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-wrong-compact.json",
+      "bytes": 2187,
+      "sha256": "f2ad02f1c7fd1f4039c639cfa47aeed1a780fca4818b235cbccd55e3aea9d535",
+      "source": "independent-review-evidence/isolated-wrong-compact.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-wrong-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/isolated-wrong-repo.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-isolated-wrong-full.json",
+      "bytes": 33100,
+      "sha256": "bea54acc436622a91fb03e177774df848011ea4334f4ab4283ee0cef2c789728",
+      "source": "independent-review-evidence/isolated-wrong-repo.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-rust-only-basic-compact.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/exact-basic-compact.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-rust-only-basic-compact.json",
+      "bytes": 2128,
+      "sha256": "7eca233d4dbc3bbbf829666e40bb81c933d3d7dc49c3d87ee737f9c3dafc66e2",
+      "source": "author-evidence/exact-basic-compact.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-rust-only-basic-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/exact-basic-repo.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/green/reviewer-rust-only-basic-full.json",
+      "bytes": 31312,
+      "sha256": "d63734e9729febddaf6998e43a162c8e35860676b248dbdda122883ca18aa7e0",
+      "source": "author-evidence/exact-basic-repo.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/initial-baseline-diff.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/baseline.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/initial-baseline-diff.json",
+      "bytes": 21035,
+      "sha256": "db01c263e3d05b25b00ac60268a30693343e2b40be7904adfc348e046acb2920",
+      "source": "author-evidence/baseline.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/initial-baseline-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/baseline-repo.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/initial-baseline-full.json",
+      "bytes": 34220,
+      "sha256": "4a55206ba528f8f5c5a8d569359e22ef38a689afd90cf7b02e6621fc1d67e50d",
+      "source": "author-evidence/baseline-repo.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/initial-baseline-full.stderr",
+      "bytes": 344,
+      "sha256": "25ae0f264b36eb3f3dd892d830965682cfbc32a60c0bb7dd95e85cd4f3e79fea",
+      "source": "author-evidence/baseline-repo.stderr",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/intermediate-refinement-compact.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/candidate-basic-compact-green.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/intermediate-refinement-compact.json",
+      "bytes": 2128,
+      "sha256": "7eca233d4dbc3bbbf829666e40bb81c933d3d7dc49c3d87ee737f9c3dafc66e2",
+      "source": "author-evidence/candidate-basic-compact-green.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/intermediate-refinement-full.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "author-evidence/candidate-basic-repo-green.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "projections/red/intermediate-refinement-full.json",
+      "bytes": 34220,
+      "sha256": "398204922b716245ec22b338751d2ec1fd4afeca1d2cd12ac579a73acd49ec14",
+      "source": "author-evidence/candidate-basic-repo-green.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "public-handoff-draft.md",
+      "bytes": 1124,
+      "sha256": "459e048f80f74e79daf0f18f188be95db404c67107ab77bcbf813a310e4a7c49",
+      "source": "assembled from evidence records",
+      "transformation": "concise public-ready draft; not posted"
+    },
+    {
+      "path": "review/control-results.json",
+      "bytes": 2273,
+      "sha256": "e580035564516789865d74359272b8b44eac9b0f010983bbeb39710db7d073d9",
+      "source": "independent-review-evidence/control-results.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/independent-review.md",
+      "bytes": 8257,
+      "sha256": "52e6aeded249ffb07fc92f3cdfe76bc7746acdb5e3f498ca8bcf8ab9925d3e3e",
+      "source": "independent-review-evidence/review.md",
+      "transformation": "public-cleaned summary copy; irrelevant reviewer setup details omitted"
+    },
+    {
+      "path": "review/isolated-results.json",
+      "bytes": 477,
+      "sha256": "169f47325503b818529bf635e062a93652f502ce89412e942c60e6be5f181558",
+      "source": "independent-review-evidence/isolated-results.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-path-roots-five.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/native-path-roots.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/native-path-roots-five.log",
+      "bytes": 7878,
+      "sha256": "ff7f79c10f1cfa96c363055db6ad8631f3f2db9a2713317bd1cb3453adf494d1",
+      "source": "independent-review-evidence/native-path-roots.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/private-inherent-receiver-integration-six.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "source": "independent-review-evidence/integration-six.exit",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/private-inherent-receiver-integration-six.log",
+      "bytes": 12431,
+      "sha256": "db4b3ed0c8c3353d8cfb2fa6c04dd4d6f345dcb4b55d552f3e6ba6fef9ce439e",
+      "source": "independent-review-evidence/integration-six.log",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/review-receipt.json",
+      "bytes": 1876,
+      "sha256": "f4904746cb4d385746cb4874b2badfb593a69fea3eca6783a427b67ef61be318",
+      "source": "independent-review-evidence/review-receipt.json",
+      "transformation": "byte-for-byte copy"
+    },
+    {
+      "path": "review/rust-only-nine-fixture-receipt.json",
+      "bytes": 3963,
+      "sha256": "01aca2bc0a9ae1a3a846f4662427028030ed3dbfdde8a377846353f5c3a99beb",
+      "source": "author-evidence/exact-producer-nine-fixture-receipt.json",
+      "transformation": "byte-for-byte copy"
+    }
+  ],
+  "omitted_locally_retained_raw_outputs": [
+    {
+      "source": "author-evidence/exact-const-binding-repo.json",
+      "bytes": 31325,
+      "sha256": "ac2a67f568d047f11af172477d12a261c65ae439eabf7b42691c31f3fc382ac4",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-const-binding-compact.json",
+      "bytes": 2141,
+      "sha256": "5721462e8771db2629b31ffa0af78a430a183ea10684e37ae9b379fc16c79e8d",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-expired-binding-repo.json",
+      "bytes": 31327,
+      "sha256": "4e68311ebd14e23b7a34be72f1426a920e082aef6eb935b12c8e33da4cce036d",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-expired-binding-compact.json",
+      "bytes": 2143,
+      "sha256": "1255dae74f2726cec0d87badcb04c18b996ecb08a99bf68bdf7fe9cbf26b69a6",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-import-binding-repo.json",
+      "bytes": 31326,
+      "sha256": "a693e40d6bf959fa4341d7298cbb72fa0731f21f2e9cf3ad490930a508bd241b",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-import-binding-compact.json",
+      "bytes": 2142,
+      "sha256": "5e3779caf72d157b9754a401da5a7404d987ab9b5772febbfc8ae24eb380fe7f",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-mixed-helper-repo.json",
+      "bytes": 34272,
+      "sha256": "64820428fac3eae8209f8d6dc24e1a40f457aa20d68bf922b5c136f8935ea475",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-mixed-helper-compact.json",
+      "bytes": 2140,
+      "sha256": "f4d48ac7525a3e197b262a03d79521fe4008a811870a8e11020c9aad8c222346",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-operand-item-repo.json",
+      "bytes": 31384,
+      "sha256": "fbae0abf8757d08b7e77d315f1a4d16c79ea65511b252f5c79bd04dcea8ed457",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-operand-item-compact.json",
+      "bytes": 2140,
+      "sha256": "b4918de5d2e158b97fb155caac4fa2be050e68919f5f42642521478efe93cc45",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-public-inherent-repo.json",
+      "bytes": 31874,
+      "sha256": "c945a91b1b94308e166b4a5e2e03b91673569f1b44413f1eae343c7be12c083a",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-public-inherent-compact.json",
+      "bytes": 2143,
+      "sha256": "ff55f21a22bd342acd2653ec666f4a596e46244772269eb8a3d5a22103a128aa",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-raw-comment-repo.json",
+      "bytes": 31323,
+      "sha256": "b596c55a5e818f7098bc9a99fa3c04f7cef22cd7db6a47e27fcb896ee5054355",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-raw-comment-compact.json",
+      "bytes": 2139,
+      "sha256": "2991141814ebf6cf861b133507a1e46c1c92ef70f049144b8b9a80b53575a933",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-while-binding-repo.json",
+      "bytes": 31325,
+      "sha256": "1d83de83448fe26549cc5d23171a919b710a2ec55fff484aa53f0d623dd89ce4",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/exact-while-binding-compact.json",
+      "bytes": 2141,
+      "sha256": "9d23328a22b7b15c27bc8ade329f7ea08093b428fba8264eb6e72200d48efb40",
+      "reason": "One of the eight omitted Rust-only fixture projections; digest also appears in rust-only-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-raw-comment-repo.json",
+      "bytes": 31323,
+      "sha256": "5755c7ec2cd55af957bdaedbcf87cf6b6728c207d8706dd12aff1c923e6294e1",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-raw-comment-compact.json",
+      "bytes": 2168,
+      "sha256": "36a3a8a254858704d643bb140f059937b60e8147e72288935cd72b37a78dea64",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-expired-binding-repo.json",
+      "bytes": 31327,
+      "sha256": "a37f415ef916c83e384c7157e82f9c062d4eed10bb8ebaf31e2164d96a83f875",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-expired-binding-compact.json",
+      "bytes": 2172,
+      "sha256": "db79401f384df42770090895f87843e82e834ee033e191c0360328437753a3db",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-while-binding-repo.json",
+      "bytes": 31325,
+      "sha256": "5f1ae01d2c28b6de8b567ccd41d609dc09a7301a436c218f023d2bc3c3bfc94a",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-while-binding-compact.json",
+      "bytes": 2170,
+      "sha256": "9c1d3d3d3ed9d8e1778a7fc76615bc3cff943400211af22520aaf6705de1efba",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-const-binding-repo.json",
+      "bytes": 31325,
+      "sha256": "20eed93bc7fc63e31c800f1e43f76dcf558aed90318e256f94dd1866872626fa",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-const-binding-compact.json",
+      "bytes": 2170,
+      "sha256": "843ee91738052f9a1b8286864855f541b736699e3a53389c8ba763eaf8ce79bf",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-import-binding-repo.json",
+      "bytes": 31326,
+      "sha256": "3b2797ce32c78c9626304f624d867c7a841faedf8371f0eb9115cdf25da120d2",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-import-binding-compact.json",
+      "bytes": 2171,
+      "sha256": "d79296e668b88abfd6b4b6096d3d85de0d829642327cb6d05d2537d1cb913e35",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-operand-item-repo.json",
+      "bytes": 31384,
+      "sha256": "43a556186ad1efa2cac130638cf2da49041d7b627c58f5f0f4047ec4ea829ab5",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-operand-item-compact.json",
+      "bytes": 2169,
+      "sha256": "2118d2b66b4f6c8f944770ef014cce46d934bf46dd2ab970eedafb1061dfbbbc",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-mixed-helper-repo.json",
+      "bytes": 34272,
+      "sha256": "c45c121ae9bc8d1420c508aa7b501e06f7e8a533463850dfecfdbe39e7d78923",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-mixed-helper-compact.json",
+      "bytes": 2169,
+      "sha256": "f7e4951a382166670f98941fef1c3b49f7e29efb44e3c3776f01a063913e406d",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-public-inherent-repo.json",
+      "bytes": 31874,
+      "sha256": "21ceeb648381b9f072bcbfb7d7fc56707854f99349b84ffd4dbad7361f857c29",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "author-evidence/default-exact-public-inherent-compact.json",
+      "bytes": 2172,
+      "sha256": "efa398a3bd3317756b93242139e5683baaa265ac54831a9547b708387c2ab10b",
+      "reason": "One of the eight omitted default-feature fixture projections; digest appears in default-feature-nine-fixture-receipt.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_for_shadow-repo.json",
+      "bytes": 27422,
+      "sha256": "7713c0e558fff6a646565f388ca593ff9adc0d82b1f5f0b868d486a06cac4c26",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_statement_call-repo.json",
+      "bytes": 25858,
+      "sha256": "4620e3c82855cd285c2068aa6ad27aacf00f72ce9c1da530daccfb9115b8e7ab",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_inline_variant-repo.json",
+      "bytes": 25858,
+      "sha256": "07c379fb29896c4fac79e3ee5e60675ce537099eaa1020ecd526db54f65e34a0",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/controls-diff.json",
+      "bytes": 31347,
+      "sha256": "27d8004565728b2e8ae7fde16b4e1fe67a084c57c8caf645566a051de76d251c",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_borrow_parentheses-compact.json",
+      "bytes": 2185,
+      "sha256": "ecfa6ec6bc1073fddeb3663d9d70ad99e94b421ff531ac382148d6d80bd5cf3e",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_match_shadow-compact.json",
+      "bytes": 2199,
+      "sha256": "804d70cb6cb35f71ad2af33bdd18b319a9918784b7449cb820cb4add2552d4a6",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_local_assertion_macro-compact.json",
+      "bytes": 2208,
+      "sha256": "2891cc2faa9724f2e251492b495c63190a8676522d2a47df8407f312ede2aadd",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_match_shadow-diff.json",
+      "bytes": 19900,
+      "sha256": "a49db698d7489b55ba102ee994d21df8641d1ab5095a9cf30cdc40dc952554c0",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_local_assertion_macro-repo.json",
+      "bytes": 27653,
+      "sha256": "305adaa394f4a5894c7617fb64f5d32f6fabed16675fa710f23f0267cb2a80a5",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_for_shadow-diff.json",
+      "bytes": 19862,
+      "sha256": "5ee6206250869c79abef2bac75b94d67c3a2dc0169cc8b57637c689d82edb8ad",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_statement_call-diff.json",
+      "bytes": 17986,
+      "sha256": "cf446f784408c389ee1bbc43e406bf592fd0a6a129dce2593562aa9cbd512e41",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_ufcs-diff.json",
+      "bytes": 17354,
+      "sha256": "bb88bbc23907b1bb0c1671baee5e0793764a200f5dff19a3547f88f0ab114a99",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_local_assertion_macro-diff.json",
+      "bytes": 19314,
+      "sha256": "d52e48d85a4a69a3b0b408641ba8d61e8e3c77c568bb258a1e8149afc87fceae",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/controls-compact.json",
+      "bytes": 2161,
+      "sha256": "1f79026d277138469e21598acde77cf29448a293ccc038edaaf55031445be197",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_borrow_parentheses-diff.json",
+      "bytes": 17602,
+      "sha256": "3fe3ee0aff93b1f49d31381b081b8bebf6a2c7cbb985b75c2b40326a9a4c590e",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_iflet_shadow-compact.json",
+      "bytes": 2199,
+      "sha256": "85b15d57514f0fd570693c05f6011687626a85217ae6c4188e3a27a634788ab9",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_ufcs-repo.json",
+      "bytes": 26552,
+      "sha256": "936000028b377f2aafcbf9deb8936138ce38b818115374a8704fc09e9d787a30",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_diagnostic_only-compact.json",
+      "bytes": 2210,
+      "sha256": "eae03e55d3d419d7256df88d7961907d41fdd6bb9f0a15d70bc8bb3778735d8d",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_for_shadow-compact.json",
+      "bytes": 2197,
+      "sha256": "16b60c5ce1a22a86726238139e465e65777194a8767f5c7e3be4c8712705c095",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_statement_call-compact.json",
+      "bytes": 2181,
+      "sha256": "339f368d32bd16c82619920c4aa689f4286bae20f622a8084beb522d560f8956",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_ufcs-compact.json",
+      "bytes": 2171,
+      "sha256": "e131c774d1369e6dccbf6885dd8128cab40e34d92337e2bcd97f01cb189cb2f3",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_closure_shadow-compact.json",
+      "bytes": 2209,
+      "sha256": "882ffa155573ee3fc4d07d7ec1929dfe397c55b00739fe350ef328480e008104",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_diagnostic_only-diff.json",
+      "bytes": 20073,
+      "sha256": "8273133d81dbbbc2248bdb4bfc560ae5ead1335b6e1cfa28ab90f2e4eee9080b",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_borrow_parentheses-repo.json",
+      "bytes": 25942,
+      "sha256": "b779dc8e47d6fd1d897f769f02a5aac42266da1848a1c27e72e5a7c1c9480f41",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/isolated-mixed-diff.json",
+      "bytes": 26344,
+      "sha256": "65a011200fb63fbfc9c1a67c80542c4f4e2a0d12f3c2322283b6fa65f2028c6a",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_diagnostic_only-repo.json",
+      "bytes": 29296,
+      "sha256": "20524d0aec9200dfe4eb865c546a5d79451f90c45dd8026ff0d788f46c9a9a4e",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_inline_variant-compact.json",
+      "bytes": 2181,
+      "sha256": "649f4aee31037c830337b596ab45cd8260eea60b4f7740a20e36d73a8b0b9410",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_iflet_shadow-diff.json",
+      "bytes": 19904,
+      "sha256": "adb89686a32a5a46ff2c1950eb87179af503d91d11e8378afc488e76c9c23458",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_valid_inline_variant-diff.json",
+      "bytes": 20202,
+      "sha256": "a78c381a05876e241ee403e6088bdf2a1273fd375ad80023be31478f0fdddf77",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/isolated-wrong-diff.json",
+      "bytes": 23201,
+      "sha256": "0aea0ad214133bbe51d98782aec5d535a9df1cb91b432214eb0e80b186b180e9",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_iflet_shadow-repo.json",
+      "bytes": 27464,
+      "sha256": "5c0293b53a53fc1b55a4a2e443ce80d1af16e6a629ceedeb149e9a1337a7732f",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/controls-repo.json",
+      "bytes": 46114,
+      "sha256": "9605e8dd342b903e24162348cdcc74138707331177cb7fa88a9c351456e8db7c",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_match_shadow-repo.json",
+      "bytes": 27464,
+      "sha256": "2d4f82cbe89553cbc95fd387b0b659a0c6b592a980d90b0e26de276b6162fbda",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_closure_shadow-diff.json",
+      "bytes": 20042,
+      "sha256": "6a944bc812fc912e6643c89878466fcb32046617d00f8b16fa0c257f7549e102",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "independent-review-evidence/control_wrong_closure_shadow-repo.json",
+      "bytes": 29231,
+      "sha256": "7a7b9633b95c6f14d613e044c97a157379354427f09d1fb57e5bfc091507be55",
+      "reason": "Raw independent control report omitted; aggregate literal expectations are retained in review/control-results.json or review/isolated-results.json"
+    },
+    {
+      "source": "author-evidence/publication-entries.json",
+      "bytes": 2498817,
+      "sha256": "ec89ced4d40625d5534ca2f311244bcdd0c1e44f5eae69cb69efa10515223a0b",
+      "reason": "2.5 MB embedded changed-source publication dump; source is available from the public commit"
+    },
+    {
+      "source": "author-evidence/exact-head-goldens.md",
+      "bytes": 345822,
+      "sha256": "322b821636a4e7328bcb88879fbef39e524c0002ab440484b0388911d31feea2",
+      "reason": "large aggregate golden report dump; concise drift report and machine comparison retained"
+    },
+    {
+      "source": "author-evidence/ripr-6b382125-default",
+      "bytes": 213752984,
+      "sha256": "9707ca93255f5b2c02753ddcfafa9c0a74d7ab58db24b1bdea36ebea1a70074a",
+      "reason": "author default-feature executable; binary omitted, its SHA is retained in the receipt"
+    },
+    {
+      "source": "independent-review-evidence/ripr-6b382125-rustonly",
+      "bytes": 100029704,
+      "sha256": "814c6373c78aad5acbb57a6c70084eb0b18a43fe3acadf5ee0207218f10172aa",
+      "reason": "reviewer Rust-only executable; binary omitted, its SHA is retained in the review receipts"
+    },
+    {
+      "source": "published-sha-evidence/ripr-unit-f6aab763-default",
+      "bytes": 242222488,
+      "sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6",
+      "reason": "published-SHA unit harness binary; binary omitted, its SHA/size retained in the focused unit receipt"
+    },
+    {
+      "source": "author-evidence/frozen-candidate.patch",
+      "bytes": 43850,
+      "sha256": "6d333223ba6bb159c3cab509a5e79cb7fbd988658300ca90fe29bd93bb5c85d8",
+      "reason": "candidate patch; code is accessible from published commit, full source digests are retained"
+    },
+    {
+      "source": "independent-review-evidence/reviewed-candidate.patch",
+      "bytes": 43573,
+      "sha256": "7e2b242ef859c1920bb7436f8647174452c94fd15c7abc4259431ddd2e277471",
+      "reason": "reviewer patch copy; code is accessible from published commit"
+    }
+  ],
+  "manifest_note": "Included-file hashes omit this manifest to avoid a recursive digest. The parent-facing closeout records this manifest SHA-256. Omitted large files are identified by neutral artifact category/filename, exact byte count and SHA-256; raw build outputs and full report dumps are not copied."
+}

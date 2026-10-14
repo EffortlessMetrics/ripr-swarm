@@ -1,0 +1,36 @@
+   Compiling ripr v0.11.0 (/workspace/scratch/2e70149a8e59/repair-private-target-7415/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.08s
+     Running tests/private_inherent_receiver.rs (/workspace/scratch/2e70149a8e59/repair-private-target-7415-target/debug/deps/private_inherent_receiver-4f0048b20270483f)
+
+running 4 tests
+test public_inherent_method_keeps_cross_target_receiver_attribution ... ok
+
+thread 'expired_inner_binding_cannot_type_outer_inherent_receiver' (39) panicked at crates/ripr/tests/private_inherent_receiver.rs:236:13:
+assertion `left == right` failed
+  left: Some(DirectOwnerCall)
+ right: Some(WeakTokenSubstring)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test expired_inner_binding_cannot_type_outer_inherent_receiver ... FAILED
+
+thread 'raw_call_line_comment_cannot_supply_inherent_receiver' (41) panicked at crates/ripr/tests/private_inherent_receiver.rs:236:13:
+assertion `left == right` failed
+  left: Some(DirectOwnerCall)
+ right: Some(WeakTokenSubstring)
+test raw_call_line_comment_cannot_supply_inherent_receiver ... FAILED
+
+thread 'unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys' (42) panicked at crates/ripr/tests/private_inherent_receiver.rs:177:13:
+assertion `left == right` failed: a serde_json::Value call cannot reach private JsonValue::as_object
+  left: Some(DirectOwnerCall)
+ right: Some(WeakTokenSubstring)
+test unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys ... FAILED
+
+failures:
+
+failures:
+    expired_inner_binding_cannot_type_outer_inherent_receiver
+    raw_call_line_comment_cannot_supply_inherent_receiver
+    unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys
+
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p ripr --test private_inherent_receiver`

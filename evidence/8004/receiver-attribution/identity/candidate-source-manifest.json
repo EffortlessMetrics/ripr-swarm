@@ -1,0 +1,33 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "issue": 7415,
+  "published_pull_request": 8004,
+  "reviewed_local_commit": "6b382125783a05e9b3353131837ed215fce70247",
+  "published_commit": "f6aab7639b88be1a21c757be74baef833e636f17",
+  "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+  "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+  "changed_path_count": 9,
+  "changed_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/7415-inherent-receiver-admission.md",
+    "crates/ripr/src/analysis/classify/mod.rs",
+    "crates/ripr/src/analysis/classify/related_tests.rs",
+    "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+    "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+    "crates/ripr/src/analysis/test_grip_evidence/tests.rs",
+    "crates/ripr/tests/private_inherent_receiver.rs",
+    "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
+  ],
+  "source_sha256": {
+    ".ripr/traceability.toml": "981223eeef38a91a90536782ecd010bb0be231d9301338f4ceccf9e1a6a5dc8a",
+    "changelog.d/7415-inherent-receiver-admission.md": "8db0cfd416c2329fc97761e8c0ff213ef8916bb48618a9eaf5bb028fc9dd66e9",
+    "crates/ripr/src/analysis/classify/mod.rs": "997dfa046c1bebedc5904f5c1a169b69b28d88736673bc146747bb90d6997a6a",
+    "crates/ripr/src/analysis/classify/related_tests.rs": "7eab013042656e3ed2796ba4b435ff130c3250ad7269fc1adbb754eb7b522198",
+    "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs": "416f0d409f7053ff0417774100e681b46948f19e9fa69bcf41b380561abcf389",
+    "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs": "d7a64a8e72f578b663b2e3e8446d296c1dd1e90fc92cbf7caf19ec8de668d34e",
+    "crates/ripr/src/analysis/test_grip_evidence/tests.rs": "fc08e69e179b20b6310c7f209607d10d25089087bfd1500c20ccf64ae8452216",
+    "crates/ripr/tests/private_inherent_receiver.rs": "d71121ca385b2d033effb02eae831238ef16da85d12a0a28881f67ecb4479159",
+    "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md": "c09791e070f57828e5f23d67c222920ea0d779a0662389d2fb6729233ebcc203"
+  },
+  "scope": "This identifies the same tracked source snapshot reviewed and published; it does not assert a fresh build at the published commit SHA."
+}

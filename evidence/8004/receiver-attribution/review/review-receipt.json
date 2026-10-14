@@ -1,0 +1,52 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "issue": 7415,
+  "reviewed_head_sha": "6b382125783a05e9b3353131837ed215fce70247",
+  "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+  "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+  "clean_tree_observed_before_and_after": true,
+  "toolchain": {
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+    "platform": "Linux x86_64"
+  },
+  "build": {
+    "command": "cargo test -p ripr --locked --offline --no-default-features --features lang-rust --test private_inherent_receiver",
+    "features": [
+      "lang-rust"
+    ],
+    "default_features": false,
+    "jobs": 1,
+    "incremental": false,
+    "dev_debug": 0,
+    "test_debug": 0
+  },
+  "executable": {
+    "selected_path": "/workspace/scratch/2e70149a8e59/review-direct-receiver-target/debug/ripr",
+    "retained_path": "/workspace/scratch/2e70149a8e59/review-direct-receiver-evidence/ripr-6b382125-rustonly",
+    "sha256": "814c6373c78aad5acbb57a6c70084eb0b18a43fe3acadf5ee0207218f10172aa",
+    "observed_version": "ripr 0.11.0 (6b382125783a05e9b3353131837ed215fce70247)"
+  },
+  "integration_tests": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_path_roots": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "platform_scope": "Linux, not native Windows"
+  },
+  "independent_combined_native_control_subjects": 15,
+  "isolated_control_cases": 10,
+  "isolated_cli_reports": 30,
+  "isolated_wrong_and_mixed_cli_reports": 6,
+  "source_changes_by_reviewer": false,
+  "limitations": [
+    "No hosted checks reviewed or GitHub writes made.",
+    "No default-feature full lib-test run repeated; author SIGKILL remains an infrastructure gap.",
+    "No composition qualification with #7817 or #7973.",
+    "No representative performance benchmark; repeated-parser work is source inference."
+  ]
+}

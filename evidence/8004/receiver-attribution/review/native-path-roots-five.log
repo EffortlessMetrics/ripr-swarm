@@ -1,0 +1,202 @@
+warning: unused import: `model::lines_look_alike`
+  --> crates/ripr/src/analysis/diff/mod.rs:24:16
+   |
+24 | pub(crate) use model::lines_look_alike;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `LanguageAdapter`
+ --> crates/ripr/src/analysis/pipeline.rs:8:5
+  |
+8 |     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `expected_sinks` and `required_oracles`
+  --> crates/ripr/src/analysis/probes/mod.rs:24:31
+   |
+24 | pub(crate) use expectations::{expected_sinks, required_oracles};
+   |                               ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `fingerprint_probe_id` and `normalize_expression`
+  --> crates/ripr/src/analysis/mod.rs:83:5
+   |
+83 |     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+   |     ^^^^^^^^^^^^^^^^^^^^                                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+   --> crates/ripr/src/analysis/mod.rs:466:34
+    |
+466 | use std::collections::{BTreeSet, HashMap};
+    |                                  ^^^^^^^
+
+warning: unused imports: `declared_python_handwritten_under` and `is_python_dir_pruned_from_repo_discovery`
+  --> crates/ripr/src/config.rs:40:56
+   |
+40 |     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+43 |     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PYTEST_VERIFY_PROGRAM`
+  --> crates/ripr/src/domain/mod.rs:91:27
+   |
+91 | pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+   |                           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `snapshot_inputs` is never read
+  --> crates/ripr/src/analysis/committed_source.rs:61:5
+   |
+40 | pub(crate) struct CommittedSourceOverlay {
+   |                   ---------------------- field in this struct
+...
+61 |     snapshot_inputs: BTreeSet<String>,
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `CommittedSourceOverlay` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `serves` and `snapshot_inputs_differ_in` are never used
+   --> crates/ripr/src/analysis/committed_source.rs:163:8
+    |
+ 97 | impl CommittedSourceOverlay {
+    | --------------------------- methods in this implementation
+...
+163 |     fn serves(&self, root: &Path) -> bool {
+    |        ^^^^^^
+...
+167 |     fn snapshot_inputs_differ_in(&self, root: &Path, directory: &Path) -> bool {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `snapshot_inputs_differ_in` is never used
+   --> crates/ripr/src/analysis/committed_source.rs:289:15
+    |
+289 | pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `aligned_counterparts` is never used
+  --> crates/ripr/src/analysis/diff/model.rs:93:19
+   |
+40 | impl ChangedFile {
+   | ---------------- method in this implementation
+...
+93 |     pub(crate) fn aligned_counterparts(&self) -> BTreeMap<usize, &ChangedLine> {
+   |                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: field `removed_by_coordinate` is never read
+   --> crates/ripr/src/analysis/diff/model.rs:218:5
+    |
+210 | struct ReplacementRun<'a> {
+    |        -------------- field in this struct
+...
+218 |     removed_by_coordinate: Vec<(usize, Vec<&'a ChangedLine>)>,
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_ALIGNED_CELLS` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:228:7
+    |
+228 | const MAX_ALIGNED_CELLS: usize = 65_536;
+    |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_ALIGNED_TOKENS` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:232:7
+    |
+232 | const MAX_ALIGNED_TOKENS: usize = 256;
+    |       ^^^^^^^^^^^^^^^^^^
+
+warning: constant `ALIKE_THRESHOLD` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:235:7
+    |
+235 | const ALIKE_THRESHOLD: u32 = 500;
+    |       ^^^^^^^^^^^^^^^
+
+warning: function `lines_look_alike` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:242:15
+    |
+242 | pub(crate) fn lines_look_alike(old: &str, new: &str) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `line_similarity` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:246:4
+    |
+246 | fn line_similarity(old: &str, new: &str) -> u32 {
+    |    ^^^^^^^^^^^^^^^
+
+warning: function `key_similarity` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:254:4
+    |
+254 | fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>>)) -> u32 {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `token_similarity` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:265:4
+    |
+265 | fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `code_tokens` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:287:4
+    |
+287 | fn code_tokens(line: &str) -> Option<Vec<&str>> {
+    |    ^^^^^^^^^^^
+
+warning: function `line_key` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:330:4
+    |
+330 | fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
+    |    ^^^^^^^^
+
+warning: function `align_by_content` is never used
+   --> crates/ripr/src/analysis/diff/model.rs:339:4
+    |
+339 | fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(usize, usize)> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: methods `analyze_diff` and `analyze_repo` are never used
+   --> crates/ripr/src/analysis/language/adapter.rs:99:8
+    |
+ 90 | pub(crate) trait LanguageAdapter {
+    |                  --------------- methods in this trait
+...
+ 99 |     fn analyze_diff(
+    |        ^^^^^^^^^^^^
+...
+111 |     fn analyze_repo(
+    |        ^^^^^^^^^^^^
+
+warning: method `analyze_diff_for_languages` is never used
+    --> crates/ripr/src/analysis/language/rust/mod.rs:1722:19
+     |
+1718 | impl RustAdapter {
+     | ---------------- method in this implementation
+...
+1722 |     pub(crate) fn analyze_diff_for_languages(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_python_dir_pruned_from_repo_discovery` is never used
+  --> crates/ripr/src/config/python.rs:76:15
+   |
+76 | pub(crate) fn is_python_dir_pruned_from_repo_discovery(name: &str) -> bool {
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `declared_python_handwritten_under` is never used
+   --> crates/ripr/src/config/python.rs:118:15
+    |
+118 | pub(crate) fn declared_python_handwritten_under(declared: &[String], dir: &Path) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `ripr` (lib) generated 26 warnings (run `cargo fix --lib -p ripr` to apply 7 suggestions)
+   Compiling ripr v0.11.0 (/workspace/scratch/2e70149a8e59/review-direct-receiver-6b382125/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 0.72s
+     Running tests/native_path_roots.rs (/workspace/scratch/2e70149a8e59/review-direct-receiver-target/debug/deps/native_path_roots-a04eee588768d03d)
+
+running 5 tests
+test common::fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+test common::fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+

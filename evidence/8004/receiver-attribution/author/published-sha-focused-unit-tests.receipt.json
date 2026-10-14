@@ -1,0 +1,40 @@
+{
+  "source_commit": "f6aab7639b88be1a21c757be74baef833e636f17",
+  "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+  "parent": "89ac47a603092ba7f9f55cf74999b88649621abf",
+  "command": "cargo test -p ripr --lib --locked --offline inherent_receiver -- --nocapture",
+  "feature_set": [
+    "default",
+    "lang-rust",
+    "lang-typescript",
+    "lang-python"
+  ],
+  "rust_toolchain": "1.95.0",
+  "profile": {
+    "test": "unoptimized",
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false,
+    "jobs": 1
+  },
+  "exit_code": 0,
+  "focused_test_result": {
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 10814,
+    "elapsed_test_seconds": 0.38
+  },
+  "selected_tests": [
+    "analysis::test_grip_evidence::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence",
+    "analysis::test_grip_evidence::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence"
+  ],
+  "binary": {
+    "file": "/workspace/scratch/2e70149a8e59/receiver-gap-8004-evidence/ripr-unit-f6aab763-default",
+    "size": 242222488,
+    "sha256": "3eaf4aa2ed0842de4d4ee58f9edf6f5340748e39b8264ab74503ca06408b49e6"
+  },
+  "scope_note": "Two focused receiver-relation unit tests passed; 10,814 tests were filtered out. This is not a full lib-test-suite pass.",
+  "raw_log_sha256": "1648d4aa45bf211c7fd218af2d83be3a23461e217699d3671e07ce1ca7cbeaa9"
+}

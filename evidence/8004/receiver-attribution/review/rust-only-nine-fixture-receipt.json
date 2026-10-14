@@ -1,0 +1,94 @@
+{
+  "candidate": "6b382125783a05e9b3353131837ed215fce70247",
+  "tree": "81af6df65693db067d08e661ea0f33b3ef41342c",
+  "producer_path": "/workspace/scratch/2e70149a8e59/review-direct-receiver-evidence/ripr-6b382125-rustonly",
+  "producer_sha256": "814c6373c78aad5acbb57a6c70084eb0b18a43fe3acadf5ee0207218f10172aa",
+  "features": "--no-default-features --features lang-rust",
+  "debug": 0,
+  "jobs": 1,
+  "producer_builder": "independent reviewer; author independently executed these retained9pairs",
+  "compact_relationship_unit_gap": "NOT_ESTABLISHED after default lib-test SIGKILL",
+  "fixtures": [
+    {
+      "file": "exact-basic-repo.json",
+      "full_sha256": "d63734e9729febddaf6998e43a162c8e35860676b248dbdda122883ca18aa7e0",
+      "compact_sha256": "7eca233d4dbc3bbbf829666e40bb81c933d3d7dc49c3d87ee737f9c3dafc66e2",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-const-binding-repo.json",
+      "full_sha256": "ac2a67f568d047f11af172477d12a261c65ae439eabf7b42691c31f3fc382ac4",
+      "compact_sha256": "5721462e8771db2629b31ffa0af78a430a183ea10684e37ae9b379fc16c79e8d",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-expired-binding-repo.json",
+      "full_sha256": "4e68311ebd14e23b7a34be72f1426a920e082aef6eb935b12c8e33da4cce036d",
+      "compact_sha256": "1255dae74f2726cec0d87badcb04c18b996ecb08a99bf68bdf7fe9cbf26b69a6",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-import-binding-repo.json",
+      "full_sha256": "a693e40d6bf959fa4341d7298cbb72fa0731f21f2e9cf3ad490930a508bd241b",
+      "compact_sha256": "5e3779caf72d157b9754a401da5a7404d987ab9b5772febbfc8ae24eb380fe7f",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-mixed-helper-repo.json",
+      "full_sha256": "64820428fac3eae8209f8d6dc24e1a40f457aa20d68bf922b5c136f8935ea475",
+      "compact_sha256": "f4d48ac7525a3e197b262a03d79521fe4008a811870a8e11020c9aad8c222346",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-operand-item-repo.json",
+      "full_sha256": "fbae0abf8757d08b7e77d315f1a4d16c79ea65511b252f5c79bd04dcea8ed457",
+      "compact_sha256": "b4918de5d2e158b97fb155caac4fa2be050e68919f5f42642521478efe93cc45",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-public-inherent-repo.json",
+      "full_sha256": "c945a91b1b94308e166b4a5e2e03b91673569f1b44413f1eae343c7be12c083a",
+      "compact_sha256": "ff55f21a22bd342acd2653ec666f4a596e46244772269eb8a3d5a22103a128aa",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-raw-comment-repo.json",
+      "full_sha256": "b596c55a5e818f7098bc9a99fa3c04f7cef22cd7db6a47e27fcb896ee5054355",
+      "compact_sha256": "2991141814ebf6cf861b133507a1e46c1c92ef70f049144b8b9a80b53575a933",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    },
+    {
+      "file": "exact-while-binding-repo.json",
+      "full_sha256": "1d83de83448fe26549cc5d23171a919b710a2ec55fff484aa53f0d623dd89ce4",
+      "compact_sha256": "9d23328a22b7b15c27bc8ade329f7ea08093b428fba8264eb6e72200d48efb40",
+      "status": "complete",
+      "seams": 5,
+      "relation_invariants": "passed",
+      "compact_summary_metric_parity": "passed"
+    }
+  ]
+}

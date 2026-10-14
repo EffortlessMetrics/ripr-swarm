@@ -1,0 +1,92 @@
+[
+  {
+    "case": "control_valid_ufcs",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": true,
+    "strongly_gripped": 5,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_valid_borrow_parentheses",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": true,
+    "strongly_gripped": 5,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_valid_statement_call",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": true,
+    "strongly_gripped": 5,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_valid_inline_variant",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": true,
+    "strongly_gripped": 5,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_iflet_shadow",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_for_shadow",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_match_shadow",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_closure_shadow",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_diagnostic_only",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  },
+  {
+    "case": "control_wrong_local_assertion_macro",
+    "native_test_subjects": 3,
+    "diff_probes": 3,
+    "repo_seams": 5,
+    "expected_direct": false,
+    "strongly_gripped": 1,
+    "full_compact_class_count_parity": true
+  }
+]
