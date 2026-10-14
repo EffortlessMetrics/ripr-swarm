@@ -6,13 +6,17 @@
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
 use super::super::facts::CallFact;
-use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
+use super::super::rust_index::{
+    FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
+};
 use super::activation::{
     call_arguments, comparison_operands, function_parameters, literal_operand_value,
     owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
-use super::owner_pin::closure_adaptor::{AdaptorTail, argument_sequences, owner_adaptor_tail};
+use super::owner_pin::closure_adaptor::{
+    AdaptorTail, admitted_owner_adaptor_tail, argument_sequences, owner_adaptor_tail,
+};
 use super::reveal::assertion_comparison_operands;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
@@ -78,6 +82,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
     wrapper_entry: Option<WrapperEntryPairing<'_>>,
+    index: &RustIndex,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
         return false;
@@ -85,6 +90,31 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     let Some(owner) = owner_fn else {
         return false;
     };
+    // RIPR-SPEC-0260: a changed closure body of an adaptor tail pairs only
+    // through the element path, which requires the compared operand to be
+    // one whole owner call. Activation's element facts (`x == 0` on a call
+    // line) must never make a call, a bound local or a helper call a
+    // boundary one: `let r = pos(xs); assert_eq!(r[1], ..)` observes a
+    // projection that may not tell `>` from `>=`. A tail rules 1 and 2 may
+    // not read (a `collect` into a rebound `Vec`) pairs nothing. Computed
+    // once for every related test.
+    if owner_adaptor_tail(owner).is_some_and(|tail| tail.closure_body_is(&probe.expression)) {
+        let Some(element) = admitted_owner_adaptor_tail(owner, index)
+            .and_then(|tail| adaptor_element_boundary(probe, tail))
+        else {
+            return false;
+        };
+        return related_tests.iter().any(|test| {
+            test_pairs_boundary_element(
+                owner,
+                test,
+                &element,
+                assertion_admitted,
+                owner_pinned,
+                helper_loan,
+            )
+        });
+    }
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
     // caller's return; any other chain shape keeps the pairing missing.
@@ -126,7 +156,6 @@ fn test_pairs_boundary_input_with_oracle(
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
-    let element = adaptor_element_boundary(probe, owner);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
@@ -145,19 +174,11 @@ fn test_pairs_boundary_input_with_oracle(
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
-                    || element.as_ref().is_some_and(|element| {
-                        loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
-                    })
             });
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
-            || element.as_ref().is_some_and(|element| {
-                whole_owner_call_operands(&assertion.text, owner)
-                    .iter()
-                    .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
-            })
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
             // rule: the owner-return pin judges the owner's own call, never
@@ -334,11 +355,10 @@ fn loan_pairs_boundary_call(
 /// RIPR-SPEC-0260 rule 1 pairing: the admitted adaptor tail whose closure
 /// body is the changed comparison, and the literal boundary the closure
 /// binding is compared with.
-fn adaptor_element_boundary(
-    probe: &Probe,
-    owner: &FunctionSummary,
-) -> Option<(AdaptorTail, String)> {
-    let tail = owner_adaptor_tail(owner).filter(|tail| tail.closure_body_is(&probe.expression))?;
+fn adaptor_element_boundary(probe: &Probe, tail: AdaptorTail) -> Option<(AdaptorTail, String)> {
+    if !tail.closure_body_is(&probe.expression) {
+        return None;
+    }
     let (left, right) = comparison_operands(&probe.expression)?;
     let boundary = match (tail.reads_element(&left), tail.reads_element(&right)) {
         (true, false) => right,
@@ -346,6 +366,35 @@ fn adaptor_element_boundary(
         _ => return None,
     };
     literal_operand_value(&boundary).map(|value| (tail, value))
+}
+
+/// RIPR-SPEC-0260 rule 1 same-test pairing: an admitted discriminating or
+/// owner-pinned assertion of `test` compares one whole owner call whose
+/// argument for the iterated parameter has a run that reaches the
+/// boundary, directly or through a borrowed helper assertion's loan.
+fn test_pairs_boundary_element(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    element: &(AdaptorTail, String),
+    assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+) -> bool {
+    test.assertions.iter().any(|assertion| {
+        if !assertion_admitted(test, assertion)
+            || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
+        {
+            return false;
+        }
+        if !(test.start_line..=test.end_line).contains(&assertion.line) {
+            return helper_loan(test, assertion).is_some_and(|loan| {
+                loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
+            });
+        }
+        whole_owner_call_operands(&assertion.text, owner)
+            .iter()
+            .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+    })
 }
 
 /// Whether one owner call's argument for the iterated parameter is, on some
@@ -1203,6 +1252,28 @@ mod tests {
         tests: &[&TestSummary],
         activation: &ActivationEvidence,
     ) -> bool {
+        let source = owner
+            .map(|owner| owner.body.to_string())
+            .unwrap_or_default();
+        pairing_in_owner_file(probe, owner, tests, activation, &source)
+    }
+
+    /// [`pairing_with_admitted_oracles`] with the owner's file holding
+    /// `source`, which the RIPR-SPEC-0260 `Vec` gate reads.
+    fn pairing_in_owner_file(
+        probe: &Probe,
+        owner: Option<&FunctionSummary>,
+        tests: &[&TestSummary],
+        activation: &ActivationEvidence,
+        source: &str,
+    ) -> bool {
+        let mut index = RustIndex::default();
+        if let Some(owner) = owner {
+            index.insert_file_only(
+                owner.file.clone(),
+                crate::analysis::rust_index::summarize_file(owner.file.clone(), source.to_string()),
+            );
+        }
         has_same_test_boundary_oracle_pairing(
             probe,
             owner,
@@ -1212,6 +1283,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             None,
+            &index,
         )
     }
 
@@ -2619,6 +2691,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| None,
                 entry(chain, &|_| activation.clone()),
+                &RustIndex::default(),
             )
         };
         assert!(pairs(Some(&chain), &activation));
@@ -2660,6 +2733,7 @@ mod tests {
             &|_, _| None,
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| activation
                 .clone()),
+            &RustIndex::default(),
         ));
     }
 
@@ -2684,6 +2758,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&wrapper_chain(wrapper_body)), &|_| activation.clone()),
+            &RustIndex::default(),
         )
     }
 
@@ -2712,6 +2787,7 @@ mod tests {
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| {
                 transferred_boundary_row(1, line)
             }),
+            &RustIndex::default(),
         ));
     }
 
@@ -2805,6 +2881,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&chain), &own_rows),
+            &RustIndex::default(),
         ));
         // Control: the same far test pairs when its own rows hold the boundary.
         assert!(has_same_test_boundary_oracle_pairing(
@@ -2816,6 +2893,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             entry(Some(&chain), &|_| transferred_boundary_row(2, line)),
+            &RustIndex::default(),
         ));
     }
 
@@ -3094,6 +3172,7 @@ mod tests {
             &|_, _| false,
             &|_, candidate| (candidate == assertion).then(|| loan.clone()),
             None,
+            &RustIndex::default(),
         )
     }
 
@@ -3142,6 +3221,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| None,
                 None,
+                &RustIndex::default(),
             )
         };
         assert!(!pairs(&test));
@@ -3167,6 +3247,7 @@ mod tests {
             &|_, _| false,
             &|_, _| None,
             None,
+            &RustIndex::default(),
         ));
     }
 
@@ -3399,6 +3480,93 @@ mod tests {
         // The `assert!` condition, with at most one `!`, is the operand.
         assert!(pairs(any, "x > 0", "assert!(!gate(&[-2, 0]));"));
         assert!(!pairs(any, "x > 0", "assert!(gate(&[-2, 0]) == false);"));
+    }
+
+    /// RIPR-SPEC-0260: activation's element fact on a `let` line never
+    /// makes the bound local a boundary local; `r[1]` and `r.len()`
+    /// observe projections that cannot tell `x > 0` from `x >= 0`.
+    #[test]
+    fn adaptor_element_fact_never_pairs_a_bound_projection() {
+        let mut owner = gate_owner();
+        owner.body =
+            "pub fn gate(xs: &[i32]) -> Vec<bool> { xs.iter().map(|&x| x > 0).collect() }".into();
+        owner.item.has_body = true;
+        let pairs = |assertion: &str, bound: bool| {
+            let call_line = if bound {
+                "let r = gate(xs);"
+            } else {
+                assertion
+            };
+            let body = if bound {
+                format!(
+                    "fn element() {{\n    for xs in [&[0, 5]] {{\n        {call_line}\n        {assertion}\n    }}\n}}"
+                )
+            } else {
+                format!(
+                    "fn element() {{\n    for xs in [&[0, 5]] {{\n        {assertion}\n    }}\n}}"
+                )
+            };
+            let mut oracle = exact(assertion);
+            oracle.line = if bound { 4 } else { 3 };
+            let mut owner_call = call("gate", call_line);
+            owner_call.line = 3;
+            let test = test_summary(
+                "element",
+                &body,
+                vec![owner_call],
+                vec![oracle],
+                &["0", "5"],
+            );
+            let activation = ActivationEvidence {
+                observed_values: vec![ValueFact {
+                    line: 3,
+                    text: format!("{call_line} | element x = 0 of xs"),
+                    value: "x == 0".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }],
+                missing_discriminators: Vec::new(),
+            };
+            pairing_with_admitted_oracles(
+                &predicate_probe("x > 0"),
+                Some(&owner),
+                &[&test],
+                &activation,
+            )
+        };
+        assert!(pairs("assert_eq!(gate(xs), [false, true]);", false));
+        assert!(!pairs("assert_eq!(r[1], true);", true));
+        assert!(!pairs("assert_eq!(r.len(), 2);", true));
+        assert!(!pairs("assert_eq!(gate(xs)[1], true);", false));
+    }
+
+    /// RIPR-SPEC-0260: a `collect` into a `Vec` the owner's file rebinds
+    /// pairs no element boundary, through the same gate as the pin.
+    #[test]
+    fn adaptor_element_boundary_refuses_a_rebound_vec() {
+        let mut owner = gate_owner();
+        owner.body =
+            "pub fn gate(xs: &[i32]) -> Vec<bool> { xs.iter().map(|&x| x > 0).collect() }".into();
+        owner.item.has_body = true;
+        let assertion = "assert_eq!(gate(&[0, 5]), [false, true]);";
+        let test = test_summary(
+            "element",
+            assertion,
+            vec![call("gate", assertion)],
+            vec![exact(assertion)],
+            &[],
+        );
+        let pairs = |items: &str| {
+            pairing_in_owner_file(
+                &predicate_probe("x > 0"),
+                Some(&owner),
+                &[&test],
+                &ActivationEvidence::default(),
+                &format!("{}\n{items}", owner.body),
+            )
+        };
+        assert!(pairs(""));
+        assert!(!pairs("type Vec<T> = std::collections::BTreeSet<T>;"));
+        assert!(!pairs("use std::collections::BTreeSet as Vec;"));
     }
 
     fn gate_owner() -> FunctionSummary {

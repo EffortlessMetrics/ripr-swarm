@@ -154,9 +154,30 @@ pub(in crate::analysis::classify) fn owner_adaptor_tail(
     adaptor_tail_of(&owner.body)
 }
 
+/// The owner's adaptor tail when rules 1 and 2 may read it: admitted by
+/// [`owner_adaptor_tail`], and its `collect`, if any, builds the standard
+/// `Vec` in the owner's file ([`AdaptorTail::keeps_standard_vec`]). The
+/// owner-return pin, activation and same-test pairing all ask this one
+/// question.
+pub(in crate::analysis::classify) fn admitted_owner_adaptor_tail(
+    owner: &FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<AdaptorTail> {
+    let tail = owner_adaptor_tail(owner)?;
+    let source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| &*facts.data().source);
+    tail.keeps_standard_vec(source, index).then_some(tail)
+}
+
 /// [`owner_adaptor_tail`] over the owner's text from `fn` to its closing
 /// brace.
 pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<AdaptorTail> {
+    // Most owners iterate nothing; skip the parse for them.
+    if !body.contains(".iter()") {
+        return None;
+    }
     let masked = mask_comments_and_strings(body);
     if has_unbounded_macro(&masked)
         || !whole_word_offsets(&masked, "return").is_empty()

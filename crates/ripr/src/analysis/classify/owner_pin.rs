@@ -1533,15 +1533,8 @@ impl OwnerReturnPin {
             // RIPR-SPEC-0260 rule 2: only a changed return value that is the
             // whole admitted adaptor tail; the test side reads the input.
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
-                closure_adaptor::owner_adaptor_tail(owner)
+                closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                     .filter(|tail| tail.tail_is(&probe.expression))
-                    .filter(|tail| {
-                        let source = index
-                            .files()
-                            .get(&owner.file)
-                            .map(|facts| &*facts.data().source);
-                        tail.keeps_standard_vec(source, index)
-                    })
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                     })?
