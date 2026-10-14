@@ -8707,15 +8707,13 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
     // workspace and an unpinned route would resolve in the wrong directory,
     // and with the probe family, so a line holding several gap families
     // cannot stub another seam. The root renders through `shell_arg` (so it
-    // is quoted when the path needs it, e.g. a space in the temp directory)
+    // is quoted when the path needs it, with embedded quotes POSIX-escaped)
     // and with `/` separators on Windows (`root_path_display`), so compare
-    // against the quote-stripped, separator-normalized suggestion.
+    // the quote-stripped, separator-normalized form on both sides.
     let normalized_stderr = stderr.replace('\'', "").replace('\\', "/");
+    let normalized_root = root_arg.replace('\'', "").replace('\\', "/");
     assert!(
-        normalized_stderr.contains(&format!(
-            "ripr agent stub --root {}",
-            root_arg.replace('\\', "/")
-        )),
+        normalized_stderr.contains(&format!("ripr agent stub --root {normalized_root}")),
         "the refusal must pin the stub route to the repair root:\n{stderr}"
     );
     assert!(
