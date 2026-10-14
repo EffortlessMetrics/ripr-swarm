@@ -530,6 +530,51 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
             "ensure!(matches!(r, /* , /* , */ */ Ok(3)) == true);",
             &exact,
         ),
+        // #7822: brackets inside a nested comment must not hide a pinned
+        // pattern compared with a bool. The same comment in a closure
+        // already keeps exact credit; the bool-comparison path must too.
+        // Unpinned patterns with that comment stay weak: the fix only
+        // restores polarity, it does not promote an unpinned match.
+        (
+            "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true);",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , ( [ /* , ) ] */ } */ Some(_))));",
+            &weak,
+        ),
+        (
+            "assert!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == false);",
+            &weak,
+        ),
+        (
+            "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , ( [ /* , ) ] */ } */ Some(3))));",
+            &exact,
+        ),
+        (
+            "assert!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "assert!(true == matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)));",
+            &exact,
+        ),
+        (
+            "assert!((matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3))) == true);",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, // , ( [ ) ] }\n Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, // , ( [ ) ] }\n Ok(_)) == true);",
+            &weak,
+        ),
         // Rule 1 already reads a compared pattern nested in a chain as not
         // positive, whatever its pattern.
         ("assert!(ready && matches!(r, Ok(3)) == true);", &weak),
