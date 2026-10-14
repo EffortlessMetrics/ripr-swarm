@@ -110,10 +110,11 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     (comparison == Some("!=") || relational).then_some(BoolOperandReading::Capped)
 }
 
-/// `text` through any leading `!` or trailing `.not()`, and whether an odd
-/// number of them applied. `!` binds tighter than a binary operator, so it
-/// negates the whole only when the rest is one operand (`!(a && b)`, not
-/// `!flag && b`).
+/// `text` through any leading `!`, trailing `.not()` or comparison with a
+/// boolean literal (`X == false`, `X != true`, `X == true`), and whether
+/// an odd number of negations applied. `!` binds tighter than a binary
+/// operator, so it negates the whole only when the rest is one operand
+/// (`!(a && b)`, not `!flag && b`).
 fn strip_negations(text: &str) -> (&str, bool) {
     let mut core = unwrap_parentheses(text);
     let mut negated = false;
@@ -127,12 +128,37 @@ fn strip_negations(text: &str) -> (&str, bool) {
             core = inner;
         } else if let Some(receiver) = strip_not_call(core) {
             core = unwrap_parentheses(receiver.trim());
+        } else if let Some((operand, flips)) = literal_compared_operand(core) {
+            core = operand;
+            if !flips {
+                continue;
+            }
         } else {
             break;
         }
         negated = !negated;
     }
     (core, negated)
+}
+
+/// The operand of a top-level `==` or `!=` whose other side is a boolean
+/// literal, and whether the comparison negates it (`X == false`).
+fn literal_compared_operand(text: &str) -> Option<(&str, bool)> {
+    // `==` binds tighter than `&&` and `||`: in `a && x == false` the
+    // literal compares only `x`.
+    if split_top_level_conjuncts(text).len() > 1 || has_top_level_disjunction(text) {
+        return None;
+    }
+    let (at, width) = top_level_comparison_operator(text)?;
+    let not_equal = text.get(at..at + width)? == "!=";
+    let (left, right) = (text.get(..at)?, text.get(at + width..)?);
+    let literal = |side: &str| boolean_literal_value(mask_comments_and_strings(side).trim());
+    let (operand, value) = match (literal(left), literal(right)) {
+        (None, Some(value)) => (left, value),
+        (Some(value), None) => (right, value),
+        _ => return None,
+    };
+    Some((unwrap_parentheses(operand.trim()), value == not_equal))
 }
 
 /// Whether `text` has no top-level binary operator the bool rules read.
@@ -146,29 +172,20 @@ fn is_single_operand(text: &str) -> bool {
 }
 
 /// Whether one conjunct of a chain asserted true states only a relation: a
-/// negated test (`!matches!(..)`, `!(a == b)`), a `!=` or relational
-/// comparison, or a comparison asserted false (`(a == b) == false`).
+/// negated test (`!matches!(..)`, `!(a == b)`, `(a == b) == false`) or a
+/// `!=` or relational comparison, through any literal comparison
+/// (`(r != Err(E::Bad)) == true`). A negated bool value (`x == false`,
+/// `!x`) pins it, like `!is_valid(x)`.
 fn conjunct_states_relation(conjunct: &str) -> bool {
     let (core, negated) = strip_negations(conjunct.trim());
     let relational = has_top_level_relational_operator(core);
     let masked = mask_comments_and_strings(core);
     let holds_test =
         relational || masked.contains("matches!") || masked.contains("==") || masked.contains("!=");
-    if (negated && holds_test) || relational {
-        return true;
-    }
-    let Some((at, width)) = top_level_comparison_operator(core) else {
-        return false;
-    };
-    let literal = |side: Option<&str>| {
-        side.and_then(|side| boolean_literal_value(mask_comments_and_strings(side).trim()))
-    };
-    let (left, right) = (literal(core.get(..at)), literal(core.get(at + width..)));
-    match core.get(at..at + width) {
-        Some("!=") => left != Some(false) && right != Some(false),
-        Some("==") => left == Some(false) || right == Some(false),
-        _ => false,
-    }
+    (negated && holds_test)
+        || relational
+        || top_level_comparison_operator(core).and_then(|(at, width)| core.get(at..at + width))
+            == Some("!=")
 }
 
 /// The non-literal operand of a comparison with a boolean literal, whether
@@ -354,7 +371,7 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
 }
 
 /// Whether `before` (masked) ends inside the condition or scrutinee of an
-/// `if`, `while` or `match`: its last such keyword has no `{` after it
+/// `if`, `while` or `match` keyword whose condition is still open there
 /// (`flag == if ready && matches!(..) { false } else { true }`).
 fn in_keyword_condition(before: &str) -> bool {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';

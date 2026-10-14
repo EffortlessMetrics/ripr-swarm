@@ -697,6 +697,15 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ),
         ("assert_eq!(flag && !(a == b), true);", &weak),
         ("assert_eq!(flag && !(score(2) < 3), true);", &weak),
+        (
+            "assert_eq!(flag && (r != Err(E::Bad)) == true, true);",
+            &weak,
+        ),
+        ("assert_eq!((r != Err(E::Bad)) == true, true);", &weak),
+        ("assert_eq!(flag && (score(2) < 3) == true, true);", &weak),
+        // A bool value compared with `false` pins it, like `!x`.
+        ("assert_eq!(flag && x == false, true);", &exact),
+        ("assert_eq!(x == false, true);", &exact),
         ("assert_eq!(a == b && c != d, true);", &exact),
         // A leading `!` binds to its own operand, not the whole chain.
         ("assert_eq!(!flag && matches!(r, Ok(3)), true);", &exact),

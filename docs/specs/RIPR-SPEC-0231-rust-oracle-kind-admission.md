@@ -261,10 +261,12 @@ Two pattern terms are used below.
    `<T as Tr>::f(x) == y`). An `&&`
    chain asserted true with a `matches!` conjunct and no pinning `==`
    conjunct reads like the same chain in `assert!` (rule 3); with no
-   pinning `==` conjunct, a negated test (`!matches!(..)`, `!(a == b)`), a
-   `!=` or relational comparison or a comparison asserted false as a
-   conjunct caps (`assert_eq!(score(2) != 0 && flag, true)`,
-   `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`). A leading `!`
+   pinning `==` conjunct, a negated test (`!matches!(..)`, `!(a == b)`,
+   `(a == b) == false`) or a `!=` or relational comparison as a conjunct,
+   through any literal comparison (`(r != Err(E::Bad)) == true`), caps
+   before the chain is read (`assert_eq!(score(2) != 0 && flag, true)`,
+   `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`); a bool value
+   compared with `false` pins it like `!x`. A leading `!`
    negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
