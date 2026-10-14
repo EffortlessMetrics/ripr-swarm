@@ -2629,15 +2629,21 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
-    // zero-argument `expect_err()` is a mock's expectation for a method
-    // named `err`, not `Result::expect_err`.
+    // `.expect_err(<message>)` whose argument group closes `expr`. An empty
+    // group (`expect_err()`, `expect_err( )`) is a mock's expectation for a
+    // method named `err`, not `Result::expect_err`; `without_expect_err`
+    // applies the same rule, so both adapters agree on it.
+    // Masking keeps byte offsets, and blanks a message's quotes, so the
+    // arguments are read back from `expr` itself.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
-        return false;
-    }
-    // Find last `.expect_err(`
-    expr.contains(".expect_err(")
+    let masked = mask_comments_and_strings(expr);
+    let masked = masked.trim_end();
+    let close = masked.len().saturating_sub(1);
+    masked
+        .match_indices(".expect_err(")
+        .map(|(start, call)| start + call.len() - 1)
+        .find(|&open| balanced_group_end(masked, open) == Some(close))
+        .is_some_and(|open| !expr[open + 1..close].trim().is_empty())
 }
 
 pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {

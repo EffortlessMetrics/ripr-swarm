@@ -14302,6 +14302,7 @@ tests = [
   "crates/ripr/tests/question_mark_side_flip.rs::a_removed_question_mark_line_is_never_exposed",
   "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::macro_definitions_and_inner_cfg_make_a_test_file_unreadable",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0227_uncompared_expect_err_reads_like_unwrap_err",
 ]
 fixtures = []
 code = [
