@@ -366,13 +366,22 @@ impl Backend {
     /// See RIPR-SPEC-0105 for the design rationale.
     pub(super) async fn refresh_diagnostics(&self, scope: RefreshScope, reason: RefreshReason) {
         if self.configuration_failure().is_some() {
+            eprintln!("[RD] bail config_failure scope={scope:?} reason={reason:?}");
             return;
         }
         let authority = self.workspace_root_authority();
         let Some(root) = authority.effective_root.clone() else {
+            eprintln!(
+                "[RD] bail no-root scope={scope:?} reason={reason:?} state={:?}",
+                authority.state
+            );
             return;
         };
         if !authority.allows_analysis() {
+            eprintln!(
+                "[RD] authority-blocked scope={scope:?} reason={reason:?} state={:?}",
+                authority.state
+            );
             if matches!(
                 (&authority.state, scope),
                 (WorkspaceRootState::RootChanged, RefreshScope::Full)
@@ -6185,7 +6194,22 @@ impl Backend {
             && health.attempt_id.is_none()
             && health.reason.is_none()
             && health.current_input_identity.is_none();
-        if !legacy_test_snapshot && !health.allows_current_repairs() {
+        // A same-input refresh that is merely queued or in flight does not
+        // make the committed snapshot's evidence stale: the snapshot's
+        // evidence describes exactly the input the running refresh is
+        // re-deriving, so the copy serves current evidence instead of a
+        // staleness disclosure (#7408 matrix — the save's debounced refresh
+        // racing the context copy read the just-committed full-seam snapshot
+        // as stale). Staleness stays for inputs that genuinely moved.
+        let same_input_refresh_in_flight = matches!(
+            health.state,
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) && health.current_input_identity.is_some()
+            && health.current_input_identity == snapshot.input_identity_id();
+        if !same_input_refresh_in_flight
+            && !legacy_test_snapshot
+            && !health.allows_current_repairs()
+        {
             return Some("analysis input is no longer current; refresh the workspace evidence");
         }
         if snapshot.seams_deferred {

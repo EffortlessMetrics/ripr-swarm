@@ -606,6 +606,29 @@ mod tests {
     }
 
     #[test]
+    fn same_input_interactive_arriving_while_full_is_active_is_deduplicated() -> Result<(), String>
+    {
+        let scheduler = RefreshScheduler::default();
+        let RefreshDecision::Start(full) = request(&scheduler, 2, RefreshScope::Full) else {
+            return Err("full request should start".to_string());
+        };
+        let full = *full;
+        // The save's debounced interactive request for the same input is
+        // absorbed by the running full refresh (scope-covered identities
+        // match): the full's evidence already covers that input.
+        if request(&scheduler, 2, RefreshScope::Interactive) != RefreshDecision::Deduplicated {
+            return Err("same-input interactive request should be absorbed".to_string());
+        }
+
+        // When the full refresh publishes, nothing superseded it: the
+        // scheduler is idle with the full recorded as completed.
+        if scheduler.finish(&full, true).is_some() {
+            return Err("no request should remain after the absorbed request".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn deduplicates_same_input_and_full_scope_covers_interactive_scope() -> Result<(), String> {
         let scheduler = RefreshScheduler::default();
         let RefreshDecision::Start(active) = request(&scheduler, 1, RefreshScope::Full) else {
