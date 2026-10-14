@@ -1270,68 +1270,228 @@ fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), Strin
 }
 
 #[test]
+fn a_mock_passed_to_a_classmethod_owner_pins_its_arguments() -> Result<(), String> {
+    // #7634: a classmethod or staticmethod owner is called on its imported
+    // class (rule 9), and its binding decorator leaves the returned mock
+    // unchanged.
+    const IMPORTS: &str = "from unittest.mock import Mock\n\nfrom src.other import Other\nfrom src.shop import Service";
+    // `decorators` are the owner's decorator lines; the changed line is the
+    // first call in the body.
+    let class = |decorators: &[&str], signature: &str, test: &str| {
+        let head: String = decorators
+            .iter()
+            .map(|decorator| format!("    @{decorator}\n"))
+            .collect();
+        classify(
+            &format!(
+                "class Service:\n{head}    def run({signature}):\n        handler(2)\n        return handler\n"
+            ),
+            decorators.len() + 3,
+            "        handler(1)",
+            &test_module(IMPORTS, test),
+        )
+    };
+    let returned =
+        "def test_run():\n    m = Service.run(Mock())\n    m.assert_called_once_with(2)\n";
+    let passed =
+        "def test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n";
+    for (decorator, signature) in [("classmethod", "cls, handler"), ("staticmethod", "handler")] {
+        for test in [returned, passed] {
+            assert_eq!(
+                class(&[decorator], signature, test)?,
+                ExposureClass::Exposed,
+                "@{decorator}: {test}"
+            );
+        }
+    }
+    // The class through an import alias, and a staticmethod whose handler is
+    // not its first parameter.
+    assert_eq!(
+        classify(
+            "class Service:\n    @classmethod\n    def run(cls, handler):\n        handler(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                "from unittest.mock import Mock\n\nfrom src.shop import Service as S",
+                "def test_run():\n    h = Mock()\n    S.run(h)\n    h.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        class(
+            &["staticmethod"],
+            "tag, handler",
+            "def test_run():\n    h = Mock()\n    Service.run(1, h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A classmethod's receiver binds the class whatever it is named, so the
+    // local passed second is the handler, not the first parameter after it.
+    let klass = "klass, handler, audit";
+    assert_eq!(
+        class(
+            &["classmethod"],
+            klass,
+            "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // `audit` gets 2 before and after, so its expectation cannot fail.
+    assert_eq!(
+        classify(
+            "class Service:\n    @classmethod\n    def run(klass, handler, audit):\n        handler(2)\n        audit(2)\n",
+            4,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // `@classmethod` over `@staticmethod` binds no receiver: `h` is the
+    // handler, and `a`, which gets 2 either way, is not read.
+    assert_ne!(
+        classify(
+            "class Service:\n    @classmethod\n    @staticmethod\n    def run(handler, audit):\n        handler(2)\n        audit(2)\n",
+            5,
+            "        handler(1)",
+            &test_module(
+                IMPORTS,
+                "def test_run():\n    h = Mock()\n    a = Mock()\n    Service.run(h, a)\n    a.assert_called_once_with(2)\n",
+            ),
+        )?,
+        ExposureClass::Exposed
+    );
+    // A later import of the same name binds another class.
+    assert_ne!(
+        class(
+            &["classmethod"],
+            "cls, handler",
+            "from src.other import Other as Service\n\n\ndef test_run():\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // Another decorator stacked on the classmethod may change what the call
+    // returns, so the result is not the mock passed; the passed local still
+    // reads it.
+    let cached = ["classmethod", "functools.cache"];
+    assert_eq!(
+        class(&cached, "cls, handler", returned)?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        class(&cached, "cls, handler", passed)?,
+        ExposureClass::Exposed
+    );
+    // Not the owner on that class: an instance method called on the class, a
+    // decorator that only ends in `classmethod` or `staticmethod`, the same method on another
+    // class, and a class name the test rebinds (rule 9).
+    for (decorators, signature, test) in [
+        (&[][..], "self, handler", passed),
+        (&["lib.fake_classmethod"][..], "cls, handler", passed),
+        (
+            &["lib.fake_staticmethod"][..],
+            "handler",
+            "def test_run():\n    s = Service()\n    h = Mock()\n    s.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    h = Mock()\n    Other.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+        (
+            &["classmethod"][..],
+            "cls, handler",
+            "def test_run():\n    Service = Other\n    h = Mock()\n    Service.run(h)\n    h.assert_called_once_with(2)\n",
+        ),
+    ] {
+        // Either reading fails closed; neither credits the mock.
+        assert!(
+            matches!(
+                class(decorators, signature, test)?,
+                ExposureClass::WeaklyExposed | ExposureClass::StaticUnknown
+            ),
+            "{decorators:?} {signature}: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), String> {
     // The gate applies to `p.m(...)` too: `abs(user)` may hand the mock the
     // same value, while a scaled or added argument differs at a nonzero input
     // (RIPR-SPEC-0238 Decision 15).
-    let class = |new: &str, old: &str| {
+    //
+    // Each test pins the arguments the new call passes at `user == 3`, so it
+    // passes on the new code; whether it also passes on the old code is what
+    // the verdict reads.
+    let class = |new: &str, old: &str, pinned: &str| {
         classify(
-            &format!("def notify(client, user):\n    client.send({new})\n"),
+            &format!("def notify(client, user, other=5):\n    client.send({new})\n"),
             2,
             &format!("    client.send({old})"),
             &test_module(
                 "from unittest.mock import Mock\n\nfrom src.shop import notify",
-                "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with(3)\n",
+                &format!(
+                    "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with({pinned})\n"
+                ),
             ),
         )
     };
     // Any rewrite that keeps the old argument inside it, other than literal
     // arithmetic, can return it unchanged at the test's input.
-    for (new, old) in [
-        ("abs(user)", "user"),
-        ("user", "int(user)"),
-        ("abs(abs(user))", "user"),
-        ("float(abs(user))", "user"),
-        ("max(user, 0)", "user"),
-        ("user or 0", "user"),
-        ("(user)", "user"),
-        ("user.real", "user"),
-        ("2.0", "2"),
-        ("*users", "user"),
+    for (new, old, pinned) in [
+        ("abs(user)", "user", "3"),
+        ("user", "int(user)", "3"),
+        ("abs(abs(user))", "user", "3"),
+        ("float(abs(user))", "user", "3.0"),
+        ("max(user, 0)", "user", "3"),
+        ("user or 0", "user", "3"),
+        ("(user)", "user", "3"),
+        ("user.real", "user", "3"),
+        ("2.0", "2", "2"),
+        ("*[user]", "user", "3"),
         // An identity operation or a requoted string hands the mock the same
         // value.
-        ("user + 0", "user"),
-        ("user * 1", "user"),
-        ("user ** 1", "user"),
-        ("0 + user", "user"),
-        ("1 * user", "user"),
-        ("user + ''", "user"),
-        ("\"hi\"", "'hi'"),
-        ("1_000", "1000"),
+        ("user + 0", "user", "3"),
+        ("user * 1", "user", "3"),
+        ("user ** 1", "user", "3"),
+        ("0 + user", "user", "3"),
+        ("1 * user", "user", "3"),
+        ("str(user) + ''", "str(user)", "'3'"),
+        ("\"hi\"", "'hi'", "'hi'"),
+        ("1_000", "1000", "1000"),
     ] {
         assert_eq!(
-            class(new, old)?,
+            class(new, old, pinned)?,
             ExposureClass::WeaklyExposed,
             "{old} -> {new}"
         );
     }
-    for (new, old) in [
-        ("user * 100", "user"),
-        ("user + 1", "user"),
-        ("1 + user", "user"),
-        ("user", "user - 1"),
-        ("user, 1", "user"),
-        ("abs(user), 1", "user, 2"),
-        ("2.5", "2"),
-        ("'welcome'", "'hi'"),
-        ("other", "user"),
-        ("user, tag=1", "user"),
-        ("0 - user", "user"),
-        ("user - 1", "user"),
-        ("'1'", "1"),
-        ("user, tag=1", "user, kind=1"),
+    for (new, old, pinned) in [
+        ("user * 100", "user", "300"),
+        ("user + 1", "user", "4"),
+        ("1 + user", "user", "4"),
+        ("user", "user - 1", "3"),
+        ("user, 1", "user", "3, 1"),
+        ("abs(user), 1", "user, 2", "3, 1"),
+        ("2.5", "2", "2.5"),
+        ("'welcome'", "'hi'", "'welcome'"),
+        ("other", "user", "5"),
+        ("user, tag=1", "user", "3, tag=1"),
+        ("0 - user", "user", "-3"),
+        ("user - 1", "user", "2"),
+        ("'1'", "1", "'1'"),
+        ("user, tag=1", "user, kind=1", "3, tag=1"),
     ] {
-        assert_eq!(class(new, old)?, ExposureClass::Exposed, "{old} -> {new}");
+        assert_eq!(
+            class(new, old, pinned)?,
+            ExposureClass::Exposed,
+            "{old} -> {new}"
+        );
     }
     // An old line that is not a call statement cannot be compared: it fails
     // closed rather than reading the new call as a change.
