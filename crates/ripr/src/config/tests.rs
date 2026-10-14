@@ -1164,6 +1164,8 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
     let finding_affecting = [
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
+        "languages.python.handwritten_files",
+        "languages.typescript.handwritten_files",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
@@ -1390,6 +1392,8 @@ proptest! {
             languages: Some(RawLanguagesConfig {
                 enabled: Some(vec!["rust".to_string()]),
                 rust: None,
+                python: None,
+                typescript: None,
             }),
             profiles: None,
             typescript: Some(RawTypescriptConfig {
@@ -1814,6 +1818,52 @@ fn rust_handwritten_files_accepts_scoped_recovery_configuration() -> Result<(), 
         config.languages.rust.handwritten_files,
         ["tests/generated_weight_tests.rs"]
     );
+    Ok(())
+}
+
+#[test]
+fn python_and_typescript_handwritten_files_parse_and_validate() -> Result<(), String> {
+    let config = parse_config(
+        "[languages.python]
+handwritten_files = ['build/lib/pipeline.py']
+[languages.typescript]
+handwritten_files = ['dist/pricing.ts', 'env/config.mjs']
+",
+    )?;
+    assert_eq!(
+        config.languages.python.handwritten_files,
+        ["build/lib/pipeline.py"]
+    );
+    assert_eq!(
+        config.languages.typescript.handwritten_files,
+        ["dist/pricing.ts", "env/config.mjs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn python_and_typescript_handwritten_files_reject_wrong_extensions_and_globs() -> Result<(), String>
+{
+    for (section, paths) in [
+        ("languages.python", "['build/lib/pipeline.ts']"),
+        ("languages.python", "['build/*.py']"),
+        ("languages.typescript", "['dist/pricing.py']"),
+        ("languages.typescript", "['dist/*.ts']"),
+    ] {
+        let result = parse_config(&format!(
+            "[{section}]
+handwritten_files = {paths}
+"
+        ));
+        match result {
+            Err(_e) => {}
+            Ok(_) => {
+                return Err(format!(
+                    "invalid [{section}] handwritten_files declaration was accepted: {paths}"
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

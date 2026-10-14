@@ -278,6 +278,73 @@ fn porcelain_parser_pairs_rename_sources_and_rejects_malformed_records() -> Resu
 }
 
 #[test]
+fn porcelain_parser_records_unrouted_snapshot_inputs() -> Result<(), String> {
+    // RIPR-SPEC-0258: `.snap` files, `package.json` and runner configs
+    // decide the committed-snapshot reading, so edited, untracked, ignored
+    // and renamed-away ones are recorded, routed (`.js` / `.ts` configs) or
+    // not; routed ones also keep their source entries.
+    let parsed = parse_porcelain_z(
+        b" M test/__snapshots__/a.test.ts.snap ?? package.json !! jest.config.js R  vite.config.ts vitest.config.ts  M README.md  M src/a.ts ",
+    )?;
+    assert_eq!(
+        parsed.snapshot_inputs,
+        vec![
+            "test/__snapshots__/a.test.ts.snap",
+            "package.json",
+            "jest.config.js",
+            "vite.config.ts",
+            "vitest.config.ts",
+        ]
+    );
+    assert_eq!(
+        parsed.dirty,
+        vec!["vite.config.ts", "vitest.config.ts", "src/a.ts"]
+    );
+    assert_eq!(parsed.ignored_files, vec!["jest.config.js"]);
+    assert_eq!(parsed.untracked, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn snapshot_inputs_differ_only_in_their_own_directory() {
+    let root = std::env::temp_dir().join("ripr-committed-source-snapshot-inputs");
+    let mut overlay = CommittedSourceOverlay::from_entries(&root, [])
+        .with_snapshot_inputs(&["test/__snapshots__/a.test.ts.snap", "package.json"]);
+    overlay.ignored.directories = vec!["build".to_string()];
+    let overlay = Some(Arc::new(overlay));
+    with_overlay(overlay, || {
+        assert!(snapshot_inputs_differ_in(
+            &root,
+            Path::new("test/__snapshots__")
+        ));
+        assert!(snapshot_inputs_differ_in(&root, Path::new("")));
+        assert!(!snapshot_inputs_differ_in(&root, Path::new("test")));
+        assert!(!snapshot_inputs_differ_in(
+            &root,
+            Path::new("src/__snapshots__")
+        ));
+        // A directory inside an ignored one holds nothing `HEAD` has.
+        assert!(snapshot_inputs_differ_in(
+            &root,
+            Path::new("build/__snapshots__")
+        ));
+        assert!(!snapshot_inputs_differ_in(&root, Path::new("src")));
+        // Another root is not this overlay's.
+        assert!(!snapshot_inputs_differ_in(
+            Path::new("/elsewhere"),
+            Path::new("")
+        ));
+    });
+    assert!(!snapshot_inputs_differ_in(&root, Path::new("")));
+    // With nothing dirty at the root, the root does not differ.
+    let clean = CommittedSourceOverlay::from_entries(&root, [])
+        .with_snapshot_inputs(&["test/__snapshots__/a.test.ts.snap"]);
+    with_overlay(Some(Arc::new(clean)), || {
+        assert!(!snapshot_inputs_differ_in(&root, Path::new("")));
+    });
+}
+
+#[test]
 fn missing_on_disk_disclosure_names_bounded_paths() {
     // The disclosure lives with the pipeline wiring; keep the key contract
     // here: only committed (Some) entries missing on disk are named.
@@ -286,6 +353,7 @@ fn missing_on_disk_disclosure_names_bounded_paths() {
         canonical_root: None,
         ignored: IgnoredPaths::default(),
         untracked: BTreeSet::new(),
+        snapshot_inputs: BTreeSet::new(),
         entries: BTreeMap::from([
             ("gone.rs".to_string(), Some(b"x".to_vec())),
             ("never.rs".to_string(), None),
