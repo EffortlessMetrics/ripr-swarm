@@ -62,7 +62,7 @@ pub(crate) fn probes_for_file_with_relations(
     let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
     // Old lines whose replacement is a guard-only arm edit: that edit's
     // predicate already carries the old guard as `before`.
-    let mut guard_edit_counterparts = Vec::<String>::new();
+    let mut guard_edit_counterparts = Vec::<usize>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -160,10 +160,12 @@ pub(crate) fn probes_for_file_with_relations(
                         })
                     })
             };
-            if let Some(removed) = removed_counterpart.as_deref()
-                && canonical_shapes.iter().any(|shape| guard_only_arm(shape))
+            // The positional counterpart's old-side line, not its text: an
+            // identical arm deleted elsewhere in the file keeps its probe.
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && canonical_shapes.iter().any(&guard_only_arm)
             {
-                guard_edit_counterparts.push(removed.trim().to_string());
+                guard_edit_counterparts.push(removed.line);
             }
             let canonical_shapes = canonical_shapes
                 .iter()
@@ -316,10 +318,7 @@ pub(crate) fn probes_for_file_with_relations(
         // A guard-only arm edit replaced this line, and its predicate holds
         // the old guard; probing the old line again would read the same
         // guard as deleted behavior.
-        if guard_edit_counterparts
-            .iter()
-            .any(|counterpart| counterpart == text)
-        {
+        if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {

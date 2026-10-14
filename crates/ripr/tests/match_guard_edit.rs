@@ -236,3 +236,94 @@ fn a_second_match_leaves_the_guard_binding_unread() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_loop_variable_named_like_a_guard_binding_is_not_the_parameter() -> Result<(), String> {
+    // Control (CodeRabbit on #7811): the loop's `p` is not the arm binding,
+    // so `tier(10)` is not boundary evidence for `p >= 10`.
+    let lib = tier(
+        "    for p in 0..3 {\n        if p >= 10 {\n            return Tier::Bronze;\n        }\n    }\n",
+    );
+    let test = "use guard_edit::{Tier, tier};\n\n#[test]\nfn ten_is_bronze() {\n    assert_eq!(tier(10), Tier::Bronze);\n}\n";
+    let findings =
+        findings_on_changed_line(&lib, "        if p >= 10 {", "        if p > 10 {", test)?;
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_identical_arm_deleted_elsewhere_keeps_its_probe() -> Result<(), String> {
+    // Control (CodeRabbit on #7811): only the guard edit's own old line is
+    // skipped; the same text deleted from `sign2` is still probed.
+    let lib = format!(
+        "{SIGN}\n/// Second.\npub fn sign2(n: i64) -> i8 {{\n    match n {{\n        0 => 0,\n        _ => 1,\n    }}\n}}\n"
+    );
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n /// The sign of `n`.\n pub fn sign(n: i64) -> i8 {\n     match n {\n-        n if n < 0 => -1,\n+        n if 0 > n => -1,\n         0 => 0,\n         _ => 1,\n     }\n@@ -10,6 +10,5 @@\n /// Second.\n pub fn sign2(n: i64) -> i8 {\n     match n {\n-        n if n < 0 => -1,\n         0 => 0,\n         _ => 1,\n";
+    let test = "use guard_edit::{sign, sign2};\n\n#[test]\nfn signs() {\n    assert_eq!(sign(-5), -1);\n    assert_eq!(sign(0), 0);\n    assert_eq!(sign2(9), 1);\n}\n";
+    let repo = TempRepo::create(&lib, &[], test, diff)?;
+    let output = repo.check()?;
+    let deleted = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.expression == "n if n < 0 => -1,")
+        .count();
+    assert!(deleted >= 1, "{:?}", output.findings);
+    assert!(
+        output
+            .findings
+            .iter()
+            .any(|finding| finding.probe.expression == "0 > n"),
+        "{:?}",
+        output.findings
+    );
+    Ok(())
+}
+
+const BOUNDARY_TESTS: &str = "use guard_edit::{Tier, tier};\n\n#[test]\nfn around_one_hundred() {\n    assert_eq!(tier(99), Tier::Silver);\n    assert_eq!(tier(100), Tier::Silver);\n    assert_eq!(tier(101), Tier::Silver);\n    assert_eq!(tier(400), Tier::Gold);\n}\n";
+
+#[test]
+fn a_rebound_parameter_is_not_the_scrutinee() -> Result<(), String> {
+    // Control (review on #7811): `let points = points - 50;` moves the real
+    // boundary to `points == 150`, so `tier(100)` is no boundary evidence.
+    let lib = tier("    let points = points - 50;\n").replace("p if 100 <= p", "p if 100 < p");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_unrebound_parameter_control_reads_exposed() -> Result<(), String> {
+    // Positive twin of the rebinding control: with the parameter matched
+    // directly, `tier(100)` sits on the boundary.
+    let lib = tier("").replace("p if 100 <= p", "p if 100 < p");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}

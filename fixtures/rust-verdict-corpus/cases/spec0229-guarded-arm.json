@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "tests/it.rs pins f(Some(5)) to 1; 5 > 3 and 5 > 4 both hold, so the guard edit passes. The changed arm is guarded, so selection is not provable either way. Spec cells: RIPR-SPEC-0229 example 5. ripr reads weakly_exposed on the match arm with no named missing discriminator, as the example requires; the predicate finding on the same line names v == 4 under the boundary rule, not the arm rule.",
+  "reasoning": "tests/it.rs pins f(Some(5)) to 1; 5 > 3 and 5 > 4 both hold, so the guard edit passes. The changed arm is guarded, so selection is not provable either way. Spec cells: RIPR-SPEC-0229 example 5. The guard-only edit carries only its predicate finding (#7811): it reads weakly_exposed and names v == 4 under the boundary rule, and no arm-selection discriminator is named, as the example requires.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "gap",

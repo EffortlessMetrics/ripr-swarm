@@ -2782,8 +2782,11 @@ fn starts_with_identifier_token(text: &str, token: &str) -> bool {
 /// A guarded binding arm (`p if 100 <= p =>`) in the body's only `match`,
 /// whose scrutinee is the parameter itself, binds the parameter's value to
 /// `p`, so the guard's boundary reads the parameter's inputs. Any second
-/// `match` (an arm could belong to either), a `let` of the same name, or a
-/// binding that is not a bare identifier leaves the operand unread.
+/// `match` (an arm could belong to either), any mention of the name off a
+/// guard line (a `let`, a loop variable, a closure parameter), any mention
+/// of the parameter outside the signature and the `match` line (a rebinding
+/// or shadowing), or a binding that is not a bare identifier leaves the
+/// operand unread.
 fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str) -> bool {
     let code = body
         .lines()
@@ -2806,11 +2809,31 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
                 })
         })
         && code.iter().any(|line| line.starts_with(&guard))
-        && !code.iter().any(|line| {
-            line.strip_prefix("let ")
-                .map(|rest| rest.trim_start_matches("mut ").trim_start())
-                .is_some_and(|rest| starts_with_identifier_token(rest, operand))
-        })
+        // Every other mention binds or reads some other `operand` (a loop
+        // variable, a closure parameter, a `let`), so the name is read as
+        // the arm binding only when it appears on guard lines alone.
+        && code
+            .iter()
+            .filter(|line| mentions_identifier(line, operand))
+            .all(|line| line.starts_with(&guard))
+        // The parameter itself must reach the `match` unchanged: any other
+        // mention (`let points = points - 50;`, a closure `|points|`) may
+        // rebind or shadow it, so the test argument is not the scrutinee.
+        && code
+            .iter()
+            .filter(|line| mentions_identifier(line, parameter))
+            .all(|line| {
+                line.contains("fn ")
+                    || line.strip_prefix("match ").is_some_and(|rest| {
+                        rest.strip_prefix(parameter)
+                            .is_some_and(|tail| tail.trim() == "{")
+                    })
+            })
+}
+
+fn mentions_identifier(line: &str, name: &str) -> bool {
+    line.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|word| word == name)
 }
 
 fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {

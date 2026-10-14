@@ -14259,6 +14259,10 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::a_guard_only_edit_without_the_boundary_input_stays_weak",
   "crates/ripr/tests/match_guard_edit.rs::a_guard_binding_reads_the_scrutinee_parameter_inputs",
   "crates/ripr/tests/match_guard_edit.rs::a_second_match_leaves_the_guard_binding_unread",
+  "crates/ripr/tests/match_guard_edit.rs::a_loop_variable_named_like_a_guard_binding_is_not_the_parameter",
+  "crates/ripr/tests/match_guard_edit.rs::an_identical_arm_deleted_elsewhere_keeps_its_probe",
+  "crates/ripr/tests/match_guard_edit.rs::a_rebound_parameter_is_not_the_scrutinee",
+  "crates/ripr/tests/match_guard_edit.rs::the_unrebound_parameter_control_reads_exposed",
 ]
 fixtures = [
   "fixtures/match_arm_blind",
