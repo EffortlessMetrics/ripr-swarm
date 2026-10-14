@@ -23590,8 +23590,8 @@ fn repair_route_status(root: &Path) -> Result<serde_json::Value, Box<dyn std::er
     Ok(serde_json::from_slice(&status.stdout)?)
 }
 
-/// Runs the before phase and returns the `--attempt ... --phase after`
-/// command it printed.
+/// Runs the before phase and returns the human next-step command it printed
+/// (`ripr continue --root … --attempt …` for an ordinary attempt).
 fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let root_arg = root.to_string_lossy().into_owned();
     let before = run_ripr(&[

@@ -408,12 +408,12 @@ fn persist_before_repair_attempt(
         // target's inline test module, so "strengthen" an existing test, or
         // any other byte of the production file, would fail the attempt.
         eprintln!(
-            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the --attempt command printed below. Any other edit fails the attempt terminally.",
+            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the command printed below. Any other edit fails the attempt terminally.",
             policy.selected_target.path()
         );
     } else {
         eprintln!(
-            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
+            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that one test surface fails the attempt terminally."
         );
     }
     eprintln!(
@@ -437,12 +437,13 @@ fn persist_before_repair_attempt(
             result.manifest_path.display()
         ))
     );
-    eprintln!(
-        "ripr: attempt next command: {}",
-        result.manifest.next_command
-    );
-    let next_powershell =
-        crate::output::markdown::powershell_text_variant(&result.manifest.next_command);
+    // Human next-step lines teach `ripr continue` for ordinary attempts
+    // (#7879). The persisted manifest and JSON continuation keep the
+    // advanced `--phase after` spelling.
+    let follow_up =
+        crate::agent::loop_commands::human_after_phase_follow_up(&result.manifest.next_command);
+    eprintln!("ripr: attempt next command: {follow_up}");
+    let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
     if let Some(form) = &next_powershell {
         eprintln!("ripr: attempt next command (PowerShell): {form}");
     }

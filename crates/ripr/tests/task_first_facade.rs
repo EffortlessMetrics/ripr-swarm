@@ -295,6 +295,27 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let manifest = read_manifest(root, &ids[0])?;
     assert_eq!(manifest["seam_id"], FIXTURE_SEAM);
     assert_eq!(manifest["state"], "awaiting_edit");
+    let persisted = manifest["next_command"]
+        .as_str()
+        .ok_or("manifest next_command missing")?;
+    assert!(
+        persisted.contains("ripr agent repair") && persisted.contains("--phase after"),
+        "persisted next_command stays the advanced after spelling:\n{persisted}"
+    );
+    let stderr = stderr_text(&repair);
+    let printed = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))?;
+    assert!(
+        printed.starts_with("ripr continue --root ")
+            && printed.contains(&format!("--attempt {}", ids[0])),
+        "human next command must name `ripr continue`:\n{printed}"
+    );
+    assert!(
+        !printed.contains("--phase after"),
+        "human next command must not teach `--phase after`:\n{printed}"
+    );
     // The compact RepairCard renders on stdout after the start, and every
     // line of the canonical `agent card` rendering appears in order.
     let card = run_ripr(
@@ -310,6 +331,10 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     )?;
     assert_exit(&card, 0, "agent card for the started seam");
     let facade_stdout = stdout_text(&repair);
+    assert!(
+        facade_stdout.contains(&format!("Next, after the test edit: {printed}")),
+        "stdout trailer must name the same ordinary continue route:\n{facade_stdout}"
+    );
     let facade_lines: Vec<&str> = facade_stdout.lines().collect();
     let card_stdout = stdout_text(&card);
     let mut cursor = 0usize;
@@ -339,6 +364,14 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         serde_json::from_slice(&status.stdout).map_err(|error| format!("status JSON: {error}"))?;
     assert_eq!(report["attempt"]["attempt_id"], ids[0].as_str());
     assert_eq!(report["attempt"]["status_class"], "awaiting_edit");
+    let status_command = report
+        .pointer("/next_action/command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("status JSON missing next_action.command:\n{report:#}"))?;
+    assert_eq!(
+        status_command, printed,
+        "status must name the same ordinary continue route the before phase printed"
+    );
     Ok(())
 }
 
