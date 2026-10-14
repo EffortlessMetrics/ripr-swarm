@@ -967,6 +967,14 @@ fn analyze_related_assertions(
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
         let credits_oracle = credits(*reason);
+        // #7794: kind alone does not connect a sibling parser equality
+        // to an effect in the owner reached by another test. Unknown
+        // standard-method dispatch is not an observation witness. Keep
+        // token/collection confirmation and opaque macro allowances.
+        let effect_kind_confirms = !is_effect_family(&probe.family)
+            || !(owner_reaching_related
+                && is_proximity_only(*reason)
+                && !invokes_opaque_macro(&test.body));
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -1203,6 +1211,7 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
                                         || (is_effect_family(&probe.family)
+                                            && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
                                                 test, assertion,
@@ -6943,6 +6952,87 @@ return Err(\"typed pin\".into());
             "a whole-object effect observer must clear observation_unverified even without a token: got `{}`",
             discriminate.summary
         );
+    }
+
+    #[test]
+    fn sibling_effect_kind_cannot_confirm_beside_owner_caller() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family, "persist_audit(record)");
+            let reaching = test_with_assertions("calls_owner", vec![]);
+            let sibling = test_with_assertions(
+                "parser_only",
+                vec![oracle(
+                    "assert_eq!(parsed, expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
+                let (_, discriminate, related) = reveal_evidence(
+                    &probe,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&sibling, reason),
+                    ],
+                );
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Weak,
+                    "{}",
+                    discriminate.summary
+                );
+                assert!(
+                    related.iter().any(|r| r.name == "parser_only"
+                        && r.oracle_kind == OracleKind::WholeObjectEquality)
+                );
+            }
+            // A solitary proximity observer retains the prior reading.
+            let (_, alone, _) =
+                reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
+            assert_eq!(alone.state, StageState::Yes);
+            // Direct/helper relations confirm without a shared token.
+            for reason in [
+                RelationReason::DirectOwnerCall,
+                RelationReason::HelperOwnerCall,
+            ] {
+                let (_, direct, _) = reveal_evidence(
+                    &probe,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&sibling, reason),
+                    ],
+                );
+                assert_eq!(direct.state, StageState::Yes);
+            }
+            // Actual token confirmation remains independent of kind.
+            let token = test_with_assertions(
+                "effect_named",
+                vec![oracle(
+                    "assert_eq!(persist_audit(record), expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            );
+            let (_, confirmed, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&token, RelationReason::SameTestFile),
+                ],
+            );
+            assert_eq!(confirmed.state, StageState::Yes);
+            // The established opaque-macro allowance remains explicit.
+            let mut opaque = sibling.clone();
+            opaque.body = "fixture_setup!();".into();
+            let (_, allowed, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&opaque, RelationReason::SameTestFile),
+                ],
+            );
+            assert_eq!(allowed.state, StageState::Yes);
+        }
     }
 
     /// RIPR-SPEC-0094 Part D (#7046 review): when the effect carrier refuses

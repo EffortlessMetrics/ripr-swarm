@@ -7221,6 +7221,9 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/tests/sibling_effect_oracle.rs::parser_only_decoys_cannot_supply_aggregation_discrimination",
+  "crates/ripr/tests/sibling_effect_oracle.rs::direct_effect_observer_retains_strong_credit",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::sibling_effect_kind_cannot_confirm_beside_owner_caller",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_family_match_only_without_token_downgrades_discriminate_to_weak",
@@ -7273,6 +7276,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
+  "fixtures/rust_sibling_effect_oracle",
   "fixtures/oracle_confirmation_mixed",
   "fixtures/owner_parameter_token_coincidence",
   "fixtures/self_computed_expected_value",
@@ -7301,6 +7305,9 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
+  "fixtures/rust_sibling_effect_oracle/expected/check.json",
+  "fixtures/rust_sibling_effect_oracle/expected/human.txt",
+  "fixtures/rust_sibling_effect_oracle/expected/human-full.txt",
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",

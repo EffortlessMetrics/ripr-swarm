@@ -1,0 +1,1005 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_sibling_effect_oracle/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:b9fe5ed16349f56f2b39e8c994eca5df75a47b51ae707e1aa62dda2e3d5156b2","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55",
+      "canonical_gap_id": "gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:call_deletion:call_deletion:.or_insert_with_btreeset_new",
+        "language": "rust",
+        "file": "src/sensors/ripr_limits.rs",
+        "owner": "module_limit_evidence",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": ".or_insert_with_btreeset_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/sensors/ripr_limits.rs",
+        "line": 137,
+        "expression": ".or_insert_with(BTreeSet::new)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)", "related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses strong exact value oracle: assert_eq!(missing[\"sources\"][0][\"state\"], \"unavailable\");", "related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses weak relational check oracle: assert!(contexts.iter().all(|context| context.len() <= 1024));", "related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses smoke smoke only oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some());", "related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses strong exact value oracle: assert_eq!(\n            parse_note(note(\"tests/日本語.rs\").trim()),\n            Some(vec![(\n                \"tests/日本語.rs\".into(),\n                \"rust_module_ambiguous_parent\".into()\n            )])\n        );", "related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected);", "source table row value \"disclosed\" at line 220", "source table row value 0 at line 220", "source table row value 1 at line 220", "source table row value 8 at line 220", "source table row value \"invalid_disclosure\" at line 221", "source table row value 0 at line 221", "source table row value 1 at line 221", "source function argument value detail_status = \"detail_unavailable\" at line 225"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":".or_insert_with(BTreeSet::new)","line":137}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: .or_insert_with(BTreeSet::new)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "220": "(&exact, 1, 0, 8, \"disclosed\"),",
+        "221": "(&over, 0, 1, 0, \"invalid_disclosure\"),",
+        "225": "let value = module_limit_evidence(temp.path(), \"detail_unavailable\");",
+        "340": "let missing = module_limit_evidence(dir, \"detail_unavailable\");",
+        "343": "(\"\", \"\", 0),",
+        "344": "(\"benign/n\", \"\", 0),",
+        "345": "(\"note\", \"\", 1),",
+        "346": "(\"\", \"note\", 1),",
+        "347": "(\"note\", \"note\", 1),",
+        "348": "(\"duplicate\", \"note\", 1),",
+        "357": "let value = module_limit_evidence(dir, \"ok\");",
+        "375": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"state\"],",
+        "379": "let value = module_limit_evidence(dir, \"detail_unavailable\");",
+        "393": "let exact = module_limit_evidence(dir, \"ok\");",
+        "401": "let over = module_limit_evidence(dir, \"ok\");",
+        "410": "let capped = module_limit_evidence(dir, \"ok\");",
+        "419": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"uninterpreted_lines\"],",
+        "424": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"state\"],"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 220,
+            "value": "\"disclosed\"",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "8",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "\"invalid_disclosure\"",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 225,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 340,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 343,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 343,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "\"benign/n\"",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 347,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 347,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 348,
+            "value": "\"duplicate\"",
+            "context": "table_row"
+          },
+          {
+            "line": 348,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 357,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 375,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 379,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 393,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 401,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 410,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 419,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 424,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 220,
+          "value": "\"disclosed\"",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "8",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "\"invalid_disclosure\"",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 225,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 340,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 343,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 343,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "\"benign/n\"",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 347,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 347,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 348,
+          "value": "\"duplicate\"",
+          "context": "table_row"
+        },
+        {
+          "line": 348,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 357,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 375,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 379,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 393,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 401,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 410,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 419,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 424,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        }
+      ],
+      "observed_values_total": 131,
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 53,
+      "related_tests": [
+        {
+          "name": "module_evidence_retains_single_pass_duplicates_benign_and_unavailable",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 337,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(missing[\"sources\"][0][\"state\"], \"unavailable\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "module_note_line_byte_boundary_excludes_line_terminators",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 194,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(contexts.iter().all(|context| context.len() <= 1024));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "module_note_context_limit_counts_utf8_bytes",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 268,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "assert!(parse_note(note(&exact_ascii).trim()).is_some());",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "module_note_contract_rejects_malformed_counts_reasons_and_paths",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 283,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(\n            parse_note(note(\"tests/日本語.rs\").trim()),\n            Some(vec![(\n                \"tests/日本語.rs\".into(),\n                \"rust_module_ambiguous_parent\".into()\n            )])\n        );",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "module_note_orientation_sentence_accepts_optional_next_step",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 238,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(parse_note(&oriented), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "read_prefix_rejects_non_regular_files",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 257,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(error.kind(), std::io::ErrorKind::Other);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "unresolved_target_location_is_required_and_positive",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 315,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(\n            parse_note(&make(\"src/a.rs:12\")),\n            Some(vec![(\n                \"src/a.rs:12\".into(),\n                \"rust_module_unresolved_target\".into()\n            )])\n        );",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "module_evidence_retains_single_pass_duplicates_benign_and_unavailable",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 337,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(value[\"entries\"].as_array().map(Vec::len), Some(count));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3",
+      "canonical_gap_id": "gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:side_effect:side_effect:.or_default",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/sensors/ripr_limits.rs:module_limit_evidence:side_effect:side_effect:.or_default",
+        "language": "rust",
+        "file": "src/sensors/ripr_limits.rs",
+        "owner": "module_limit_evidence",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": ".or_default"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/sensors/ripr_limits.rs",
+        "line": 137,
+        "expression": ".or_default()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: .or_default()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: .or_default()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: .or_default() (line 137)", "related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong exact value oracle: assert_eq!(parse_note(&oriented), expected);", "related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses strong whole object equality oracle: assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );", "related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses none unknown oracle: assert_eq!(missing[\"sources\"][0][\"state\"], \"unavailable\");", "related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses none unknown oracle: assert!(contexts.iter().all(|context| context.len() <= 1024));", "related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses none unknown oracle: assert!(parse_note(note(&exact_ascii).trim()).is_some());", "source table row value \"disclosed\" at line 220", "source table row value 0 at line 220", "source table row value 1 at line 220", "source table row value 8 at line 220", "source table row value \"invalid_disclosure\" at line 221", "source table row value 0 at line 221", "source table row value 1 at line 221", "source function argument value detail_status = \"detail_unavailable\" at line 225"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":".or_default()","line":137}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence call effect: .or_default()", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach module_limit_evidence: module_evidence_retains_single_pass_duplicates_benign_and_unavailable, module_note_line_byte_boundary_excludes_line_terminators, module_note_context_limit_counts_utf8_bytes"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "220": "(&exact, 1, 0, 8, \"disclosed\"),",
+        "221": "(&over, 0, 1, 0, \"invalid_disclosure\"),",
+        "225": "let value = module_limit_evidence(temp.path(), \"detail_unavailable\");",
+        "340": "let missing = module_limit_evidence(dir, \"detail_unavailable\");",
+        "343": "(\"\", \"\", 0),",
+        "344": "(\"benign/n\", \"\", 0),",
+        "345": "(\"note\", \"\", 1),",
+        "346": "(\"\", \"note\", 1),",
+        "347": "(\"note\", \"note\", 1),",
+        "348": "(\"duplicate\", \"note\", 1),",
+        "357": "let value = module_limit_evidence(dir, \"ok\");",
+        "375": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"state\"],",
+        "379": "let value = module_limit_evidence(dir, \"detail_unavailable\");",
+        "393": "let exact = module_limit_evidence(dir, \"ok\");",
+        "401": "let over = module_limit_evidence(dir, \"ok\");",
+        "410": "let capped = module_limit_evidence(dir, \"ok\");",
+        "419": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"uninterpreted_lines\"],",
+        "424": "module_limit_evidence(dir, \"ok\")[\"sources\"][0][\"state\"],"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 220,
+            "value": "\"disclosed\"",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 220,
+            "value": "8",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "\"invalid_disclosure\"",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 221,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 225,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 340,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 343,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 343,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "\"benign/n\"",
+            "context": "table_row"
+          },
+          {
+            "line": 344,
+            "value": "0",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 345,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 346,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 347,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 347,
+            "value": "1",
+            "context": "table_row"
+          },
+          {
+            "line": 348,
+            "value": "\"duplicate\"",
+            "context": "table_row"
+          },
+          {
+            "line": 348,
+            "value": "\"note\"",
+            "context": "table_row"
+          },
+          {
+            "line": 357,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 375,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 379,
+            "value": "detail_status = \"detail_unavailable\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 393,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 401,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 410,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 419,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 424,
+            "value": "detail_status = \"ok\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 220,
+          "value": "\"disclosed\"",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 220,
+          "value": "8",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "\"invalid_disclosure\"",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 221,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 225,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 340,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 343,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 343,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "\"benign/n\"",
+          "context": "table_row"
+        },
+        {
+          "line": 344,
+          "value": "0",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 345,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 346,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 347,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 347,
+          "value": "1",
+          "context": "table_row"
+        },
+        {
+          "line": 348,
+          "value": "\"duplicate\"",
+          "context": "table_row"
+        },
+        {
+          "line": 348,
+          "value": "\"note\"",
+          "context": "table_row"
+        },
+        {
+          "line": 357,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 375,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 379,
+          "value": "detail_status = \"detail_unavailable\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 393,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 401,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 410,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 419,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 424,
+          "value": "detail_status = \"ok\"",
+          "context": "function_argument"
+        }
+      ],
+      "observed_values_total": 131,
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 8,
+      "related_tests": [
+        {
+          "name": "module_note_orientation_sentence_accepts_optional_next_step",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 238,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(parse_note(&oriented), expected);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "module_note_orientation_sentence_accepts_optional_next_step",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 238,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(\n            parse_note(&format!(\"{oriented} {MODULE_AMBIGUOUS_PARENT_NEXT_STEP}\")),\n            expected\n        );",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "module_evidence_retains_single_pass_duplicates_benign_and_unavailable",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 337,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(missing[\"sources\"][0][\"state\"], \"unavailable\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        },
+        {
+          "name": "module_note_line_byte_boundary_excludes_line_terminators",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 194,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert!(contexts.iter().all(|context| context.len() <= 1024));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        },
+        {
+          "name": "module_note_context_limit_counts_utf8_bytes",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 268,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert!(parse_note(note(&exact_ascii).trim()).is_some());",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        },
+        {
+          "name": "module_note_contract_rejects_malformed_counts_reasons_and_paths",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 283,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(\n            parse_note(note(\"tests/日本語.rs\").trim()),\n            Some(vec![(\n                \"tests/日本語.rs\".into(),\n                \"rust_module_ambiguous_parent\".into()\n            )])\n        );",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        },
+        {
+          "name": "read_prefix_rejects_non_regular_files",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 257,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(error.kind(), std::io::ErrorKind::Other);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        },
+        {
+          "name": "unresolved_target_location_is_required_and_positive",
+          "file": "src/sensors/ripr_limits.rs",
+          "line": 315,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(\n            parse_note(&make(\"src/a.rs:12\")),\n            Some(vec![(\n                \"src/a.rs:12\".into(),\n                \"rust_module_unresolved_target\".into()\n            )])\n        );",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

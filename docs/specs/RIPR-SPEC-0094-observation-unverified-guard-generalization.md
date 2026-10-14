@@ -13,6 +13,7 @@ Linked issues:
 - #4486
 - #6297
 - #7063
+- #7794
 
 Linked PRs:
 
@@ -255,6 +256,29 @@ Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `direct_collection_state_write_requires_complete_witness`,
 `cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
 `direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
+
+## Sibling effect oracle provenance (#7794)
+
+When an actual related test reaches the owner, a SideEffect or CallDeletion
+oracle related only by file/module proximity cannot confirm observation from
+its kind alone. Its matched rows remain visible with
+`observation_unconfirmed` when no other confirmation applies. A whole-object
+equality on a sibling parser result cannot observe an aggregation effect just
+because it has the right oracle kind.
+
+This rule narrows only the existing kind-based effect confirmation branch;
+collection/field and token confirmation retain their authority. Proximity
+without an actual owner caller and opaque macro invocation retain their prior
+reading. Direct and helper effect observers retain credit. Unknown standard
+method dispatch does not itself establish that an equality observes the changed
+effect; this slice neither rules out that dispatch nor resolves value flow.
+This is separate from #7778's predicate/string-literal guard and preserves
+#3161's broader propagation limits.
+
+Proof: `sibling_effect_oracle` public API metamorphic and direct-effect controls,
+the exact consumer fixture `rust_sibling_effect_oracle`, and its independent
+honesty-corpus invariant. Native removal experiments are separate runtime
+evidence rather than a static mutation claim.
 
 ## Part D: a whole-object effect observer must be able to carry the effect
 

@@ -1,0 +1,12 @@
+diff --git a/src/sensors/ripr_limits.rs b/src/sensors/ripr_limits.rs
+--- a/src/sensors/ripr_limits.rs
++++ b/src/sensors/ripr_limits.rs
+@@ -134,7 +134,7 @@
+                             for entry in parsed {
+                                 entries
+                                     .entry(entry)
+-                                    .or_insert_with(BTreeSet::new)
++                                    .or_default()
+                                     .insert(artifact.to_owned());
+                             }
+                         } else {
