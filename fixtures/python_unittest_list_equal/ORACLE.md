@@ -132,3 +132,12 @@ call alignment. Generic textual call matching is unchanged. Seven spelling and
 import cases require exposed/strong/yes; seven rival, rebound, derived-call and
 subscript controls forbid exposure. Static-callee validation precedes name
 extraction, so grouping cannot turn a derived result into an owner call.
+
+Repair source `e4cc301590d86f3566d0088fcc283f0906d3f537` matches the four
+changed Rust blobs exercised by eight focused regressions and all 570 Python
+adapter tests. Its real CLI passes the unchanged literal verifier (exit 0): all
+four call spellings are exposed/strong/yes, while equal-value and unsupported-
+shape controls retain their prior outcomes. The executable SHA-256 is
+`d26c0fdbbb51f43e881ba7a34a91d4250ec22084aee2ba9dc99b2fd4bcb91960`.
+All 410 goldens, honesty and dogfood pass; generated drift is limited to the
+positive fixture's three oracle-text fields and its blessing record.

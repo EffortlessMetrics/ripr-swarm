@@ -43,7 +43,7 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python return expression can alter the owner return value: `return [1, 2]`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return [1, 2] (line 2)", "related test tests/test_labels.py:6 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, 2])"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python return expression can alter the owner return value: `return [1, 2]`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses a `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return [1, 2] (line 2)", "related test tests/test_labels.py:6 test_labels uses strong exact value oracle: self.assertListEqual(labels (), [1, 2])"],
       "flow_sinks": [
         {"kind":"return_value","text":"return [1, 2]","line":2}
       ],
@@ -69,7 +69,7 @@
           "line": 6,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "self.assertListEqual(labels(), [1, 2])"
+          "oracle": "self.assertListEqual(labels (), [1, 2])"
         }
       ],
       "stop_reasons": [],
@@ -80,7 +80,7 @@
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
-      "observed_sink": "self.assertListEqual(labels(), [1, 2])",
+      "observed_sink": "self.assertListEqual(labels (), [1, 2])",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
       "source_currentness": "candidate_current"

@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_list_equal (3)
+
+Reason:
+RIPR-SPEC-0028: preserve AST owner identity for labels (); native one-test wrong/correct witnesses and literal CLI expected exposed/strong/yes distinguish the retained615 failure from the repair. Only the existing positive fixture changes spelling.
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
