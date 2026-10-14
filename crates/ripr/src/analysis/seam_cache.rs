@@ -31,7 +31,7 @@
 //! A companion corpus fingerprint cache
 //! (`repo-corpus-fingerprint/{schema_version}/{fingerprint}.json`, issue
 //! #2108) maps a stat-only corpus signature — sorted
-//! `(path, mtime, size, ctime)` tuples — to the aggregate
+//! `(path, mtime, size, ctime, device, inode)` tuples — to the aggregate
 //! `files_content_hash` previously computed for that signature, so a warm
 //! cache-key computation does not re-read the corpus. A fingerprint miss
 //! costs nothing: the content hash is then computed exactly as before and
@@ -1428,11 +1428,13 @@ impl WorkspaceState<'_> {
 /// #3848 retained schema `0.2` because the unix validity rule did not change;
 /// the integrity transition below invalidates those unsigned mappings.
 /// 0.2 -> 0.3: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.3";
+/// 0.3 -> 0.4: device and inode bind replacement file identity (#7850).
+/// Earlier mappings remain on disk but cannot admit replacement-file reuse.
+pub(crate) const CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION: &str = "0.4";
 
 /// Cheap corpus signature: FNV-1a over sorted
 /// `(relative path, mtime secs, mtime nanos, size, ctime secs, ctime
-/// nanos)` tuples for every file in `files` (paths relative to `root`).
+/// nanos, device, inode)` tuples for every file in `files` (paths relative to `root`).
 /// Stat-only — no file contents are read. Returns `None` on any platform
 /// without a content-change witness (see below), when any file cannot be
 /// stat'd, or when a file has no portable mtime; callers must then fall
@@ -1508,6 +1510,13 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
             entry.push_str(&metadata.ctime().to_string());
             entry.push('\0');
             entry.push_str(&metadata.ctime_nsec().to_string());
+            // A replacement directory can bring a different file with the
+            // same timestamps and size. ctime describes changes to one inode,
+            // so bind its filesystem identity too; inode numbers are device-local.
+            entry.push('\0');
+            entry.push_str(&metadata.dev().to_string());
+            entry.push('\0');
+            entry.push_str(&metadata.ino().to_string());
             entry
         };
         entries.push(entry);

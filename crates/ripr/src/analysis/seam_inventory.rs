@@ -212,7 +212,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
-    // holds a mapping for the current (path, mtime, size, ctime on unix)
+    // holds a mapping for the current (path, mtime, size, ctime, device, inode on unix)
     // signature, the cache key is rebuilt without reading any file contents.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         trace_latency_phase(
