@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0258-ex06-spaced-call",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0258-ex06-spaced-call.diff",
+  "anchor": {
+    "file": "src/priceSnapSpaced.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tomatchsnapshot_spaced_call_committed",
+  "hard_case": "`toMatchSnapshot ()` with a space before `(` is still one snapshot call",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceSnapSpaced",
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`priceSnapSpaced(150)` returns 140; the edit returns 130. The test calls `toMatchSnapshot ()` with a space before `(`, and the committed entry `priceSnapSpaced 1` = `140` fails the edit under `jest --ci`. RIPR-SPEC-0258 example 6 counts the spaced call as a snapshot call, so the body holds exactly one and the entry is read as snapshot / strong. The example's committed-history forms need a git history the corpus harness does not build; this case labels the spaced-call form. ripr reports `exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "3ea9a19",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0258#6"
+  ]
+}

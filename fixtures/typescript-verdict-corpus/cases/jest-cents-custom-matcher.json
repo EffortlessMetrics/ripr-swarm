@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The custom toBeCents matcher compares exactly, so the 100 / amount mutant fails it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "reasoning": "The custom toBeCents matcher passes only when Number.isInteger(received) && received === expected, so the 100 / amount mutant fails it. RIPR-SPEC-0262 reads that same-file strict-equality matcher as exact_value / strong, so ripr credits the discriminator. Before RIPR-SPEC-0262 it read the matcher as unknown and reported weakly_exposed, a false actionable gap. Spec cells: RIPR-SPEC-0262 example 1",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",
@@ -41,5 +41,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0262#1"
+  ]
 }

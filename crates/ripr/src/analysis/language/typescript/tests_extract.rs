@@ -77,7 +77,8 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
             assertion_bindings: TypeScriptAssertionBindings::from_program(
                 &ret.program.body,
                 &imports,
-            ),
+            )
+            .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
             admission: TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file),
             ..TestScope::default()
         };

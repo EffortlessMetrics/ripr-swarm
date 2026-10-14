@@ -7,7 +7,9 @@ mod returns;
 mod shadow;
 mod text;
 
-pub(crate) use calls::{attribute_ranges, call_name_bounds_before_paren, extract_call_facts};
+pub(crate) use calls::{
+    attribute_ranges, call_name_bounds_before_paren, extract_call_facts, runs_its_arguments,
+};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
 // `string_literal_spans` offsets index the unmasked text: a literal's
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).
@@ -22,7 +24,8 @@ pub(crate) use oracles::{
     err_return_guard_oracles, err_return_guard_twin, extract_assertions,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
     has_oracle_text_shape, is_inequality_assertion, is_unwrap_err_bound_error_assertion,
-    outer_assertion_condition, terminal_err_return_guard_oracle, unwrap_err_bound_variables,
+    outer_assertion_condition, terminal_err_return_guard_oracle, uncompared_unwrap_err,
+    unwrap_err_bound_variables,
 };
 pub(crate) use returns::extract_return_facts;
 pub(crate) use shadow::{

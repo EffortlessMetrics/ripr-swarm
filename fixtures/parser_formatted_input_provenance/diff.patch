@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -41,7 +41,7 @@
+         {
+             return None;
+         }
+-        if reason == "old_unresolved_target" {
++        if reason == "rust_module_unresolved_target" {
+             let (_, location) = context.rsplit_once(':')?;
+             if location.parse::<u64>().ok()? == 0 {
+                 return None;

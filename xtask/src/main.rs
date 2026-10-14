@@ -328,6 +328,7 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
+    MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
     MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, MutationOutcomeRecord,
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
     build_mutation_calibration_report, build_sarif_policy_report, mutation_calibration_report_json,
@@ -600,18 +601,35 @@ fn check_identity_registry() -> Result<(), String> {
 }
 
 fn precommit() -> Result<(), String> {
+    precommit_policy(false)
+}
+
+fn precommit_policy(collect_all: bool) -> Result<(), String> {
     ensure_reports_dir()?;
+    let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
+    // CI rejects stale/partial proof before compilation-bearing file policy.
+    // Local ordering and its ordinary workflow check remain unchanged.
+    if collect_all && let Some(path) = &preflight_receipt {
+        repo_policy::verify_preflight(Path::new(path))?;
+    }
     run("cargo", &["fmt", "--check"])?;
-    check_static_language()?;
-    check_no_panic_family()?;
-    check_allow_attributes()?;
-    check_local_context()?;
+    if collect_all {
+        policy::check_policy_all()?;
+    } else {
+        check_static_language()?;
+        check_no_panic_family()?;
+        check_allow_attributes()?;
+        check_local_context()?;
+    }
     check_file_policy()?;
-    check_covered_by()?;
-    check_executable_files()?;
+    if !collect_all {
+        check_covered_by()?;
+        check_executable_files()?;
+    }
     check_text_encoding()?;
-    match std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT") {
-        Some(path) => repo_policy::verify_preflight(Path::new(&path))?,
+    match preflight_receipt {
+        Some(path) if !collect_all => repo_policy::verify_preflight(Path::new(&path))?,
+        Some(_) => {}
         None => check_workflows()?,
     }
     check_droid_review_config()?;
@@ -643,9 +661,18 @@ fn precommit() -> Result<(), String> {
     check_proof_packs()?;
     check_release_targets()?;
     check_dependencies()?;
-    check_process_policy()?;
-    check_network_policy()?;
-    check_lint_policy()?;
+    if !collect_all {
+        check_process_policy()?;
+        check_network_policy()?;
+        check_lint_policy()?;
+    }
+    publish_precommit_policy_report(collect_all)
+}
+
+fn publish_precommit_policy_report(ci_policy: bool) -> Result<(), String> {
+    if ci_policy {
+        return Ok(());
+    }
     let body = precommit_report_body();
     write_report("precommit.md", &body)
 }
@@ -2464,12 +2491,16 @@ fn command_catalog_ci_drift_violations_for_repo(
     Ok(command_catalog_ci_drift_violations(catalog, &enforced))
 }
 
-/// An enforced `cargo xtask precommit` invocation transitively enforces every
-/// gate in the precommit table (issue #2258): expand it so gates invoked only
+/// An enforced `cargo xtask precommit` or `cargo xtask ci-policy`
+/// invocation transitively enforces every gate
+/// in the precommit table (issues #2258, #7826): expand it so gates invoked only
 /// through precommit still count as CI-enforced. Advisory precommit
 /// invocations never reach the enforced set, so they expand nothing.
 fn expand_precommit_ci_invocations(enforced: &mut BTreeSet<WorkflowXtaskInvocation>) {
-    if !enforced.contains(&("precommit".to_string(), String::new())) {
+    if !["precommit", "ci-policy"]
+        .iter()
+        .any(|command| enforced.contains(&(command.to_string(), String::new())))
+    {
         return;
     }
     for gate in PRECOMMIT_GATE_COMMANDS {

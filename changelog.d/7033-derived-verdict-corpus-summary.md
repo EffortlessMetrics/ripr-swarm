@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - The verdict corpus no longer commits `expected/summary.json`. Each
   expected row records its own contradiction counts, and the summary is
   derived from the rows wherever it is read: `verdict-corpus check`, the

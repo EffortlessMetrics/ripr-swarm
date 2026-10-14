@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e7af7ea..671a852 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn audit(n: u32) -> Vec<String> {
+     let mut lines = vec![String::from("start")];
+-    lines.push(format!("audited {n}"));
++    lines.push(format!("audited {}", n));
+     lines
+ }
+ 
