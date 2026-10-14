@@ -877,6 +877,22 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
+        // #7857: a `std`/`core`-rooted `assert_eq!` needs the same root proof
+        // as targeted call syntax (manifest, crate provenance) plus the
+        // test's real file, which a generated test's expansion does not show.
+        if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            && !(self.targeted_macro_binding_is_unambiguous(test, assertion.line, &path, index)
+                && parse_clean_source_file(&facts.source).is_some_and(|file| {
+                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(
+                        &path,
+                        file.tree().syntax(),
+                    )
+                }))
+        {
+            return Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::OpaqueMacro(path),
+            ));
+        }
         let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
@@ -1939,7 +1955,7 @@ impl OwnerReturnPin {
         // A nested `format!` is read only as a rendered scalar pin.
         let renders = !is_guard && is_assert_eq_of_render(&assertion.text);
         let reads_assert_eq =
-            renders || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
+            renders || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -5292,6 +5308,31 @@ pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool 
         && masked
             .find(macro_name)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
+/// [`is_plain_macro`], or the same single invocation under a `std` or `core`
+/// root (`std::assert_eq!(..)`, `::core::assert_eq!(..)`). Admission
+/// credits the qualified form only when [`OwnerPinSyntax`] proves the root
+/// unrebound (#7857).
+fn is_plain_or_std_macro(text: &str, macro_name: &str) -> bool {
+    is_plain_macro(text, macro_name) || std_rooted_macro_path(text, macro_name).is_some()
+}
+
+/// The whitespace-free path (`std::assert_eq`, `::core::assert_eq`) when
+/// `text` is one `macro_name` invocation under a `std` or `core` root.
+fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [(name, _)] = invocations.as_slice() else {
+        return None;
+    };
+    let offset = masked.find(macro_name)?;
+    let root: String = masked[..offset]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    (*name == macro_name && matches!(root.as_str(), "std::" | "core::" | "::std::" | "::core::"))
+        .then(|| format!("{root}{macro_name}"))
 }
 
 /// `assert_eq!` whose only nested macros are `format!`, which
