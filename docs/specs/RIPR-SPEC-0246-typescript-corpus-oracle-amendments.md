@@ -158,11 +158,15 @@ The rule reads every owner call whose whole result a strong
 RIPR-SPEC-0248 rule 1 does). Its argument for `x` is read when it is an
 object literal, inline or a name the test binds once by
 `const name = { ... }` (a type annotation is allowed) and by no `let` or
-`var`. The name must otherwise appear only as a member read, or as a
-whole argument of `expect`, of a matcher or of the owner call. Any other
-use (a member write or `delete`, a cast, an alias, a helper call, an
-array or object entry, a callback or `catch` parameter of the same name)
-makes the input unreadable.
+`var`, at the top of a block that holds every later mention. The name
+must otherwise appear only after it, as a member read, or as a whole
+argument of `expect`, of a matcher on `expect(...)` (`.toEqual(cfg)`,
+`.not.toBe(cfg)`) or of the owner call (bare, renamed or through its
+module). Any other use (a member write or `delete`, a cast, an alias, a
+helper or method call, an array or object entry, a callback or `catch`
+parameter of the same name) makes the input unreadable, and so does an
+entry whose value is a function, which the test could call to set the
+field.
 That input lacks the field when it has no `k` entry and no spread,
 computed, method or accessor entry, or when its last `k` entry holds
 another literal. A strong assertion whose subject is exactly the `k`

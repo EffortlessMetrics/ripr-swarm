@@ -4917,6 +4917,15 @@ pub(crate) fn ts_spread_override_unseen(
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        let qualified: Vec<String> = receivers
+            .iter()
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        let callees: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(qualified.iter().map(String::as_str))
+            .collect();
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
                 continue;
@@ -4961,7 +4970,7 @@ pub(crate) fn ts_spread_override_unseen(
                 if argument.starts_with('{') {
                     Some(argument.to_string())
                 } else {
-                    ts_test_local_object(&candidate.test.body_text, argument, &names)
+                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
                 }
             });
             match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {

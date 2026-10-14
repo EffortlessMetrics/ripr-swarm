@@ -106,6 +106,10 @@ impl SpreadOverride {
             }
             match key_value(entry) {
                 Some((key, literal)) if key == self.key => found = Some(literal),
+                // A function value could set the key when the test calls it.
+                Some((_, value)) if value.starts_with("function") || value.contains("=>") => {
+                    return OverrideInput::Unknown;
+                }
                 Some(_) => {}
                 // A shorthand of another name cannot hold the key; anything
                 // else (a computed key, a method, an accessor) might.
@@ -504,6 +508,15 @@ mod tests {
             (r#"{ url: "http://x", ok: true }"#, OverrideInput::Carries),
             (r#"{ url: "http://x" }"#, OverrideInput::Differs),
             (r#"{ ok: "a\"b" }"#, OverrideInput::Unknown),
+            (
+                r#"{ name: "bo", arm: function () { this.ok = true; } }"#,
+                OverrideInput::Unknown,
+            ),
+            (r#"{ name: "bo", arm: () => 1 }"#, OverrideInput::Unknown),
+            (
+                r#"{ name: "bo", arm() { this.ok = true; } }"#,
+                OverrideInput::Unknown,
+            ),
             ("cfg", OverrideInput::Unknown),
         ] {
             assert_eq!(change.input(object), expected, "{object}");
@@ -599,6 +612,17 @@ mod tests {
             "const cfg = { ok: true }; const c = cfg; c.ok = false;",
             "const cfg = { ok: true }; if (cfg.ok == true) { log(cfg); }",
             "const cfg = { ok: true }; expect(ready([cfg][0])).toEqual(cfg);",
+            // a method call on another value, or an optional call, is no matcher
+            "const cfg = { ok: true }; new Defaults().apply(cfg);",
+            "const cfg = { ok: true }; hooks.init?.(cfg);",
+            "const cfg = { ok: true }; (x).fill(cfg);",
+            "const cfg = { ok: true }; make().toFill(cfg);",
+            // a qualified call of the owner's name on another receiver
+            "const cfg = { ok: true }; legacy.ready(cfg);",
+            // a commented-out declaration, or one in an inner block
+            "// const cfg = { ok: true };\n expect(ready(cfg)).toEqual(cfg);",
+            "expect(ready(cfg)).toEqual(cfg); { const cfg = { ok: true }; expect(cfg.ok).toBe(true); }",
+            "{ const cfg = { ok: true }; } expect(ready(cfg)).toEqual(cfg);",
         ] {
             assert_eq!(
                 ts_test_local_object(body, "cfg", &["ready"]),
@@ -616,10 +640,13 @@ mod tests {
             "const cfg = { ok: true }; expect(ready(cfg).ok).toBe(cfg.ok);",
             "const cfg = { ok: true }; const r = flag ? ready(cfg) : null;",
             "const cfg = { ok: true }; expect(ns.ready(cfg)).toEqual({ ...cfg, ok: true });",
+            "const cfg = { ok: true }; expect(ready(cfg)).not.toBe(cfg);",
+            "const cfg = { ok: true }; await expect(ready(cfg)).resolves.toEqual(cfg);",
+            "test(\"t\", () => { const cfg = { ok: true }; expect(ready(cfg)).toEqual(cfg); });",
             "const cfg = { ok: true }; expect(await ready(cfg, 1)).toStrictEqual(cfg);",
         ] {
             assert_eq!(
-                ts_test_local_object(body, "cfg", &["ready"]).as_deref(),
+                ts_test_local_object(body, "cfg", &["ready", "ns.ready"]).as_deref(),
                 Some("{ ok: true }"),
                 "{body}"
             );

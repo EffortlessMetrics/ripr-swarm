@@ -354,6 +354,17 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
             "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).name).toBe(\"bo\");",
             ExposureClass::WeaklyExposed,
         ),
+        // A method that may write the input (`save`, `apply`) fails the read.
+        (
+            "spread-local-method-call",
+            "const cfg = { name: \"bo\" };\n  new Defaults().apply(cfg);\n  expect(ready(cfg)).toEqual(cfg);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-local-strict-matcher",
+            "const cfg = { name: \"bo\" };\n  expect(ready(cfg)).toStrictEqual({ ...cfg, ok: true });",
+            ExposureClass::Exposed,
+        ),
         // Anything after the key can pass on both versions.
         (
             "spread-key-pin-nullish",

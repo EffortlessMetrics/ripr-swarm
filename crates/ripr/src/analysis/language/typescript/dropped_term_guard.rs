@@ -276,23 +276,36 @@ pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bo
     })
 }
 
-/// RIPR-SPEC-0246 rule 3: `true` when every mention of the test local `name`
-/// in the masked test body only reads it: its `const` declaration, a member
-/// read (`name.k`, `name?.k`, `name[k]`, never written, incremented or
-/// deleted), or a whole argument of `expect`, of a matcher (`.toEqual(name)`)
-/// or of a call named in `callees` (the owner and its renames, bare or
-/// qualified). Any other mention (a cast, an alias, an array or object
-/// entry, a helper call, a callback parameter) could hand the call another
-/// value, so it fails the read.
+/// RIPR-SPEC-0246 rule 3: `true` when the masked test body declares the
+/// test local `name` once with `const` and every other mention, all after
+/// that declaration and inside its block, only reads it: a member read
+/// (`name.k`, `name?.k`, `name[k]`, never written, incremented or deleted),
+/// or a whole argument of `expect`, of a matcher on `expect(...)`
+/// (`.toEqual(name)`, `.not.toBe(name)`) or of a call named exactly in
+/// `callees` (the owner, its renames and its module-qualified forms). Any
+/// other mention (a cast, an alias, an array or object entry, a helper or
+/// method call, a callback parameter, a use outside the declaring block)
+/// could hand the call another value, so it fails the read.
 pub(crate) fn ts_local_only_read(masked: &str, name: &str, callees: &[&str]) -> bool {
-    identifier_offsets(masked, name).into_iter().all(|at| {
-        let before = masked[..at].trim_end();
-        if before
+    let offsets = identifier_offsets(masked, name);
+    let declares = |at: usize| {
+        masked[..at]
+            .trim_end()
             .strip_suffix("const")
             .is_some_and(|head| !head.ends_with(is_identifier_part))
-        {
+    };
+    let declarations: Vec<usize> = offsets.iter().copied().filter(|&at| declares(at)).collect();
+    let [declaration] = declarations[..] else {
+        return false;
+    };
+    offsets.into_iter().all(|at| {
+        if at == declaration {
             return true;
         }
+        if at < declaration || !inside_declaring_block(masked, declaration, at) {
+            return false;
+        }
+        let before = masked[..at].trim_end();
         if before
             .strip_suffix("delete")
             .is_some_and(|head| !head.ends_with(is_identifier_part))
@@ -310,16 +323,76 @@ pub(crate) fn ts_local_only_read(masked: &str, name: &str, callees: &[&str]) -> 
             && after.trim_start().starts_with([',', ')']);
         whole
             && call_argument_callee(masked, at).is_some_and(|callee| {
-                callee == "expect"
-                    || callee.starts_with('.')
-                    || callees.iter().any(|owner| {
-                        callee == *owner
-                            || callee
-                                .strip_suffix(owner)
-                                .is_some_and(|head| head.ends_with('.'))
-                    })
+                callee == "expect" || callees.contains(&callee) || expect_matcher(masked, callee)
             })
     })
+}
+
+/// `true` when the brace depth between `declaration` and `at` never drops
+/// below the declaration's own, so the block that declares the name is still
+/// open at `at`.
+fn inside_declaring_block(masked: &str, declaration: usize, at: usize) -> bool {
+    let mut depth = 0isize;
+    for c in masked[declaration..at].chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// `true` when `callee` (a slice of `masked`) is a matcher on `expect(...)`:
+/// `.toX`, after any of `.not`, `.resolves` and `.rejects`, directly after
+/// the `)` that closes an `expect(` call.
+fn expect_matcher(masked: &str, callee: &str) -> bool {
+    let Some(path) = callee.strip_prefix('.') else {
+        return false;
+    };
+    let mut segments: Vec<&str> = path.split('.').collect();
+    let Some(matcher) = segments.pop() else {
+        return false;
+    };
+    if !matcher.starts_with("to")
+        || !segments
+            .iter()
+            .all(|segment| matches!(*segment, "not" | "resolves" | "rejects"))
+    {
+        return false;
+    }
+    let start = (callee.as_ptr() as usize).saturating_sub(masked.as_ptr() as usize);
+    let Some(head) = masked.get(..start).map(str::trim_end) else {
+        return false;
+    };
+    if !head.ends_with(')') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let Some(open) = head.char_indices().rev().find_map(|(index, c)| {
+        match c {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        None
+    }) else {
+        return false;
+    };
+    head[..open]
+        .trim_end()
+        .strip_suffix("expect")
+        .is_some_and(|before| !before.ends_with(|c: char| is_identifier_part(c) || c == '.'))
 }
 
 /// The text after a non-empty member path (`.k`, `?.k`, `[e]`, `!`, in any
