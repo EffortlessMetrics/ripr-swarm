@@ -11928,6 +11928,9 @@ id = "RIPR-SPEC-0190"
 name = "versioned machine discovery via help --json"
 spec = "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::malformed_config_json_keeps_exit_two_with_closed_stderr",
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::execution_failure_and_typed_refusal_keep_distinct_exits_with_closed_stderr",
+  "crates/ripr/src/main.rs::tests::panic_boundary_reports_and_exits_with_code_two",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/src/cli/help_json.rs::tests::help_command_reports_json_support_in_the_machine_catalog",
   "crates/ripr/src/cli/help.rs::tests::help_overview_routes_to_first_actions_and_full_reference",
@@ -11960,6 +11963,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/main.rs",
   "crates/ripr/src/cli/help_json.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/execute.rs",

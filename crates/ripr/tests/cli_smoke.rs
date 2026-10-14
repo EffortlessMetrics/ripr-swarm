@@ -22,6 +22,8 @@ mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;
+#[path = "cli_smoke/closed_stderr.rs"]
+mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(all(unix, feature = "lang-rust"))]
