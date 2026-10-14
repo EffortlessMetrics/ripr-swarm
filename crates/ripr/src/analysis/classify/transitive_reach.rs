@@ -820,12 +820,13 @@ impl OwnerReach<'_, '_> {
         assertion: &crate::analysis::facts::OracleFact,
         expression: &str,
         source: &str,
+        sources: &[String],
     ) -> bool {
         let observes = |function: &FunctionSummary| {
             IMPLICIT_DISPATCH_METHODS.contains(&function.name.as_str())
                 && super::related_tests::test_dispatches_trait_impl(test, function)
                 && super::implicit_effect::assertion_observes_dispatch(
-                    function, owner, expression, test, assertion, source,
+                    function, owner, expression, test, assertion, source, sources,
                 )
         };
         observes(owner)

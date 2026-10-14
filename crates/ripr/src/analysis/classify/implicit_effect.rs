@@ -14,6 +14,232 @@ use ra_ap_syntax::{
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
+fn known_builtin_attribute(attr: &ast::Attr) -> bool {
+    let text = compact(&attr.syntax().text().to_string());
+    let Some(inner) = text.strip_prefix("#[").and_then(|s| s.strip_suffix(']')) else {
+        return false;
+    };
+    let key = inner.split(['(', '=']).next().unwrap_or("");
+    if key == "derive" {
+        let Some((_, list)) = inner.split_once('(') else {
+            return false;
+        };
+        let Some(list) = list.strip_suffix(')') else {
+            return false;
+        };
+        return list.split(',').all(|name| {
+            matches!(
+                name,
+                "Clone"
+                    | "Copy"
+                    | "Debug"
+                    | "Default"
+                    | "Eq"
+                    | "Hash"
+                    | "Ord"
+                    | "PartialEq"
+                    | "PartialOrd"
+            )
+        });
+    }
+    matches!(
+        key,
+        "allow"
+            | "warn"
+            | "deny"
+            | "forbid"
+            | "expect"
+            | "doc"
+            | "cfg"
+            | "test"
+            | "ignore"
+            | "should_panic"
+            | "repr"
+            | "inline"
+            | "cold"
+            | "must_use"
+            | "deprecated"
+            | "non_exhaustive"
+            | "macro_export"
+            | "track_caller"
+            | "no_mangle"
+            | "export_name"
+            | "link"
+            | "link_section"
+            | "target_feature"
+    )
+}
+fn bounded_expansion_surface(sources: &[String], receiver: &str) -> bool {
+    const BUILTIN_MACROS: &[&str] = &[
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "debug_assert_eq",
+        "debug_assert_ne",
+        "format",
+        "format_args",
+        "vec",
+        "matches",
+        "panic",
+        "unreachable",
+        "todo",
+        "unimplemented",
+        "stringify",
+        "concat",
+        "env",
+        "option_env",
+        "include_str",
+        "include_bytes",
+        "file",
+        "line",
+        "column",
+        "module_path",
+    ];
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "Eq",
+        "Hash",
+        "Ord",
+        "PartialEq",
+        "PartialOrd",
+    ];
+    const DISPATCH_TRAITS: &[&str] = &[
+        "Iterator",
+        "std::iter::Iterator",
+        "core::iter::Iterator",
+        "Add",
+        "std::ops::Add",
+        "core::ops::Add",
+    ];
+    sources.iter().all(|source| {
+        let Some(parse) = parse_clean_source_file(source) else {
+            return false;
+        };
+        let tree = parse.tree();
+        let receiver_tail = receiver.rsplit("::").next().unwrap_or(receiver);
+        !tree.syntax().descendants().any(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|module| module.name())
+                .is_some_and(|name| matches!(name.text(), "std" | "core"))
+                || ast::UseTree::cast(node.clone())
+                    .and_then(|use_tree| use_tree.rename())
+                    .and_then(|rename| rename.name())
+                    .is_some_and(|name| matches!(name.text(), "std" | "core"))
+                || ast::UseTree::cast(node.clone()).is_some_and(|use_tree| {
+                    use_tree.use_tree_list().is_none()
+                        && use_tree.rename().is_none()
+                        && use_tree.path().is_some_and(|path| {
+                            matches!(
+                                compact(&path.syntax().text().to_string())
+                                    .rsplit("::")
+                                    .next()
+                                    .unwrap_or(""),
+                                "std" | "core"
+                            )
+                        })
+                })
+                || ast::ExternCrate::cast(node.clone())
+                    .and_then(|krate| krate.rename())
+                    .and_then(|rename| rename.name())
+                    .is_some_and(|name| matches!(name.text(), "std" | "core"))
+        })
+            && !tree
+            .syntax()
+            .descendants()
+            .any(|node| ast::MacroRules::can_cast(node.kind()))
+            && !tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::TypeAlias::cast)
+                .any(|alias| {
+                    alias.ty().is_some_and(|ty| {
+                        compact(&ty.syntax().text().to_string())
+                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                            .any(|name| name == receiver_tail)
+                    })
+                })
+            && !tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|use_tree| {
+                    compact(&use_tree.syntax().text().to_string())
+                        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                        .any(|name| name == receiver_tail)
+                })
+            && !tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Impl::cast)
+            .any(|item| {
+                let trait_text = item
+                    .trait_()
+                        .map(|t| compact(&t.syntax().text().to_string()))
+                        .map(|path| path.split('<').next().unwrap_or(&path).to_string());
+                let self_text = item.self_ty().map(|ty| compact(&ty.syntax().text().to_string()));
+                let is_drop = trait_text.as_deref().is_some_and(|name| {
+                    name == "Drop" || name.ends_with("::Drop")
+                });
+                let receiver_impl = self_text.as_deref().is_some_and(|name| {
+                    name.rsplit("::").next() == Some(receiver_tail)
+                });
+                is_drop
+                    || (receiver_impl
+                        && trait_text
+                            .as_deref()
+                            .is_some_and(|name| !DISPATCH_TRAITS.contains(&name)))
+            })
+            && tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::MacroCall::cast)
+                .all(|call| {
+                    call.path().is_some_and(|path| {
+                        let path_text = path.syntax().text().to_string();
+                        let path_text = path_text.trim();
+                        !path_text.contains("::") && BUILTIN_MACROS.contains(&path_text)
+                    })
+                })
+            // An imported macro can shadow a prelude macro with the same
+            // spelling. Refuse wildcard imports and imports of any name in
+            // the small macro allowlist instead of attempting resolution.
+            && tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Use::cast)
+                .all(|item| {
+                    let use_text = compact(&item.syntax().text().to_string());
+                    let canonical_iterator_import = matches!(
+                        use_text.as_str(),
+                        "usestd::iter::Iterator;" | "usecore::iter::Iterator;"
+                    );
+                    let canonical_add_import = matches!(
+                        use_text.as_str(),
+                        "usestd::ops::Add;" | "usecore::ops::Add;"
+                    );
+                    !use_text.contains('*')
+                        && use_text
+                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                            .all(|name| {
+                                !BUILTIN_MACROS.contains(&name)
+                                    && !BUILTIN_DERIVES.contains(&name)
+                                    && name != "Drop"
+                                    && (name != "Iterator" || canonical_iterator_import)
+                                    && (name != "Add" || canonical_add_import)
+                                    && name != receiver_tail
+                            })
+                })
+            && tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Attr::cast)
+                .all(|attr| known_builtin_attribute(&attr))
+    })
+}
 fn name(expr: &ast::Expr) -> Option<String> {
     let ast::Expr::PathExpr(path) = expr else {
         return None;
@@ -34,7 +260,11 @@ fn single_self_field_use(function: &FunctionSummary, field: &str) -> bool {
     let tree = parse.tree();
     // Macro arguments are token trees, so PathExpr traversal cannot account
     // for hidden reads or writes through `self`.
-    if tree.syntax().descendants().any(|node| ast::MacroCall::can_cast(node.kind())) {
+    if tree
+        .syntax()
+        .descendants()
+        .any(|node| ast::MacroCall::can_cast(node.kind()))
+    {
         return false;
     }
     let uses: Vec<_> = tree
@@ -60,7 +290,11 @@ fn single_parameter_use(function: &FunctionSummary, parameter: &str) -> bool {
     };
     let tree = parse.tree();
     // Do not grant an assertion based on an incomplete view of macro tokens.
-    if tree.syntax().descendants().any(|node| ast::MacroCall::can_cast(node.kind())) {
+    if tree
+        .syntax()
+        .descendants()
+        .any(|node| ast::MacroCall::can_cast(node.kind()))
+    {
         return false;
     }
     tree.syntax()
@@ -298,7 +532,7 @@ fn dispatch_statement(statement: &ast::Stmt, receiver: &str, method: &str) -> bo
     }
 }
 
-fn local_dispatch_type(source: &str, self_ty: &str) -> bool {
+fn local_dispatch_type(source: &str, self_ty: &str, sources: &[String]) -> bool {
     if self_ty.is_empty()
         || !self_ty
             .bytes()
@@ -306,9 +540,9 @@ fn local_dispatch_type(source: &str, self_ty: &str) -> bool {
     {
         return false;
     }
-    // Declarative macro definitions can expand to impl blocks that are absent
-    // from this source parse. Do not infer Drop absence in their presence.
-    if source.contains("macro_rules!") {
+    // Keep the bounded observer proof inside source forms whose expansions
+    // cannot add hidden Drop implementations.
+    if !bounded_expansion_surface(sources, self_ty) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(source) else {
@@ -333,18 +567,6 @@ fn local_dispatch_type(source: &str, self_ty: &str) -> bool {
     // A destructor runs when the consumed receiver leaves scope and may write
     // the same sink after the observed dispatch. Its spelling may be
     // qualified, so any same-file Drop impl makes this bounded proof unknown.
-    if tree.syntax().descendants().filter_map(ast::Impl::cast).any(|item| {
-        item.trait_().is_some_and(|t| {
-            t.syntax()
-                .text()
-                .to_string()
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| name.trim_end_matches(' ').ends_with("Drop"))
-        })
-    }) {
-        return false;
-    }
     let receiver_types: Vec<_> = tree
         .syntax()
         .descendants()
@@ -372,11 +594,12 @@ pub(super) fn assertion_observes_dispatch(
     test: &TestSummary,
     assertion: &OracleFact,
     source: &str,
+    sources: &[String],
 ) -> bool {
     let FunctionContainer::TraitImpl { self_ty, .. } = &dispatch.item.container else {
         return false;
     };
-    if !local_dispatch_type(source, self_ty) {
+    if !local_dispatch_type(source, self_ty, sources) {
         return false;
     }
     let Some(field) = shared_field(dispatch, owner, expression) else {

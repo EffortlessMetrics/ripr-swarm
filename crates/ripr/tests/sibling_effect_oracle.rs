@@ -22,6 +22,16 @@ fn effect(source: &str, diff: &str, expression: &str) -> Result<Value, String> {
 }
 
 fn finding(source: &str, diff: &str, expression: &str, family: &str) -> Result<Value, String> {
+    finding_with_files(source, diff, expression, family, &[])
+}
+
+fn finding_with_files(
+    source: &str,
+    diff: &str,
+    expression: &str,
+    family: &str,
+    extra_files: &[(&str, &str)],
+) -> Result<Value, String> {
     let scratch = Scratch(std::env::temp_dir().join(format!(
         "ripr-sibling-effect-{}-{}",
         std::process::id(),
@@ -38,6 +48,13 @@ fn finding(source: &str, diff: &str, expression: &str, family: &str) -> Result<V
         .map_err(|e| e.to_string())?;
     std::fs::write(scratch.0.join("src/sensors/ripr_limits.rs"), source)
         .map_err(|e| e.to_string())?;
+    for (relative, contents) in extra_files {
+        let path = scratch.0.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(path, contents).map_err(|e| e.to_string())?;
+    }
     let patch = scratch.0.join("change.diff");
     std::fs::write(&patch, diff).map_err(|e| e.to_string())?;
     let report = check_workspace(CheckInput {
@@ -158,7 +175,8 @@ fn implicit_observer() {
     assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });
 }
 "#;
-const ADD_OBSERVER: &str = r#"use std::{cell::Cell, rc::Rc, ops::Add};
+const ADD_OBSERVER: &str = r#"use std::ops::Add;
+use std::{cell::Cell, rc::Rc};
 struct Counter { sink: Rc<Cell<usize>>, finished: bool }
 impl std::ops::Add<()> for Counter {
     type Output = ();
@@ -637,13 +655,34 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
         "record(&self.sink);\n        reset_sink!(&self.sink);",
     );
     hidden_dispatch_write.insert_str(0, macro_definition);
-    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
-        .replace("output.borrow_mut().push(1);", "output.borrow_mut().push(1);\n    reset_sink!(output);");
+    let mut hidden_owner_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+        "output.borrow_mut().push(1);",
+        "output.borrow_mut().push(1);\n    reset_sink!(output);",
+    );
     hidden_owner_write.insert_str(0, macro_definition);
     let destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
         + "\nimpl Drop for crate::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let aliased_destructor = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nuse std::ops::Drop as Finalizer;\nimpl Finalizer for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let aliased_dispatch_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
+        "impl Iterator for Counter",
+        "impl std::iter::Iterator for Counter",
+    ) + "\nuse hostile_crate::Iterator;\nimpl Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let shadowed_core_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nmod core { pub use hostile_crate::iter; }\nimpl core::iter::Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
+    let imported_core_trait = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        + "\nuse hostile_crate::core;\nimpl core::iter::Iterator for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }\n";
     let macro_destructor_write = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
         + "\nmacro_rules! install_drop { () => { impl Drop for Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } } }; }\ninstall_drop!();\n";
+    let custom_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace("struct Counter", "#[derive(CustomDrop)]\nstruct Counter");
+    let imported_builtin_derive = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace("use std::", "use hostile_macros::{Debug};\nuse std::");
+    let qualified_builtin_spelling =
+        format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nother_macros::vec!();\n";
+    let grouped_macro_import = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}")
+        .replace("use std::", "use hostile_macros::{vec};\nuse std::")
+        + "\nvec!();\n";
     for source in [
         reverse,
         format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}").replace(
@@ -653,7 +692,15 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
         hidden_dispatch_write,
         hidden_owner_write,
         destructor_write,
+        aliased_destructor,
+        aliased_dispatch_trait,
+        shadowed_core_trait,
+        imported_core_trait,
         macro_destructor_write,
+        custom_derive,
+        imported_builtin_derive,
+        qualified_builtin_spelling,
+        grouped_macro_import,
     ] {
         for family in ["side_effect", "call_deletion"] {
             let expression = "output.borrow_mut().push(1)";
@@ -661,6 +708,21 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
             assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "source={source}\n{row}");
             assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == "observation_unconfirmed"), "{row}");
         }
+    }
+    let cross_file_drop = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nmod drop_impl;\n";
+    let expression = "output.borrow_mut().push(1)";
+    for family in ["side_effect", "call_deletion"] {
+        let row = finding_with_files(
+            &cross_file_drop,
+            &changed_effect(&cross_file_drop, expression),
+            expression,
+            family,
+            &[(
+                "src/sensors/ripr_limits/drop_impl.rs",
+                "impl Drop for super::Counter { fn drop(&mut self) { self.sink.borrow_mut().clear(); self.sink.borrow_mut().push(1); } }",
+            )],
+        )?;
+        assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
     }
     let source = ITERATOR_OBSERVER.replace(
         "self.sink.set(1);",

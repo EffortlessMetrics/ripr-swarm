@@ -508,6 +508,12 @@ impl ClassifiedProbeEvidence {
                     )
                 })
         };
+        let indexed_sources: Vec<String> = context
+            .index
+            .files()
+            .values()
+            .map(|facts| facts.source.to_string())
+            .collect();
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -528,7 +534,8 @@ impl ClassifiedProbeEvidence {
                     let owner = context.owner_fn?;
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
-                    reach.test_has_known_implicit_dispatch(owner, test)
+                    reach
+                        .test_has_known_implicit_dispatch(owner, test)
                         .then(|| {
                             context.index.files().get(&test.file).is_some_and(|facts| {
                                 reach.assertion_has_known_implicit_observer(
@@ -537,6 +544,7 @@ impl ClassifiedProbeEvidence {
                                     assertion,
                                     &context.probe.expression,
                                     &facts.source,
+                                    &indexed_sources,
                                 )
                             })
                         })
