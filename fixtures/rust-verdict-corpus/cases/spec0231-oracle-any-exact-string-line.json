@@ -1,0 +1,60 @@
+{
+  "case_id": "spec0231-oracle-any-exact-string-line",
+  "subject_id": "authored-spec0231-27",
+  "diff": "cases/spec0231-oracle-any-exact-string-line.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "iter_any_exact_string_literal",
+  "hard_case": "A closure `.any()` over a log buffer that compares each line to one string literal pins the value; the twin `contains(&id)` would stay weak.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "lines.push(format!(\"audited {}\", n + 1));",
+        "mutated_line": "lines.push(format!(\"audited {}\", n + 1));",
+        "outcome": "tests_failed",
+        "failing_test": "tests::audit_logs_the_count",
+        "equivalence_review": "not equivalent: audit(42) logs \"audited 43\""
+      },
+      {
+        "replacement": "lines.push(format!(\"audit {n}\"));",
+        "mutated_line": "lines.push(format!(\"audit {n}\"));",
+        "outcome": "tests_failed",
+        "failing_test": "tests::audit_logs_the_count",
+        "equivalence_review": "not equivalent: the line reads \"audit 42\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "lines.iter().any(|l| l == \"audited 42\") fails unless some line is exactly \"audited 42\", so changing the count or the text kills both mutants. Spec cells: RIPR-SPEC-0231 example 27.",
+  "labeling_observation": {
+    "ripr_commit": "78312b335",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#27"
+  ],
+  "expected_oracle": {
+    "kind": "exact_value",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#27"
+  }
+}

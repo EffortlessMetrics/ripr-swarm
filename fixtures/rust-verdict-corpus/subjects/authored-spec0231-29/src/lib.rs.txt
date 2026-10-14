@@ -1,0 +1,14 @@
+pub fn scale(xs: &[u32]) -> Vec<u32> {
+    xs.iter().map(|x| x * 2).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scale_grows_something() {
+        let xs = scale(&[1, 2]);
+        assert!(xs.into_iter().any(|x| x > 1));
+    }
+}

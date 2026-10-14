@@ -1,0 +1,18 @@
+pub struct Row {
+    pub total: u32,
+}
+
+pub fn rows(a: u32, b: u32) -> [Row; 2] {
+    [Row { total: 0 }, Row { total: a + b }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_carry_the_sum() {
+        let rows = rows(30, 3);
+        assert!(rows.iter().any(|r| r.total == 33));
+    }
+}
