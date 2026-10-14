@@ -233,6 +233,13 @@ impl ExpansionSurface {
             .syntax()
             .descendants()
             .any(|node| ast::MacroRules::can_cast(node.kind()))
+            // Preserve the Drop veto through renamed imports. Compacting a
+            // whole use item joins `Drop as Alias`, hiding the Drop token.
+            && !tree.syntax().descendants().filter_map(ast::UseTree::cast).any(|item| {
+                item.path().is_some_and(|path| {
+                    compact(&path.syntax().text().to_string()).rsplit("::").next() == Some("Drop")
+                })
+            })
             && !tree
             .syntax()
             .descendants()
