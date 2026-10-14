@@ -59,22 +59,26 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         }
         // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` or `r.expect_err(..)`
         // whose value is never compared panics only when `r` is `Ok`, so it
-        // observes the `Err` side.
-        if (trimmed.ends_with("unwrap_err();") || trimmed.contains(".expect_err("))
-            && !is_assertion_line(&trimmed)
-            && starts_statement(body, offset)
+        // observes the `Err` side. Join rustfmt-wrapped tails through the
+        // first depth-0 `;` so the existing statement-start and receiver
+        // gates see the whole statement (#7955).
+        let mut fact_offset = offset;
+        if starts_statement(body, offset)
+            && let Some((err_facts, extra_lines, leftover)) =
+                uncompared_unwrap_err_facts_opening_on_line(body, offset, start_line)
         {
-            let rest = body.lines().skip(offset + 1).collect::<Vec<_>>().join("\n");
-            if let Some(text) = uncompared_unwrap_err(&trimmed, &rest) {
-                out.push(OracleFact {
-                    line: start_line + offset,
-                    observed_tokens: extract_identifier_tokens(&text),
-                    text,
-                    kind: OracleKind::BroadError,
-                    strength: OracleStrength::Weak,
-                    ok_value_observed: None,
-                });
-                continue;
+            out.extend(err_facts);
+            for _ in 0..extra_lines {
+                let _ = lines.next();
+            }
+            match leftover {
+                Some(rest)
+                    if is_assertion_line(&rest) || starts_discarded_matcher_computation(&rest) =>
+                {
+                    trimmed = rest;
+                    fact_offset = offset + extra_lines;
+                }
+                _ => continue,
             }
         }
         if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
@@ -110,7 +114,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             }
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
-                line: start_line + offset + preceding_lines,
+                line: start_line + fact_offset + preceding_lines,
                 text: trimmed,
                 kind: classification.kind,
                 strength: classification.strength,
@@ -2393,14 +2397,196 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     }
 }
 
-/// RIPR-SPEC-0227 decision 2: a one-line statement whose value is
-/// `<call>.unwrap_err()` and is never compared,
-/// returned as the oracle text (the extraction without `let` or `;`). The
-/// value is uncompared when the statement discards it (`f().unwrap_err();`,
-/// `let _ = ..`, `let _e = ..`) or binds a name that `rest` (the body after
-/// the statement) never mentions. A binding that a later assertion reads is
-/// that assertion's oracle (RIPR-SPEC-0106), not a side check, and an
-/// assignment or any other statement shape is not admitted.
+/// Maximum extra lines a rustfmt-wrapped `unwrap_err` / `expect_err`
+/// statement may span. Unclosed delimiters stop instead of swallowing a
+/// later observer.
+const UNWRAP_ERR_JOIN_LIMIT: usize = 16;
+
+/// Uncompared `unwrap_err` / `expect_err` statements that begin on body
+/// line `offset`, including rustfmt-wrapped tails and same-row siblings.
+/// Extra lines are continuations of those statements, not later rows.
+/// `leftover` is same-row text that is not itself an uncompared error-side
+/// observer, so the generic assertion path can still read it.
+fn uncompared_unwrap_err_facts_opening_on_line(
+    body: &str,
+    offset: usize,
+    start_line: usize,
+) -> Option<(Vec<OracleFact>, usize, Option<String>)> {
+    let (first, extra_lines, first_suffix) = take_semicolon_terminated_statement(body, offset)?;
+    let suffix_line = offset.saturating_add(extra_lines);
+    let mut statements = vec![(first, offset)];
+    let mut suffix = first_suffix;
+    while let Some((next, rest)) = first_statement_in_text(&suffix) {
+        statements.push((next, suffix_line));
+        suffix = rest;
+    }
+    let later = body
+        .lines()
+        .skip(offset.saturating_add(extra_lines).saturating_add(1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut facts = Vec::new();
+    let mut leftover_parts = Vec::new();
+    for (index, (statement, line)) in statements.iter().enumerate() {
+        let rest = {
+            let following = statements[(index + 1)..]
+                .iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut parts = Vec::new();
+            if !following.is_empty() {
+                parts.push(following);
+            }
+            let trailing = suffix.trim();
+            if !trailing.is_empty() {
+                parts.push(trailing.to_string());
+            }
+            if !later.is_empty() {
+                parts.push(later.clone());
+            }
+            parts.join("\n")
+        };
+        if let Some(text) = uncompared_unwrap_err(statement, &rest) {
+            facts.push(OracleFact {
+                line: start_line + *line,
+                observed_tokens: extract_identifier_tokens(&text),
+                text,
+                kind: OracleKind::BroadError,
+                strength: OracleStrength::Weak,
+                ok_value_observed: None,
+            });
+        } else {
+            leftover_parts.push(statement.trim().to_string());
+        }
+    }
+    let trailing = suffix.trim();
+    if !trailing.is_empty() {
+        leftover_parts.push(trailing.to_string());
+    }
+    if facts.is_empty() {
+        None
+    } else {
+        let leftover = if leftover_parts.is_empty() {
+            None
+        } else {
+            Some(leftover_parts.join(" "))
+        };
+        Some((facts, extra_lines, leftover))
+    }
+}
+
+fn first_statement_in_text(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let masked = mask_comments_and_strings(trimmed);
+    let semi = depth0_semicolon_index(&masked)?;
+    Some((
+        trimmed[..=semi].to_string(),
+        trimmed[semi + 1..].to_string(),
+    ))
+}
+
+/// First semicolon-terminated statement starting at `offset`. Continues
+/// onto later lines only while they are rustfmt tails of that statement,
+/// and never past a new observer. Indices into the joined text match the
+/// masked layout because masking preserves byte length.
+fn take_semicolon_terminated_statement(
+    body: &str,
+    offset: usize,
+) -> Option<(String, usize, String)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let first = lines.get(offset)?.trim();
+    if first.is_empty() || is_control_or_block_start(first) {
+        return None;
+    }
+    let mut joined = String::new();
+    for (step, raw) in lines[offset..].iter().enumerate() {
+        if step >= UNWRAP_ERR_JOIN_LIMIT {
+            return None;
+        }
+        let line = raw.trim();
+        if step > 0 {
+            if !is_unwrap_err_statement_continuation(&joined, line) {
+                return None;
+            }
+            joined.push('\n');
+        }
+        joined.push_str(line);
+        let masked = mask_comments_and_strings(&joined);
+        if let Some(semi) = depth0_semicolon_index(&masked) {
+            return Some((
+                joined[..=semi].to_string(),
+                step,
+                joined[semi + 1..].to_string(),
+            ));
+        }
+    }
+    None
+}
+
+fn depth0_semicolon_index(masked: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (index, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn masked_group_depth(masked: &str) -> i32 {
+    let mut depth = 0i32;
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth
+}
+
+fn is_control_or_block_start(line: &str) -> bool {
+    line.starts_with("if ")
+        || line.starts_with("if(")
+        || line.starts_with("match ")
+        || line.starts_with("for ")
+        || line.starts_with("while ")
+        || line.starts_with("loop ")
+        || line.starts_with("unsafe ")
+        || line.starts_with('{')
+}
+
+/// Whether `next` may attach to an unfinished statement. Tails start with
+/// a rustfmt wrap token, or continue an incomplete `let` binding. An
+/// unclosed delimiter does not admit a later assertion, `let`, or control
+/// statement, so a missing `)` cannot swallow the next observer.
+fn is_unwrap_err_statement_continuation(joined_so_far: &str, next: &str) -> bool {
+    if next.is_empty() {
+        return true;
+    }
+    if next.starts_with(['.', ')', ']', '}', ',', '"', '\''])
+        || next.starts_with("r#")
+        || next.starts_with("r\"")
+        || next.starts_with('&')
+    {
+        return true;
+    }
+    let masked = mask_comments_and_strings(joined_so_far);
+    let depth = masked_group_depth(&masked);
+    if depth == 0 {
+        let incomplete_let = masked.trim_start().starts_with("let ") && masked.contains('=');
+        return incomplete_let && !is_assertion_line(next) && !next.starts_with("let ");
+    }
+    !is_assertion_line(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
+}
+
 /// Whether body line `offset` starts a statement: the previous non-empty
 /// line ends one. After `let e =` the next line is the value, not a
 /// discarded expression.
@@ -2413,6 +2599,15 @@ fn starts_statement(body: &str, offset: usize) -> bool {
         .is_none_or(|previous| previous.ends_with([';', '{', '}']))
 }
 
+/// RIPR-SPEC-0227 decision 2: a semicolon-terminated statement whose value
+/// is `<call>.unwrap_err()` or `<call>.expect_err(..)` and is never
+/// compared, returned as the oracle text (the extraction without `let` or
+/// `;`). The value is uncompared when the statement discards it
+/// (`f().unwrap_err();`, `let _ = ..`, `let _e = ..`) or binds a name that
+/// `rest` (the body after the statement) never mentions. A binding that a
+/// later assertion reads is that assertion's oracle (RIPR-SPEC-0106), not
+/// a side check, and an assignment or any other statement shape is not
+/// admitted.
 pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<String> {
     let statement = statement.trim();
     let expression = statement.strip_suffix(';')?.trim_end();
