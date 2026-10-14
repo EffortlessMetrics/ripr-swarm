@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - TypeScript verdict corpus spec-example coverage:
   `fixtures/typescript-verdict-corpus` now has a `spec-coverage.toml` ledger,
   so `verdict-corpus check-all` gates its citations on a floor instead of

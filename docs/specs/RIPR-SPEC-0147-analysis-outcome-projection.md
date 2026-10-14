@@ -77,8 +77,9 @@ limitation exists. JSON/status output must expose the same DTO and derive
 `analysis_complete` from its closed kind; it must not maintain an independent
 completeness flag.
 
-The diff-scoped `check` CLI maps the producer's `unsupported_input` kind to
-exit `2` after writing the original report (#7440). Retained findings, counts,
+The diff-scoped `check` and `diff` CLI commands map the producer's
+`unsupported_input` kind to exit `2` after writing the original report
+(#7440 for check, #7793 for diff). Retained findings, counts,
 input identity and limitation recovery remain intact; a second refusal document
 must not be appended. Complete kinds, including explicit empty-input `no_scope`,
 and `partial_with_limitations` retain advisory exit `0`. Neither incomplete
@@ -230,6 +231,14 @@ coverage counts and nonempty retained finding coordinates.
 `unsupported_check_keeps_rendered_formats_and_repo_scope` covers human, SARIF,
 native/Shields badge reports and the repo-only agent packet control;
 `check_json_malformed_options_remain_empty_exit_two` separates usage failure.
+`cli_smoke::unsupported_diff_exit::diff_json_outcomes_preserve_report_and_exit_contract`
+executes committed complete, empty, usable partial, conflict and mixed subjects
+with literal outcome/status/count/coordinate expectations and independently
+hashed Git input. `diff_human_unsupported_and_usage_keep_stream_contracts`
+separates the original human report, usage error and operational refusal;
+`diff_discovery_names_unsupported_and_partial_exits` checks actual machine and
+human command discovery. Absolute-root seam path parity remains outside this
+exit mapping and is tracked in #7797.
 
 The focused pipeline and JSON/human parity tests above cover limitation
 propagation, complete-versus-incomplete zero-result behavior, and shared

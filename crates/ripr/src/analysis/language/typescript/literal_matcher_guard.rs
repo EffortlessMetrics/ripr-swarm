@@ -129,3 +129,103 @@ pub(crate) fn inline_snapshot_is_literal(
         _ => false,
     }
 }
+
+/// A test-local `const` whose primitive literal initializer a loose equality
+/// may read in place of the name (RIPR-SPEC-0247 rule 2, amended for #6654):
+/// declared once at the top level of the test body, before the assertion.
+/// Only primitives qualify: `const` stops reassignment, not mutation, so an
+/// object or array the test fills in later (`want.push(...)`) is not the
+/// literal it was declared with.
+#[derive(Clone, Debug)]
+pub(crate) struct LooseLiteralConst {
+    name: String,
+    text: String,
+    declared_end: u32,
+}
+
+/// The test body's top-level `const <name> = <literal>;` bindings whose name
+/// no other top-level declaration reuses. Only plain identifiers bound to a
+/// literal are kept; the literal's own coercion reach is decided per
+/// assertion by [`resolve_loose_literal_const`].
+pub(crate) fn loose_literal_consts(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
+) -> Vec<LooseLiteralConst> {
+    let mut declared: Vec<String> = Vec::new();
+    let mut candidates = Vec::new();
+    for stmt in statements {
+        match stmt {
+            Statement::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    declared.extend(
+                        declarator
+                            .id
+                            .get_binding_identifiers()
+                            .iter()
+                            .map(|ident| ident.name.to_string()),
+                    );
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+                        continue;
+                    }
+                    let oxc_ast::ast::BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    let Some(init) = &declarator.init else {
+                        continue;
+                    };
+                    // `deep: false` admits no object or array literal.
+                    if !expression_pins_loosely(init, false) {
+                        continue;
+                    }
+                    // The literal itself, without parentheses or `as`.
+                    let span = init.get_inner_expression().span();
+                    let Some(text) = source.get(span.start as usize..span.end as usize) else {
+                        continue;
+                    };
+                    candidates.push(LooseLiteralConst {
+                        name: id.name.to_string(),
+                        text: text.to_string(),
+                        declared_end: declaration.span.end,
+                    });
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                declared.extend(function.id.as_ref().map(|id| id.name.to_string()));
+            }
+            Statement::ClassDeclaration(class) => {
+                declared.extend(class.id.as_ref().map(|id| id.name.to_string()));
+            }
+            _ => {}
+        }
+    }
+    // Defensive: a valid program cannot declare a top-level name twice, but
+    // the parser recovers from that error and must not credit either one.
+    candidates.retain(|candidate| {
+        declared
+            .iter()
+            .filter(|name| **name == candidate.name)
+            .count()
+            == 1
+    });
+    candidates
+}
+
+/// The literal a loose equality's `expected` identifier stands for, when it
+/// names one of `consts` declared before the assertion at `call_start`.
+pub(crate) fn resolve_loose_literal_const<'c>(
+    consts: &'c [LooseLiteralConst],
+    expected: &Argument<'_>,
+    call_start: u32,
+) -> Option<&'c str> {
+    let Some(Expression::Identifier(ident)) = expected
+        .as_expression()
+        .map(|expression| expression.get_inner_expression())
+    else {
+        return None;
+    };
+    consts
+        .iter()
+        .find(|candidate| candidate.name == ident.name.as_str())
+        .filter(|candidate| candidate.declared_end <= call_start)
+        .map(|candidate| candidate.text.as_str())
+}

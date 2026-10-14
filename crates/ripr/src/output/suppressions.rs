@@ -805,9 +805,25 @@ pub struct CheckSuppressionOutcome {
     pub policy_path: String,
     /// Suppressed findings in `findings[]` order.
     pub suppressed: Vec<SuppressedCheckFinding>,
-    /// Expired-entry and unmatched-selector warnings, kept visible so a
-    /// stale policy cannot silently keep output clean.
+    /// Expired-entry, unmatched-selector, and inapplicable-kind warnings,
+    /// kept visible so a stale or mixed-kind policy cannot silently keep
+    /// output clean.
     pub warnings: Vec<String>,
+}
+
+/// Exposure-gap rows from a mixed suppression manifest.
+///
+/// Finding-exposure badges match only these entries so `test_efficiency` rows
+/// stay with [`apply_test_efficiency_suppressions`] and do not inherit the
+/// explicit check-policy inapplicable-kind warning (#7760).
+pub(crate) fn exposure_gap_suppression_entries(
+    entries: &[SuppressionEntry],
+) -> Vec<SuppressionEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.kind == SuppressionKind::ExposureGap)
+        .cloned()
+        .collect()
 }
 
 /// Applies exposure-gap suppression entries to check findings (#1441).
@@ -821,8 +837,15 @@ pub struct CheckSuppressionOutcome {
 ///
 /// Expired entries are not applied and surface as warnings, mirroring
 /// [`apply_exposure_suppressions`]. Entries that match nothing surface as
-/// warnings too. `test_efficiency` entries are ignored — they select
-/// test-efficiency report rows, not check findings.
+/// warnings too. `test_efficiency` entries are not applied — they select
+/// test-efficiency report rows, not check findings — and each one surfaces
+/// as a warning so a mixed **explicit** `--suppression-policy` cannot silently
+/// look empty (#7760).
+///
+/// Finding-exposure badges share this matcher for `exposure_gap` rows only.
+/// Pass [`exposure_gap_suppression_entries`] so implicit badge policy does not
+/// inherit the inapplicable-kind warning; `test_efficiency` rows stay with
+/// [`apply_test_efficiency_suppressions`].
 pub fn apply_check_suppressions(
     candidates: &[CheckSuppressionCandidate],
     entries: &[SuppressionEntry],
@@ -830,10 +853,21 @@ pub fn apply_check_suppressions(
 ) -> (std::collections::BTreeMap<String, String>, Vec<String>) {
     let mut matched: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let mut warnings = Vec::new();
-    for entry in entries
-        .iter()
-        .filter(|entry| entry.kind == SuppressionKind::ExposureGap)
-    {
+    for entry in entries {
+        match entry.kind {
+            SuppressionKind::TestEfficiency => {
+                let test_name = entry.test.as_deref().unwrap_or("unknown");
+                let key_label = match &entry.path {
+                    Some(path) => format!("`{test_name}` at `{path}`"),
+                    None => format!("`{test_name}`"),
+                };
+                warnings.push(format!(
+                    "test_efficiency suppression for {key_label} does not apply to check findings (test-efficiency rows only)"
+                ));
+                continue;
+            }
+            SuppressionKind::ExposureGap => {}
+        }
         let Some(selector) = entry.finding_id.clone().or_else(|| entry.path.clone()) else {
             continue;
         };
@@ -1654,6 +1688,49 @@ reason = "second"
                 .iter()
                 .any(|w| w.contains("did not match") && w.contains("missing/**"))
         );
+    }
+
+    #[test]
+    fn apply_check_suppressions_warns_on_test_efficiency_entries() {
+        let candidates = vec![candidate("probe:src", "src/lib.rs", "no_static_path")];
+        let te_entries = vec![
+            test_efficiency_entry("adds_correctly", Some("src/lib.rs"), None, 10),
+            test_efficiency_entry("cli_prints_help", None, None, 20),
+        ];
+        let (matched, warnings) = apply_check_suppressions(&candidates, &te_entries, "2026-05-03");
+
+        assert!(
+            matched.is_empty(),
+            "test_efficiency path/test selectors must not suppress check findings: {matched:?}"
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings[0].contains("test_efficiency")
+                && warnings[0].contains("`adds_correctly`")
+                && warnings[0].contains("at `src/lib.rs`")
+                && warnings[0].contains("does not apply to check findings"),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings[1].contains("`cli_prints_help`")
+                && warnings[1].contains("does not apply to check findings")
+                && !warnings[1].contains(" at `"),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().all(|w| !w.contains("did not match")),
+            "inapplicable test_efficiency entries must not be reported as unmatched exposure selectors: {warnings:?}"
+        );
+
+        let mut mixed = te_entries;
+        mixed.push(path_selector_entry("src/lib.rs", None, None));
+        let (matched, warnings) = apply_check_suppressions(&candidates, &mixed, "2026-05-03");
+        assert_eq!(
+            matched.get("probe:src").map(String::as_str),
+            Some("src/lib.rs"),
+            "exposure_gap selectors must still apply beside ignored test_efficiency entries"
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
     }
 
     #[test]

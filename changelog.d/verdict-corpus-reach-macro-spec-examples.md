@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - The Rust verdict corpus gains 15 authored cases, each in its own crate, for
   numbered acceptance examples of the reach, macro and miss-evidence specs
   that no case cited. Each case records its examples in `spec_examples`:

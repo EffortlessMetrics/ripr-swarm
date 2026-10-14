@@ -13,6 +13,7 @@ use crate::output::evidence_record::evidence_record_for;
 use crate::output::gap_decision_ledger;
 use crate::output::suppressions::{
     CheckSuppressionCandidate, SuppressionEntry, apply_check_suppressions,
+    exposure_gap_suppression_entries,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -199,10 +200,13 @@ fn record_related_tests(unique_tests: &mut BTreeSet<(String, String, usize)>, fi
 /// `kind = "exposure_gap"` suppression whose `finding_id` or root-relative
 /// `path`/`static_class` selector matches a currently-counted exposure gap.
 /// Implicit badge suppression uses the same matcher as explicit
-/// `--suppression-policy` findings, so path-glob policy applies consistently
-/// across both surfaces. Expired and unmatched suppressions surface as
-/// `warnings` so silently-stale debt cannot keep the badge green. `today` is
-/// the ISO date used for expiry comparison.
+/// `--suppression-policy` findings for `exposure_gap` rows, so path-glob
+/// policy applies consistently across both surfaces. `test_efficiency` rows
+/// are omitted here and applied by the dedicated TE matcher; the explicit
+/// check-policy inapplicable-kind warning is not copied onto badges (#7760).
+/// Expired and unmatched exposure suppressions surface as `warnings` so
+/// silently-stale debt cannot keep the badge green. `today` is the ISO date
+/// used for expiry comparison.
 pub fn ripr_badge_summary_with_suppressions(
     output: &CheckOutput,
     suppressions: &[SuppressionEntry],
@@ -241,9 +245,14 @@ pub fn ripr_badge_summary_with_suppressions(
         }
     }
 
-    let presence =
-        CheckSuppressionCandidate::for_findings(&output.root, present_gap_findings, suppressions);
-    let (suppressed_findings, warnings) = apply_check_suppressions(&presence, suppressions, today);
+    let exposure_entries = exposure_gap_suppression_entries(suppressions);
+    let presence = CheckSuppressionCandidate::for_findings(
+        &output.root,
+        present_gap_findings,
+        &exposure_entries,
+    );
+    let (suppressed_findings, warnings) =
+        apply_check_suppressions(&presence, &exposure_entries, today);
     let calibrated_ids: BTreeSet<&str> = calibrated_gap_findings
         .iter()
         .map(|finding| finding.id.as_str())

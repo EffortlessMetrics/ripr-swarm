@@ -48,12 +48,6 @@ are scoped or reviewed.
   `bulk_rate(parcels::BULK_ITEMS)` when the argument is a path-qualified
   constant (#6668).
 
-- CI: ub-review selects RIPR's companion configuration and Rust repository
-  identity, and requests resolved-candidate receipts under the same PR-specific
-  artifact name used for upload. Review remains advisory; artifact retrieval
-  requires the existing token's Actions access and exact-revision reuse checks
-  still apply (#6337).
-
 - MCP wire names unified on `canonical_id` (same spelling the evidence
   documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
   `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
@@ -118,7 +112,7 @@ are scoped or reviewed.
   `ripr check` scans workspace files for shadowed assertion macros on all
   cores and stops once one file already leaves every trusted macro
   unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
-  (8.0s to 4.4s on two cores) with identical output.
+  (8.0s to 4.4s on two cores) with identical output (#5230).
 - The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
   and report steps now run inside one `ripr reports ci-packet` step, which
   keeps each old step's semantics: a log group per step, advisory failures
@@ -141,7 +135,7 @@ are scoped or reviewed.
   594s, with identical JSON. The evidence pass also sorts each file's
   functions once for owner lookup and collects each owner file's fixture names
   once, so cold pilot on a generated one-file crate with 200,000 functions
-  takes 20s instead of 416s, with identical artifacts.
+  takes 20s instead of 416s, with identical artifacts (#5331).
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
@@ -150,13 +144,13 @@ are scoped or reviewed.
   a runner with no prebuilt archive (Windows) or a failed download falls back
   to `cargo install`. The workflow also restores ripr's analysis cache
   (`RIPR_CACHE_DIR`, outside the checkout) with `actions/cache`, so later
-  pushes to a pull request reuse the facts of unchanged files.
+  pushes to a pull request reuse the facts of unchanged files (#5236).
 
 - CI: the generated workflow's advisory summary step is one
   `ripr reports ci-summary` call instead of about 1,250 lines of inline
   bash and `jq`, so the generated workflow drops from about 2,400 lines to
   about 1,150. The new command prints the same Markdown from the same
-  artifacts and can be run locally against a `target/ripr` tree.
+  artifacts and can be run locally against a `target/ripr` tree (#5236).
 
 - Classified seam-cache publication serializes borrowed records through a
   bounded atomic writer. Encoded bytes are the primary single-entry/shard
@@ -264,14 +258,6 @@ are scoped or reviewed.
   sampled, and the summary states that the full per-file list is not
   materialized in output. No JSON/SARIF schema shape changes. (#5022)
 
-- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
-  identity, including target kind/source and exact executable hash. Required
-  release controls must resolve to one owning artifact across both samples;
-  missing or ambiguous provenance is refused instead of borrowing another
-  target's pass. Log-derived report entries use bounded excerpts and section
-  counts with explicit truncation and omissions; doctest transitions are
-  explicit and never assigned an inferred package (#5043).
-
 - The Python preview adapter now resolves a module-level named constant used
   as a comparison threshold (`if amount >= DISCOUNT_THRESHOLD:` with
   `DISCOUNT_THRESHOLD = 10_000`), matching the Rust and TypeScript adapters.
@@ -314,10 +300,6 @@ are scoped or reviewed.
   [#4046](https://github.com/EffortlessMetrics/ripr-swarm/issues/4046)).
 
 
-
-
-
-
 - `path_dependencies.rs` no longer carries `allow(dead_code)`.
   `cycle_manifests`, `contains_node`, `forward_walk`, and the scope
   expansion `status` accessor are `#[cfg(test)]`. Cycle-set recording
@@ -330,41 +312,6 @@ are scoped or reviewed.
   `policy/clippy-exceptions.toml` has no live rows;
   `clippy-exception-0001` is retired
   ([#3995](https://github.com/EffortlessMetrics/ripr-swarm/issues/3995)).
-
-- `cargo xtask check-lint-policy` now requires a non-MSRV `blocked_by` on
-  every `[[planned]]` row whose `activate_when_msrv` is already met by
-  workspace `rust-version`. Empty or MSRV-only `blocked_by` fails. A
-  narrative `reason` does not satisfy the gate. The four current planned
-  lints copy their existing `reason` into `blocked_by` and are not promoted
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990)).
-
-- `cargo xtask check-allow-attributes` now fails a
-  `.ripr/allow-attributes.txt` row whose `max_count` is higher than the
-  current source count, including a row whose suppression is gone. The
-  live `path_dependencies.rs` `allow(dead_code)` budget is tightened from
-  7 to 4, matching the four remaining suppressions. Over-budget
-  suppressions still fail
-  ([#3923](https://github.com/EffortlessMetrics/ripr-swarm/issues/3923)).
-
-- `cargo xtask check-covered-by` now parses `policy/clippy-exceptions.toml`
-  as TOML: unique ids, required nonblank fields, optional ISO `expires`
-  dates that are not in the past, unknown fields, duplicate keys, and
-  trailing garbage. Test-valued `covered_by` resolution uses the
-  TOML-decoded command (including single-quoted strings)
-  ([#3867](https://github.com/EffortlessMetrics/ripr-swarm/issues/3867)).
-
-- `cargo xtask check-lint-policy` now compares `[[planned]]`
-  `activate_when_msrv` to `[workspace.package] rust-version`. The four current
-  planned lints are not promoted; the remaining-blocker field is `blocked_by`
-  ([#3990](https://github.com/EffortlessMetrics/ripr-swarm/issues/3990))
-  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
-
-- `cargo xtask check-lint-policy` now parses `policy/clippy-debt.toml`
-  as TOML: unique ids, required nonblank fields, ISO `target` dates that
-  are not in the past, unknown fields, duplicate keys, and debt lints
-  that are not already active, planned, or present in `Cargo.toml`.
-  `clippy-debt-0001` stays deferred
-  ([#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833)).
 
 - `crates/ripr/README.md` Development now leads with `cargo xtask precommit`
   and names `ci-full` as the complete local pass. The sequential cargo
@@ -543,27 +490,6 @@ are scoped or reviewed.
   `ripr.toml` enables" (#5214).
 - `schemas/ripr/doctor.schema.json`: the doctor document now has a published
   JSON Schema, and `docs/OUTPUT_SCHEMA.md` documents its shape (#5214).
-- Verdict corpus: authored subjects. Three small crates written for the
-  corpus add 23 runtime-labeled cases covering the verdicts and probe
-  families the real crates left empty: field construction, call deletion,
-  side effect, error path, static unknown and non-arithmetic return values.
-  ripr now credits 6 authored lines, and 3 of those credits are false
-  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
-  cases are reported apart from upstream ones under `by_origin`, because
-  they were chosen to fill cells: the upstream rates stay 10 of 20 false
-  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
-  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
-  current case exercises it (RIPR-SPEC-0219).
-- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
-  specs define and no corpus case exercised: assertions that never run
-  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
-  Result matches, `matches!` and `return Err` oracles, self-computed
-  expected values, named-constant and split-test boundaries, macro and
-  helper-chain reach, scanner and recursive helpers, cross-crate tests,
-  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
-  corpus's first silent verdict). Two changed-`let` cases exercise the
-  retarget projection. Authored rates now read 23 of 36 false actionable
-  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
@@ -591,31 +517,6 @@ are scoped or reviewed.
   fields and consumers must treat them as line-only. `agent verify`
   requires the current `0.4` envelope, so regenerate snapshots rather than
   hand-editing versions (#5336).
-- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
-  reported as strongly gripped with every mutant missed. Neither is credited
-  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
-  reads limited. The spot-check miss on the otel line came from a build that
-  did not compile it, so its truth comes from `--features profiling-traced`.
-  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
-  #5332, #5335).
-- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
-  scoreboards (speed, ci, trust, paste, first_run) on a pinned
-  real-repository corpus: cold pilot and warm check time and peak memory,
-  generated workflow size, false-clean and self-contradicting output, and
-  paste safety of printed commands under a hostile repository path. Targets
-  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
-  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
-  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
-  nightly `DX Scoreboard` workflow runs it.
-
-- Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
-  second semver and bytesize pins), now 32 cases across 10 subjects. The
-  report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
-  `as_mb` read `weakly_exposed` while a test fails under the mutant) and 2
-  `no_static_path_with_related_tests` contradictions, for 10 of 20
-  discriminated cases and 4 of 39 findings. rusqlite `inner_connection.rs:86`
-  is left out because its spot-check mutant is equivalent on SQLite 3.37 and
-  later (RIPR-SPEC-0219, #5332).
 - LSP: the accepted refresh's work-done progress now consumes the shared
   producer stage vocabulary — the blocking analysis runs through the shared
   progress-bearing entry point and a best-effort bridge forwards
@@ -637,14 +538,6 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
-- Labeled Rust verdict corpus (`cargo xtask verdict-corpus`, RIPR-SPEC-0219):
-  23 one-line edits in pinned serde, regex-syntax, semver, hex, itoa and
-  bytesize excerpts, each labeled by running mutants against the crate's own
-  tests. The harness scores ripr's anchored verdict as ideal, abstained, false
-  actionable, false exposed or false silent and counts contradictions inside
-  ripr's output. First report: 7 of 15 discriminated cases get a gap verdict
-  (false actionable), no case is credited, and 2 of 29 findings contradict
-  themselves. It runs no mutation testing or network access.
 - Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
   a frozen protocol names study identity, assignment, equal budgets, the named
   RIPR evidence surface, leakage controls, retries, stopping, non-compensating
@@ -739,47 +632,12 @@ are scoped or reviewed.
   append one compact JSONL record so adopting consumers can populate history
   trend fields. Generated CI still only reads those files when present and
   never passes `--out-jsonl` (#4392).
-- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
-  receipt for merge/protection surfaces (`#4832`). Desired settings, live
-  observation, apply-route capability, and rollback identity stay separate
-  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
-  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
-  applies settings or enables a queue.
-- CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
-  isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
-  zero-subject, or mismatched rows cannot pass. No PyPI credentials or
-  publication (#4631).
-- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
-  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
-  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
-  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
-  advisory under the lane contract (test/lint verdicts never gate; missing or
-  zero-subject evidence fails the job). The label-gated full suite is
-  unchanged (#4938).
-- LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
-  sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
-  unchanged save/refresh, production/related/unrelated edits, rename, config
-  change, cancellation, corrupt cache, and explicit full refresh. A stale
-  cached answer cannot satisfy a speed target, and a fast elapsed time cannot
-  hide a redundant full rescan or duplicate diagnostic publication. The
-  historical 2s/10s/30s figures remain proposals, not gates.
-- Identity: `cargo xtask check-identity-registry` enforces one governed
-  identifier catalog and generated `docs/identity` table. Vocabulary and
-  compatibility map only; it does not migrate consumers (#4804).
 - CLI: `ripr check` projects producer-owned analysis stages and throttled
   heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
   JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
   reveals the active stage and heartbeats; producer `completed` is held until
   the command actually succeeds. Unknown totals stay unknown; `--quiet`
   suppresses the stream. This does not make analysis faster (#4810).
-- `cargo xtask rust-judged-panel feedback` and `check` now retain one
-  checked feedback ledger over the frozen #3806 Rust judgments. Every
-  terminal case gets a disposition; confirmed defects stay replay-only
-  unless a producer-path fixture can keep the exact mechanism; JSON and
-  Markdown reports carry denominators without an overall analyzer score,
-  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
-  (#4796).
-
 - Zed: a Zed extension in `editors/zed` starts `ripr lsp --stdio` from your
   `PATH` for Rust, Python, TypeScript, TSX, and JavaScript files. Zed runs
   only language servers an extension registers, so ripr could not run in Zed
@@ -1042,40 +900,11 @@ are scoped or reviewed.
   via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
   step-debugging with variable inspection (#2420).
 
-- `cargo xtask module-health` now reports a **responsibility signal** alongside
-  its line count: a heuristic count of distinct top-level concerns (distinct
-  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
-  when it exceeds a fixed threshold. This surfaces the "structurally entangled
-  even if not huge" case that a pure line count misses (e.g. a small file
-  exposing many distinct concern families). Both signals appear in the JSON and
-  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
-  responsibility signal is documented as a smell, not a measurement; the
-  advisory still always exits 0 and is never wired into CI gates.
-
 - Property-based tests (`proptest`) added for the diff parser, covering parser
   totality (never panics on arbitrary input), structural invariants (no empty
   paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
   This is the first property-based testing infrastructure in the repo (#2751).
 
-- New `cargo xtask eval-sweep check` command: the typed offline validator for
-  the accepted Python eval-sweep artifacts (RIPR-SPEC-0086). It validates the
-  accepted eight-subject manifest under a deny-unknown schema (exactly eight
-  uniquely identified subjects, immutable https/sha pins, portable secret-free
-  diff paths) and retained run receipts in both owned shapes — the historical
-  0.2 report the sweep command writes and the 0.3 currentness shape (binary/
-  features/config/profile/input identity, materialization/detection/
-  corpus-selection/execution states, evidence digests, repeat-run comparison
-  identity, manifest-digest binding) — failing closed on changed denominators,
-  unknown state vocabulary, contradictory status, malformed or stale digest
-  bindings, and hand-edited aggregates that disagree with the derived rows
-  (including a supplied `gate_status` that differs from the gate the rows
-  derive and summary distributions that do not match the row-derived key set
-  exactly); missing identities are typed `incomplete`, never invented. It
-  writes the versioned `eval-sweep-check.{json,md}` reports (kind
-  `python_eval_sweep_check_report`, schema `0.1`) whose verdict vocabulary is
-  `valid` / `incomplete` / `not_run` — a structural currentness-readiness
-  verdict, never a robustness or adequacy claim
-  ([#3565](https://github.com/EffortlessMetrics/ripr-swarm/issues/3565)).
 - `ripr feedback record` writes a local usefulness receipt bound to one
   analysis snapshot (`--snapshot`, required) with a reason from a closed list,
   such as `useful_actionable` or `false_actionable`, under
@@ -1138,11 +967,6 @@ are scoped or reviewed.
   `refresh_replayable` is `true` only for producer-validated repo-exposure
   sources; records and unidentified kinds keep their repo-exposure recovery
   commands but no longer advertise them as a replay (#5985).
-- Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
-  JSON through the same product importer as `ripr calibrate cargo-mutants`.
-  A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
-  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
-  is no longer read as all-unknown (#5374).
 - Rust analysis: a test-local identifier that contains an error lexeme in
   operand position (`error_count`, `nonerror`) no longer confirms a changed `?`
   error path as `exposed`. The operand twin stays `weakly_exposed` with
@@ -1189,7 +1013,7 @@ are scoped or reviewed.
   downgrade a diff that touches none of that language. A Rust-only change in a
   repository with an unrelated, deeply nested Python fixture (found trialing
   `bat`) was reported `partial_with_limitations`; it now completes. The same
-  refusal still surfaces when the diff touches that language.
+  refusal still surfaces when the diff touches that language (#5284).
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
@@ -1211,7 +1035,7 @@ are scoped or reviewed.
   `caught`/`missed`/`timeout`/`unviable`, and `outcomes.json` and
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
-  filled.
+  filled (#5295).
 - Mutation spot-check: `--mutants-arg <name>=<arg>` (#5475) passes selection
   arguments such as `--workspace`, `--file` or `--re` to the cargo-mutants run
   the harness starts, records them in the receipt, and marks scoreboard samples
@@ -1223,7 +1047,7 @@ are scoped or reviewed.
   example `origin/HEAD` tracking the checked-out branch in a clone of a feature
   branch). An explicit `--base`, `--diff`, `--candidate-tree` or `--worktree`
   skips it. The empty result alone is not a clean pass, and the warning names
-  `--base <ref>`. The stdout note and JSON are unchanged.
+  `--base <ref>`. The stdout note and JSON are unchanged (#5298).
 - `ripr check`: the uncommitted-changes note no longer offers `--worktree`
   as the remedy for untracked files, which the flag never sees. The tracked
   wording now says "staged and unstaged tracked edits" (matching
@@ -1257,12 +1081,12 @@ are scoped or reviewed.
   pastes as one argument in PowerShell. A new advisory `printed-command-paste`
   lane pastes the commands from the main flows it runs into bash, zsh, sh and
   PowerShell on Linux, macOS and Windows. Commands carried in JSON are checked
-  in Bash only.
+  in Bash only (#5296).
 - `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
-  `ripr.toml` already failed loudly.
+  `ripr.toml` already failed loudly (#5304).
 - Config: workspace status and Python repair config-profile detection treat a
   dangling `ripr.toml` symlink as present (the same fact `load_for_root`
   already returns), never as built-in defaults (#5404).
@@ -1271,7 +1095,7 @@ are scoped or reviewed.
   Install ripr step fails with the cause and the fix (install Rust or add a
   toolchain step) instead of a bare `cargo: command not found`. When ripr was
   never installed, the advisory summary says so and points at that step's log
-  instead of rendering nothing.
+  instead of rendering nothing (#5428).
 - `ripr zero status` no longer reports `achieved` from a content-free or
   partial baseline debt delta. Missing or partial counts, items that
   contradict zero counts, and partial-scope, findings-bounded, or otherwise
@@ -1283,13 +1107,13 @@ are scoped or reviewed.
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
   names the path and the next step. A root that exists but is not a workspace
-  still gets the `first-pr` recovery packet.
+  still gets the `first-pr` recovery packet (#5337).
 - Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
   has a focused test but no `ripr agent repair` command, and closes with
   `Next, by hand:` instead of silence. `ripr init --ci` names the accepted
   provider, and `ripr agent repair --phase before` without `--seam-id` points
   to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
-  not seam IDs.
+  not seam IDs (#5289).
 - Tiny repositories are fast again: `ripr check` on a ~20-file crate no
   longer pays ~0.3 s of fixed waiting. Every `git`/`cargo` subprocess wait
   slept a fixed 50 ms after spawn although the probes exit in ~3 ms (8 probes
@@ -1335,7 +1159,7 @@ are scoped or reviewed.
   package from the registry. A test path that is absolute or leaves the
   package through `..`, or a runner option such as `--config` or `-p`, is
   refused too, since ripr's own verify commands name only package-relative
-  test paths and node ids.
+  test paths and node ids (#5400).
 
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
@@ -1456,16 +1280,16 @@ are scoped or reviewed.
   binding the changed function introduces (regex `dfa.accels.validate()?`,
   whose deletion survives the suite) is no longer confirmed by a test's
   same-named local; field, method and parameter names still confirm. Both
-  read `weakly_exposed` now.
+  read `weakly_exposed` now (#4771).
 - Rust: a `pub(crate) struct Name<'a> {` line is no longer probed as a call
-  deletion and reported `no_static_path`.
+  deletion and reported `no_static_path` (#4771).
 - A changed source file that is not in the working tree (sparse checkout
   or a local delete) is now a named `changed_file_absent_from_worktree`
   limitation and a partial analysis outcome. Before, `ripr check` treated
   the missing owner as a clean `no_static_path`, and `ripr review-comments`
   reported `scoped production files: 0/0` with no disclosure. Probes for
   that file are withheld. The repair is to check the file out or disable
-  sparse checkout for it.
+  sparse checkout for it (#4672).
 - Rust `return_value` evidence from bare `assert_eq!` now shares execution
   and macro-binding admission across token matching and owner-return pins.
   Refused deferred/conditional/no-op assertions contribute no oracle credit;
@@ -1630,18 +1454,18 @@ are scoped or reviewed.
   just above the old budget could select the same partition again. The LSP
   message and the recovery detail no longer say "at least 0 changed line(s)"
   when every changed file ripr's language adapters read was selected, and
-  the VS Code next step no longer points only at the file budget.
+  the VS Code next step no longer points only at the file budget (#4870).
 - Python: a parameter default on its own line inside a multi-line `def`
   header is no longer credited `exposed` when every strong related call
   passes that parameter by keyword or position. It reads `weakly_exposed`
   and names the call to add, one that omits the parameter. A keyword never
-  counts as binding a positional-only parameter, in one-line headers too.
+  counts as binding a positional-only parameter, in one-line headers too (#4891).
 - Python: a dunder method of a nested class (`Outer.Inner.__init__`) relates
   to tests that build `Outer.Inner(...)` from an imported `Outer`. A dunder
   with no related test whose tests import anything from its package (a
   private descriptor's `__get__` behind a public decorator, cachetools
   57d2e48) reads `static_unknown` with the `dynamic_dispatch` limit instead
-  of `no_static_path`. A root `lib/` directory is an import root like `src/`.
+  of `no_static_path`. A root `lib/` directory is an import root like `src/` (#4891).
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -1649,7 +1473,7 @@ are scoped or reviewed.
   reparses the owner's file per probe unless the file could admit the
   derived tuple slice, and computes each related test's value facts once
   per owner instead of once per probe; a ripr commit went
-  from 11.1 s to 8.1 s.
+  from 11.1 s to 8.1 s (#4607).
 
 - The preview note no longer calls a JavaScript file a TypeScript file. On a
   CommonJS package such as mime-types, `Changed file(s) by language:
@@ -1669,7 +1493,7 @@ are scoped or reviewed.
   edits does not exist. A selector miss, or a missing selector under
   `--worktree`, now names a `ripr check ... --json` listing with the same
   root, base and `--worktree`, and a `--worktree` drill-in without `--root`
-  resolves the project root from a subdirectory the way `ripr check` does.
+  resolves the project root from a subdirectory the way `ripr check` does (#4909).
 - Python: a changed dunder method now relates to the tests that use its class.
   `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
   instead of tests that define their own helper class with `def __init__`.
@@ -1680,7 +1504,7 @@ are scoped or reviewed.
   header in a test is no longer read as a call of `name`. Replays of
   packaging and cachetools bug fixes moved 25 false `no_static_path` or
   wrongly related findings; each flagged line's mutants were killed by the
-  project's own suite.
+  project's own suite (#4533).
 - `ripr doctor` in a TypeScript repository no longer recommends `ripr check`
   without saying TypeScript is off: it names the enable step beside the
   first command, because `check` skips files of a language that is not
@@ -1690,17 +1514,17 @@ are scoped or reviewed.
   made the next doctor run suggest the opposite edit. In a JavaScript-only
   repository the tip offered `["rust", "javascript"]`, which configuration
   loading rejects; it now offers the `typescript` entry, which analyzes
-  JavaScript.
+  JavaScript (#4901).
 - Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
   now follows every function sharing a callee's name. It followed only the
   first one indexed, so jiter's `decode_to_tape`, reached through one of two
   `decode` impls, and indexmap's `get_disjoint_mut` helpers read a silent
   `no_static_path` with no named limitation. Classification is unchanged;
-  those findings now name the unresolved path and a test to inspect.
+  those findings now name the unresolved path and a test to inspect (#4533).
 - Python: a reflowed multi-line function signature no longer produces a probe
   per parameter line. `self,`, `key,`, `*args,` and the closing `):` carry no
   behavior of their own; four of cachetools c0fdf6a's thirteen probes were
-  these lines. Parameter defaults keep their probe.
+  these lines. Parameter defaults keep their probe (#4533).
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read
@@ -1710,13 +1534,13 @@ are scoped or reviewed.
   conditional expression and for the `if` form. The line was read as a
   returned value, so any exact assertion such as
   `expect(discount(500)).toBe(450)` made a `>=` to `>` change read `exposed`
-  with "no repair to make", although 500 takes the discount either way.
+  with "no repair to make", although 500 takes the discount either way (#4886).
 - Python and TypeScript: a returned relational comparison such as
   `return total > 100` is now a predicate boundary on `total == 100`, as the
   `if` form and the Rust tail expression already were. A `>=` to `>` change
   read `exposed` with "no repair to make" when the only test asserted
   `is_large(500) == True`, which holds either way. Equality returns, computed
-  operands and compound conditions stay return values.
+  operands and compound conditions stay return values (#4900).
 - Rust findings now list the related tests that call the changed owner before
   tests matched only by a weak name token, as RIPR-SPEC-0021 already required.
   On `tokio-rs/bytes` the "Related tests appear to reach" line quoted
@@ -1728,7 +1552,7 @@ are scoped or reviewed.
   `phf_map! { "a" => 1 }`) or inside a string no longer gets a `match_arm`
   probe. Arm lines, inline `match` blocks and `macro_rules!` rule arms keep
   it. An arrow on a continuation line of a multi-line macro call still reads
-  as an arm, since the line carries no enclosing context.
+  as an arm, since the line carries no enclosing context (#4879).
 - Security: ripr's git calls pass `-c core.fsmonitor=false`, so a
   repository's own `core.fsmonitor` program (reachable from an extracted
   archive or a planted nested repository) does not run on `git status`
@@ -1745,7 +1569,7 @@ are scoped or reviewed.
   packet command then failed with "gap_id ... was not found". The refresh now
   reruns `ripr check --json` with the base the check output recorded and
   rebuilds the ledger with `--check-output`. The blocked reason says the
-  record's repair route stays usable as advisory guidance.
+  record's repair route stays usable as advisory guidance (#5300).
 - Security: `ripr doctor` probes every language runtime (`node`, `bun`,
   `pnpm`, `python3`, `pytest`) outside the checkout, as it already did for
   `yarn`. Run inside it, pnpm fetched and ran the release a project's
@@ -1807,7 +1631,7 @@ are scoped or reviewed.
   changed `_defu`; ripr reported `no_static_path` for the tested change. The
   relation follows at most three same-module calls, respects parameter and
   local shadowing, and reports such reach as `weakly_exposed`, naming the
-  exported callers, never `exposed` on its own.
+  exported callers, never `exposed` on its own (#4526).
 - Rust files saved with a UTF-8 byte-order mark now analyze like the same
   file without one. The mark made the parser fail, so the file silently fell
   back to lexical facts and a change to an item on line 1 got false
@@ -1837,12 +1661,12 @@ are scoped or reviewed.
 - LSP: a request whose method starts with `$/` and that ripr does not handle
   now gets a `-32601` method-not-found error, as the LSP spec requires. It got
   no response at all, so a client that sent one waited on it forever.
-  Unhandled `$/` notifications are still ignored.
+  Unhandled `$/` notifications are still ignored (#4503).
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.
   Workspace status no longer says a `ripr.toml` is detected when the root has
-  none; that limitation now appears only when one was found.
+  none; that limitation now appears only when one was found (#4517).
 - TypeScript: when a test imports the changed function through an alias
   ripr could not resolve, such as `@/lib/math` with
   `[typescript] resolve_tsconfig_paths` unset, `ripr check` no longer says
@@ -1928,7 +1752,7 @@ are scoped or reviewed.
   the git work tree, and names the manifest on stderr. Before, a package
   directory without a Cargo manifest rooted at the package, so tests in
   sibling packages were outside the analysis and a change they cover read
-  `no_static_path` with the analysis reported complete.
+  `no_static_path` with the analysis reported complete (#4611).
 - TypeScript: a test in another workspace package that imports the changed
   file now relates to it, whether the import is a relative path, a tsconfig
   alias, or the package's own name (`@vitest/utils/helpers`). The
@@ -1938,7 +1762,7 @@ are scoped or reviewed.
   package's `exports` (or `source`/`module`/`main`) to a source file in the
   workspace; a name two packages share, or a target that exists only as
   build output, stays unresolved. A constructor change in another package
-  still needs the test to import the class.
+  still needs the test to import the class (#4611).
 - TypeScript: a package's own tests that import it by name (zustand's
   `import { devtools } from 'zustand/middleware'`) now relate to the changed
   source. When the manifest exports only published build output
@@ -1952,11 +1776,11 @@ are scoped or reviewed.
   (`a/src/shared/calc.py` and `b/src/shared/calc.py` are both
   `shared.calc`), a test importing that name is credited only to the package
   it lives in. Before, a test in `b` exercising `b`'s function could make a
-  change to `a`'s function read `exposed`.
+  change to `a`'s function read `exposed` (#4611).
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
   per file now serves the whole run. On a ripr commit, a warm check went from
-  8.6 s to 6.6 s with byte-identical JSON.
+  8.6 s to 6.6 s with byte-identical JSON (#4498).
 - `ripr review-comments --gap-ledger` now renders repair cards for gaps from
   `ripr reports gap-ledger --check-output`, such as Python repair gaps. Those
   ledger rows carry no seam ID, and every one was suppressed as
@@ -1986,14 +1810,14 @@ are scoped or reviewed.
   `impl` blocks are recognized the same way. Bindings are matched on the
   attribute's path (including `#[unsafe(no_mangle)]` and `#[cfg_attr(..,
   pyfunction)]`), so a doc comment or unrelated attribute that mentions a
-  binding name does not count.
+  binding name does not count (#4868).
 - LSP: opening a second repository in the same Helix session no longer stops
   ripr for the first. Helix adds the new repository as a workspace folder to
   the running server, which made the folder set ambiguous and stopped
   analysis for both. Editors without the VS Code integration now keep the
   root they started with, are told which folder is not analyzed, and hover
   on a file from that folder says it is outside the analyzed root. The VS
-  Code extension keeps its folder-picker behavior.
+  Code extension keeps its folder-picker behavior (#4454).
 - `ripr agent brief --json`: `before_snapshot_command` now creates
   `target/ripr/workflow` before redirecting into it, so the first loop command
   works in a fresh checkout. When the requested scope matches nothing and no
@@ -2009,7 +1833,7 @@ are scoped or reviewed.
   at startup and when a later folder change stops analysis. Hover names the
   blocked root, a file outside the analyzed root, an edited buffer whose
   evidence is paused until the file is saved, or a file no refresh has
-  analyzed yet.
+  analyzed yet (#4454).
 - CI: the `ripr init --ci github` workflow pins `shell: bash` for every job,
   so its bash-only steps still parse on a Windows runner, and the README
   names `ripr init --ci github` as the CI entry point (#4391).
@@ -2019,13 +1843,13 @@ are scoped or reviewed.
   gives the skipped count. On one 11-file ripr change it went from 398 s, past
   the 120 s default bound, to 18.5 s with the same comments. Agent brief and
   review warnings now name the first ten hidden matching seams and count the
-  rest, so that report shrank from 1.7 MB to 34 KB.
+  rest, so that report shrank from 1.7 MB to 34 KB (#4434).
 - Generated GitHub workflow (`ripr init --ci github`): it now checks out the
   PR head instead of GitHub's `refs/pull/N/merge` commit, so review comments
   and annotations land on the PR diff's lines after the base branch moves.
   Before, they carried merge-commit line numbers. The install now pins the
   generating ripr version; an unpinned `cargo install ripr` took the newest
-  crates.io release, whose CLI need not match the workflow's steps.
+  crates.io release, whose CLI need not match the workflow's steps (#4447).
 - A repository's `ripr.toml` can no longer choose a program for ripr to run.
   `[perl].executable` was spawned by `ripr check`, probed by `ripr doctor`, and
   spawned by `ripr lsp` on file open or save, so a cloned repository could run
@@ -2033,7 +1857,7 @@ are scoped or reviewed.
   script). ripr now ignores that key, says so on stderr or in the doctor
   report, and uses the exporter on PATH unless the user sets
   `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. The VS Code extension already required
-  a trusted workspace to start the server.
+  a trusted workspace to start the server (#4438).
 - `docs/OUTPUT_SCHEMA.md`, `docs/LLM_OPERATOR_GUIDE.md`, and
   `docs/interop/mcp.md` now match the JSON agents receive: five missing
   version-table rows, the `swarm queue` `0.2` example and its `python`
@@ -2063,7 +1887,7 @@ are scoped or reviewed.
   nothing; and when several target tokens together pass the limit, the tests
   asserting the most of them are kept. One `init.rs` seam had related 3,990
   tests. On `review-comments` for one ripr commit, the run fell from 50 s to
-  17 s with identical comments.
+  17 s with identical comments (#4476).
 - Rust: a changed function that no test calls now reads `no_static_path`.
   Before, a same-file test of a sibling function made it `weakly_exposed`
   with "strong oracle found", and its unknown-shape lines said "escalate to
@@ -2071,16 +1895,16 @@ are scoped or reviewed.
   names the function outside its own `fn` line: a caller, function pointer,
   `use` alias, doctest or macro block that names it, a crate that includes a
   README as docs, a trait-impl method, or a nearby test that invokes a
-  non-assertion macro keeps reach undecided.
+  non-assertion macro keeps reach undecided (#4428).
 - Rust: a struct-field initializer is no longer `exposed` when no assertion
   reads that field. On anyhow, a `Box` token in an unrelated downcast
   assertion credited `ptr: NonNull::from(Box::leak(ptr))` with confidence 1.00
   while its own evidence said nothing observes the field. An assertion that
   reads the field on the function's result (`cfg.retries` after
   `let cfg = default_config()`) still counts; the same field name on another
-  value does not.
+  value does not (#4428).
 - Rust: the one-line signature of a new function whose body is added too is no
-  longer probed; it only repeated the body's findings.
+  longer probed; it only repeated the body's findings (#4428).
 - `ripr check` run from a crate subdirectory such as `src/` now analyzes the
   crate. In a repository whose `Cargo.toml` has no `[workspace]` table, the
   root stayed the subdirectory, the diff fell outside it, and the JSON reported
@@ -2102,27 +1926,27 @@ are scoped or reviewed.
   still show movement `improved`. The MCP
   server's instructions and tool description say it does not analyze the diff
   and name the CLI route that does; an unusable root and unknown tool or
-  resource names now carry a recovery.
+  resource names now carry a recovery (#4418).
 - `ripr check` analyzes Rust crate roots declared outside `src/`
   (`[lib] path = "lib/foo.rs"`, `[[bin]] path = ...`). A change there used
   to report zero candidate lines as a complete analysis, and Draft mode
   dropped the package's tests, so a tested change read as
-  `no_static_path`.
+  `no_static_path` (#4422).
 - Base-resolution failures name their cause and the next step. A shallow
   CI checkout no longer stops at raw `fatal: ... no merge base`; it names
   `git fetch --unshallow` and `fetch-depth: 0`. A repository with no
   commits, or whose default branch is not `main`/`master`, is told which
   `--base` would work. A branch that shares no history with HEAD is never
-  offered as that base.
+  offered as that base (#4422).
 - A diff that touches conflict markers in a file no enabled adapter reads
   (for example resolving markers committed to a workflow `.yml`) no longer
-  turns the whole run into `unsupported_input`.
+  turns the whole run into `unsupported_input` (#4422).
 - `--root` at a workspace member scopes the diff to that member and reads
   its paths relative to it. Repository-relative paths used to miss the
-  member's files, so a tested change read as `no_static_path`.
+  member's files, so a tested change read as `no_static_path` (#4432).
 - In diff analysis, the generated-code skip limitation names up to three
   skipped files and lists the generated-code conventions and the
-  `[languages.rust] generated_file_patterns` setting.
+  `[languages.rust] generated_file_patterns` setting (#4432).
 - `ripr check` on committed history (the default, or `--base <rev>`) now reads
   the committed version of every tracked file you have edited but not
   committed, tests included, and leaves out new files that are not committed,
@@ -2132,7 +1956,7 @@ are scoped or reviewed.
   edit already moved the counts while the note said uncommitted changes were
   not analyzed. The note naming `--worktree` now appears only when a source or
   test file has uncommitted changes, not for an edited README or workflow.
-  Tracked files deleted from the working tree are named on stderr.
+  Tracked files deleted from the working tree are named on stderr (#4442).
 - An empty `ripr check --diff` result now leads with its true cause. A config
   whose `[languages].enabled` leaves out `rust` records a typed
   `language_adapter_unavailable` limitation for the Rust files it skipped
@@ -2163,15 +1987,11 @@ are scoped or reviewed.
   inside an open code span; and a closed stdout pipe (`ripr doctor | head`)
   ends quietly with exit `2` instead of an internal-error report.
 
-- `cargo xtask ripr-pr` timeout packets now give one host-shell-labeled retry
-  command that keeps base, head, and root arguments literal when copied, including
-  refs with shell syntax and roots with spaces (#4367).
-
 - `ripr receipt check --ledger` explains each cross-reference state after its
   token. `receipt_ok` now says it only means the ledger still lists the
   receipt's gap, not that the gap is closed, so it no longer reads as a fix
   confirmation. The Python context witness's `fix_site` names the same
-  suggested test as `check`, `explain` and the repair card.
+  suggested test as `check`, `explain` and the repair card (#4429).
 
 - TypeScript preview boundary findings get a delegatable repair packet when
   the boundary input is statically derivable: a changed `amount >= 5000` or
@@ -2189,21 +2009,21 @@ are scoped or reviewed.
   opens with the comparison (`if (`, `return`, or `const|let|var NAME =`),
   with no earlier `return`/`throw`/`break`/`continue`/`yield`, loop or
   `await`, and the owner may not be a generator or a curried or returned
-  function.
+  function (#4429).
 
 - `ripr pilot` on a Python-only change with a repair card now ends with the
   card's route (`ripr first-pr` before the edit to name the receipt command,
   the test edit, its verify command, then that receipt command) instead of
-  `ripr check --root .`, which only led back to pilot.
+  `ripr check --root .`, which only led back to pilot (#4429).
 
 - `ripr check`'s Start here prefers a Python preview finding that has a
   repair card over one that has none, so it no longer reports "no repair card"
-  while `ripr pilot` and `ripr first-pr` route a card for the same diff.
+  while `ripr pilot` and `ripr first-pr` route a card for the same diff (#4429).
 
 - `ripr check` now names the repair loop for a Rust top gap that has a repair
   route: one `Repair loop:` line under the drill-in commands points to
   `ripr pilot --root <root>`, which prints the `ripr agent repair` start.
-  Preview-language, static-limited, and route-less findings do not get it.
+  Preview-language, static-limited, and route-less findings do not get it (#4429).
 
 - Actionable working-set review cards write the verify and analysis-outcome
   artifacts consumed by their receipt command. Gate and onboarding projections
@@ -2221,7 +2041,7 @@ are scoped or reviewed.
   `selected` and `omitted` item lists, so its self-named continuation route
   returns items rather than only counts, and a `hidden_gaps` list naming the
   gaps the actionable profile never publishes because they have no repair
-  route, such as a new function no test calls.
+  route, such as a new function no test calls (#4418).
 - LSP fallback diagnostics explain their static classification and point to
   hover evidence without promising an unavailable clipboard action or repair
   route. Missing-path guidance remains explicitly static (#4328).
@@ -2230,7 +2050,7 @@ are scoped or reviewed.
   had no behavior of its own, so it either stayed `weakly_exposed` after a
   correct test was added or, in Python, claimed unearned `exposed` credit
   beside a weakly exposed body predicate. Changed signatures, default values,
-  and one-line bodies keep their probe.
+  and one-line bodies keep their probe (#4428).
 - Static discrimination keeps oracle strength and confirmation on the same
   assertion. An unrelated exact assertion can no longer borrow a weaker
   assertion's token match to promote a finding to `exposed`; equally strong
@@ -2241,12 +2061,12 @@ are scoped or reviewed.
   `--root` is `.`, `./` or the checkout's absolute path. An absolute root used
   to leak the checkout path into the uri and change every fingerprint between
   a local and a CI run. SARIF shares the path owner GitHub annotations already
-  used.
+  used (#4417).
 - Server qualification builds the Linux server archives, which the editor
   extension downloads, on Ubuntu 22.04 with `--locked`, and fails a Linux
   binary that needs a glibc newer than 2.34 (RHEL 9), the floor the 0.11.0
   release sync adds to `cargo xtask release-server-archive`. The 0.10.0 Linux archives were built on Ubuntu 24.04 and
-  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found`.
+  failed on Ubuntu 22.04 and Debian 12 with `GLIBC_2.39 not found` (#4414).
 - `RIPR_GIT_TIMEOUT` with a non-numeric or out-of-range value now fails
   closed (exit 2) naming the variable and the value, like `--git-timeout` and
   the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
@@ -2257,7 +2077,7 @@ are scoped or reviewed.
   (`import more_itertools as mi`, `mi.one(...)` via `from .more import *`)
   every changed line read `no_static_path` although mutating those lines
   fails the projects' own tests. Renamed re-exports, `_private` names under a
-  star import, and names a declared `__all__` omits are not followed.
+  star import, and names a declared `__all__` omits are not followed (#4477).
 - TypeScript preview: a test that imports a changed function through a barrel
   now reaches it. On unjs/ufo, `import { withoutBase } from "../src"` names
   the directory whose `src/index.ts` does `export * from "./utils"`; ripr
@@ -2272,7 +2092,7 @@ are scoped or reviewed.
   and a test that imports only another name from the same barrel stays
   unrelated. (ufo's own `withBase` tests are still missed: they
   register from a `for` loop with computed titles, which test extraction does
-  not index and discloses as partial.)
+  not index and discloses as partial.) (#4502)
 - TypeScript: tests declared inside a `for`, `for...of` or `for...in` loop
   or a `.forEach` callback are now extracted, including tests with a
   template-literal or other computed title. Before, a suite written like
@@ -2282,7 +2102,7 @@ are scoped or reviewed.
   owner only when its own body calls it. A loop is walked only when it is
   known to run at least once (a non-empty literal, or a `const` bound to
   one), and a loop variable or `describe` parameter that reuses an imported
-  owner's name shadows it.
+  owner's name shadows it (#4593).
 
 - Explicit per-seam agent packets bind their `packet.next` commands and
   artifact paths to the selected root. Prepared repair packets advertise the
@@ -2296,7 +2116,7 @@ are scoped or reviewed.
   (exit 4). The interpreter is spelled `python`, like the unittest route's
   `python -m unittest`, because it names the virtual environment's interpreter
   on every platform. Repair-card, LSP skeleton, and dogfood consumers accept
-  both the new form and the bare form earlier artifacts carry.
+  both the new form and the bare form earlier artifacts carry (#4485).
 
 - `ripr first-pr` now prints the receipt path its receipt command writes. For a
   Python or TypeScript preview gap, `Receipt path:` named a
@@ -2304,7 +2124,7 @@ are scoped or reviewed.
   `ripr receipt write` command wrote `--out gap-python-....json`; the path now
   is the file the printed command writes (its `--out`, or the receipt
   writer's default for its `--gap`), else the ledger's recorded path, and the
-  first-pr default only when first-pr builds the command itself.
+  first-pr default only when first-pr builds the command itself (#4485).
 
 - `ripr first-pr` no longer leaves `--status not_run` unexplained in the
   receipt it presents as the step after verify. A `Receipt status` line now
@@ -2312,7 +2132,7 @@ are scoped or reviewed.
   summary and `start-here.md`, telling the reader to pass `--status passed`
   when the verify command exited 0 and `--status failed` when it did not. The
   command itself is unchanged, still runs as printed, and records `not_run`
-  when left as is.
+  when left as is (#4485).
 
 - The generated CI job summary's `PR review summary` and `Recommended next
   test` blocks, their collapsed full reports included, now print copyable
@@ -2321,7 +2141,7 @@ are scoped or reviewed.
   `ripr agent start` binds into `workflow.json` and `agent-brief.json`, like
   the `Agent review packet` block already did. The stored artifacts keep
   their bound root; only the summary rendering rewrites the checkout path, and
-  only where it is a whole path token.
+  only where it is a whole path token (#4485).
 - `ripr review-comments` now reads its diff the way `ripr check` does. It ran
   its own `git diff`, so `color.diff=always` in the repository's git config
   produced zero guidance with exit 0, and `diff.submodule=diff` put guidance
@@ -2352,7 +2172,7 @@ are scoped or reviewed.
   other budget the next file may also need. When every changed file ripr's language adapters read was
   selected (a single oversized first file), it no longer prints "at least 0
   changed file(s) ... may contain additional findings"; it says the result
-  stays partial instead.
+  stays partial instead (#4686).
 - Rust cache entries now reject same-key semantic payload edits before serving
   facts or classified evidence. File-fact, full/compact classified, shard and
   corpus-fingerprint generations cold-recompute once; checksums do not
@@ -2432,11 +2252,6 @@ are scoped or reviewed.
   `lang-rust` feature's manifest, and release CI now builds the packaged crate
   from a fresh resolution
   ([#3787](https://github.com/EffortlessMetrics/ripr-swarm/issues/3787)).
-- `cargo xtask actionable-gap-outcomes` no longer reports an agent receipt's
-  `verification.status: "verification_not_run"` as the attempt's verify
-  result. It counts as a missing verify result
-  ([#4234](https://github.com/EffortlessMetrics/ripr-swarm/issues/4234)).
-
 - `ripr gate evaluate --gap-ledger` no longer reports an already-observed
   (closed) gap under "Suppressed" as configured-hidden. The ledger's
   `not_policy_targeted` state also covers no-action records, so the gate now
@@ -2455,7 +2270,7 @@ are scoped or reviewed.
   unchanged. The command still needs the package's dependencies installed;
   ripr does not check for `node_modules`, and every launcher runs only the
   installed binary, so a missing one fails instead of being fetched from the
-  registry.
+  registry (#5229).
 
 - A TypeScript change that only edits type syntax on a signature or
   declaration line (a return type, a parameter or variable annotation, an
@@ -2491,7 +2306,7 @@ are scoped or reviewed.
   `return`, a generator hook, or any `eval` or escaped identifier in the
   file. Member reads, `expect(cart)`, `typeof cart`, comments, import paths
   and describe/test/mock name strings do not count; any other string or
-  template that mentions the name does.
+  template that mentions the name does (#4266).
 
 - A generated command prints no PowerShell form only when PowerShell reads it
   the same way. Commands with a quoted program path, `$` expansion, globs,
@@ -2536,26 +2351,19 @@ are scoped or reviewed.
   at compile time; declaration files still count as changed files. Ambient
   statements are found from the syntax tree, so `declare` used as a
   JavaScript identifier, or at the start of a template-literal line, is still
-  probed.
+  probed (#4295).
 
 - Perl preview: with Perl enabled but no fact packet, the reason now says
   to pass `--perl-facts <packet.json>` or configure `[perl].producer` instead
   of citing an internal campaign issue, and the note reads "1 Perl file was
-  not analyzed".
+  not analyzed" (#4298).
 
 - `ripr doctor` now lists Perl under "Detected languages" whenever its Perl
   section appears: any `.pm`, `.pl` or `.t` file at any depth, such as a
   CPAN module under `lib/Name/`, or a `Makefile.PL`, `Build.PL` or `cpanfile`.
   It no longer prints "none detected" beside a Perl section that counts the
   same files. Files under `target/`, `node_modules/`, `blib/` or hidden
-  directories detect nothing, as they already counted nothing.
-
-- `cargo xtask vscode-package` now reads the built VSIX and fails if it
-  carries workspace build output (anything under `extension/target/`, Cargo
-  `.fingerprint` or `incremental` state, `.rlib` or `.rmeta`) or exceeds 1,500
-  entries or 64 MiB unpacked. On the 0.11.0 trial join, Cargo output left under
-  `editors/vscode/target/` was packed into a 725 MB VSIX; this check fails
-  packaging if an ignore rule ever misses that output again.
+  directories detect nothing, as they already counted nothing (#4302).
 
 - The LSP local file-URI decoder refuses a parent-directory segment (`..`),
   including one written with percent-encoding or backslashes, instead of
@@ -2752,7 +2560,7 @@ are scoped or reviewed.
   commands. The second is the most actionable thing on screen — the product's
   own advertisement of its output omitted the step that tells a reader what to
   run next. Both now match `fixtures/boundary_gap/expected/human.txt`, which is
-  the same example.
+  the same example (#3059).
 
 - `ripr explain` and `ripr context` now reject a mistyped flag with a
   suggestion. Neither parser routed through the shared unknown-argument
@@ -2768,7 +2576,7 @@ are scoped or reviewed.
 
   Both commands are also registered in the help lookup and the command-path
   list the flag-parity guard iterates, which previously omitted them from both
-  sides and so could not see the gap.
+  sides and so could not see the gap (#3055).
 
 - The release external-cwd journey test no longer flakes with `Text file busy`
   under the full `reports::release` filter. It published its spawnable stub with
@@ -2784,42 +2592,6 @@ are scoped or reviewed.
   hard links. Test-only change; no `ripr` behavior is affected
   ([#3051](https://github.com/EffortlessMetrics/ripr-swarm/issues/3051)).
 
-- `cargo xtask check-public-api` now observes the transitive public surface.
-  Its collector matched two line prefixes in `crates/ripr/src/lib.rs`, so every
-  `pub` item reachable through an allowlisted `pub mod` was invisible: a new
-  `pub const` in `domain/mod.rs` was reported as `pass`. The gate now parses the
-  crate's module tree and records module-level items whose visibility is a bare
-  `pub`, following `pub mod` into other files. `policy/public_api.txt` is
-  rewritten as a `<kind> <path>` recording of the surface that already existed —
-  214 entries where 18 lines were recorded before. No item's visibility changed;
-  the previously unrecorded items were already public. The gate does not cover
-  public struct fields, enum variants, trait items, or associated functions in
-  `impl` blocks, and it records a glob re-export as a glob because a syntax walk
-  cannot expand one. Both limits are stated in the gate's own report.
-
-  Three blind spots in that first walk are closed. `cfg` predicates were
-  decided by looking for the identifiers `test` and `not` anywhere in the
-  predicate, which was wrong in both directions: `#[cfg(any(test, feature =
-  "x"))]` was dropped although a feature-enabled build exports it, so an
-  accidental public addition passed the gate, and `#[cfg(all(test, not(feature
-  = "x")))]` was recorded although nothing but a test build compiles it. Each
-  predicate is now evaluated with `test = false` and every other option left
-  unknown, and an item is dropped only when no non-test build can compile it.
-  Non-`pub` modules were skipped entirely, so a `#[macro_export] macro_rules!`
-  declared in one was missed even though it binds at the crate root whatever
-  the declaring module's visibility; such modules are now walked for their
-  exported macros and nothing else. Completed work was keyed by file path
-  alone, so with two `#[path]` modules sharing one file only the first path was
-  recorded; it is now keyed by file and module path, with a separate
-  in-progress set bounding a module tree that names itself. A `#[path]` on a
-  module declared at the top level of a non-`mod.rs` file also resolved against
-  the wrong base directory — it is relative to the directory holding that file,
-  not to the file's child-module directory, which is how
-  `crates/ripr/src/cli/commands.rs` declares its subcommands.
-
-  `policy/public_api.txt` is unchanged: none of these corrections moves the
-  `ripr` crate's own recorded surface.
-
 - The `fabricated_result` case in `fixtures/assurance_vocabulary/assurance/corpus.json`
   omitted `runtime_mutation`, so it failed the assurance schema for a missing
   required field rather than for the producer-bound digest mismatch it exists to
@@ -2834,13 +2606,13 @@ are scoped or reviewed.
   It now renders `Missing discriminator: AuthError::RevokedToken`. Entries that
   are not value-shaped ("No strong discriminator was detected") are unchanged,
   as is every non-human format. 18 `human.txt` goldens re-blessed as
-  `formatting_only`.
+  `formatting_only` (#3050).
 
 - `Cargo.lock` now resolves the current workspace manifest. The `serial_test`
   dev-dependency was added without refreshing the lock, so `cargo` commands
   that pass `--locked` — including release qualification and lock-resolving
   package commands — failed to resolve. No declared manifest dependency
-  requirement changed; the refresh only records the missing resolution.
+  requirement changed; the refresh only records the missing resolution (#2853).
 
 - An unexpected panic now produces a recognizable `ripr: internal error`
   message and exits with code 2, not the default Rust panic output with
@@ -2860,19 +2632,19 @@ are scoped or reviewed.
 
 - AGENTS.md example commands used a stale probe ID (`error_path:8ee9f771`)
   that no longer matches the sample fixture. Updated to the current
-  `error_path:c1a03250` so the examples work when copy-pasted.
+  `error_path:c1a03250` so the examples work when copy-pasted (#2734).
 - `docs/CONFIGURATION.md` said the LSP reads "six keys" but the table below
-  and the code confirm seven governed keys. Corrected to "seven."
+  and the code confirm seven governed keys. Corrected to "seven." (#2734)
 - `crates/ripr/README.md` distribution row called GitHub Releases
   "unpublished working drafts" but the crate is published on crates.io.
-  Reworded to accurately reflect the crates.io distribution channel.
+  Reworded to accurately reflect the crates.io distribution channel (#2734).
 - VS Code settings `ripr.check.mode` and `ripr.trace.server` now carry
   `enumDescriptions` so the Settings UI dropdown explains each option.
   The `ripr.trace.server` description now clarifies it traces LSP transport,
-  not analysis reasoning.
+  not analysis reasoning (#2734).
 - VS Code settings `ripr.gitTimeoutMs` and `ripr.refreshDeadlineMs` now
   declare `minimum: 1000` to prevent silent acceptance of 0 or negative
-  values.
+  values (#2734).
 
 - Three test modules used fixed (non-unique) temporary directory names that
   could collide under parallel test execution, causing intermittent flakes.
@@ -2952,7 +2724,7 @@ are scoped or reviewed.
   `related_test_or_observer`, and absolute paths under a relative `--root`
   resolve. The status surfaces and the repair-packet command name the change
   and the regeneration command (`ripr reports gap-ledger`, or
-  `cargo xtask lane1-evidence-audit` for `actionable-gaps.json`).
+  `cargo xtask lane1-evidence-audit` for `actionable-gaps.json`) (#4709).
 - Windows LSP refreshes now isolate shared Git subprocesses from the JSON-RPC
   server stdin and terminate timed-out process trees with bounded pipe draining.
   Explicit refreshes therefore return trustworthy results within the ordinary
@@ -3001,12 +2773,12 @@ are scoped or reviewed.
   control-flow-nested writes, values invalidated by an intervening mutable
   borrow, and opaque expressions remain fail-closed; unsupported direct writes
   report `field_assignment_value_unresolved` instead of an ineffective repair
-  route.
+  route (#1511).
 
 - LSP: receipt status for an actionable gap with no recorded attempt now
   reports `not_available`. It used to report the first entry of
   `swarm-attempt-ledger.json`, which is another gap's latest attempt outcome.
-  With no actionable gap it still reports the ledger's latest entry.
+  With no actionable gap it still reports the ledger's latest entry (#4588).
 - Rust literal match-arm observation is now bound to the input that
   selects the changed arm. A test asserting a sibling arm's result, a
   diagnostic-only call, an ambiguous owner, a conditional input, or an
@@ -3083,7 +2855,7 @@ are scoped or reviewed.
   temporary file beside the destination, flush it and rename it over the
   old one. Symlinked, non-regular and read-only destinations are still
   refused, an existing file's permissions are kept, and a long destination
-  name does not lengthen the temporary file's name.
+  name does not lengthen the temporary file's name (#4589).
 - Generated `first-pr`, first-useful-action, PR-review front-panel and
   agent workflow commands now carry the absolute selected root in `--root`
   (and anchor their `--repo-exposure` and redirect paths to it), so a
@@ -3107,13 +2879,13 @@ are scoped or reviewed.
   movement is not a runtime or mutation result. The stale-evidence refresh
   that first-pr prints after a test edit now passes `--worktree` too: without
   it, `ripr check` read the files as committed at HEAD, missed the uncommitted
-  test edit, and first-pr selected the gap the edit had just closed again.
+  test edit, and first-pr selected the gap the edit had just closed again (#4768).
 - `ripr check --worktree` now starts its diff at the merge base of `--base`
   and `HEAD`, as the committed `<base>...HEAD` diff does. It ran
   `git diff <base>` against the base tip, so once the base gained commits
   after the branch forked, those commits showed up, reversed, as branch
   changes. With no merge base (a shallow clone) it still diffs from the base
-  tip.
+  tip (#4768).
 - `ripr check`, `ripr pilot` and `ripr agent repair` now name one gap with the
   same word. The changed line `check` reports as `weakly_exposed` and the
   seam `pilot` reports as `weakly_gripped` both read `weak` first, for
@@ -3124,7 +2896,7 @@ are scoped or reviewed.
   are unchanged. The repair packet's actionability reason now says "add a
   focused test with the missing discriminator next to the nearest related
   test", matching the new test `pilot` names, where it used to say "extend
-  the nearest related test".
+  the nearest related test" (#4520).
 - With rustup 1.28.1 or later, `ripr doctor` no longer installs a Rust
   toolchain. In a checkout whose `rust-toolchain.toml` pins a toolchain that
   is not installed, its `cargo --version` and `rustc --version` probes made
@@ -3177,7 +2949,7 @@ are scoped or reviewed.
   names a digest of its crate sources and lockfile. Entries from other builds
   become misses and are recomputed. A `ripr check` artifact from another
   build of the same version is refused for reuse, and the `analyzer_version`
-  in a targeted-rerun input fingerprint carries the same build identity.
+  in a targeted-rerun input fingerprint carries the same build identity (#4564).
 - `ripr help pr-ledger` now shows `[--label LABEL]...` in the
   `pr-ledger record` usage line. The option was accepted and listed under
   Record options but missing from the synopsis (#4391).
@@ -3188,7 +2960,7 @@ are scoped or reviewed.
   any command containing `>`, so it reported `cache_limited` with a
   `run ripr check` recovery that could not help. One trailing redirect into
   the workspace's `target/ripr/` is accepted; every other redirect is still
-  refused.
+  refused (#4758).
 - Rust: a test that asserts through a helper in its own file no longer reads
   as "no assertion". With `fn check(x, want) { assert!(gate(x) == want) }`
   in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
@@ -3242,7 +3014,7 @@ are scoped or reviewed.
 - TypeScript: minified bundles (`*.min.js`, `*.min.mjs`, `*.min.cjs`) are
   skipped like `*.generated.*` files. A rebuilt `public/js/app.min.js`
   became a `no_static_path` finding whose JSON carried the 1.4 MB line
-  twice.
+  twice (#4756).
 - Rust: checked-in generated code and `cargo vendor` crates no longer turn
   into findings. A file whose first five lines carry an `@generated`
   (prost, tonic, Diesel), rust-bindgen, or `Code generated ... DO NOT EDIT`
@@ -3253,7 +3025,7 @@ are scoped or reviewed.
   named in the existing generated-code limitation, the header is read
   from the committed file rather than uncommitted edits, and
   repository-wide runs count the skipped files as a partial run. A
-  hand-written `src/vendor/` module stays analyzed.
+  hand-written `src/vendor/` module stays analyzed (#4756).
 - `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
   By default each phase prints a short human summary that names the seam, the
   movement and where the full packet, receipt and verify documents were
@@ -3263,7 +3035,7 @@ are scoped or reviewed.
   leads its `Analysis outcome:` and `State:` lines with plain words and keeps
   the id in parentheses, for example `Analysis outcome: findings below
   (analysis complete; complete_with_findings).` and `State: a test gap to
-  inspect or repair (top_gap)`.
+  inspect or repair (top_gap)` (#4777).
 - `ripr check`'s `Limitation:` lines lead with plain words and keep the
   schema tokens in parentheses, for example `Limitation: some changed files
   were not analyzed during language analysis (language_scope_unsupported at
@@ -3338,7 +3110,7 @@ are scoped or reviewed.
   known counts separately while total unresolved debt and qualified head are
   unknown. `--check` now refuses incomplete evidence; invalid input replaces
   an old receipt with an indeterminate error receipt and returns nonzero.
-  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
+  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary (#4993).
 
 ### Docs
 
@@ -3402,6 +3174,31 @@ are scoped or reviewed.
   ([#5013](https://github.com/EffortlessMetrics/ripr-swarm/issues/5013),
   [#5018](https://github.com/EffortlessMetrics/ripr-swarm/issues/5018),
   [#5023](https://github.com/EffortlessMetrics/ripr-swarm/issues/5023)).
+
+- Unreleased changelog bullets now carry an issue, PR, or RIPR-SPEC
+  reference. 103 historical entries were backfilled from their originating
+  squash-merge commits; `cargo xtask check-changelog-fragments` rejects a
+  future Unreleased bullet that names none (#7671).
+
+- Unreleased user-facing sections no longer carry internal test-corpus or
+  CI/xtask bookkeeping. That class is summarized under `### Internal / CI`,
+  and `changelog.d/` fragments for it use the `Internal / CI` section.
+  `ripr init --ci` workflow notes and analyzer behavior proven by a corpus
+  case stay in the user-facing section that describes them (#7674).
+
+### Internal / CI
+
+- Verdict-corpus case batches and lockfile/summary/relabel bookkeeping that
+  previously sat in Added and Fixed. Analyzer behavior proven by a corpus
+  case stays in the user-facing section that describes it (#7674,
+  RIPR-SPEC-0219).
+- Contributor xtask and CI-lane plumbing that previously sat in Added,
+  Changed, and Fixed: `dx-scoreboard`, merge-queue capture, the
+  windows-advisory and local-wheelhouse lanes, ub-review companion config,
+  lint/allow/covered-by policy gates, identity-registry, module-health,
+  eval-sweep check, rust-judged-panel, lsp-performance-report,
+  mutation-calibration importer, `ripr-pr` timeout packets,
+  actionable-gap-outcomes, vscode-package, and check-public-api (#7674).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
