@@ -5,7 +5,7 @@ const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
-    ("precommit", "cargo xtask precommit"),
+    ("precommit", "cargo xtask ci-policy"),
     (
         "promotion_honesty",
         "cargo xtask check-evidence-promotion-honesty",
@@ -191,6 +191,29 @@ fn rust_gate_workflow_rejects_fabricated_success_or_missing_outcome() {
         let findings = contract_violations(&changed);
         assert!(
             findings.contains(&"summary: rust-tests must retain its actual outcome".to_owned())
+        );
+    }
+}
+
+#[test]
+fn rust_gate_workflow_rejects_local_convenience_clippy_composition() {
+    let changed = WORKFLOW.replace("run: cargo xtask ci-policy", "run: cargo xtask precommit");
+    assert!(contract_violations(&changed).contains(&"precommit: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
+    for command in [
+        "cargo clippy -p xtask --all-targets -- -D warnings",
+        "cargo clippy --workspace -- -D warnings",
+        "cargo clippy --workspace --all-targets",
+    ] {
+        let changed = WORKFLOW.replace(
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            command,
+        );
+        assert!(
+            contract_violations(&changed).contains(&"clippy: exact command missing".to_owned())
         );
     }
 }

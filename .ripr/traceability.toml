@@ -9,6 +9,13 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
+  "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",
+  "crates/ripr/tests/cli_smoke.rs::check_human_output_reports_sample_findings",
+  "crates/ripr/tests/cli_smoke.rs::check_json_output_has_stable_contract_fields",
+  "crates/ripr/tests/cli_smoke.rs::check_badge_json_output_has_native_badge_shape",
+  "crates/ripr/tests/cli_smoke.rs::check_badge_shields_output_has_exactly_four_top_level_fields",
+  "crates/ripr/tests/cli_smoke.rs::check_badge_command_exits_zero_even_with_nonzero_count",
   "crates/ripr/tests/slice_boundary.rs::unresolved_calls_cannot_credit_skipped_slice_rows",
   "crates/ripr/tests/slice_boundary.rs::fallible_slice_observations_cannot_credit_later_rows",
   "crates/ripr/tests/slice_boundary.rs::ignored_fallible_closure_cannot_credit_skipped_slice_rows",
@@ -168,6 +175,7 @@ tests = [
   "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes"
 ]
 fixtures = [
+  "crates/ripr/tests/cli_smoke/sample_output.rs",
   "fixtures/rust_slice_table_boundary",
   "fixtures/rust_slice_table_zero_elements",
   "fixtures/rust_slice_table_try_exit",
@@ -386,6 +394,8 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_oracle_policy_invalidates_classified_cache",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::effective_snapshot_policy_invalidates_full_and_compact_caches",
   "crates/ripr/tests/cache_clear_safety.rs::full_directory_swap_cache_matches_cold_after_restart",
   "crates/ripr/tests/cache_clear_safety.rs::compact_directory_swap_cache_matches_cold_after_restart",
   "crates/ripr/src/analysis/classify/activation.rs::tests::a_field_overwritten_before_the_assertion_is_not_the_owner_field",
@@ -1987,8 +1997,15 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/tests/cli_smoke.rs::baseline_create_writes_reviewed_ledger_and_refuses_overwrite",
+  "crates/ripr/tests/cli_smoke.rs::baseline_create_warns_when_source_predates_build_identity",
   "crates/ripr/tests/cli_smoke.rs::baseline_diff_writes_debt_delta_json_and_markdown",
   "crates/ripr/tests/cli_smoke.rs::baseline_update_removes_resolved_without_adopting_new_debt",
+  "crates/ripr/src/output/baseline.rs::tests::baseline_create_persists_producing_analyzer_version_from_subject",
+  "crates/ripr/src/output/baseline.rs::tests::baseline_create_discloses_missing_producing_analyzer_version",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_discloses_analyzer_version_identity_discontinuity_as_stale",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_discloses_version_crossing_when_both_sides_recorded",
+  "crates/ripr/src/output/baseline_delta.rs::tests::baseline_delta_keeps_same_or_unversioned_builds_resolved",
+  "crates/ripr/src/output/ripr_zero_status.rs::tests::ripr_zero_status_withholds_achieved_on_analyzer_version_identity_discontinuity",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9159,6 +9176,7 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_files_refuse_with_disambiguation_and_no_write",
   "crates/ripr/tests/agent_stub_compiles.rs::ambiguous_at_tied_seams_refuse_without_weakening_nested_selection",
   "crates/ripr/tests/agent_stub_compiles.rs::absent_selectors_keep_not_found_and_explicit_disclosures",
@@ -15028,6 +15046,8 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/parser_assertion_provenance.rs::unrelated_reason_literal_cannot_supply_parser_discrimination",
+  "crates/ripr/tests/parser_assertion_provenance.rs::direct_reason_oracle_keeps_credit_beside_the_decoy",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::analyzer_limit_refusals_withhold_the_gap_and_name_the_test",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::withholding_drops_the_gap_confidence_bonus_and_never_raises_a_score",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::an_unmarked_refusal_keeps_the_gap",
@@ -15046,10 +15066,12 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
 ]
 fixtures = [
+  "fixtures/parser_formatted_input_provenance",
   "fixtures/gap_withheld_feature_gated_test",
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
@@ -15071,6 +15093,7 @@ id = "RIPR-SPEC-0241"
 name = "check --json refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",
   "crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal",
@@ -15201,6 +15224,8 @@ id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
 spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
+  "xtask/src/tests.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
+  "xtask/tests/policy_all.rs::ci_policy_collects_real_cheap_failures_before_expensive_work",
   "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
   "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
   "xtask/tests/policy_all.rs::policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report",
@@ -15209,6 +15234,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "xtask/src/main.rs::publish_precommit_policy_report",
   "xtask/src/policy/all.rs::check_policy_all",
   "xtask/src/policy/mod.rs",
   "xtask/src/command.rs",

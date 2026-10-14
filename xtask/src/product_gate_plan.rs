@@ -261,8 +261,8 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::Precommit,
             ProductGateRole::Required,
             policy.clone(),
-            "cargo xtask precommit",
-            "repository precommit invariants hold",
+            "cargo xtask ci-policy",
+            "repository policy, complete change-set and whitespace invariants hold; selected Clippy remains owned by the explicit workspace lint producer",
             "does not replace product tests",
         ),
         gate(

@@ -52750,10 +52750,10 @@ fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<()
     let workflow = routed_rust_workflow_text()?;
     let reusable = reusable_rust_workflow_text()?;
     let routed_count = workflow.matches("cargo xtask precommit").count();
-    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask ci-policy").count();
     if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once as ci-policy in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
@@ -53621,4 +53621,64 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
         return Err(format!("empty inventory must stay empty, got {changes:?}"));
     }
     Ok(())
+}
+
+#[test]
+fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
+    assert_eq!(
+        XtaskCommand::parse(["ci-policy".to_string()]),
+        XtaskCommand::CiPolicy
+    );
+    assert!(matches!(
+        XtaskCommand::parse(["ci-policy".to_string(), "--skip".to_string()]),
+        XtaskCommand::Unknown(_)
+    ));
+    let required =
+        "jobs:\n  policy:\n    steps:\n      - name: Policy\n        run: cargo xtask ci-policy\n";
+    let mut enforced = super::ci_enforced_xtask_invocations(required);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        assert!(
+            enforced.contains(&(gate.to_string(), String::new())),
+            "missing {gate}"
+        );
+    }
+    for advisory in [
+        required.replace("ci-policy", "ci-policy || true"),
+        required.replace(
+            "- name: Policy",
+            "- name: Policy\n        continue-on-error: true",
+        ),
+    ] {
+        let mut enforced = super::ci_enforced_xtask_invocations(&advisory);
+        super::expand_precommit_ci_invocations(&mut enforced);
+        assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Result<(), String> {
+    with_temp_cwd("ci-policy-local-report", |root| {
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|e| e.to_string())?;
+        let local = reports.join("precommit.md");
+        std::fs::write(&local, "local report witness").map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            "local report witness"
+        );
+        super::publish_precommit_policy_report(false)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            super::precommit_report_body()
+        );
+        std::fs::remove_file(&local).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&local).map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert!(local.is_dir());
+        assert!(super::publish_precommit_policy_report(false).is_err());
+        Ok(())
+    })
 }
