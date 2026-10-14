@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0259: a custom matcher the test file registers with
+//! RIPR-SPEC-0262: a custom matcher the test file registers with
 //! `expect.extend`, whose result passes only when `received === expected`,
 //! compares as strictly as `toBe`.
 //!
@@ -6,7 +6,7 @@
 //! the file, or any other body, leaves every custom matcher `unknown`.
 
 use super::*;
-use oxc_ast::ast::{BinaryOperator, LogicalOperator, PropertyKind};
+use oxc_ast::ast::{BinaryOperator, ImportDeclarationSpecifier, LogicalOperator, PropertyKind};
 
 /// Names of the matchers the file's `expect.extend({ ... })` calls register
 /// whose `pass` requires strict equality of the received and expected
@@ -18,7 +18,7 @@ pub(crate) fn strict_equality_matchers(
     let mut registered: Vec<(String, bool)> = Vec::new();
     let mut extend_calls = 0;
     for statement in statements {
-        let Some(object) = expect_extend_object(statement, source) else {
+        let Some(object) = expect_extend_object(statement) else {
             continue;
         };
         extend_calls += 1;
@@ -41,12 +41,10 @@ pub(crate) fn strict_equality_matchers(
     // Every mention of `extend` in the file must be a top-level statement
     // read above; one in a hook, a helper or a nested scope (however spelled:
     // `expect.extend (`, `expect["extend"](`) may register the same name with
-    // another body. A computed member of `expect` may spell `extend` in
-    // pieces, so any `expect[` refuses.
+    // another body.
     if extend_calls == 0
         || extend_mentions(source) != extend_calls
-        || source.contains("expect[")
-        || source.contains("expect?.[")
+        || !names_expect_plainly(statements, source)
     {
         return Vec::new();
     }
@@ -76,12 +74,142 @@ fn extend_mentions(source: &str) -> usize {
         .count()
 }
 
-/// The object literal of a top-level `expect.extend({ ... })` statement,
-/// with `extend` spelled out in the source (an escaped name such as
-/// `ext\u0065nd` would hide from `extend_mentions`).
+/// `true` when the file reaches `expect` only by name: no escaped name
+/// (`ext\u0065nd`), every mention of the word `expect` is `expect(`,
+/// `expect.` or a plain `import { expect }`, no computed member access
+/// builds a name (`ns["ext" + "end"]`), and no global or module object that
+/// holds `expect` under another spelling is named. Comments and strings
+/// count too, so a mention only refuses.
+fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, source: &str) -> bool {
+    if source.contains("\\u") || computed_member_access(source) {
+        return false;
+    }
+    let mut imports = 0;
+    let mut imported_expect = 0;
+    for statement in statements {
+        let Statement::ImportDeclaration(import) = statement else {
+            continue;
+        };
+        imports += 1;
+        for specifier in import.specifiers.iter().flatten() {
+            match specifier {
+                ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                    // Only a plain `import { expect }`; `expect as e` and
+                    // `fake as expect` both refuse.
+                    if specifier.local.name == "expect" || specifier.imported.name() == "expect" {
+                        let text =
+                            source.get(specifier.span.start as usize..specifier.span.end as usize);
+                        if text != Some("expect") {
+                            return false;
+                        }
+                        imported_expect += 1;
+                    }
+                }
+                ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => return false,
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(_) => {}
+            }
+        }
+    }
+    let other_mentions = source
+        .match_indices("expect")
+        .filter(|(index, matched)| {
+            word_at(source, *index, matched.len())
+                && !source
+                    .get(index + matched.len()..)
+                    .is_some_and(|rest| rest.starts_with('(') || rest.starts_with('.'))
+        })
+        .count();
+    other_mentions == imported_expect
+        && word_mentions(source, "import") == imports
+        && word_mentions(source, "global") == source.matches("declare global").count()
+        && GLOBAL_ROOTS
+            .iter()
+            .all(|word| word_mentions(source, word) == 0)
+}
+
+/// Names that hold the runner's `expect` (the global object, a module
+/// object or a code string) under a spelling the word scan cannot see.
+const GLOBAL_ROOTS: &[&str] = &[
+    "globalThis",
+    "window",
+    "self",
+    "this",
+    "document",
+    "constructor",
+    "Reflect",
+    "Function",
+    "eval",
+    "require",
+    "requireActual",
+    "requireMock",
+    "importActual",
+    "importMock",
+    "createMockFromModule",
+];
+
+/// `true` when `source` holds a `[` that may index a value by a name other
+/// than a number literal: one after a name, `)`, `]`, `!` or `?.`. A `[`
+/// after a keyword (`return [a]`, `const [a]`) starts an array or a
+/// pattern instead; one in a type (`number[]`) is empty.
+fn computed_member_access(source: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "const",
+        "let",
+        "var",
+        "return",
+        "in",
+        "of",
+        "typeof",
+        "void",
+        "await",
+        "yield",
+        "case",
+        "new",
+        "delete",
+        "instanceof",
+        "else",
+        "do",
+        "throw",
+        "extends",
+        "keyof",
+        "readonly",
+    ];
+    let is_identifier = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    source.match_indices('[').any(|(index, _)| {
+        let before = source.get(..index).unwrap_or_default().trim_end();
+        let Some(last) = before.chars().next_back() else {
+            return false;
+        };
+        if is_identifier(last) {
+            let word_start = before
+                .char_indices()
+                .rev()
+                .take_while(|(_, ch)| is_identifier(*ch))
+                .last()
+                .map_or(0, |(start, _)| start);
+            if before
+                .get(word_start..)
+                .is_some_and(|word| KEYWORDS.contains(&word))
+            {
+                return false;
+            }
+        } else if !matches!(last, ')' | ']' | '!' | '.') {
+            return false;
+        }
+        let key = source
+            .get(index + 1..)
+            .and_then(|rest| rest.split(']').next())
+            .unwrap_or_default()
+            .trim();
+        !key.chars().all(|ch| ch.is_ascii_digit())
+    })
+}
+
+/// The object literal of a top-level `expect.extend({ ... })` statement.
+/// `names_expect_plainly` refuses an escaped name such as `ext\u0065nd`,
+/// which would hide from `extend_mentions`.
 fn expect_extend_object<'s, 'a>(
     statement: &'s Statement<'a>,
-    source: &str,
 ) -> Option<&'s oxc_ast::ast::ObjectExpression<'a>> {
     let Statement::ExpressionStatement(statement) = statement else {
         return None;
@@ -92,9 +220,7 @@ fn expect_extend_object<'s, 'a>(
     let Expression::StaticMemberExpression(member) = &call.callee else {
         return None;
     };
-    let spelled =
-        source.get(member.property.span.start as usize..member.property.span.end as usize);
-    if spelled != Some("extend")
+    if member.property.name != "extend"
         || !matches!(&member.object, Expression::Identifier(object) if object.name == "expect")
         || call.arguments.len() != 1
     {
@@ -127,7 +253,11 @@ fn matcher_function<'s, 'a>(
         }
         _ => return None,
     };
-    if params.rest.is_some() || params.items.len() != 2 {
+    // A default (`e = r`) runs code and may bind `expected` to `received`.
+    if params.rest.is_some()
+        || params.items.len() != 2
+        || params.items.iter().any(|param| param.initializer.is_some())
+    {
         return None;
     }
     let name = |index: usize| match &params.items.get(index)?.pattern {
@@ -143,8 +273,8 @@ fn matcher_function<'s, 'a>(
 
 /// `true` when the body is `return { pass: X, ... }` or
 /// `const pass = X; return { pass, ... }`, with `X` a `&&` chain one of whose
-/// terms is `received === expected` (either order) or
-/// `Object.is(received, expected)`, and no term assigns or updates anything.
+/// terms is `received === expected` (either order), and no term assigns or
+/// updates anything.
 fn passes_only_on_strict_equality(
     [received, expected]: [&str; 2],
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
@@ -176,10 +306,9 @@ fn passes_only_on_strict_equality(
     };
     let mut terms = Vec::new();
     conjunction_terms(pass, &mut terms);
-    let object_is = object_is_unshadowed(source);
     terms
         .iter()
-        .any(|term| is_strict_equality(term, received, expected, object_is))
+        .any(|term| is_strict_equality(term, received, expected))
         && terms.iter().all(|term| {
             source
                 .get(term.span().start as usize..term.span().end as usize)
@@ -242,28 +371,25 @@ fn inert_value(value: &Expression<'_>) -> bool {
     }
 }
 
-/// `true` when every mention of the word `Object` in `source` is an
-/// `Object.is(` call, so no declaration, import or assignment can replace
-/// it.
-fn object_is_unshadowed(source: &str) -> bool {
-    word_mentions(source, "Object") == source.matches("Object.is(").count()
-}
-
 /// The word `word` in `source`, not inside a longer identifier.
 fn word_mentions(source: &str, word: &str) -> usize {
-    let is_identifier = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
     source
         .match_indices(word)
-        .filter(|(index, matched)| {
-            let before = source
-                .get(..*index)
-                .and_then(|text| text.chars().next_back());
-            let after = source
-                .get(index + matched.len()..)
-                .and_then(|text| text.chars().next());
-            !before.is_some_and(is_identifier) && !after.is_some_and(is_identifier)
-        })
+        .filter(|(index, matched)| word_at(source, *index, matched.len()))
         .count()
+}
+
+/// `true` when `source[index..index + len]` is not inside a longer
+/// identifier.
+fn word_at(source: &str, index: usize, len: usize) -> bool {
+    let is_identifier = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    let before = source
+        .get(..index)
+        .and_then(|text| text.chars().next_back());
+    let after = source
+        .get(index + len..)
+        .and_then(|text| text.chars().next());
+    !before.is_some_and(is_identifier) && !after.is_some_and(is_identifier)
 }
 
 fn conjunction_terms<'s, 'a>(expression: &'s Expression<'a>, terms: &mut Vec<&'s Expression<'a>>) {
@@ -276,43 +402,14 @@ fn conjunction_terms<'s, 'a>(expression: &'s Expression<'a>, terms: &mut Vec<&'s
     }
 }
 
-fn is_strict_equality(
-    term: &Expression<'_>,
-    received: &str,
-    expected: &str,
-    object_is: bool,
-) -> bool {
+fn is_strict_equality(term: &Expression<'_>, received: &str, expected: &str) -> bool {
     let is_name = |expression: &Expression<'_>, name: &str| matches!(expression.get_inner_expression(), Expression::Identifier(identifier) if identifier.name == name);
-    let pair = |left: &Expression<'_>, right: &Expression<'_>| {
-        (is_name(left, received) && is_name(right, expected))
-            || (is_name(left, expected) && is_name(right, received))
+    let Expression::BinaryExpression(binary) = term else {
+        return false;
     };
-    match term {
-        Expression::BinaryExpression(binary) => {
-            binary.operator == BinaryOperator::StrictEquality && pair(&binary.left, &binary.right)
-        }
-        Expression::CallExpression(call) => {
-            let Expression::StaticMemberExpression(member) = &call.callee else {
-                return false;
-            };
-            object_is
-                && matches!(&member.object, Expression::Identifier(object) if object.name == "Object")
-                && member.property.name == "is"
-                && call.arguments.len() == 2
-                && match (
-                    call.arguments
-                        .first()
-                        .and_then(|argument| argument.as_expression()),
-                    call.arguments
-                        .get(1)
-                        .and_then(|argument| argument.as_expression()),
-                ) {
-                    (Some(left), Some(right)) => pair(left, right),
-                    _ => false,
-                }
-        }
-        _ => false,
-    }
+    binary.operator == BinaryOperator::StrictEquality
+        && ((is_name(&binary.left, received) && is_name(&binary.right, expected))
+            || (is_name(&binary.left, expected) && is_name(&binary.right, received)))
 }
 
 /// `true` when `text` may assign or update anything: an `=` outside `==`,

@@ -196,7 +196,7 @@ and the rejected alternative. Recorded on #6654.
    remaining false verdicts stay listed on #6654. Superseded for
    committed snapshots by RIPR-SPEC-0258, which credits
    `jest-spec0234-ex03`; and for a same-file strict-equality
-   custom matcher by RIPR-SPEC-0259, which credits
+   custom matcher by RIPR-SPEC-0262, which credits
    `jest-cents-custom-matcher`.
 
 ## Required Evidence

@@ -512,7 +512,7 @@ reason = "TypeScript analyzer rules; a Python case cannot label them"
 
 # TypeScript strict custom matcher
 [[spec]]
-id = "RIPR-SPEC-0259"
+id = "RIPR-SPEC-0262"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 

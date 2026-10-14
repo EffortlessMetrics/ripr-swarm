@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0259: a same-file `expect.extend` matcher that passes only on
+//! RIPR-SPEC-0262: a same-file `expect.extend` matcher that passes only on
 //! `received === expected` reads `exact_value` / strong; every other
 //! registration or body keeps `unknown`.
 
@@ -38,14 +38,14 @@ fn strict_equality_custom_matcher_reads_exact() {
         strong()
     );
     for matcher in [
-        // `return { pass: X }`, either operand order, `Object.is`.
+        // `return { pass: X }`, either operand order, a function expression.
         "expect.extend({ toBeCents(r, e) { return { pass: e === r, message: () => \"\" }; } });\n",
-        "expect.extend({ toBeCents: function (r, e) { return { pass: Object.is(r, e) }; } });\n",
+        "expect.extend({ toBeCents: function (r, e) { return { pass: r === e }; } });\n",
         "expect.extend({ toBeCents: (r, e) => { return { pass: r > 0 && (r === e) }; } });\n",
         // Inert values beside `pass`: a function, a name, a literal.
         "expect.extend({ toBeCents(r, e) { return { message: () => \"\", actual: r, kind: `cents`, n: 1, pass: r === e }; } });\n",
-        // `Object` mentioned only as `Object.is(` calls.
-        "expect.extend({ toBeCents(r, e) { return { pass: Object.is(r, e) && Object.is(e, r) }; } });\n",
+        // A plain `import { expect }`, array patterns, literals and types.
+        "import { expect, test } from \"@jest/globals\";\nconst [a, b]: number[] = [1, 2];\nconst xs = [a, b][0];\nexpect.extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
     ] {
         assert_eq!(
             cents_oracles(&format!("{matcher}{CENTS_TEST}")),
@@ -85,9 +85,14 @@ fn custom_matcher_that_may_pass_without_strict_equality_stays_unknown() {
         "expect.extend({ toBeCents(r, e) { return { pre: fix(r), pass: r === e }; } });\n",
         "expect.extend({ toBeCents(r, e) { return { pass: (r = e), pass: r === e }; } });\n",
         "expect.extend({ toBeCents(r, e) { return { pass: true, pass: r === e }; } });\n",
-        // A shadowed or replaced `Object`.
-        "const Object = { is: () => true };\nexpect.extend({ toBeCents(r, e) { return { pass: Object.is(r, e) }; } });\n",
-        "Object.is = () => true;\nexpect.extend({ toBeCents(r, e) { return { pass: Object.is(r, e) }; } });\n",
+        // `Object.is` is not read: the file may replace `Object` unseen.
+        "expect.extend({ toBeCents(r, e) { return { pass: Object.is(r, e) }; } });\n",
+        // A default may bind `expected` to `received`.
+        "expect.extend({ toBeCents(r, e = r) { return { pass: r === e }; } });\n",
+        "expect.extend({ toBeCents(r = 150, e) { return { pass: r === e }; } });\n",
+        "expect.extend({ toBeCents: (r = 150, e) => { return { pass: r === e }; } });\n",
+        // An escaped name hides `eval` from the write scan.
+        "expect.extend({ toBeCents: function (r, e) { return { pass: ev\\u0061l(\"r\" + String.fromCharCode(61) + \"e\") && r === e }; } });\n",
         // Duplicate parameter names (sloppy mode).
         "expect.extend({ toBeCents: function (r, r) { return { pass: r === r }; } });\n",
         // Another statement, a `let`, a renamed result, or two `pass` keys.
@@ -122,6 +127,17 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
         "beforeAll(() => { expect.extend ({ toBeCents: () => ({ pass: true }) }); });\n",
         "beforeAll(() => { expect[\"extend\"]({ toBeCents: () => ({ pass: true }) }); });\n",
         "beforeAll(() => { expect[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        "beforeAll(() => { expect [\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        "beforeAll(() => { (expect)[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        "const e = expect;\nbeforeAll(() => { e[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        // An escaped name anywhere in the file.
+        "beforeAll(() => { expect.ext\\u0065nd({ toBeCents: () => ({ pass: true }) }); });\n",
+        // A computed member that builds the name from a module object.
+        "import g from \"./g\";\nbeforeAll(() => { g[\"exp\" + \"ect\"][\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
+        // `expect` other than as `expect(` or `expect.`, or imported other
+        // than as a plain `import { expect }`.
+        "beforeAll(() => { for (const f of Object.values(expect)) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
+        "import { expect as e } from \"@jest/globals\";\n",
     ] {
         assert_eq!(
             cents_oracles(&format!("{CENTS_MATCHER}{extra}{CENTS_TEST}")),
@@ -129,6 +145,52 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
             "{extra}"
         );
     }
+    // A module or global object that holds `expect` under no visible name:
+    // a namespace import, a dynamic import, `global`, or a root the reader
+    // refuses by name.
+    for root in [
+        "g",
+        "await import(\"@jest/globals\")",
+        "global",
+        "globalThis",
+        "window",
+        "self",
+        "this",
+        "document.defaultView",
+        "(() => 0).constructor(\"return th\" + \"is\")()",
+        "Reflect.get(g, \"de\" + \"fault\")",
+        "Function(\"return th\" + \"is\")()",
+        "eval(\"th\" + \"is\")",
+        "require(\"@jest/globals\")",
+        "jest.requireActual(\"@jest/globals\")",
+        "jest.requireMock(\"@jest/globals\")",
+        "vi.importActual(\"@jest/globals\")",
+        "vi.importMock(\"@jest/globals\")",
+        "jest.createMockFromModule(\"@jest/globals\")",
+    ] {
+        let import = if root == "g" {
+            "import * as g from \"@jest/globals\";\n"
+        } else {
+            ""
+        };
+        let hook = format!(
+            "{import}beforeAll(async () => {{ for (const v of Object.values({root})) for (const f of Object.values(v)) try {{ f({{ toBeCents: () => ({{ pass: true }}) }}); }} catch {{}} }});\n"
+        );
+        assert_eq!(
+            cents_oracles(&format!("{CENTS_MATCHER}{hook}{CENTS_TEST}")),
+            unknown(),
+            "{hook}"
+        );
+    }
+    // A local `expect` imported under another name: the file's assertions
+    // reach no runner matcher, and the registration is not read either.
+    let renamed = format!("import {{ fake as expect }} from \"./fake\";\n{CENTS_MATCHER}");
+    assert!(strict_equality_matchers_of(&renamed).is_empty());
+    // `declare global` alone keeps the reading.
+    let declared = format!(
+        "{CENTS_MATCHER}declare global {{ namespace jest {{ interface Matchers<R> {{ toBeCents(e: number): R; }} }} }}\n{CENTS_TEST}"
+    );
+    assert_eq!(cents_oracles(&declared), strong());
     // An escaped `extend` hides from the mention count, which would let the
     // hook's registration go unseen.
     let escaped = "beforeAll(() => { expect.extend({ toBeCents: () => ({ pass: true }) }); });\nexpect.ext\\u0065nd({ toBeCents(r, e) { return { pass: r === e }; } });\n";

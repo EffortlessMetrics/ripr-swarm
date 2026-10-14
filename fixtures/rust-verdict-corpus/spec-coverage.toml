@@ -562,7 +562,7 @@ reason = "non-Rust language or packaging surface"
 
 # TypeScript strict custom matcher
 [[spec]]
-id = "RIPR-SPEC-0259"
+id = "RIPR-SPEC-0262"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 

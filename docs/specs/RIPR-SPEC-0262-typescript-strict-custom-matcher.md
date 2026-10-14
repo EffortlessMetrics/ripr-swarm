@@ -1,4 +1,4 @@
-# RIPR-SPEC-0259: TypeScript strict custom matcher
+# RIPR-SPEC-0262: TypeScript strict custom matcher
 
 Status: proposed
 
@@ -82,29 +82,37 @@ file may register or replace it:
   `expect.extend({ <name>(received, expected) { ... } })`, with `extend`
   spelled out (not escaped); the value may also be a `function`
   expression or an arrow function. It is synchronous, not a generator, and
-  has exactly two distinct plain identifier parameters;
+  has exactly two distinct plain identifier parameters with no default
+  value (`e = r` may bind `expected` to `received`);
 - the body is `return { pass: X, ... }`, or `const pass = X;` followed by
   `return { pass, ... }`. The returned object keys `pass` once and has no
   spread, getter, method or computed key, and every other value is inert:
   a function, a name, or a literal. JavaScript evaluates the properties in
   order, so any other value could write a parameter before `pass` runs;
 - `X` is a `&&` chain one of whose terms is `received === expected` (either
-  order) or `Object.is(received, expected)`, and no term may write
+  order), and no term may write
   anything. A term writes when its text holds an `=` outside `==`, `===`,
   `!=`, `!==`, `<=` and `>=` (so arrows, `<<=`, `>>=` and `||=` count),
   `++`, `--`, or the word `eval` or `arguments`, which reach the
   parameters without naming them. Every other term can only make the
   matcher fail more often;
-- `Object.is` counts only when every mention of the word `Object` in the
-  file is an `Object.is(` call, so nothing in the file declares, imports or
-  replaces `Object`;
 - every `expect.extend` object in the file has only plain keyed entries,
   the word `extend` occurs in the file exactly as often as those
-  top-level calls (comments and strings included, so a mention only
-  refuses), the file holds no computed member of `expect` (`expect[`),
-  `<name>` is registered once, and `<name>` is not a matcher
-  RIPR-SPEC-0243 already reads (a re-registered `toBeCloseTo`, which that
-  spec reads as unknown, is read from its body);
+  top-level calls, `<name>` is registered once, and `<name>` is not a
+  matcher RIPR-SPEC-0243 already reads (a re-registered `toBeCloseTo`,
+  which that spec reads as unknown, is read from its body);
+- the file reaches `expect` only by name: it holds no `\u` escape; every
+  mention of the word `expect` is `expect(`, `expect.` or a plain
+  `import { expect }`; it has no namespace import, dynamic `import(` or
+  `import` mention beyond its import declarations; no `[` after a name,
+  `)`, `]`, `!` or `?.` holds anything but a number (so no computed member
+  can build `"ext" + "end"`); and it never names `global` (outside
+  `declare global`), `globalThis`, `window`, `self`, `this`, `document`,
+  `constructor`, `Reflect`, `Function`, `eval`, `require`,
+  `requireActual`, `requireMock`, `importActual`, `importMock` or
+  `createMockFromModule`, each of which holds `expect` or runs code under
+  a spelling the scan cannot see. Comments and strings count too, so a
+  mention only refuses;
 - the assertion passes exactly one argument, which is not a spread, and
   uses no `.not` or `.rejects` modifier.
 
@@ -131,6 +139,15 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    that may write anything refuses even when the write is harmless.
    Rejected: allow writes to names other than the parameters, which needs
    scope resolution the adapter does not have.
+5. **Refuse every route to `expect` that does not name it.** A hook may
+   register the name again through an alias, a computed key, a module
+   object or the global object, and the word count sees none of them. The
+   reader refuses the routes by text, which loses credit in files that
+   index objects or mention `this`, and keeps the false-credit rate at
+   zero on the routes reviewed. Rejected: read `Object.is(received,
+   expected)` as strict, because `Object` can be replaced by the same
+   routes (`globalThis["Obj" + "ect"]`) and the corpus case does not need
+   it.
 
 ### Known limits
 
@@ -140,8 +157,13 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
   top-level registration and replaces it; the credit then reads a body
   the runner does not use. A matcher registered only outside this file
   stays `unknown`.
-- Registration through an alias of `expect` that avoids the word
-  `extend` (`const e = expect;` and then `e[name]` called with the matchers) is not seen.
+- An imported function that registers the name again
+  (`import { install } from "./matchers"; beforeAll(install);`) is not
+  seen, because the registration is in another file.
+- The route list is closed, not complete. A file that builds code at
+  runtime and runs it through a path the list does not name (a timer
+  given a code string, for example) is not seen.
+- `Object.is(received, expected)` stays `unknown`.
 - A matcher whose comparison goes through a helper (`equals(r, e)`,
   `this.equals`) or another statement stays `unknown`.
 - A matcher with a third parameter (`(received, expected, precision)`)
@@ -164,17 +186,19 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
 
 1. The corpus case: `toBeCents` reads `exact_value` / strong and the
    finding is `exposed`. The same matcher as `return { pass: e === r }`,
-   as `function (r, e) { return { pass: Object.is(r, e) }; }`, as a
+   as `function (r, e) { return { pass: r === e }; }`, as a
    block-bodied arrow with `r > 0 && (r === e)`, with inert `message`,
-   name and literal values beside `pass`, or with two `Object.is` terms:
-   strong.
+   name and literal values beside `pass`, or in a file with a plain
+   `import { expect }`, array patterns, `number[]`, `xs[0]` and
+   `declare global`: strong.
 2. `r == e`, `r !== e`, `r === e || r === 0`, `!(r === e)`,
    `Math.round(r) === e`, a term that writes a parameter (`r = e`,
    `[r] = [e]`, `r >>= 0`, `r <<= 0`, `r ||= e`, `r++`, `r--`, an `eval`, an
    `arguments` write, an arrow that assigns), another property or an
    earlier `pass` evaluated before the comparison (`pre: (r = e)`,
    `pre: fix(r)`, `pass: (r = e), pass: r === e`, `pass: true, pass: r === e`),
-   a shadowed or replaced `Object`, duplicate parameters `(r, r)`, a
+   `Object.is(r, e)`, a default `e = r` or `r = 150`, an escaped
+   `ev\u0061l`, duplicate parameters `(r, r)`, a
    statement before the `return`, a `let pass`, a `const ok` returned as
    `pass: ok` or as a shorthand `pass`, a bare shorthand `pass`, a spread
    in the returned object, an `async` matcher, an expression-bodied arrow,
@@ -182,10 +206,14 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    three-parameter matcher: `unknown`.
 3. A second registration of the name, `expect.extend(matchers)`,
    `expect.extend({ ...matchers })`, or an `expect.extend` inside
-   `beforeAll` (also spelled `expect.extend (`, as a computed
-   `expect` member named `"extend"`, or as `"ext" + "end"`), or a hook
-   registration beside a top-level `expect.ext\u0065nd`: `unknown`. A
-   matcher named `toBe` keeps the built-in reading.
+   `beforeAll` (also spelled `expect.extend (`, `expect.ext\u0065nd`, a
+   computed `expect` member named `"extend"` or `"ext" + "end"`, with or
+   without a space or parentheses, through `const e = expect`, or through
+   a default import indexed as `g["exp" + "ect"]`), a hook registration
+   beside a top-level `expect.ext\u0065nd`, a hook that calls every value
+   of `expect`, of a namespace import, of a dynamic import or of any
+   refused root, `import { expect as e }`, or `import { fake as expect }`:
+   `unknown`. A matcher named `toBe` keeps the built-in reading.
 4. `toBeCents(150, 2)`, `toBeCents(...args)` or
    `await expect(p).rejects.toBeCents(150)`: `unknown`. `.not.toBeCents(150)`
    records no `toBeCents` assertion. A file that shadows `expect` reaches

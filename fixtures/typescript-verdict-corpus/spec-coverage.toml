@@ -8,7 +8,7 @@
 # analyzer verdict, oracle, probe or test-shape behavior that a corpus case
 # (a TypeScript diff plus runtime mutant truth from the subject's own tests)
 # can label: RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-# RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0259. An in-scope example a case cannot label is waived with a
+# RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. An in-scope example a case cannot label is waived with a
 # reason; waived examples are accounted for, never covered. No example is
 # waived today: every in-scope example has a case, and a new spec's
 # uncovered examples stay visible as uncovered. Every RIPR-SPEC-0243 example has a case:
@@ -509,7 +509,7 @@ scope = "in"
 
 # TypeScript strict custom matcher
 [[spec]]
-id = "RIPR-SPEC-0259"
+id = "RIPR-SPEC-0262"
 scope = "in"
 
 # TypeScript Preview Static Facts

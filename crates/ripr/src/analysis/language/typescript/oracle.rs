@@ -647,7 +647,7 @@ pub(crate) fn expect_assertion_from_expression(
             .first()
             .is_some_and(|argument| argument.as_expression().is_some())
     {
-        // RIPR-SPEC-0259: the file's own matcher passes only on `===`.
+        // RIPR-SPEC-0262: the file's own matcher passes only on `===`.
         (OracleKind::ExactValue, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
@@ -831,7 +831,7 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// path reads no context assert.
     node_test_runner: bool,
     /// Custom matchers the file registers with `expect.extend` that pass
-    /// only on strict equality (RIPR-SPEC-0259).
+    /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
 }
 
@@ -1043,7 +1043,7 @@ impl TypeScriptAssertionBindings {
     }
 
     /// These bindings with the file's strict custom matchers
-    /// (RIPR-SPEC-0259).
+    /// (RIPR-SPEC-0262).
     pub(crate) fn with_strict_matchers(mut self, names: Vec<String>) -> Self {
         self.strict_matchers = names;
         self
