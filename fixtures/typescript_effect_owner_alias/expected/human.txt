@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/receipt.test.ts`, add a focused assertion for the missing discriminator `log contains "audit"`, shaped like `expect(discount(100)).toBe(expected)`; run `node --test tests/receipt.test.ts`, then rerun `ripr check`.
+  Safe next action: this TypeScript preview finding's repair packet is not ready (the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
   File: src/receipt.ts:2
   Language: typescript
   Language status: preview
@@ -22,7 +22,8 @@ Start here:
   Missing discriminator (1 of 2): propagation_unknown: changed value sinks to a non-escaping call effect (`"audit"`); all strong assertions observe the owner return value, not this call effect; propagation unknown
   Related test: tests/receipt.test.ts:4 unchanged return is not the audit event
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `log contains "audit"`; the repair packet is complete and delegatable (advisory).
+    discriminator `log contains "audit"`; no actionable repair packet is emitted until verify,
+    receipt, and edit-boundary fields are available.
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 1 related test(s) found for owner `emitReceipt`
     - infection unknown: TypeScript preview adapter does not yet model infection.

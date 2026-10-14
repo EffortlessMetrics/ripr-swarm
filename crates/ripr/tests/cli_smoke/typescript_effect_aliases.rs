@@ -142,7 +142,20 @@ fn return_only_aliases_do_not_observe_the_changed_effect() -> TestResult {
             "export default emitReceipt;\n",
         ),
     ] {
-        Consumer::new(imports, body, suffix)?.check("weakly_exposed", "weak")?;
+        let report = Consumer::new(imports, body, suffix)?.check("weakly_exposed", "weak")?;
+        let finding = &report["findings"][0];
+        for surface in ["preview_actionability", "typescript_preview_card"] {
+            assert_eq!(finding[surface]["repair_packet_ready"], false, "{finding}");
+            let reason = finding[surface]["why_not_actionable"]
+                .as_str()
+                .ok_or("missing packet refusal reason")?;
+            assert!(reason.contains("effect-observing assertion"), "{reason}");
+            let route = finding[surface]["repair_route"]
+                .as_str()
+                .ok_or("missing repair route")?;
+            assert!(!route.contains("expect("), "return-only repair: {route}");
+        }
+        assert!(finding["typescript_repair_packet"].is_null(), "{finding}");
     }
     Ok(())
 }

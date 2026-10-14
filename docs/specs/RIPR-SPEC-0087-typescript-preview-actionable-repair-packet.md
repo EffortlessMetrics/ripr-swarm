@@ -240,13 +240,22 @@ non-actionable category from `typescript_actionability_for`
   Without that evidence, or without literal arguments at both positions, the
   packet fails closed with the boundary placeholder.
 
-If G-A through G-F all hold, the finding has *exactly* the evidence the Rust
+- **G-H. Refused strong effect observer (#7514).** For `SideEffect` and
+  `CallDeletion`, a selected strong oracle whose typed observation state is
+  not `Yes` cannot supply the repair assertion shape. Repeating or
+  strengthening that assertion does not establish observation of the changed
+  effect. Retain the diagnostic gap record without an assertion shape, mark
+  its `agent_packet` projection ineligible, and let the shared validator
+  report that an effect-observing assertion is needed. This does not change
+  weaker-oracle strengthening, other probe families, or classification.
+
+If G-A through G-H all hold, the finding has *exactly* the evidence the Rust
 packet requires except the four projection fields named in §3. PR 7 produces
 those four fields, builds the `GapRecord`, and calls the shared validator.
 
 ### 1.3 Result of the gate
 
-- Validator `Ok(())` **and** G-A–G-F hold ⇒ set
+- Validator `Ok(())` **and** G-A–G-H hold ⇒ set
   `repair_packet_ready: true`, set `actionability_category:
   "complete_repair_packet"`, set `gap_state: "actionable"`, clear
   `missing_actionability_fields` to `[]`. `authority_boundary` stays

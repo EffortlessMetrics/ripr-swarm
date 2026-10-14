@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (3)
+
+Reason:
+RIPR-SPEC-0087 G-H (#7514): refuse delegation of a strong assertion already rejected as an effect observer; independent public packet RED and CLI GREEN pin readiness false and no copied return assertion.
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -28,11 +28,13 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: actionable
-  category: complete_repair_packet
-  repair packet ready: true
-  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `log contains "audit"` in the related test, shaped like `expect(discount(100)).toBe(expected)`
+  gap state: advisory
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
   raw evidence: src/receipt.ts:2 (typescript_preview_probe) source=probe:src_receipt.ts:typescript_preview:eb6f83d9 owner=emitReceipt
 
 Static exposure
@@ -62,33 +64,21 @@ TypeScript preview card (advisory)
   missing discriminator: log contains "audit"
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   verify: node --test tests/receipt.test.ts
-  repair packet ready: true
-  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `log contains "audit"` in the related test, shaped like `expect(discount(100)).toBe(expected)`
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
     - This card is advisory and is not a repair packet.
 
 TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:typescript_preview:eb6f83d9
-  source: emitReceipt at src/receipt.ts:2
-  related test: tests/receipt.test.ts::unchanged return is not the audit event
-  oracle: expect(discount(100)).toBe(expected)
-  edit surface: tests/receipt.test.ts
-  verify: node --test tests/receipt.test.ts
-  receipt: ripr receipt write --gap gap:typescript:typescript_preview:eb6f83d9 --verify-command 'node --test tests/receipt.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-eb6f83d9.json
-  must not change:
-    - Do not edit production code unless the focused proof exposes a real product defect.
-    - Do not broaden the change beyond this GapRecord and its repair route.
-    - Do not treat static evidence as runtime mutation, coverage, or correctness proof.
-    - Do not generate tests or call external providers from this packet.
-    - Do not treat preview-language evidence as gate authority.
-  why actionable: complete-contract TypeScript finding — package root, runner, owner, oracle all resolved; no blocking limitation
-  authority: preview_advisory_only
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains "audit"`; the repair packet is complete and delegatable (advisory).
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast probe:src_receipt.ts:typescript_preview:eb6f83d9
   ripr context --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast --at probe:src_receipt.ts:typescript_preview:eb6f83d9

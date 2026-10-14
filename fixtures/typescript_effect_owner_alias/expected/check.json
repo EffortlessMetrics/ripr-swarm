@@ -35,8 +35,8 @@
       "flow_sinks": [
         {"kind":"call_effect","text":"console.log(\"audit\", amount * 9);","line":2}
       ],
-      "evidence": ["owner: emitReceipt", "missing_discriminator: log contains \"audit\"", "typescript_oracle_observed: discount(100)", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/receipt.test.ts:5", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`", "raw_evidence_ref: file=src/receipt.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_receipt.ts:typescript_preview:eb6f83d9;owner=emitReceipt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: node_test", "typescript_test_runner: node_test", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: node --test tests/receipt.test.ts"],
-      "missing": ["propagation_unknown: changed value sinks to a non-escaping call effect (`\"audit\"`); all strong assertions observe the owner return value, not this call effect; propagation unknown"],
+      "evidence": ["owner: emitReceipt", "missing_discriminator: log contains \"audit\"", "typescript_oracle_observed: discount(100)", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/receipt.test.ts:5", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/receipt.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_receipt.ts:typescript_preview:eb6f83d9;owner=emitReceipt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: node_test", "typescript_test_runner: node_test", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: node --test tests/receipt.test.ts"],
+      "missing": ["propagation_unknown: changed value sinks to a non-escaping call effect (`\"audit\"`); all strong assertions observe the owner return value, not this call effect; propagation unknown", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -95,53 +95,31 @@
           "line": 4,
           "name": "unchanged return is not the audit event"
         },
-        "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`",
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
         "verify": {
           "command": "node --test tests/receipt.test.ts"
         },
-        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
-      },
-      "typescript_repair_packet": {
-        "allowed_edit_surface": [
-          "tests/receipt.test.ts"
-        ],
-        "assertion_shape": "expect(discount(100)).toBe(expected)",
-        "authority_boundary": "preview_advisory_only",
-        "canonical_gap_id": "gap:typescript:typescript_preview:eb6f83d9",
-        "file": "src/receipt.ts",
-        "forbidden_files": [
-          "src/receipt.ts"
-        ],
-        "gap_id": "probe:src_receipt.ts:typescript_preview:eb6f83d9",
-        "language": "typescript",
-        "language_status": "preview",
-        "line": 2,
-        "missing_discriminator": "log contains \"audit\"",
-        "must_not_change": [
-          "Do not edit production code unless the focused proof exposes a real product defect.",
-          "Do not broaden the change beyond this GapRecord and its repair route.",
-          "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
-          "Do not generate tests or call external providers from this packet.",
-          "Do not treat preview-language evidence as gate authority."
-        ],
-        "owner": "emitReceipt",
-        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:eb6f83d9 --verify-command 'node --test tests/receipt.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-eb6f83d9.json",
-        "repair_kind": "AddBoundaryAssertion",
-        "schema_version": "0.5",
-        "source": "typescript_preview_projection",
-        "target_test": "tests/receipt.test.ts::unchanged return is not the audit event",
-        "verify_command": "node --test tests/receipt.test.ts"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable"
       },
       "preview_actionability": {
-        "actionability_category": "complete_repair_packet",
+        "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
-        "evidence_needed_to_promote": "",
-        "gap_state": "actionable",
-        "missing_actionability_fields": [],
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
         "missing_graph_legs": [],
         "raw_evidence_refs": [
           {
@@ -155,16 +133,16 @@
             "source_id": "probe:src_receipt.ts:typescript_preview:eb6f83d9"
           }
         ],
-        "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `log contains \"audit\"` in the related test, shaped like `expect(discount(100)).toBe(expected)`",
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "unlock_condition": null,
-        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable"
       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; the repair packet is complete and delegatable (advisory).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; the repair packet is complete and delegatable (advisory).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains \"audit\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -182,5 +160,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/receipt.ts","digest":"sha256:b40e835d8a7e8cd8f8cb504d2f8fcbb01ec8d5910ba893f0ddfc63a999e00379"},{"path":"tests/receipt.test.ts","digest":"sha256:292c4cdf1bf31680b61f9967b5e1171322599fe672231768e1e548eb08579ad5"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/receipt.ts","digest":"sha256:b40e835d8a7e8cd8f8cb504d2f8fcbb01ec8d5910ba893f0ddfc63a999e00379"}]}
 }

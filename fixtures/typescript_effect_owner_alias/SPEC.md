@@ -20,10 +20,14 @@ Exactly one `side_effect` finding at `src/receipt.ts:2` for `emitReceipt` is
 `exact_value` / `strong` oracle. Observation and discrimination stay `weak`:
 the assertion does not observe the changed effect. The independent honesty
 corpus pins the class, count and oracle without deriving them from this golden.
+The preview card and actionability projection keep `repair_packet_ready: false`.
+RIPR-SPEC-0087 G-H refuses to delegate a strong assertion already rejected as
+an effect observer; no repair packet repeats the unchanged return assertion.
 
 ## Must Not
 
 - Treat a renamed owner return as a separate effect observer.
+- Offer that rejected strong assertion as a delegatable effect repair.
 - Drop the genuine owner relation or downgrade the extracted exact oracle.
 - Tighten the conservative substring rule into a whole-identifier or masked
   text rule that grants new effect credit.
