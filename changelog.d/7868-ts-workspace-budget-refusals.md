@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- TypeScript workspace read-budget limitations retain every refused file in the bounded sample and report the true refusal total (#7868).
+- TypeScript workspace read-budget limitations count every refused file before bounded sampling and report the true refusal total (#7868).
