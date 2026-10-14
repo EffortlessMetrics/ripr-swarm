@@ -2716,6 +2716,7 @@ fn boundary_local_operand_parameter(
         if body_contains_wrapped_local_alias(&function.body, "Some", operand, parameter)
             || body_contains_wrapped_local_alias(&function.body, "Ok", operand, parameter)
             || body_contains_direct_local_alias(&function.body, operand, parameter)
+            || body_contains_guard_binding_alias(&function.body, operand, parameter)
         {
             return Some(parameter.clone());
         }
@@ -2776,6 +2777,40 @@ fn starts_with_identifier_token(text: &str, token: &str) -> bool {
         .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
         .unwrap_or(text.len());
     end > 0 && &text[..end] == token
+}
+
+/// A guarded binding arm (`p if 100 <= p =>`) in the body's only `match`,
+/// whose scrutinee is the parameter itself, binds the parameter's value to
+/// `p`, so the guard's boundary reads the parameter's inputs. Any second
+/// `match` (an arm could belong to either), a `let` of the same name, or a
+/// binding that is not a bare identifier leaves the operand unread.
+fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str) -> bool {
+    let code = body
+        .lines()
+        .map(code_line_before_comment)
+        .filter(|line| !is_comment_line(line))
+        .collect::<Vec<_>>();
+    let matches = code
+        .iter()
+        .map(|line| line.matches("match ").count())
+        .sum::<usize>();
+    let guard = format!("{operand} if ");
+    matches == 1
+        && body_contains_match_parameter(body, parameter)
+        && code.iter().any(|line| {
+            line.find("match ")
+                .map(|index| line[index + "match ".len()..].trim_start())
+                .is_some_and(|rest| {
+                    rest.strip_prefix(parameter)
+                        .is_some_and(|tail| tail.trim_start().starts_with('{'))
+                })
+        })
+        && code.iter().any(|line| line.starts_with(&guard))
+        && !code.iter().any(|line| {
+            line.strip_prefix("let ")
+                .map(|rest| rest.trim_start_matches("mut ").trim_start())
+                .is_some_and(|rest| starts_with_identifier_token(rest, operand))
+        })
 }
 
 fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {

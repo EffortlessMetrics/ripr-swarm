@@ -213,6 +213,27 @@ shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
 when no other shape on the line holds the edit, so a changed line never
 loses its only finding.
 
+### A guard-only edit is the guard's predicate
+
+When an edit lies wholly inside an arm's guard (`n if 0 > n =>` from
+`n if n < 0 =>`), the line carries the guard's `predicate` finding alone.
+Arm selection never evaluates guards, so an arm finding there can only
+read unconfirmed, while the predicate's boundary pairing is the
+discriminator the edit needs. The arm head is kept when the edit reaches
+past the guard's predicate (a renamed binding, a changed pattern) or when
+the line has no predicate shape that holds the edit.
+
+A bare binding in a guarded arm (`p if 100 <= p =>`) holds the scrutinee's
+value, so when the owner body's only `match` is on a parameter
+(`match points {`), the guard's boundary reads that parameter's test
+inputs and can name `p == 100` as missing. A second `match` in the body
+(the arm could belong to either), a `let` of the same name, or a binding
+that is not a bare identifier leaves the operand unread.
+
+The old line such an edit replaced is not probed again as deleted
+behavior: the guard's predicate already carries the old guard as its
+`before`.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented

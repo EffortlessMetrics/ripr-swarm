@@ -14252,6 +14252,13 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::arm_body_edit_keeps_the_changed_return_value",
   "crates/ripr/src/analysis/probes/diff.rs::tests::unchanged_return_value_stays_when_no_other_shape_holds_the_edit",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_return_value_containing_the_edit_stays",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::guard_only_edit_keeps_only_the_guard_predicate",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_pattern_and_guard_edit_keeps_the_arm_head",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_body_predicate_edit_keeps_the_arm_head",
+  "crates/ripr/tests/match_guard_edit.rs::a_guard_only_edit_with_boundary_inputs_reads_exposed",
+  "crates/ripr/tests/match_guard_edit.rs::a_guard_only_edit_without_the_boundary_input_stays_weak",
+  "crates/ripr/tests/match_guard_edit.rs::a_guard_binding_reads_the_scrutinee_parameter_inputs",
+  "crates/ripr/tests/match_guard_edit.rs::a_second_match_leaves_the_guard_binding_unread",
 ]
 fixtures = [
   "fixtures/match_arm_blind",

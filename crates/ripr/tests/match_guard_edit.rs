@@ -1,0 +1,238 @@
+//! End-to-end witness for guard-only match-arm edits (RIPR-SPEC-0229).
+//!
+//! An edit inside an arm guard (`n if 0 > n =>` from `n if n < 0 =>`) is
+//! the guard's predicate finding: arm selection never evaluates guards, so
+//! the arm head is not probed, and the old line is not probed again as
+//! deleted behavior. A bare binding in
+//! the body's only `match` on a parameter reads that parameter's inputs.
+
+use ripr::{CheckInput, CheckOutput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    /// `lib` is the new `src/lib.rs` and `files` the other sources by path;
+    /// `diff` changes one line of one of them.
+    fn create(lib: &str, files: &[(&str, &str)], test: &str, diff: &str) -> Result<Self, String> {
+        // A process-wide sequence, not the clock: parallel tests share one
+        // `SystemTime` on some platforms.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-match-guard-edit-{}-{sequence}",
+            std::process::id()
+        ));
+        // Built before any write so `Drop` removes a partly written root.
+        let repo = Self { root };
+        let root = &repo.root;
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create test directory failed: {error}"))?;
+        let write = |path: &str, text: &str| {
+            if let Some(parent) = root.join(path).parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
+            std::fs::write(root.join(path), text)
+                .map_err(|error| format!("write {path} failed: {error}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"guard_edit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("src/lib.rs", lib)?;
+        for (path, text) in files {
+            write(path, text)?;
+        }
+        write("tests/it.rs", test)?;
+        write("diff.patch", diff)?;
+        Ok(repo)
+    }
+
+    fn check(&self) -> Result<CheckOutput, String> {
+        check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn diff_at(path: &str, text: &str, new: &str, old: &str) -> Result<(String, usize), String> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut matches = lines.iter().enumerate().filter(|(_, line)| **line == new);
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| format!("{path} has no line {new:?}"))?;
+    if matches.next().is_some() || index < 3 || index + 3 > lines.len() {
+        return Err(format!(
+            "{path} needs one {new:?} with three lines before and two after"
+        ));
+    }
+    let context = |range: std::ops::Range<usize>| {
+        lines[range]
+            .iter()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>()
+    };
+    let start = index - 2;
+    Ok((
+        format!(
+            "diff --git a/{path} b/{path}\nindex 0000000..1111111 100644\n--- a/{path}\n+++ b/{path}\n@@ -{start},6 +{start},6 @@\n{}-{old}\n+{new}\n{}",
+            context(index - 3..index),
+            context(index + 1..index + 3)
+        ),
+        index + 1,
+    ))
+}
+
+/// The findings on `line` of `src/lib.rs` after applying `old` -> `new`.
+fn findings_on_changed_line(
+    lib: &str,
+    new: &str,
+    old: &str,
+    test: &str,
+) -> Result<Vec<Finding>, String> {
+    let (diff, line) = diff_at("src/lib.rs", lib, new, old)?;
+    let repo = TempRepo::create(lib, &[], test, &diff)?;
+    let output = repo.check()?;
+    Ok(output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect())
+}
+
+const SIGN: &str = "/// The sign of `n`.\npub fn sign(n: i64) -> i8 {\n    match n {\n        n if 0 > n => -1,\n        0 => 0,\n        _ => 1,\n    }\n}\n";
+
+#[test]
+fn a_guard_only_edit_with_boundary_inputs_reads_exposed() -> Result<(), String> {
+    let test = "use guard_edit::sign;\n\n#[test]\nfn signs() {\n    assert_eq!(sign(-5), -1);\n    assert_eq!(sign(0), 0);\n    assert_eq!(sign(9), 1);\n}\n";
+    let findings = findings_on_changed_line(
+        SIGN,
+        "        n if 0 > n => -1,",
+        "        n if n < 0 => -1,",
+        test,
+    )?;
+    let seen = findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.probe.family.as_str().to_string(),
+                finding.probe.expression.clone(),
+                finding.class.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        seen,
+        vec![(
+            "predicate".to_string(),
+            "0 > n".to_string(),
+            ExposureClass::Exposed
+        )]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_guard_only_edit_without_the_boundary_input_stays_weak() -> Result<(), String> {
+    // Control: without `sign(0)` no test sits on the guard's boundary.
+    let test = "use guard_edit::sign;\n\n#[test]\nfn signs() {\n    assert_eq!(sign(-5), -1);\n    assert_eq!(sign(9), 1);\n}\n";
+    let findings = findings_on_changed_line(
+        SIGN,
+        "        n if 0 > n => -1,",
+        "        n if n < 0 => -1,",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+fn tier(prelude: &str) -> String {
+    format!(
+        "#[derive(Debug, PartialEq)]\npub enum Tier {{\n    Gold,\n    Silver,\n    Bronze,\n}}\n\npub fn tier(points: i64) -> Tier {{\n{prelude}    match points {{\n        p if 100 <= p => Tier::Gold,\n        p if p >= 50 => Tier::Silver,\n        _ => Tier::Bronze,\n    }}\n}}\n"
+    )
+}
+
+const SILVER: &str = "use guard_edit::{Tier, tier};\n\n#[test]\nfn sixty_is_silver() {\n    assert_eq!(tier(60), Tier::Silver);\n}\n";
+
+fn missing_values(findings: &[Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .flat_map(|finding| {
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .map(|fact| fact.value.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_guard_binding_reads_the_scrutinee_parameter_inputs() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &tier(""),
+        "        p if 100 <= p => Tier::Gold,",
+        "        p if p >= 100 => Tier::Gold,",
+        SILVER,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.probe.family.as_str() == "predicate"),
+        "{findings:?}"
+    );
+    assert_eq!(missing_values(&findings), vec!["p == 100".to_string()]);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::WeaklyExposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_match_leaves_the_guard_binding_unread() -> Result<(), String> {
+    // Control: with two `match`es the arm could belong to either, so the
+    // binding is not read as the parameter and no boundary is named.
+    let lib = tier("    let _bonus = match points {\n        0 => 1,\n        _ => 0,\n    };\n");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 <= p => Tier::Gold,",
+        "        p if p >= 100 => Tier::Gold,",
+        SILVER,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
