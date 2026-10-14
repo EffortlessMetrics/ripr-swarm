@@ -532,10 +532,13 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
             // Only closers and `;` may follow: `throw ("a") + "b"` or
             // `new Error("a").stack` throws more than the literal read.
             LineToken::Other(end) if end == ")" => {
+                // Up to the statement's `;` (a `}` after it closes a block,
+                // not the thrown value).
                 let tail = rest.get(index + 1..).unwrap_or_default();
                 if !tail
                     .iter()
-                    .all(|t| matches!(t, LineToken::Other(c) if c == ")" || c == ";"))
+                    .take_while(|t| !matches!(t, LineToken::Other(c) if c == ";"))
+                    .all(|t| matches!(t, LineToken::Other(c) if c == ")"))
                 {
                     return None;
                 }
@@ -848,6 +851,13 @@ mod tests {
                 "{old}"
             );
         }
+        // A block that closes after the statement still reads its message.
+        let block = ErrorChangeFacts::read(
+            Some(r#"if (x) { throw new Error("a"); }"#),
+            r#"if (x) { throw new Error("b"); }"#,
+        );
+        assert_eq!(block.old_message.as_deref(), Some("a"));
+        assert_eq!(block.new_message.as_deref(), Some("b"));
         // A sequence throws its last operand, so no message is read from
         // an earlier one.
         for (old, new) in [
@@ -985,6 +995,17 @@ mod tests {
         assert!(!literal_rejection_credits(Some(r#""a""#), &error_reason));
         let added_error = ErrorChangeFacts::read(None, r#"throw new Error("bad");"#);
         assert!(!literal_rejection_credits(Some(r#""bad""#), &added_error));
+        let rejected_error = ErrorChangeFacts::read(
+            Some(r#"return Promise.reject(new Error("a"));"#),
+            r#"return Promise.reject(new Error("b"));"#,
+        );
+        assert!(!literal_rejection_credits(Some(r#""a""#), &rejected_error));
+        // A caught rejection throws nothing this line reads.
+        let caught = ErrorChangeFacts::read(
+            Some(r#"return Promise.reject("a").catch(f);"#),
+            r#"return Promise.reject("b").catch(f);"#,
+        );
+        assert!(!literal_rejection_credits(Some(r#""a""#), &caught));
         // Off the message-only path (here an added line) the reason must
         // equal the new message.
         let unrelated = ErrorChangeFacts::read(None, r#"return Promise.reject("bad input");"#);
