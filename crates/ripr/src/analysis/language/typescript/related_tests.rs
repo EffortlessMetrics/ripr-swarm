@@ -3065,11 +3065,31 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
         let mut from = 0usize;
         while let Some(rel) = masked[from..].find(needle.as_str()) {
             let at = from + rel;
-            let before_ok = masked[..at]
+            let head = &masked[..at];
+            let before_ok = head
                 .chars()
                 .next_back()
                 .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.');
             if before_ok {
+                // `: typeof price => x` spells a type-space use (a `typeof`
+                // type query or a type-annotation colon), not a bare
+                // parameter binding (PR #7651 review).
+                let run: String = head
+                    .chars()
+                    .rev()
+                    .skip_while(|ch: &char| ch.is_whitespace())
+                    .take_while(|ch: &char| is_javascript_identifier_char(*ch))
+                    .collect();
+                let word: String = run.chars().rev().collect();
+                if matches!(word.as_str(), "typeof" | "keyof") {
+                    from = at + needle.len();
+                    continue;
+                }
+                let precedes = head.chars().rev().find(|ch: &char| !ch.is_whitespace());
+                if precedes == Some(':') {
+                    from = at + needle.len();
+                    continue;
+                }
                 return true;
             }
             from = at + needle.len();
@@ -3081,18 +3101,42 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
         while let Some(rel) = masked[from..].find("=>") {
             let at = from + rel;
             let before = masked[..at].trim_end();
-            if let Some(open) = before.rfind('(')
-                && let Some(params) = before.get(open + 1..)
-                && !params.contains([';', '{', '}'])
-                && super::classifier::ts_references_identifier(params, identifier)
-            {
-                // The `(` must open a parameter list, not a call: the token
-                // before it is not an identifier, `.`, `)`, or `]`.
-                let paren_before = before[..open].trim_end().chars().next_back();
-                if paren_before.is_none_or(|ch| {
-                    !is_javascript_identifier_char(ch) && ch != '.' && ch != ')' && ch != ']'
-                }) {
-                    return true;
+            if let Some(open) = before.rfind('(') {
+                // The balanced list inside the parens; a return type
+                // (`(x): typeof price =>`) may sit between `)` and `=>`.
+                let mut depth = 1usize;
+                let mut close = None;
+                for (offset, c) in before[open + 1..].char_indices() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + 1 + offset);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close) = close {
+                    let params = &before[open + 1..close];
+                    let between = before[close + 1..].trim_start();
+                    // The `(` must open a parameter list, not a call: the
+                    // token before it is not an identifier, `.`, `)`, or `]`.
+                    let paren_before = before[..open].trim_end().chars().next_back();
+                    if (between.is_empty() || between.starts_with(':'))
+                        && !params.contains(';')
+                        && params_bind_identifier(params, identifier)
+                        && paren_before.is_none_or(|ch| {
+                            !is_javascript_identifier_char(ch)
+                                && ch != '.'
+                                && ch != ')'
+                                && ch != ']'
+                        })
+                    {
+                        return true;
+                    }
                 }
             }
             from = at + "=>".len();
@@ -3148,7 +3192,7 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
                 }
             }
             if let Some(end) = end
-                && super::classifier::ts_references_identifier(&paren[..end], identifier)
+                && params_bind_identifier(&paren[..end], identifier)
             {
                 return true;
             }
@@ -3156,6 +3200,52 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
         }
     }
     false
+}
+
+/// Whether a masked parameter list BINDS `identifier`. A binding is a plain
+/// identifier pattern (optionally optional `a?` or a rest `...name`), or any
+/// whole-identifier occurrence inside a destructuring pattern. A mention
+/// after a top-level `=` (default value) or `:` (type annotation) is a use,
+/// not a binding: `((f = price) => ...)` reads `price` and
+/// `((x): typeof price => ...)` names a type; neither rebinds it
+/// (PR #7651 review).
+fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
+    // The pattern is everything before the element's first top-level `=`
+    // (default) or `:` (type annotation); both are depth-aware so braces and
+    // brackets inside destructuring patterns never cut the pattern.
+    fn pattern_of(masked_element: &str) -> &str {
+        let mut depth = 0usize;
+        for (offset, c) in masked_element.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                '=' | ':' if depth == 0 => return masked_element[..offset].trim_end(),
+                _ => {}
+            }
+        }
+        masked_element.trim_end()
+    }
+    split_top_level_declarators(masked_params)
+        .iter()
+        .any(|element| {
+            let element = element.trim();
+            if element.is_empty() {
+                return false;
+            }
+            // A rest parameter binds its pattern: `...cost`.
+            let element = element
+                .strip_prefix("...")
+                .map(str::trim_start)
+                .unwrap_or(element);
+            let pattern = pattern_of(element).trim_start();
+            if pattern.starts_with('{') || pattern.starts_with('[') {
+                return super::classifier::ts_references_identifier(pattern, identifier);
+            }
+            let pattern = pattern.strip_suffix('?').unwrap_or(pattern).trim_end();
+            !pattern.is_empty()
+                && pattern.chars().all(is_javascript_identifier_char)
+                && pattern == identifier
+        })
 }
 
 /// `for (const cost of ...)`, `for (let cost = ...)`, `for (cost in ...)`,

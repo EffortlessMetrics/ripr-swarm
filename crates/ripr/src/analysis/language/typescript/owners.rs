@@ -401,6 +401,19 @@ fn assigned_identifiers_in_statement(stmt: &Statement<'_>) -> Vec<String> {
                     }
                 }
             }
+            // Wrapper expressions: a write nested in `await`, a unary
+            // operator (`void (price = ...)`), or a binary expression
+            // still reassigns the binding (PR #7651 review).
+            Expression::AwaitExpression(awaited) => {
+                walk_expression(&awaited.argument, out);
+            }
+            Expression::UnaryExpression(unary) => {
+                walk_expression(&unary.argument, out);
+            }
+            Expression::BinaryExpression(binary) => {
+                walk_expression(&binary.left, out);
+                walk_expression(&binary.right, out);
+            }
             Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {}
             _ => {}
         }

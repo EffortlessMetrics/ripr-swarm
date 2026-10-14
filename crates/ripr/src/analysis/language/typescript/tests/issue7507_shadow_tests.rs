@@ -470,6 +470,156 @@ fn issue7507_reassignment_keeps_live_class_method() -> Result<(), String> {
     Ok(())
 }
 
+/// A `void`-wrapped or binary top-level reassignment still reassigns: the
+/// dead owner is dropped instead of staying credited.
+#[test]
+fn issue7507_wrapped_reassignment_drops_owner() -> Result<(), String> {
+    for source in [
+        "export let price = (n: number) => n - 20;\nvoid (price = (n: number) => 140);\n",
+        "export let price = (n: number) => n - 20;\n0 + (price = (n: number) => 140);\n",
+    ] {
+        let owners = owners_of_lib(source);
+        if owners.iter().any(|owner| owner.name == "price") {
+            return Err(format!(
+                "wrapped reassignment is dead and must yield no owner: {owners:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A destructured object parameter binds the name exactly like a plain
+/// parameter: the helper assertion must not read exposed.
+#[test]
+fn issue7507_destructured_param_shadows_owner() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let source = "import { price } from '../src/lib';\ntest('p', () => {\n  price(150); expect((({ price }) => price(150))({ price: (a: number) => 140 })).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(
+        &tests,
+        "(({ price }) => price(150))({ price: (a: number) => 140 })",
+    )?;
+    if !local_identifier_declared_in_test_body(&tests[0].body_text, "price") {
+        return Err("destructured parameter binding must read as a body-local shadow".to_string());
+    }
+    if relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err(format!(
+            "destructured-param shadow must withhold the trusted relation: {:?}",
+            relations_of(&owner, &tests)
+        ));
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err("destructured-param helper must not read exposed".to_string());
+    }
+    Ok(())
+}
+
+/// A parameter default initializer reads `price` but does not rebind it, so
+/// the genuine owner assertion keeps its trusted credit.
+#[test]
+fn issue7507_param_default_use_is_not_a_shadow() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let source = "import { price } from '../src/lib';\ntest('p', () => {\n  const make = ((f = price) => f)();\n  expect(price(150)).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "price(150)")?;
+    if local_identifier_declared_in_test_body(&tests[0].body_text, "price") {
+        return Err("a default-initializer mention must not read as a shadow".to_string());
+    }
+    if !relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err(format!(
+            "default use must not shadow the genuine owner relation: {:?}",
+            relations_of(&owner, &tests)
+        ));
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if !matches!(finding.class, ExposureClass::Exposed) {
+        return Err(format!(
+            "default use must keep the owner exposed, got {:?}",
+            finding.class
+        ));
+    }
+    Ok(())
+}
+
+/// A return-type annotation mentioning the owner (`: typeof price`) is a
+/// type-space use, not a binding: the genuine owner assertion stays trusted.
+#[test]
+fn issue7507_return_type_use_is_not_a_shadow() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let source = "import { price } from '../src/lib';\ntest('p', () => {\n  const make = ((x): typeof price => x)(0);\n  expect(price(150)).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "price(150)")?;
+    if local_identifier_declared_in_test_body(&tests[0].body_text, "price") {
+        return Err("a return-type mention must not read as a shadow".to_string());
+    }
+    if !relations_of(&owner, &tests)
+        .iter()
+        .any(|relation| relation.uses_oracle())
+    {
+        return Err(format!(
+            "return-type mention must not shadow the genuine owner relation: {:?}",
+            relations_of(&owner, &tests)
+        ));
+    }
+    let finding = classify_at_changed(&owners, &tests)?;
+    if !matches!(finding.class, ExposureClass::Exposed) {
+        return Err(format!(
+            "return-type mention must keep the owner exposed, got {:?}",
+            finding.class
+        ));
+    }
+    Ok(())
+}
+
+/// Whitespace after an unrelated member dot (`other. ns.price(150)`) reads
+/// `other.ns`'s member: the imported namespace receiver cannot be
+/// established from that spelling, so the assertion must not confirm
+/// exposed even with a genuine smoke call present.
+#[test]
+fn issue7507_whitespace_member_call_is_not_an_owner_reference() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let source = "import * as ns from '../src/lib';\ntest('p', () => {\n  const other = { ns };\n  price(150); expect(other. ns.price(150)).toBe(140);\n});\n";
+    let tests = tests_of(source);
+    assert_single_strong_exact(&tests, "other. ns.price(150)")?;
+    let finding = classify_at_changed(&owners, &tests)?;
+    if matches!(finding.class, ExposureClass::Exposed) {
+        return Err(
+            "member call with a space after an unrelated dot must not read exposed".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// A tiny test body exercises the dynamic-import receiver scan without
+/// tripping the keyword search: a needle longer than the body matches
+/// nowhere and must not panic.
+#[test]
+fn issue7507_dynamic_import_receivers_survive_a_tiny_body() -> Result<(), String> {
+    let owners = owners_of_lib(&named_lib());
+    let owner = price_owner_named(&owners)?.clone();
+    let tests = tests_of("test('t', () => {});\n");
+    let [test] = tests.as_slice() else {
+        return Err(format!("expected one test, got {}", tests.len()));
+    };
+    let receivers = owner_namespace_receivers(test, &owner, None, None);
+    if !receivers.is_empty() {
+        return Err(format!(
+            "a tiny body binds no namespace receiver: {receivers:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// A call in the C-style loop condition (`i < price(2)`) is a use, not a
 /// binding: the imported owner's assertions keep their trusted credit.
 #[test]

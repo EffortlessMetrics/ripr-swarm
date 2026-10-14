@@ -573,9 +573,14 @@ fn ts_observed_namespaced_owner_call(
             masked_observed
                 .match_indices(needle.as_str())
                 .any(|(at, _)| {
+                    // Whitespace before the receiver changes nothing about
+                    // its identity: `other. ns.price(` reads `other.ns`'s
+                    // member, so skip spaces before the receiver and reject
+                    // a member dot or a longer identifier.
                     masked_observed[..at]
                         .chars()
-                        .next_back()
+                        .rev()
+                        .find(|c: &char| !c.is_whitespace())
                         .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$') && c != '.')
                 })
         })
@@ -2726,7 +2731,13 @@ fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBindin
     let masked_chars: Vec<char> = masked.chars().collect();
     let find_char = |haystack: &[char], needle: &str, from: usize| -> Option<usize> {
         let needle_chars: Vec<char> = needle.chars().collect();
-        (from..=haystack.len().saturating_sub(needle_chars.len())).find(|&at| {
+        // A needle longer than the remaining haystack matches nowhere; the
+        // saturating range below would still visit `from` and slice past the
+        // end on a short body (e.g. `{}`), so refuse early.
+        if from > haystack.len() || haystack.len() - from < needle_chars.len() {
+            return None;
+        }
+        (from..=haystack.len() - needle_chars.len()).find(|&at| {
             haystack[at..at + needle_chars.len()]
                 .iter()
                 .collect::<String>()
@@ -2819,18 +2830,34 @@ fn dynamic_import_namespace_bindings(body_text: &str) -> Vec<DynamicImportBindin
 
 /// The trailing identifier segment immediately before the final `.` of
 /// `before_match` — the receiver of a member call (`expect(pricing.` →
-/// `pricing`).
+/// `pricing`). A receiver spelled after another member dot (`other. ns`)
+/// is a member of that outer receiver, never a bare namespace receiver, so
+/// this returns an empty string (which no receiver list contains).
 fn receiver_before_dot(before_match: &str) -> String {
     let trimmed = before_match.trim_end();
     let without_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
-    without_dot
+    let without_dot = without_dot.trim_end();
+    let receiver: String = without_dot
         .chars()
         .rev()
         .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
-        .collect()
+        .collect();
+    if receiver.is_empty() {
+        return receiver;
+    }
+    let head = without_dot.len() - receiver.len();
+    match without_dot[..head]
+        .chars()
+        .rev()
+        .find(|c: &char| !c.is_whitespace())
+    {
+        Some('.') | Some('?') | Some('!') => String::new(),
+        Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == '$' => String::new(),
+        _ => receiver,
+    }
 }
 
 /// Return the argument lists (one per call) of every `<owner_name>(...)` call
