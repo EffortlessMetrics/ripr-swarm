@@ -7666,6 +7666,10 @@ fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
     for (rows, admitted) in [
         ("[(&[], 0), (&[1, -1], 1)]", true),
         ("[(&[], 0), (&[], 0)]", false),
+        // One row ripr cannot read as a literal sequence refuses the pin,
+        // even beside a non-empty literal row.
+        ("[(&[1, -1], 1), (&[0; 2], 0)]", false),
+        ("[(&[1, -1], 1), (&[3u32], 1)]", false),
     ] {
         let lib = adaptor_lib(
             FILTER_TAIL,
@@ -7699,6 +7703,10 @@ fn adaptor_gate_refuses_tails_outside_the_rule() {
         ("xs.iter().position(|&x| x > 0).unwrap_or(0)", None),
         ("xs.iter().fold(0, |n, &x| n + usize::from(x > 0))", None),
         ("xs.to_vec().iter().filter(|&&x| x > 0).count()", None),
+        // Consumers that drop closure values: `map` + `count` ignores
+        // them, `filter` + `sum` drops an additive identity unseen.
+        ("xs.iter().map(|&x| x > 0).count()", None),
+        ("xs.iter().filter(|&&x| x > 0).sum()", None),
         // The predicate alone is not the owner's return value.
         (FILTER_TAIL, Some("x > 0")),
     ] {

@@ -24,7 +24,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #7914
 
 Support-tier impact:
 
@@ -37,9 +37,10 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No schema version bump. No new oracle kind, strength, class, relation
-  reason or limitation name. One new propagation-witness limitation label,
-  `iterator_adaptor_owner_tail`, beside `constant_owner_tail`.
+- No schema version bump. No new oracle kind, strength, class or relation
+  reason. The propagation witness gains one limitation label,
+  `iterator_adaptor_owner_tail`, beside `constant_owner_tail`; no static
+  limitation kind is added.
 - Amends RIPR-SPEC-0231's owner-return pin (a closure in the tail no longer
   refuses it on this shape) and the RIPR-SPEC-0027 boundary reading of a
   closure binding.
@@ -93,17 +94,33 @@ and every condition below holds. Anything else keeps the pre-0260 reading.
   and no turbofish.
 - `A` is `filter`, `map`, `any` or `all`, with no turbofish and exactly
   one argument, a closure.
-- `T`, when present, is `count`, `collect` or `sum`, with no arguments
-  (`collect::<Vec<_>>()` and `sum::<u64>()` are allowed).
+- `A` and `T` form one of these pairs, each of which keeps every closure
+  value in the owner's result, so a changed closure value changes what the
+  owner returns:
+  - `filter` + `count()`;
+  - `filter` or `map` + `collect()` into a `Vec`: a `collect::<Vec<..>>()`
+    turbofish, or no turbofish and an owner return type spelled `Vec<..>`;
+  - `map` + `sum()` (a `sum::<u64>()` turbofish is allowed) over an
+    arithmetic `E`: no comparison, `!`, `true`, `false` or `as` cast;
+  - `any` or `all` with no `T`.
+
+  Every other pair is refused (fail closed): `map` + `count` ignores the
+  closure value; `filter` + `sum` cannot tell a kept additive identity
+  (`x > 0` on `0`) from a dropped one; `collect` into anything not provably
+  a `Vec` (a `HashSet`, a `BTreeSet`, an alias, `_`) may lose order and
+  multiplicity; `map` + `sum` over a comparison or cast folds `bool`s into a
+  count; a bare `filter` or `map` returns a lazy iterator; a terminal with
+  arguments, or any other terminal, is not read.
 - The closure has one untyped parameter whose pattern is `x`, `&x` or
   `&&x` (no `mut`, `ref`, or destructuring), at most as many `&` as the
   adaptor hands (`filter` gives `&&T`, the others `&T`), and is not
   `move`, `async` or `static` and declares no return type.
 - `E` evaluates every part on every call: it is not a block and holds no
-  closure, `|`, `||`, `&&`, branch or loop keyword, `Option`/`Result`
+  closure, `||`, `&&`, branch or loop keyword, `Option`/`Result`
   combinator, `?`, macro, `return`, `.await`, `async`, `yield` or
-  `unsafe`. Every path in `E` is the binding or an `UPPER_CASE` constant,
-  so the closure captures nothing else.
+  `unsafe`. A bitwise `|` or `&` is allowed: it evaluates both operands.
+  Every path in `E` is the binding or an `UPPER_CASE` constant, so the
+  closure captures nothing else.
 
 The binding read as an element of `P` is the binding with at most as many
 `*` as the adaptor's reference layers minus the pattern's `&` (`x` for
@@ -155,6 +172,8 @@ discriminating or owner-pinned assertion pairs with the boundary when its
 owner call's argument for `P` has a run that reaches the boundary, read
 directly, through a table column, or, for an assertion borrowed from a
 test-local check helper, at each eager call of the helper in the test.
+Pairing reads only a literal boundary: a constant boundary (`x > LIMIT`)
+may be observed by activation but is never paired (fail closed).
 
 ### Rule 2: the owner-return pin through the adaptor
 
@@ -195,6 +214,12 @@ this edge's.
    `&[31, 30]`, where the walk stops at `31` and `d >= 30` survives.
 3. **Every related call must be readable.** Adopted: one unreadable call
    keeps the boundary unresolved, since it may sit on the boundary.
+4. **Only consumers that keep every closure value.** Adopted: an explicit
+   allow-list of adaptor/terminal pairs. Rejected: admitting any listed
+   adaptor with any listed terminal, which credits `map(|&x| x > 0).count()`
+   (the count ignores every closure value), `filter(|&&x| x > 0).sum()` (a
+   kept or dropped `0` sums alike) and a `collect` into a set (`{false,
+   true}` for both `>` and `>=`).
 
 ## Required Evidence
 
@@ -209,7 +234,9 @@ this edge's.
 
 - Other adaptors and consumers: `fold`, `flat_map`, `filter_map`, `find`,
   `position`, `take_while`, `max_by_key` and the rest keep the pre-0260
-  reading.
+  reading, as do the refused pairs (`map` + `count`, `filter` + `sum`,
+  `map` + `sum` over a comparison or cast, and `collect` into anything not
+  provably a `Vec`).
 - Closures that capture another local or parameter, closures with a block
   or conditional body, and nested closures.
 - Receivers other than an owner parameter (`self.items.iter()`,
@@ -244,12 +271,16 @@ this edge's.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`: the
-  scope, literal sequences, helper-call runs and the short-circuit run
-  rule.
+  scope, the admitted adaptor/terminal pairs, literal sequences,
+  helper-call runs and the short-circuit run rule.
 - `crates/ripr/src/analysis/classify/owner_pin/tests.rs`: rule 2 through a
   direct call and a constant-row table, and the owner-side refusals.
 - `crates/ripr/src/analysis/classify/activation.rs` tests: rule 1's
   observed, missing, short-circuit and unreadable readings.
+- `crates/ripr/src/analysis/classify/boundary_pairing.rs` tests: rule 1's
+  same-test pairing, including the constant-boundary refusal.
+- `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
+  `check_workspace`, and the `map` + `count` refusal.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
   5 (`trap-iter-empty-slice`) and 6 (`grid-iter-property`).
@@ -257,7 +288,7 @@ this edge's.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs`:
-  `adaptor_tail_of`, `literal_sequence`, `argument_sequences`,
+  `adaptor_tail_of`, `admitted_consumer`, `literal_sequence`, `argument_sequences`,
   `pinned_call_runs_closure`, `AdaptorTail::run_reaches_boundary`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `ReturnPathGate::Adaptor` in `OwnerReturnPin::establish` and `admits`.

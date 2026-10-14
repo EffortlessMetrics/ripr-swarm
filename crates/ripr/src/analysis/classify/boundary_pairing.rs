@@ -3295,6 +3295,53 @@ mod tests {
         assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
     }
 
+    /// RIPR-SPEC-0260 rule 1 pairing: an admitted assertion pairs with
+    /// the element boundary when its owner call's literal sequence reaches
+    /// the boundary; another run, an unread argument, a constant boundary
+    /// or a consumer outside the rule does not pair.
+    #[test]
+    fn adaptor_element_boundary_pairs_only_a_run_that_reaches_it() {
+        let pairs = |tail: &str, expression: &str, assertion: &str| {
+            let mut owner = gate_owner();
+            owner.body = format!("pub fn gate(xs: &[i32]) -> usize {{ {tail} }}").into();
+            owner.item.has_body = true;
+            let test = test_summary(
+                "element",
+                assertion,
+                vec![call("gate", assertion)],
+                vec![exact(assertion)],
+                &[],
+            );
+            pairing_with_admitted_oracles(
+                &predicate_probe(expression),
+                Some(&owner),
+                &[&test],
+                &ActivationEvidence::default(),
+            )
+        };
+        let filter = "xs.iter().filter(|&&x| x > 0).count()";
+        assert!(pairs(filter, "x > 0", "assert_eq!(gate(&[-1, 0, 3]), 1);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[3, 7]), 2);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&v), 1);"));
+        assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[0; 2]), 0);"));
+        // A same-file constant boundary is not read here (fail closed).
+        assert!(!pairs(
+            "xs.iter().filter(|&&x| x > LIMIT).count()",
+            "x > LIMIT",
+            "assert_eq!(gate(&[0]), 0);"
+        ));
+        // `map` + `count` ignores the closure value.
+        assert!(!pairs(
+            "xs.iter().map(|&x| x > 0).count()",
+            "x > 0",
+            "assert_eq!(gate(&[0]), 1);"
+        ));
+        // `any` stops at 5 before the boundary element decides.
+        let any = "xs.iter().any(|&x| x > 0)";
+        assert!(pairs(any, "x > 0", "assert_eq!(gate(&[-2, 0]), false);"));
+        assert!(!pairs(any, "x > 0", "assert_eq!(gate(&[5, 0]), true);"));
+    }
+
     fn gate_owner() -> FunctionSummary {
         FunctionSummary {
             id: SymbolId("src/lib.rs::gate".to_string()),

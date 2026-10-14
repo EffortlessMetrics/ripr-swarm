@@ -14620,6 +14620,10 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_elements_off_the_boundary_keep_the_missing_discriminator",
   "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_boundary_with_an_unreadable_call_stays_unresolved",
   "crates/ripr/src/analysis/classify/activation.rs::tests::adaptor_short_circuit_counts_a_boundary_element_only_when_it_decides",
+  "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs::tests::admits_only_consumers_that_keep_every_closure_value",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::adaptor_element_boundary_pairs_only_a_run_that_reaches_it",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::admitted_adaptor_tail_propagates_to_the_owner_return",
+  "crates/ripr/tests/iterator_adaptor_propagation.rs::map_count_tail_keeps_the_pre_0260_reading",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

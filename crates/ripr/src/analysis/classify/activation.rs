@@ -6964,13 +6964,17 @@ assert_eq!(input.amount, 100);"#
             );
             assert!(missing_values(&gathered).is_empty(), "{unreadable}");
         }
-        // Outside the admitted shape (a captured `&&`) nothing changes.
-        let conjunction = adaptor_boundary(
-            "xs.iter().filter(|&&x| x > 0 && x < 9).count()",
-            "x > 0",
-            &["assert_eq!(score(&[0]), 0);"],
-        );
-        assert!(!has_observed_boundary_equality(&conjunction.activation));
+        // The same readable call observes `x == 0` on the admitted shape,
+        // and nothing outside it: a short-circuit `&&` body, and `map` +
+        // `count`, which ignores the closure value.
+        let observed = |owner: &str| {
+            has_observed_boundary_equality(
+                &adaptor_boundary(owner, "x > 0", &["assert_eq!(score(&[0]), 0);"]).activation,
+            )
+        };
+        assert!(observed(filter));
+        assert!(!observed("xs.iter().filter(|&&x| x > 0 && x < 9).count()"));
+        assert!(!observed("xs.iter().map(|&x| x > 0).count()"));
     }
 
     #[test]

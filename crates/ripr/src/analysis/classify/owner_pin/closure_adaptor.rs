@@ -144,10 +144,12 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
     }
     let tail = block.tail_expr()?;
     let mut call = method_call(&tail)?;
+    let mut terminal = None;
     if TERMINALS.contains(&method_name(&call)?.as_str()) {
         if call.arg_list()?.args().next().is_some() {
             return None;
         }
+        terminal = Some(call.clone());
         call = method_call(&call.receiver()?)?;
     }
     let adaptor = method_name(&call)?;
@@ -177,7 +179,9 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
         return None;
     }
     let closure_body = closure.body()?;
-    if !unconditional_closure_body(&closure_body, &binding) {
+    if !unconditional_closure_body(&closure_body, &binding)
+        || !admitted_consumer(&function, &adaptor, terminal.as_ref(), &closure_body)
+    {
         return None;
     }
     let deciding = match adaptor.as_str() {
@@ -199,6 +203,76 @@ pub(in crate::analysis::classify) fn adaptor_tail_of(body: &str) -> Option<Adapt
             .count(),
         deciding,
         comparison,
+    })
+}
+
+/// Whether the adaptor and its terminal keep every closure value in the
+/// owner's result, so a changed closure value changes what the owner
+/// returns. Admitted: `filter` + `count`, `filter` / `map` + `collect` into a
+/// `Vec`, `map` + `sum` over an arithmetic body, and `any` / `all` with no
+/// terminal. Refused (fail closed): `map` + `count` (ignores the closure
+/// value), `filter` + `sum` (an element equal to the additive identity
+/// contributes nothing whether kept or dropped), `collect` into anything not
+/// provably a `Vec` (a set loses order and multiplicity), `map` + `sum` over
+/// a comparison or cast, a bare `filter` / `map` (a lazy iterator), and a
+/// terminal after `any` / `all`.
+fn admitted_consumer(
+    function: &ast::Fn,
+    adaptor: &str,
+    terminal: Option<&ast::MethodCallExpr>,
+    closure_body: &ast::Expr,
+) -> bool {
+    let Some(terminal) = terminal else {
+        return matches!(adaptor, "any" | "all");
+    };
+    let Some(name) = method_name(terminal) else {
+        return false;
+    };
+    match (adaptor, name.as_str()) {
+        ("filter", "count") => terminal.generic_arg_list().is_none(),
+        ("filter" | "map", "collect") => collects_into_vec(function, terminal),
+        ("map", "sum") => arithmetic_body(closure_body),
+        _ => false,
+    }
+}
+
+/// Whether `collect` provably builds a `Vec`: a `collect::<Vec<..>>()`
+/// turbofish, or no turbofish and an owner return type `Vec<..>`.
+fn collects_into_vec(function: &ast::Fn, terminal: &ast::MethodCallExpr) -> bool {
+    let target = match terminal.generic_arg_list() {
+        Some(arguments) => {
+            let mut arguments = arguments.generic_args();
+            let (Some(argument), None) = (arguments.next(), arguments.next()) else {
+                return false;
+            };
+            argument.syntax().text().to_string()
+        }
+        None => match function.ret_type().and_then(|ret| ret.ty()) {
+            Some(ty) => ty.syntax().text().to_string(),
+            None => return false,
+        },
+    };
+    let target = collapse(&target);
+    target.starts_with("Vec<") && target.ends_with('>')
+}
+
+/// Whether a `map` body summed by `sum` is arithmetic: no comparison, no
+/// `!` and no cast, so no closure value is a `bool` folded into a count.
+fn arithmetic_body(body: &ast::Expr) -> bool {
+    body.syntax().descendants_with_tokens().all(|element| {
+        !matches!(
+            element.kind(),
+            ra_ap_syntax::SyntaxKind::CAST_EXPR
+                | ra_ap_syntax::SyntaxKind::L_ANGLE
+                | ra_ap_syntax::SyntaxKind::R_ANGLE
+                | ra_ap_syntax::SyntaxKind::LTEQ
+                | ra_ap_syntax::SyntaxKind::GTEQ
+                | ra_ap_syntax::SyntaxKind::EQ2
+                | ra_ap_syntax::SyntaxKind::NEQ
+                | ra_ap_syntax::SyntaxKind::BANG
+                | ra_ap_syntax::SyntaxKind::TRUE_KW
+                | ra_ap_syntax::SyntaxKind::FALSE_KW
+        )
     })
 }
 
@@ -707,8 +781,60 @@ mod tests {
             "fn f(xs: &[i32]) -> usize { xs.iter().filter(move |&&x| x > 0).count() }",
             // More `&` than the adaptor hands.
             "fn f(xs: &[i32]) -> bool { xs.iter().any(|&&x| x > 0) }",
-            // A terminal with arguments or another terminal.
+            // A terminal with arguments, or another terminal.
+            "fn f(xs: &[i32]) -> usize { xs.iter().filter(|&&x| x > 0).count(1) }",
+            "fn f(xs: &[i32]) -> Vec<i32> { xs.iter().map(|&x| x * 2).collect(v) }",
             "fn f(xs: &[i32]) -> Option<i32> { xs.iter().map(|&x| x * 2).max() }",
+            // Not the slice's own `iter`.
+            "fn f(xs: Vec<i32>) -> usize { xs.into_iter().filter(|&x| x > 0).count() }",
+            "fn f(xs: Vec<i32>) -> usize { xs.iter_mut().filter(|x| **x > 0).count() }",
+        ] {
+            assert_eq!(tail(body), None, "{body}");
+        }
+    }
+
+    /// Only adaptor/terminal pairs that keep every closure value in the
+    /// owner's result are admitted.
+    #[test]
+    fn admits_only_consumers_that_keep_every_closure_value() {
+        for body in [
+            "fn f(xs: &[i32]) -> usize { xs.iter().filter(|&&x| x > 0).count() }",
+            "fn f(xs: &[i32]) -> Vec<&i32> { xs.iter().filter(|&&x| x > 0).collect() }",
+            "fn f(xs: &[i32]) -> Vec<bool> { xs.iter().map(|&x| x > 0).collect() }",
+            "fn f(xs: &[i32]) -> Vec<i32> { xs.iter().map(|&x| x * 2).collect::<Vec<i32>>() }",
+            "fn f(xs: &[i32]) -> i32 { xs.iter().map(|&x| x * 2 + 1).sum() }",
+            "fn f(xs: &[i32]) -> i64 { xs.iter().map(|&x| x - 3).sum::<i64>() }",
+            "fn f(xs: &[i32]) -> bool { xs.iter().any(|&x| x > 0) }",
+            "fn f(xs: &[i32]) -> bool { xs.iter().all(|&x| x > 0) }",
+        ] {
+            assert!(tail(body).is_some(), "{body}");
+        }
+        for body in [
+            // `map` + `count` ignores the closure value.
+            "fn f(xs: &[i32]) -> usize { xs.iter().map(|&x| x > 0).count() }",
+            "fn f(xs: &[i32]) -> usize { xs.iter().map(|&x| x * 2).count() }",
+            // A set loses order and multiplicity, by turbofish or return type.
+            "fn f(xs: &[i32]) -> HashSet<bool> { xs.iter().map(|&x| x > 0).collect() }",
+            "fn f(xs: &[i32]) -> BTreeSet<bool> { xs.iter().map(|&x| x > 0).collect() }",
+            "fn f(xs: &[i32]) -> usize { xs.iter().map(|&x| x > 0).collect::<HashSet<_>>() }",
+            "fn f(xs: &[i32]) -> HashSet<&i32> { xs.iter().filter(|&&x| x > 0).collect() }",
+            "fn f(xs: &[i32]) -> std::collections::BTreeSet<&i32> { xs.iter().filter(|&&x| x > 0).collect() }",
+            // A collect target ripr cannot see, or an alias.
+            "fn f(xs: &[i32]) -> impl Sized { xs.iter().map(|&x| x > 0).collect::<_>() }",
+            "fn f(xs: &[i32]) -> Bools { xs.iter().map(|&x| x > 0).collect() }",
+            // `filter` + `sum`: a kept or dropped additive identity sums alike.
+            "fn f(xs: &[i32]) -> i32 { xs.iter().filter(|&&x| x > 0).sum() }",
+            "fn f(xs: &[i32]) -> i32 { xs.iter().filter(|&&x| x >= 0).sum::<i32>() }",
+            // `map` + `sum` over a comparison, a negation or a cast.
+            "fn f(xs: &[i32]) -> u32 { xs.iter().map(|&x| (x > 0) as u32).sum() }",
+            "fn f(xs: &[i32]) -> u32 { xs.iter().map(|&x| x as u32).sum() }",
+            "fn f(xs: &[i32]) -> i32 { xs.iter().map(|&x| x == 0).sum() }",
+            // A lazy iterator, or a terminal after `any` / `all`.
+            "fn f(xs: &[i32]) -> impl Iterator { xs.iter().filter(|&&x| x > 0) }",
+            "fn f(xs: &[i32]) -> impl Iterator { xs.iter().map(|&x| x * 2) }",
+            "fn f(xs: &[i32]) -> usize { xs.iter().any(|&x| x > 0).count() }",
+            // `filter` + `count` with a turbofish is not the plain terminal.
+            "fn f(xs: &[i32]) -> usize { xs.iter().filter(|&&x| x > 0).count::<usize>() }",
         ] {
             assert_eq!(tail(body), None, "{body}");
         }
