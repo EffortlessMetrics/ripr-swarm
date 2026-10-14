@@ -472,21 +472,24 @@ fn format_owner_tail_line(
     let tree = call.token_tree()?;
     // Only the parenthesized `format!(..)` spelling.
     tree.l_paren_token()?;
-    // The arguments as a tuple: `("literal", a, b)`.
+    // The arguments as a tuple, `("literal", a, b)`, or a lone format
+    // string, `("{name}")`, which parses as a parenthesized expression.
     let arguments = crate::analysis::syntax::parse_clean_source_file(&format!(
         "fn ripr_format() {{ let _ = {}; }}",
         tree.syntax().text()
     ))?;
-    let ast::Expr::TupleExpr(tuple) = arguments
+    let fields: Vec<ast::Expr> = match arguments
         .tree()
         .syntax()
         .descendants()
         .find_map(ast::LetStmt::cast)?
         .initializer()?
-    else {
-        return None;
+    {
+        ast::Expr::TupleExpr(tuple) => tuple.fields().collect(),
+        ast::Expr::ParenExpr(lone) => vec![lone.expr()?],
+        _ => return None,
     };
-    let mut fields = tuple.fields();
+    let mut fields = fields.into_iter();
     let ast::Expr::Literal(format) = fields.next()? else {
         return None;
     };
@@ -2002,6 +2005,8 @@ mod tests {
         let positive = [
             "format!(\"{name}: {}\", score + 1)",
             "format!(\"{}-{}\", a.len(), b)",
+            // A lone format string with captured identifiers.
+            "format!(\"{name}\")",
         ];
         for expression in positive {
             let body = format!("fn calculate() -> String {{\n    {expression}\n}}");
@@ -2034,6 +2039,15 @@ mod tests {
             (
                 "fn calculate() -> String {\n    format!(concat!(\"{}\"), x)\n}",
                 "format!(concat!(\"{}\"), x)",
+            ),
+            // A lone argument that is not a string literal.
+            (
+                "fn calculate() -> String {\n    format!(concat!(\"{x}\"))\n}",
+                "format!(concat!(\"{x}\"))",
+            ),
+            (
+                "fn calculate() -> String {\n    format!(name)\n}",
+                "format!(name)",
             ),
             // Arguments that may not evaluate the changed value plainly.
             (

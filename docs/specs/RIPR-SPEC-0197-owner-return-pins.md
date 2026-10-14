@@ -1079,7 +1079,8 @@ on its own.
 
 `format_tail_witness` in `classify/propagation_witness.rs` completes a
 DirectReturn witness for a `return_value` probe whose changed expression is
-the owner's whole body, one `format!("literal", args..)` tail, on the
+the owner's whole body, one `format!("literal", args..)` tail (or a lone
+`format!("literal")` whose format captures identifiers, `"{name}"`), on the
 probe's line, matching the owner's local return-value sink. `format!`
 evaluates each argument once and writes it into the `String` it returns (an
 unused argument does not compile), so the changed argument reaches the
@@ -1263,6 +1264,11 @@ actual side and the literal as the expected value when:
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the literal.
 
+The parser grades a comparison it reads as an expect-test comparison
+(`assert_eq` or `assert_debug_eq` on an `expect!`/`expect_file!` receiver)
+`snapshot` / medium from its parsed shape, so a single-bracket, spaced
+(`expect! [[..]]`, `.assert_eq (..)`) or line-split call grades as the
+canonical spelling does.
 The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
 bool-owner pin, only its probe-relative strength rises once the pin admits
 it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a

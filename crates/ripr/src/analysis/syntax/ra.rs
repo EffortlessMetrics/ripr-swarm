@@ -2383,8 +2383,8 @@ fn extract_parser_oracles(
 
     // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
     // is a method call on the macro's value, which the macro walk above never
-    // sees. Its whole expression is the oracle, graded by `classify_assertion`
-    // (RIPR-SPEC-0231 step 6: `snapshot` / medium); the line scan below must
+    // sees. Its whole expression is the oracle, graded `snapshot` / medium
+    // (RIPR-SPEC-0231 step 6); the line scan below must
     // not also read the `.assert_debug_eq(..)` continuation of a multi-line
     // expectation as an assertion of its own.
     let mut expect_test_lines = Vec::new();
@@ -2416,13 +2416,15 @@ fn extract_parser_oracles(
     {
         let range = method_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let classification = classify_assertion(&assertion_text);
+        // The parser verified the comparison's shape, so its grade does
+        // not depend on the substring recognizer's spelling (`expect![..]`,
+        // `expect! [[..]]`, `.assert_eq (..)`, a call split across lines).
         let line = line_index.line(range.start());
         expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
         assertions.push(OracleFact {
             line,
-            kind: classification.kind,
-            strength: classification.strength,
+            kind: OracleKind::Snapshot,
+            strength: OracleStrength::Medium,
             observed_tokens: extract_identifier_tokens(&assertion_text),
             text: assertion_text,
             ok_value_observed: None,

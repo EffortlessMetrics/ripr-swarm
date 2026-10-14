@@ -166,7 +166,7 @@ fn inline_expect_operands_reads_one_literal_and_one_argument() {
 /// oracle, not a second line-scanned `.assert_debug_eq(..)`.
 #[test]
 fn expect_test_comparisons_extract_as_one_snapshot_oracle() {
-    let function = "fn renders() {\n    expect![[\"w12\"]].assert_eq(&render(4));\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4));\n    expect_file![\"w.txt\"].assert_eq(&render(4));\n}\n";
+    let function = "fn renders() {\n    expect![[\"w12\"]].assert_eq(&render(4));\n    expect![[r#\"\n        Row { w: 12 }\n    \"#]]\n    .assert_debug_eq(&row(4));\n    expect_file![\"w.txt\"].assert_eq(&render(4));\n    expect![\"w12\"].assert_eq(&render(4));\n    expect! [[\"w12\"]].assert_eq (&render(4));\n}\n";
     let oracles = parser_oracles_for_function(function, 1).unwrap_or_default();
     let read: Vec<(usize, OracleKind, OracleStrength)> = oracles
         .iter()
@@ -178,6 +178,10 @@ fn expect_test_comparisons_extract_as_one_snapshot_oracle() {
             (2, OracleKind::Snapshot, OracleStrength::Medium),
             (3, OracleKind::Snapshot, OracleStrength::Medium),
             (7, OracleKind::Snapshot, OracleStrength::Medium),
+            // The single-bracket and spaced spellings grade the same
+            // (#7856 review).
+            (8, OracleKind::Snapshot, OracleStrength::Medium),
+            (9, OracleKind::Snapshot, OracleStrength::Medium),
         ],
         "{oracles:?}"
     );
