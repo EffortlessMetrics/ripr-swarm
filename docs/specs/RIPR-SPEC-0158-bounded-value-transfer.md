@@ -126,3 +126,22 @@ the #3295 family fixtures.
 No new metric; computed-local boundary shapes move from
 `infection_unknown`-adjacent weakness to observed-boundary evidence in
 existing activation counts.
+
+## Retained source identity (#7805)
+
+Ordinary values captured within one indexed Rust diff test retain that test's
+file as optional `ValueFact.source_file`. A file/line/source/value/context
+identity preserves distinct facts even when two files contain identical
+assertions at the same line. The JSON numeric assertion map remains a legacy
+text-deduplication surface, not a file identity; source-file metadata composes
+with the existing per-value provenance fallback.
+
+This is representation only. Source identity cannot admit an assertion,
+resolve a derived/helper origin, strengthen classification, or manufacture
+an observation path. Derived and legacy facts without an originating-file
+witness retain unknown source identity. Existing output caps remain in force.
+
+Public-path evidence: `crates/ripr/tests/value_source_file_provenance.rs` pins
+same-line unrelated assertions, assertion removal and identical assertions
+across files while retaining weak classification. Legacy typed facts without
+the optional field deserialize with unknown source identity.

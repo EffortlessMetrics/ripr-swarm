@@ -4144,6 +4144,7 @@ mod tests {
         // sample_finding already carries one observed value; 13 more make 14.
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                source_file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4175,6 +4176,7 @@ mod tests {
         // (over the 8-value human window and the 32-value ranked JSON cap).
         for index in 0..41 {
             finding.activation.observed_values.push(ValueFact {
+                source_file: None,
                 line: 300 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4217,6 +4219,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                source_file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4259,6 +4262,7 @@ mod tests {
 
         for index in 0..28 {
             finding.activation.observed_values.push(ValueFact {
+                source_file: None,
                 line: 400 + index,
                 text: format!("extra({index})"),
                 value: format!("extra{index} = {index}"),
@@ -4298,6 +4302,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                source_file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5319,6 +5324,7 @@ mod tests {
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    source_file: None,
                     line: 22,
                     text: "sample(false)".to_string(),
                     value: "enabled = false".to_string(),

@@ -830,15 +830,55 @@ fn value_facts(values: &[ValueFact]) -> Value {
         bounded_observed_values(values)
             .into_iter()
             .map(|value| {
-                json!({
+                let mut fact = json!({
                     "line": value.line,
                     "text": value.text.as_str(),
                     "value": value.value.as_str(),
                     "context": value.context.as_str()
-                })
+                });
+                if let Some(source_file) = &value.source_file {
+                    fact["source_file"] = json!(crate::output::path::display_path(source_file));
+                }
+                fact
             })
             .collect::<Vec<_>>()
     )
+}
+
+#[cfg(test)]
+mod source_file_tests {
+    use super::*;
+    use crate::domain::ValueContext;
+    use std::path::PathBuf;
+
+    #[test]
+    fn source_identity_is_optional_and_preserves_the_existing_value_cap() {
+        let mut facts = (1..=40)
+            .map(|line| ValueFact {
+                source_file: Some(PathBuf::from("tests/receipt.rs")),
+                line,
+                text: format!("assert_eq!(receipt({line}), {line});"),
+                value: line.to_string(),
+                context: ValueContext::AssertionArgument,
+            })
+            .collect::<Vec<_>>();
+        let sourced = value_facts(&facts);
+        assert_eq!(sourced.as_array().map(Vec::len), Some(32));
+        assert!(
+            sourced
+                .as_array()
+                .into_iter()
+                .flatten()
+                .all(|fact| { fact["source_file"] == "tests/receipt.rs" })
+        );
+        facts[0].source_file = None;
+        let unknown = value_facts(&facts);
+        assert!(unknown[0].get("source_file").is_none());
+        assert_eq!(unknown[0]["text"], sourced[0]["text"]);
+        assert_eq!(unknown[0]["line"], sourced[0]["line"]);
+        assert_eq!(unknown[0]["value"], sourced[0]["value"]);
+        assert_eq!(unknown[0]["context"], sourced[0]["context"]);
+    }
 }
 
 fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
@@ -1948,6 +1988,7 @@ weakly_gripped = "note"
     fn assertion_values(count: usize) -> Vec<ValueFact> {
         (1..=count)
             .map(|line| ValueFact {
+                source_file: None,
                 line,
                 text: format!("assert_eq!(value, {line});"),
                 value: format!("value_{line}"),
@@ -2316,6 +2357,7 @@ weakly_gripped = "note"
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    source_file: None,
                     line: 12,
                     text: "discounted_total(50, 100)".to_string(),
                     value: "amount = 50".to_string(),
@@ -2399,6 +2441,7 @@ weakly_gripped = "note"
             observe: stage(StageState::Yes, "returned value asserted"),
             discriminate: stage(StageState::Weak, "equality boundary absent"),
             observed_values: vec![ValueFact {
+                source_file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "amount = 50".to_string(),

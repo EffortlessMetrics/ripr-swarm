@@ -495,6 +495,7 @@
       "required": ["line", "value", "context"],
       "properties": {
         "line": { "type": "integer", "minimum": 1 },
+        "source_file": { "type": "string", "minLength": 1, "description": "Producer-owned originating source file; omission means unknown and grants no oracle admission." },
         "value": { "type": "string", "minLength": 1 },
         "context": { "type": "string", "minLength": 1 }
       }

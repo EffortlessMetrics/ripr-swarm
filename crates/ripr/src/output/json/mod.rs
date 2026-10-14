@@ -147,6 +147,7 @@ mod tests {
             owner: None,
         });
         finding.activation.observed_values.push(ValueFact {
+            source_file: None,
             line: 12,
             text: "discounted_total(50, 100)".to_string(),
             value: "amount = 50".to_string(),
@@ -1103,6 +1104,7 @@ mod tests {
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
         finding.activation.observed_values.push(ValueFact {
+            source_file: None,
             line: 33,
             text: "assert_eq!(actual, expected)".to_string(),
             value: "actual = 10".to_string(),
@@ -1914,6 +1916,7 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (0..500)
             .map(|i| ValueFact {
+                source_file: None,
                 line: 42,
                 text: long_text.clone(),
                 value: format!("arg_{i} = {i}"),
@@ -1979,6 +1982,7 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (1..=5_000)
             .map(|line| ValueFact {
+                source_file: None,
                 line,
                 text: format!("assert!(rendered.contains(\"field_{line}\"));"),
                 value: format!("\"field_{line}\""),
@@ -2023,6 +2027,7 @@ mod tests {
     fn json_omits_observed_values_total_when_nothing_is_dropped() {
         let mut finding = unknown_finding();
         finding.activation.observed_values = vec![ValueFact {
+            source_file: None,
             line: 12,
             text: "assert_eq!(discounted_total(50, 100), 50);".to_string(),
             value: "amount = 50".to_string(),
