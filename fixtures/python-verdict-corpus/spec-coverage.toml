@@ -508,6 +508,12 @@ id = "RIPR-SPEC-0258"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 
+# TypeScript strict custom matcher
+[[spec]]
+id = "RIPR-SPEC-0262"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
+
 # Guarded side effect no test input enters
 [[spec]]
 id = "RIPR-SPEC-0263"

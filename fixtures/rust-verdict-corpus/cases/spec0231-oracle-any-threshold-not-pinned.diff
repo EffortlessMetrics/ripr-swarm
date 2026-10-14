@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f10a88a..c7c887a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn scale(xs: &[u32]) -> Vec<u32> {
+-    xs.iter().map(|x| x * 2).collect()
++    xs.iter().map(|x| x + x).collect()
+ }
+ 
+ #[cfg(test)]

@@ -94,6 +94,13 @@ The refusal scope covers only related tests that could have credited an
 oracle (`oracle_crediting_relations`, shared with reveal): a name-only
 relation does not count while a reach-bearing test exists.
 
+For a string-valued predicate, a shared reason literal in an unrelated
+same-file/module assertion cannot supply observation or discrimination while
+an actual owner-reaching test exists (#7763). Keep that assertion visible with
+`no_call_path`. A possible opaque or transitive owner call retains the existing
+allowance. This does not resolve formatted/local input activation or turn a
+runtime validation bypass rejection into static exposure.
+
 The classifier marks a `reachable_unrevealed` finding whose observe summary is
 `rust_assertion_context_unestablished` when it has at least one refused related
 `assert_eq!` and every one is an analyzer limit.

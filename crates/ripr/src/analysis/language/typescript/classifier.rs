@@ -3839,6 +3839,12 @@ pub(crate) fn classify_change_with_alias_state(
         alias_map,
         workspace_root,
     ));
+    pin_facts.extend(ts_typed_loose_number_facts(
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    ));
     if !pin_facts.is_empty() {
         project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
     }
@@ -4792,14 +4798,17 @@ pub(super) fn ts_candidates_pin_identity(
 
 /// `true` when a test asserts directly on the owner call's result
 /// (`expect(owner(...))`, not a member of it or a local) with a matcher that
-/// compares identity for objects (`toBe`, `strictEqual`, AVA `t.is`). chai
-/// `equal` is excluded because the `.deep` flag is not part of the recorded
-/// matcher (fail closed).
+/// compares identity for objects. The assertion carries that property:
+/// built-in `toBe` / `strictEqual` / AVA `t.is`, and a RIPR-SPEC-0262
+/// credited strict custom matcher (`pass: r === e`). Matcher names and
+/// `exact_value` are not consulted here: `toEqual` shares that kind and
+/// must not pin identity. chai `equal` stays false because the `.deep`
+/// flag is not part of the recorded matcher (fail closed).
 fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
     test.assertions.iter().any(|assertion| {
-        // A literal expected value (`toBe(null)`) pins a branch, never the
-        // returned object's identity.
-        matches!(assertion.matcher.as_str(), "toBe" | "strictEqual" | "is")
+        // A literal expected value (`toBe(null)`, `toBeSame(null)`) pins a
+        // branch, never the returned object's identity.
+        assertion.compares_reference_identity
             && assertion.has_dynamic_matcher_arg
             && assertion
                 .observed_expression

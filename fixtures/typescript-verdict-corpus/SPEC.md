@@ -49,7 +49,7 @@ it as false and its reasoning names the spec example.
 Each case that labels a numbered acceptance example cites it in
 `spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
-RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256 and RIPR-SPEC-0258. A case cites an example only when its diff and test have
+RIPR-SPEC-0252, RIPR-SPEC-0254, RIPR-SPEC-0256, RIPR-SPEC-0258 and RIPR-SPEC-0262. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
 table rather than waived. An example that lists several alternative forms or
 outcomes counts as covered when a case labels one of them; the other forms
