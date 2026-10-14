@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 56 authored cases cross cargo-mutants operator classes
   (relational boundary, equality, arithmetic, boolean logic, return value,
   statement deletion, match arm and guard, loop accumulator, early return,

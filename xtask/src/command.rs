@@ -2052,7 +2052,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/changelog-fragments.md",
             false,
             true,
-            "Checks changelog.d fragment section, entry, reference and name, and that each CHANGELOG.md Unreleased bullet names an issue, PR, or RIPR-SPEC; --release-cut also fails on any unfolded fragment.",
+            "Checks changelog.d fragment section, entry, reference and name, that verdict-corpus and Repo ops bookkeeping uses Internal / CI, and that each CHANGELOG.md Unreleased bullet names an issue, PR, or RIPR-SPEC; --release-cut also fails on any unfolded fragment.",
         ),
         command_entry(
             "check-readme-state",
