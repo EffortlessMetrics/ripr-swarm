@@ -684,7 +684,22 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!((r != Err(E::Bad)) & flag, true);", &weak),
         ("assert_eq!((score(2) != 0) & flag, true);", &weak),
         ("assert_eq!(ready & matches!(r, Ok(_)), true);", &weak),
+        // So does a negated or false-compared conjunct.
+        (
+            "assert_eq!(flag && !matches!(r, Err(E::Bad)), true);",
+            &weak,
+        ),
+        ("assert_eq!(flag & !matches!(r, Err(E::Bad)), true);", &weak),
+        ("assert_eq!(flag && !(r == Err(E::Bad)), true);", &weak),
+        (
+            "assert_eq!(flag && (r == Err(E::Bad)) == false, true);",
+            &weak,
+        ),
+        ("assert_eq!(flag && !(a == b), true);", &weak),
+        ("assert_eq!(flag && !(score(2) < 3), true);", &weak),
         ("assert_eq!(a == b && c != d, true);", &exact),
+        // A leading `!` binds to its own operand, not the whole chain.
+        ("assert_eq!(!flag && matches!(r, Ok(3)), true);", &exact),
         // A single `&` over booleans is a conjunction: both must hold.
         ("assert!(matches!(r, Err(E::Bad)) & ready);", &err),
         (
@@ -692,6 +707,17 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             &exact,
         ),
         // An `if` anywhere in the condition may invert the pattern it tests.
+        (
+            "assert!(flag == if g(S { x: 1 }) && matches!(r, Err(E::Bad)) { false } else { true });",
+            &weak,
+        ),
+        // A guard in an earlier `matches!` and a raw identifier are not
+        // conditions around the pattern.
+        (
+            "assert!(matches!(x, Some(v) if v > 0) && matches!(r, Err(E::Bad)));",
+            &err,
+        ),
+        ("assert!(r#match && matches!(r, Err(E::Bad)));", &err),
         (
             "assert!(flag == if ready && matches!(r, Ok(3)) { false } else { true });",
             &weak,

@@ -261,8 +261,11 @@ Two pattern terms are used below.
    `<T as Tr>::f(x) == y`). An `&&`
    chain asserted true with a `matches!` conjunct and no pinning `==`
    conjunct reads like the same chain in `assert!` (rule 3); with no
-   pinning `==` conjunct, a `!=` or relational conjunct caps
-   (`assert_eq!(score(2) != 0 && flag, true)`). A comparison
+   pinning `==` conjunct, a negated test (`!matches!(..)`, `!(a == b)`), a
+   `!=` or relational comparison or a comparison asserted false as a
+   conjunct caps (`assert_eq!(score(2) != 0 && flag, true)`,
+   `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`). A leading `!`
+   negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
    `matches!` (the polarity rule above) keep their readings. `^` and a
@@ -279,7 +282,9 @@ Two pattern terms are used below.
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
    directly or through nested calls), or inside the condition or
    scrutinee of an `if`, `while` or `match` anywhere in the condition
-   (`flag == if ready && matches!(..) { false } else { true }`) may be inverted or
+   (`flag == if ready && matches!(..) { false } else { true }`; a guard
+   inside an earlier `matches!(..)` and a raw `r#match` are not such
+   keywords) may be inverted or
    discarded, so it caps the reading like a negated pattern. In a boolean
    assertion's top-level `&&` chain with no top-level `||` its conjunct
    drops out and the other conjuncts decide

@@ -5,6 +5,7 @@
   `assert_eq!(r == Err(E::Bad), false)`, `ensure!((a == b) == false)`,
   `assert!((matches!(r, Ok(3)) || f) == true)`,
   `assert_eq!(ready && matches!(r, Ok(_)), true)`,
+  `assert_eq!(flag && !matches!(r, Err(E::Bad)), true)`,
   `assert!(matches!(r, Err(E::Bad)) ^ true)` and
   `assert!(std::ops::Not::not(matches!(r, Err(E::Bad))))` now read
   `relational_check` / weak. In a boolean assertion's `&&` chain only the

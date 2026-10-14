@@ -50,15 +50,8 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     {
         return Some(BoolOperandReading::Capped);
     }
-    let mut core = unwrap_parentheses(operand.trim());
-    loop {
-        if let Some(rest) = core.strip_prefix('!') {
-            core = unwrap_parentheses(rest.trim());
-        } else if let Some(receiver) = strip_not_call(core) {
-            core = unwrap_parentheses(receiver.trim());
-        } else {
-            break;
-        }
+    let (core, negated) = strip_negations(operand.trim());
+    if negated {
         positive = !positive;
     }
     // A single `&` requires both sides like `&&`, so the operand reads as
@@ -94,27 +87,88 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
         if in_condition {
             return None;
         }
-        if has_top_level_exact_equality(core) {
+        let conjuncts = split_top_level_conjuncts(core);
+        if conjuncts.iter().any(|conjunct| {
+            has_top_level_exact_equality(conjunct) && !conjunct_states_relation(conjunct)
+        }) {
             return None;
         }
-        let chain = format!("assert!({core}\n);");
-        if pattern_conjunct_assertions(&chain).is_some() {
-            return Some(BoolOperandReading::Chain(chain));
+        // With no pinning `==` conjunct, a negated, `!=`, relational or
+        // false-compared conjunct states only a relation
+        // (`score(2) != 0 && flag`, `flag && !matches!(r, Err(E::Bad))`).
+        if conjuncts
+            .iter()
+            .any(|conjunct| conjunct_states_relation(conjunct))
+        {
+            return Some(BoolOperandReading::Capped);
         }
-        // With no pinning `==` conjunct, a `!=` or relational conjunct
-        // states only a relation (`score(2) != 0 && flag`).
-        return split_top_level_conjuncts(core)
-            .into_iter()
-            .any(|conjunct| {
-                let conjunct = unwrap_parentheses(conjunct.trim());
-                has_top_level_relational_operator(conjunct)
-                    || top_level_comparison_operator(conjunct)
-                        .and_then(|(at, width)| conjunct.get(at..at + width))
-                        == Some("!=")
-            })
-            .then_some(BoolOperandReading::Capped);
+        let chain = format!("assert!({core}\n);");
+        return pattern_conjunct_assertions(&chain)
+            .is_some()
+            .then_some(BoolOperandReading::Chain(chain));
     }
     (comparison == Some("!=") || relational).then_some(BoolOperandReading::Capped)
+}
+
+/// `text` through any leading `!` or trailing `.not()`, and whether an odd
+/// number of them applied. `!` binds tighter than a binary operator, so it
+/// negates the whole only when the rest is one operand (`!(a && b)`, not
+/// `!flag && b`).
+fn strip_negations(text: &str) -> (&str, bool) {
+    let mut core = unwrap_parentheses(text);
+    let mut negated = false;
+    loop {
+        if let Some(rest) = core.strip_prefix('!') {
+            let rest = rest.trim();
+            let inner = unwrap_parentheses(rest);
+            if inner.len() == rest.len() && !is_single_operand(rest) {
+                break;
+            }
+            core = inner;
+        } else if let Some(receiver) = strip_not_call(core) {
+            core = unwrap_parentheses(receiver.trim());
+        } else {
+            break;
+        }
+        negated = !negated;
+    }
+    (core, negated)
+}
+
+/// Whether `text` has no top-level binary operator the bool rules read.
+fn is_single_operand(text: &str) -> bool {
+    split_top_level_conjuncts(text).len() == 1
+        && !has_top_level_disjunction(text)
+        && top_level_comparison_operator(text).is_none()
+        && !has_top_level_relational_operator(text)
+        && !has_top_level_bitwise_operator(text)
+        && conjoin_single_ampersands(text) == text
+}
+
+/// Whether one conjunct of a chain asserted true states only a relation: a
+/// negated test (`!matches!(..)`, `!(a == b)`), a `!=` or relational
+/// comparison, or a comparison asserted false (`(a == b) == false`).
+fn conjunct_states_relation(conjunct: &str) -> bool {
+    let (core, negated) = strip_negations(conjunct.trim());
+    let relational = has_top_level_relational_operator(core);
+    let masked = mask_comments_and_strings(core);
+    let holds_test =
+        relational || masked.contains("matches!") || masked.contains("==") || masked.contains("!=");
+    if (negated && holds_test) || relational {
+        return true;
+    }
+    let Some((at, width)) = top_level_comparison_operator(core) else {
+        return false;
+    };
+    let literal = |side: Option<&str>| {
+        side.and_then(|side| boolean_literal_value(mask_comments_and_strings(side).trim()))
+    };
+    let (left, right) = (literal(core.get(..at)), literal(core.get(at + width..)));
+    match core.get(at..at + width) {
+        Some("!=") => left != Some(false) && right != Some(false),
+        Some("==") => left == Some(false) || right == Some(false),
+        _ => false,
+    }
 }
 
 /// The non-literal operand of a comparison with a boolean literal, whether
@@ -304,19 +358,38 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
 /// (`flag == if ready && matches!(..) { false } else { true }`).
 fn in_keyword_condition(before: &str) -> bool {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let mut found = None;
-    for keyword in ["if", "while", "match"] {
-        for (at, _) in before.match_indices(keyword) {
-            let starts_word = before.get(..at).is_none_or(|head| !head.ends_with(is_word));
+    // `#` joins `r#match`, a raw identifier, not a keyword.
+    let joins = |ch: char| is_word(ch) || ch == '#';
+    ["if", "while", "match"].iter().any(|keyword| {
+        before.match_indices(keyword).any(|(at, _)| {
+            let starts_word = before.get(..at).is_none_or(|head| !head.ends_with(joins));
             let ends_word = before
                 .get(at + keyword.len()..)
                 .is_some_and(|rest| !rest.starts_with(is_word));
-            if starts_word && ends_word && found.is_none_or(|last| at > last) {
-                found = Some(at);
-            }
+            starts_word
+                && ends_word
+                && condition_still_open(before.get(at + keyword.len()..).unwrap_or_default())
+        })
+    })
+}
+
+/// Whether `rest`, the text after a keyword, stays inside that keyword's
+/// condition: it never closes the group holding the keyword (a guard in an
+/// earlier `matches!(..)`) and opens no `{` block at the keyword's level.
+fn condition_still_open(rest: &str) -> bool {
+    let mut depth = 0usize;
+    for byte in rest.bytes() {
+        match byte {
+            b'{' if depth == 0 => return false,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            _ => {}
         }
     }
-    found.is_some_and(|at| !before.get(at..).unwrap_or_default().contains('{'))
+    true
 }
 
 /// `text` with each top-level binary `&` (not `&&`, not a borrow) spelled
