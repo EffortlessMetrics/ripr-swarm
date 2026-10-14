@@ -29,15 +29,31 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "coverage.yml",
             "cargo test -p repo-policy --lib coverage_diagnostics",
         ),
+        ("ub-review.yml", "uses: EffortlessMetrics/ub-review@"),
     ];
-    let prepared = |text: &str, command: &str| {
-        let setup = "      - uses: dtolnay/rust-toolchain@v1\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview";
-        match (text.find(setup), text.find(command)) {
-            (Some(setup), Some(test)) => setup < test,
-            _ => false,
-        }
-    };
     for (route, command) in routes {
+        let action = if route == "ub-review.yml" {
+            "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
+        } else {
+            "v1"
+        };
+        let prepared = |text: &str, command: &str| {
+            let setup = format!(
+                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
+            );
+            match (text.find(setup.as_str()), text.find(command)) {
+                (Some(setup), Some(test)) => {
+                    setup < test
+                        && text[setup..]
+                            .split("\n      - ")
+                            .next()
+                            .is_some_and(|step| {
+                                !step.lines().any(|line| line.starts_with("        if:"))
+                            })
+                }
+                _ => false,
+            }
+        };
         let text = fs::read_to_string(root.join(".github/workflows").join(route))
             .map_err(|error| error.to_string())?;
         assert!(
@@ -49,11 +65,25 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             command
         ));
         assert!(!prepared(
+            &text.replace("components: llvm-tools-preview", ""),
+            command
+        ));
+        assert!(!prepared(
             &text.replace("toolchain: 1.95.0", "toolchain: stable"),
             command
         ));
         let test_first = format!("{command}\n{text}");
         assert!(!prepared(&test_first, command));
+        if route == "ub-review.yml" {
+            assert!(!prepared(&text.replace(action, "v1"), command));
+        }
+        assert!(!prepared(
+            &text.replace(
+                "components: llvm-tools-preview",
+                "components: llvm-tools-preview\n        if: false",
+            ),
+            command
+        ));
     }
     Ok(())
 }

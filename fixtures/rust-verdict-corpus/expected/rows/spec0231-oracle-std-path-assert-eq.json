@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231-oracle-std-path-assert-eq",
+  "subject_id": "authored-spec0231-30",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "path_qualified_assert_eq",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#30"
+    },
+    "observed_kind": "unknown",
+    "observed_strength": "none",
+    "observed_all": [
+      {
+        "test": "score_three_is_nine",
+        "kind": "unknown",
+        "strength": "none"
+      }
+    ],
+    "outcome": "underclaim"
+  }
+}

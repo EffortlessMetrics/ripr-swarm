@@ -3083,15 +3083,13 @@ fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
         }
 }
 
-#[test]
-fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
-    let case = semver_external_case_for_test();
-    let check_json = serde_json::json!({
+fn semver_limitation_check_json() -> serde_json::Value {
+    // A `--diff` launch has no revision `base` by construction (#3952, #7880).
+    serde_json::json!({
         "schema_version": "0.2",
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 1},
         "findings": [
             {
@@ -3116,12 +3114,91 @@ fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape()
                 ]
             }
         ]
-    });
+    })
+}
+
+#[test]
+fn pinned_semver_honesty_patch_hunk_counts_match_declared_extents() -> Result<(), String> {
+    let patch_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff");
+    let patch = std::fs::read_to_string(&patch_path).map_err(|err| {
+        format!(
+            "read pinned semver honesty patch {}: {err}",
+            patch_path.display()
+        )
+    })?;
+    if !patch.contains("@@ -69,8 +69,8 @@") {
+        return Err(format!(
+            "pinned semver patch must declare eight old/new lines, got:\n{patch}"
+        ));
+    }
+    if !patch.contains("-            if ver.patch != patch {") {
+        return Err("pinned semver patch must keep the intended != removal".to_string());
+    }
+    if !patch.contains("+            if ver.patch >= patch {") {
+        return Err("pinned semver patch must keep the intended >= insertion".to_string());
+    }
+
+    let mut old = 0usize;
+    let mut new = 0usize;
+    let mut in_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'-') => old += 1,
+            Some(b'+') => new += 1,
+            Some(b' ') | None => {
+                old += 1;
+                new += 1;
+            }
+            Some(b'\\') => {}
+            other => {
+                return Err(format!(
+                    "unsupported pinned semver hunk line {other:?}: {line}"
+                ));
+            }
+        }
+    }
+    if old != 8 {
+        return Err(format!("old hunk body must match @@ -69,8, counted {old}"));
+    }
+    if new != 8 {
+        return Err(format!("new hunk body must match @@ +69,8, counted {new}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
+    let case = semver_external_case_for_test();
+    let check_json = semver_limitation_check_json();
 
     let violations = super::evidence_promotion_external_semantic_violations(&case, &check_json);
     assert!(
         violations.is_empty(),
         "expected semver external limitation shape to pass, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_pinned_external_without_diff_still_requires_base() {
+    let mut case = semver_external_case_for_test();
+    case.external_command = "ripr check --root {checkout} --mode fast --json".to_string();
+    case.external_patch = PathBuf::new();
+    let check_json = semver_limitation_check_json();
+
+    let report =
+        super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
+    assert!(
+        report.contains("must_disclose_scope") && report.contains("base"),
+        "a pinned-external launch without --diff provenance must still require base, got {report}"
     );
 }
 
@@ -3218,7 +3295,6 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 0},
         "findings": [
             {

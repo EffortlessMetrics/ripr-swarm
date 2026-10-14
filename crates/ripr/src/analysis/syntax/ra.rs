@@ -2588,6 +2588,78 @@ enum DropInScope {
     Unknown,
 }
 
+/// Nonrecursive whole-file root proof for each qualified statement macro.
+/// Unknown glob roots remain unproved.
+pub(crate) fn assertion_root_binding_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+) -> bool {
+    drop_in_assertion_leaf(path).is_some()
+        && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
+        && node.ancestors().last().is_some_and(|file| {
+            !file
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
+}
+
+/// Qualified operand capture requires every statement macro in the same
+/// function to retain its independently established binding.
+pub(crate) fn assertion_root_is_unrebound(
+    path: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
+) -> bool {
+    let function = node.ancestors().find_map(ast::Fn::cast);
+    assertion_root_binding_is_unrebound(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
+                .filter(crate::analysis::syntax::macro_call_is_statement)
+                .all(|call| statement_bound(&call))
+        })
+}
+
+/// Initial qualified capture keeps no-implicit-prelude contexts refused.
+/// A no_std root supplies std only through an explicit unrenamed declaration.
+pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some((root, _)) = path.strip_prefix("::").unwrap_or(path).split_once("::") else {
+        return false;
+    };
+    let Some(file) = node.ancestors().last() else {
+        return false;
+    };
+    let attributes: Vec<_> = node
+        .ancestors()
+        .flat_map(|ancestor| ancestor.children().filter_map(ast::Attr::cast))
+        .collect();
+    let mentions = |name: &str| {
+        attributes.iter().any(|attribute| {
+            attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .any(|token| token.text() == name)
+                && !cfg_predicates::attribute_is_known_inactive_prelude_flags(
+                    &attribute.syntax().text().to_string(),
+                )
+        })
+    };
+    !mentions("no_implicit_prelude")
+        && (root != "std"
+            || !mentions("no_std")
+            || file
+                .children()
+                .filter_map(ast::ExternCrate::cast)
+                .any(|krate| {
+                    krate.rename().is_none()
+                        && crate::analysis::syntax::supported_targeted_item_context(krate.syntax())
+                        && krate.name_ref().is_some_and(|name| name.text() == "std")
+                }))
+}
+
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
 /// may name something other than the crate. It may when the file declares a
 /// module or an `extern crate` rename with the root's name, imports another

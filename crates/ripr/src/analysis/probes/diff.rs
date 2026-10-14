@@ -210,9 +210,14 @@ pub(crate) fn probes_for_file_with_relations(
                         };
                         canonical_shapes.iter().any(|other| {
                             let predicate = canonical_probe_text(text, other.text);
+                            // A deleted or added conjunct (`a && 100 <= p` to
+                            // `100 < p`) is more than one comparison's edit,
+                            // so the arm head stays; an edit inside one
+                            // operand of an unchanged `&&`/`||` chain is not.
                             other.family == ProbeFamily::Predicate
                                 && guard.contains(predicate.as_str())
-                                && removed_span_of_shape(text, &predicate, removed).is_some()
+                                && removed_span_of_shape(text, &predicate, removed)
+                                    .is_some_and(|span| same_connectives(&predicate, &span))
                         })
                     })
             };
@@ -344,6 +349,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
+    let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         let text = removed.text.trim();
         if should_ignore_changed_line(text) || skip_removed[removed_index] {
@@ -389,7 +395,8 @@ pub(crate) fn probes_for_file_with_relations(
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
-            if has_matching_added_line(removed, &family, changed, &added_bounds)
+            if (has_matching_added_line(removed, &family, changed, &added_bounds)
+                || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -1013,6 +1020,48 @@ fn has_matching_added_line(
         })
 }
 
+/// #7807: absence of long identifier tokens is not absence of a replacement.
+/// Admit an exact old line/family only when an emitted probe at its positional
+/// counterpart faithfully carries the edit. A whole old `before` beside a
+/// smaller `after` is insufficient: one selected constructor may not own all
+/// edits on that line. Uneven blocks and unrepresented families stay historical.
+fn represented_short_replacements(
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> std::collections::BTreeSet<(usize, &'static str)> {
+    let counterparts = changed.replacement_counterparts();
+    let added_at = changed
+        .added_lines
+        .iter()
+        .map(|line| (line.new_side_line, line))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut represented = std::collections::BTreeSet::new();
+    for seeded in probes {
+        let probe = &seeded.probe;
+        let Some(removed) = counterparts.get(&probe.location.line) else {
+            continue;
+        };
+        if !extract_identifier_tokens(&removed.text).is_empty() {
+            continue;
+        }
+        let Some(added) = added_at.get(&probe.location.line) else {
+            continue;
+        };
+        let (Some(before), Some(after)) = (&probe.before, &probe.after) else {
+            continue;
+        };
+        let old_span = if after == added.text.trim() {
+            Some(removed.text.trim().to_string())
+        } else {
+            removed_span_of_shape(added.text.trim(), after, removed.text.trim())
+        };
+        if old_span.as_deref() == Some(before.as_str()) {
+            represented.insert((removed.line, probe.family.as_str()));
+        }
+    }
+    represented
+}
+
 /// #6675: a removed line whose adjacent added replacement holds exactly the
 /// same non-whitespace characters only reorders them (an operand swap such
 /// as `(hi << 8) | lo` -> `lo | (hi << 8)`). The added line's own probe
@@ -1098,6 +1147,22 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
     changed
         .replaced_line_counterpart(added_new_side_line)
         .map(|line| line.text.trim().to_string())
+}
+
+/// The two predicate texts join their operands with the same sequence of
+/// `&&` and `||`, so an edit between them stays inside one operand.
+fn same_connectives(after: &str, before: &str) -> bool {
+    // Masked, so `&&` or `||` inside a string or comment is not a connective.
+    let connectives = |text: &str| {
+        let text = crate::analysis::extract::mask_comments_and_strings(text);
+        text.match_indices("&&")
+            .chain(text.match_indices("||"))
+            .map(|(at, connective)| (at, connective.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>()
+    };
+    connectives(after) == connectives(before)
 }
 
 /// The span of `removed_line` that corresponds to `shape_text` within
