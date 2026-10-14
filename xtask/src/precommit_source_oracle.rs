@@ -2,8 +2,10 @@
 
 pub(crate) fn require_catalogue(source: &str, expected: &[String]) -> Result<(), String> {
     let start = source
-        .find("\nfn precommit() -> Result<(), String> {")
-        .ok_or("xtask/src/main.rs must define `fn precommit()`")?;
+        .find("\nfn precommit_policy(collect_all: bool) -> Result<(), String> {")
+        .ok_or(
+            "xtask/src/main.rs must define the shared `fn precommit_policy(collect_all: bool)`",
+        )?;
     let body = &source[start..];
     let end = body
         .find("precommit_report_body")
@@ -43,7 +45,7 @@ mod tests {
 
     fn source(workflow: &str) -> String {
         format!(
-            "\nfn precommit() -> Result<(), String> {{\n    check_static_language()?;\n{workflow}\n    markdown_links()?;\n    let body = precommit_report_body();\n}}\n"
+            "\nfn precommit_policy(collect_all: bool) -> Result<(), String> {{\n    check_static_language()?;\n{workflow}\n    markdown_links()?;\n    let body = precommit_report_body();\n}}\n"
         )
     }
 
