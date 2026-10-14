@@ -1794,6 +1794,16 @@ fn ok_literal() {
                 "check(300).expect_err(\"state not sent\");",
                 vec![(BroadError, Weak)],
             ),
+            (
+                "expect_err_observer_and_expect_words_message",
+                "check(300).expect_err(\"state expect\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_mock_verification_message",
+                "check(300).expect_err(\"mock.verify() state\");",
+                vec![(BroadError, Weak)],
+            ),
         ];
         assert_both_adapters_read(&cases)
     }

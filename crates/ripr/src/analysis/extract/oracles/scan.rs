@@ -2588,7 +2588,7 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
-fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
+pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0_i64;
     for (index, byte) in text.bytes().enumerate().skip(open) {
         match byte {

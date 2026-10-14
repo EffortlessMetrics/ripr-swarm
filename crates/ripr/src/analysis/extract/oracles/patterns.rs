@@ -4,6 +4,7 @@ use super::arguments::{
     equality_assertion_arguments, is_complete_macro_invocation,
 };
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
+use super::scan::balanced_group_end;
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -1197,34 +1198,48 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// `line` with every `Result::expect_err(<message>)` call name removed, so
-/// an `expect_` name sniff sees only the other `expect_*` calls. A
-/// zero-argument `expect_err()` is a mock's expectation for a method named
-/// `err` (mockall's `expect_<method>`), so it stays.
+/// `line` with every `Result::expect_err(<message>)` call reduced to `.()`,
+/// so no later sniff sees the call name or anything in its message (a
+/// message such as `"mock.verify() state"` names nothing). A zero-argument
+/// `expect_err()` is a mock's expectation for a method named `err`
+/// (mockall's `expect_<method>`), so it stays. A message left open at the
+/// end of the line is dropped with the rest of the line.
 pub(super) fn without_expect_err(line: &str) -> String {
     const CALL: &str = ".expect_err(";
+    // Masking keeps byte length, so offsets found on it index `line`.
+    let masked = mask_comments_and_strings(line);
     let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(index) = rest.find(CALL) {
-        let after = &rest[index + CALL.len()..];
-        out.push_str(&rest[..index]);
-        out.push_str(if after.trim_start().starts_with(')') {
-            CALL
-        } else {
-            ".("
-        });
-        rest = after;
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(found) = masked[search..].find(CALL) {
+        let start = search + found;
+        let open = start + CALL.len() - 1;
+        match balanced_group_end(&masked, open) {
+            Some(close) if line[open + 1..close].trim().is_empty() => {}
+            Some(close) => {
+                out.push_str(&line[copied..start]);
+                out.push_str(".()");
+                copied = close + 1;
+            }
+            None => {
+                out.push_str(&line[copied..start]);
+                out.push_str(".()");
+                copied = line.len();
+                break;
+            }
+        }
+        search = open + 1;
     }
-    out.push_str(rest);
+    out.push_str(&line[copied..]);
     out
 }
 
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
     // `r.expect_err(..)` is a `Result` read, not a mock expectation
-    // (RIPR-SPEC-0227 decision 2, #7604), and `expect_` text in a message
-    // or comment names nothing.
-    let code = mask_comments_and_strings(&without_expect_err(&lower));
+    // (RIPR-SPEC-0227 decision 2, #7604), and `expect_` or mock text in its
+    // message or a comment names nothing.
+    let lower = without_expect_err(&line.to_ascii_lowercase());
+    let code = mask_comments_and_strings(&lower);
     let has_expectation_call = code.contains("expect_") && lower.contains('(');
     let has_mock_verification_call = lower.contains("mock")
         && [
@@ -1240,7 +1255,8 @@ pub(super) fn is_mock_expectation_line(line: &str) -> bool {
 }
 
 pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
+    // `r.expect_err("state")` reads the `Result`, not an effect (#7604).
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     let has_observer_token = [
         "event",
         "emitted",
@@ -1256,8 +1272,6 @@ pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
     ]
     .iter()
     .any(|token| lower.contains(token));
-    // `r.expect_err("state")` reads the `Result`, not an effect (#7604).
-    let lower = without_expect_err(&lower);
     has_observer_token && (lower.contains("assert") || lower.contains("expect"))
 }
 
@@ -1288,7 +1302,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
     // and a word inside their comments or strings is not one. Other text
     // keeps the line-level reading.
     let masked = assertion_oracle_text(line).map_or_else(
-        || line.to_string(),
+        || without_expect_err(line),
         |operands| mask_comments_and_strings(&operands),
     );
     identifiers_with_position(&masked).any(|(start, identifier)| {
