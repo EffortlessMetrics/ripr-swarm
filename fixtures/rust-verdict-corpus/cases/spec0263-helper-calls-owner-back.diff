@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1c7dba2..c34555e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ /// Records `x` only when it is large, then retries it ten higher while below 20.
+ pub fn add(v: &mut Vec<u32>, x: u32) {
+     if x > 10 {
+-        v.push(x);
++        v.push(x * 1);
+     }
+     again(v, x);
+ }

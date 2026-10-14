@@ -3948,6 +3948,156 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
 }
 
 #[test]
+fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
+    // trap-tally-reached-assert-control / trap-steps-early-return.
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for guard in [
+        "if weight(4) > 1000 { return; }",
+        "if 1000 < weight(4) { return; }",
+        "if weight(4) == 0 {\n    return;\n}",
+        "if weight( 4 ) >= 13 { return }",
+        "if weight(4) > 12 { return; }",
+        "if weight(4) <= 11 { return; }",
+        "if weight(4) < -1 { return; }",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert_eq!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject),
+            Some("weight(4)"),
+            "{guard}"
+        );
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    for guard in [
+        // The guard fires at the expected value: left to the guarded-return
+        // refusal.
+        "if weight(4) < 1000 { return; }",
+        "if weight(4) == 12 { return; }",
+        "if weight(4) >= 12 { return; }",
+        // The guard returns for every wrong value: a certain gap.
+        "if weight(4) != 12 { return }",
+        "if 12 != weight(4) { return; }",
+        // Another call, another operand shape, or a compound condition.
+        "if weight(5) > 1000 { return; }",
+        "if other(4) > 1000 { return; }",
+        "if weight(4) > LIMIT { return; }",
+        "if weight(4) > 1000 && true { return; }",
+        "if weight(4) > 10 > false { return; }",
+        "if !(weight(4) < 1000) { return; }",
+        // Anything else in the guard, an `else`, a second return, a value.
+        "if weight(4) > 1000 { println!(\"x\"); return; }",
+        "if weight(4) > 1000 { return; } else {}",
+        "if weight(4) > 1000 { return; }\nif weight(4) > 2000 { return; }",
+        "let _ = (); if weight(4) > 1000 { return (); }",
+        "{ if weight(4) > 1000 { return; } }",
+        "return;",
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(found.is_some(), "{guard}");
+        assert!(
+            found
+                .as_ref()
+                .and_then(AssertionRefusal::value_guard_subject)
+                .is_none(),
+            "{guard}"
+        );
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // The guard reads the call the assertion compares, against a literal.
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_eq!(weight(4), TWELVE);");
+    assert!(found.is_some_and(|refusal| refusal.value_guard_subject().is_none()));
+    let found = refusal("if weight(4) > 1000 { return; }\nassert_ne!(weight(4), 13);");
+    assert!(found.is_none_or(|refusal| refusal.value_guard_subject().is_none()));
+    // Whitespace inside a literal argument is not layout, and the compared
+    // value must be the call's own return: no projection, receiver or path
+    // (#7974 review).
+    for (guard, pin) in [
+        (
+            "if weight(4).wrapping_sub(weight(4)) > 1000 { return; }",
+            "assert_eq!(weight(4).wrapping_sub(weight(4)), 0);",
+        ),
+        (
+            "if weight(4).min(5) > 1000 { return; }",
+            "assert_eq!(weight(4).min(5), 5);",
+        ),
+        (
+            "if other::weight(4) > 1000 { return; }",
+            "assert_eq!(other::weight(4), 12);",
+        ),
+        (
+            "if (weight(4)) > 1000 { return; }",
+            "assert_eq!((weight(4)), 12);",
+        ),
+        (
+            "if weight(\"a b\") > 1000 { return; }",
+            "assert_eq!(weight(\"ab\"), 12);",
+        ),
+        (
+            "if weight(' ') > 1000 { return; }",
+            "assert_eq!(weight(' '), 12);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.value_guard_subject().is_none()),
+            "{guard}"
+        );
+    }
+    // ripr does not know the type, so a neighbour of `e` outside the guard's
+    // spared side may not exist: an unsigned count at 0, a `u8` at 255.
+    for (guard, pin) in [
+        ("if weight(4) > 0 { return; }", "assert_eq!(weight(4), 0);"),
+        ("if weight(4) >= 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 255 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) <= 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            !found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+    // A neighbour on the spared side, or one every type holds, is enough.
+    for (guard, pin) in [
+        ("if weight(4) > 1 { return; }", "assert_eq!(weight(4), 0);"),
+        (
+            "if weight(4) < 254 { return; }",
+            "assert_eq!(weight(4), 255);",
+        ),
+        (
+            "if weight(4) < 100 { return; }",
+            "assert_eq!(weight(4), 101);",
+        ),
+    ] {
+        let found = refusal(&format!("{guard}\n{pin}"));
+        assert!(
+            found.is_some_and(|refusal| refusal.is_analyzer_limit()),
+            "{guard}"
+        );
+    }
+}
+
+#[test]
 fn each_refusal_names_the_gate_that_failed() {
     let refusal = |body: &str, attrs: &str| {
         weight_refusal(
@@ -8665,4 +8815,24 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
     let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
     let lib = non_scalar_unit_tests("", body);
     assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn a_direct_call_name_is_one_bare_call_ending_the_subject() {
+    for (subject, name) in [
+        ("weight(4)", Some("weight")),
+        (" weight ( 4 , [1, 2] ) ", Some("weight")),
+        ("_w(f(1))", Some("_w")),
+        ("weight(4).min(5)", None),
+        ("weight(4) + 1", None),
+        ("other::weight(4)", None),
+        ("x.weight(4)", None),
+        ("(weight(4))", None),
+        ("weight(4)(5)", None),
+        ("4weight(1)", None),
+        ("weight", None),
+        ("weight(4", None),
+    ] {
+        assert_eq!(direct_call_name(subject), name, "{subject}");
+    }
 }

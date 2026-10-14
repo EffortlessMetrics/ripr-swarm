@@ -1,0 +1,33 @@
+use std::ops::AddAssign;
+
+/// Records `x` only when it is large.
+pub fn add(v: &mut Vec<u32>, x: u32) {
+    if x > 10 {
+        v.push(x);
+    }
+}
+
+/// A borrowed list that records a value ten higher when added to.
+pub struct Bag<'a>(pub &'a mut Vec<u32>);
+
+impl AddAssign<u32> for Bag<'_> {
+    fn add_assign(&mut self, x: u32) {
+        add(self.0, x + 10);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adding_to_a_bag_records_it_higher() {
+        let mut v = Vec::new();
+        add(&mut v, 4);
+        {
+            let mut b = Bag(&mut v);
+            b += 4;
+        }
+        assert_eq!(v, vec![14]);
+    }
+}
