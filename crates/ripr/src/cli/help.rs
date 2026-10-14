@@ -803,6 +803,10 @@ mod tests {
         assert!(CALIBRATE_HELP.contains("--mutants-json PATH"));
         assert!(CALIBRATE_HELP.contains("Producing the input:"));
         assert!(CALIBRATE_HELP.contains("cargo install cargo-mutants --locked"));
+        assert!(
+            CALIBRATE_HELP
+                .contains("mutants.json-only import counts unexecuted candidates in matched_total")
+        );
         assert!(CALIBRATE_HELP.contains("Limitation: the join matches by seam_id"));
         assert!(CALIBRATE_HELP.contains("does not carry a head SHA"));
         assert!(AGENT_HELP.starts_with("Create a bounded repair transaction for a coding agent"));

@@ -15,7 +15,7 @@
 //!   `is_detectable_generated_python_path`;
 //! - test-support helpers: the `conftest.py` pytest support convention;
 //! - physical tests: the shared `is_test_file` rule (`test_*.py`,
-//!   `*_test.py`, or a `tests`/`test` path component);
+//!   `*_test.py`, `tests.py`/`test.py`, or a `tests`/`test` path component);
 //! - production: any remaining adapter-routed Python source.
 
 use super::super::{LanguageAdapter, PythonAdapter, is_test_file};
@@ -35,8 +35,9 @@ pub(in crate::analysis::language::python) enum PythonFileRole {
     /// Application/library source the adapter treats as a production-owner
     /// surface. The analysis-subject role.
     Production,
-    /// A physically separate test file: `test_*.py`, `*_test.py`, or a file
-    /// under a `tests`/`test` directory component. Evidence source.
+    /// A physically separate test file: `test_*.py`, `*_test.py`,
+    /// `tests.py`/`test.py`, or a file under a `tests`/`test` directory
+    /// component. Evidence source.
     PhysicalTest,
     /// Test-support helper source that is not itself a test case (the
     /// pytest `conftest.py` convention). Evidence source.

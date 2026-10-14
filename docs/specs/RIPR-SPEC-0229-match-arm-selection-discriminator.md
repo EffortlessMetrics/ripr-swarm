@@ -333,7 +333,8 @@ implies but does not spell out:
   (`use other_crate::prelude::*`) is not read and stays a known gap;
 - a qualified name with no lowercase letter (`Kind::A`, `Method::GET`) may
   be an associated constant, which a pattern compares by value. It reads as
-  a variant only when its path is `Type::NAME`, with `Type` the
+  a variant, in the changed, earlier and later arms alike (#7670), only
+  when its path is `Type::NAME`, with `Type` the
   scrutinee's type written unqualified (in the parameter's signature, or
   the impl header for `self`), or `Self` in that type's own impl. The
   owner's file must declare exactly one enum of that name listing `NAME`
