@@ -337,7 +337,12 @@ impl ErrorChangeFacts {
         };
         let primitive_throw_flips = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
-                old_prefix == new_prefix
+                // A later site can throw an Error on both versions, so a
+                // first-site primitive/Error flip must not credit
+                // `toThrow(Error)` (#7950).
+                !old_ambiguous
+                    && !new_ambiguous
+                    && old_prefix == new_prefix
                     && ((throws_primitive(old_throw) && throws_builtin_error(new_throw))
                         || (throws_builtin_error(old_throw) && throws_primitive(new_throw)))
             }
@@ -1063,6 +1068,18 @@ mod tests {
         );
         assert_eq!(literal_word.old_message.as_deref(), Some("throw a"));
         assert_eq!(literal_word.new_message.as_deref(), Some("throw x"));
+
+        // A first-site primitive/Error flip is not a known `toThrow(Error)`
+        // discriminator when a later site already throws an Error.
+        let class_flip = ErrorChangeFacts::read(
+            Some(r#"catch (e) { throw "a"; } if (b) throw new Error("b");"#),
+            r#"catch (e) { throw new Error("a"); } if (b) throw new Error("b");"#,
+        );
+        assert!(!class_flip.primitive_throw_flips);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &class_flip
+        ));
 
         // One throw site still reads the message (control).
         let one = ErrorChangeFacts::read(
