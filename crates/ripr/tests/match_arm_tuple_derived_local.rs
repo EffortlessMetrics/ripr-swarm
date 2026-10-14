@@ -15,6 +15,172 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
 
+const TERMINAL_SOURCE: &str = r#"use std::collections::{BTreeMap, BTreeSet};
+type Result<T> = std::result::Result<T, String>;
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProofReceipt { pub id: String, pub result: String }
+pub fn terminalize_proof(
+    task_id: &str,
+    plan_status: &str,
+    receipts: &[ProofReceipt],
+    proof_request_ids: &BTreeMap<String, Vec<String>>,
+    receipt_request_ids: &BTreeMap<String, Vec<String>>,
+) -> Result<(String, String, Vec<String>, Vec<String>)> {
+    let mut request_ids = proof_request_ids.get(task_id).cloned().unwrap_or_default();
+    request_ids.sort();
+    request_ids.dedup();
+    let request_set = request_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut matching = receipts
+        .iter()
+        .filter_map(|receipt| {
+            let request_identity_matches =
+                receipt_request_ids
+                    .get(&receipt.id)
+                    .is_some_and(|receipt_requests| {
+                        receipt_requests
+                            .iter()
+                            .any(|request_id| request_set.contains(request_id.as_str()))
+                    });
+            let task_identity_matches = receipt.id == task_id;
+            let relation = match (request_identity_matches, task_identity_matches) {
+                (true, true) => "request_and_task_identity",
+                (true, false) => "request_identity_v2",
+                (false, true) => "task_identity",
+                (false, false) => return None,
+            };
+            Some((receipt, relation))
+        })
+        .collect::<Vec<_>>();
+    matching.sort_by(|(left, _), (right, _)| left.id.cmp(&right.id));
+    let receipt_ids = matching
+        .iter()
+        .map(|(receipt, _)| receipt.id.clone())
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        let (status, reason) = if plan_status == "planned" {
+            (
+                "not_executed".to_owned(),
+                "planned proof task has no terminal receipt joined by request or task identity"
+                    .to_owned(),
+            )
+        } else {
+            (
+                plan_status.to_owned(),
+                "proof task retained its terminal planner disposition".to_owned(),
+            )
+        };
+        return Ok((status, reason, request_ids, receipt_ids));
+    }
+    let mut results = matching
+        .iter()
+        .map(|(receipt, _)| terminal_proof_receipt_status(receipt))
+        .collect::<Result<Vec<_>>>()?;
+    results.sort();
+    results.dedup();
+    let status = if results.len() == 1 {
+        results[0].clone()
+    } else {
+        "multiple_terminal_receipts".to_owned()
+    };
+    let reason = matching
+        .iter()
+        .map(|(receipt, relation)| format!("{}={} join={relation}", receipt.id, receipt.result))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Ok((status, reason, request_ids, receipt_ids))
+}
+
+fn terminal_proof_receipt_status(receipt: &ProofReceipt) -> Result<String> {
+    if receipt.result.trim().is_empty() || !matches!(receipt.result.as_str(),
+        "head_passed" | "head_failed" | "discriminating" | "non_discriminating"
+        | "base_patch_failed" | "timed_out" | "skipped_budget" | "skipped_profile") {
+        return Err("unsupported terminal result".to_string());
+    }
+    Ok(receipt.result.clone())
+}
+"#;
+
+/// Faithful #1306 owner body from terminal.rs blob
+/// 1ae5baef607bdf2d9c53fa6749956f6db38fd9c0. Only visibility and the changed
+/// request-only literal differ; the Result alias/receipt validator keep this
+/// native standalone specimen independent of UB's package dependencies.
+fn terminal_test(request_match: bool, task_match: bool) -> String {
+    let task = if task_match {
+        "receipt-1"
+    } else {
+        "different-task"
+    };
+    let request = if request_match {
+        "request-1"
+    } else {
+        "unrelated-request"
+    };
+    let (status, reason, receipt_ids) = match (request_match, task_match) {
+        (true, false) => (
+            "head_passed",
+            "receipt-1=head_passed join=request_identity_v2",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (false, true) => (
+            "head_passed",
+            "receipt-1=head_passed join=task_identity",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (true, true) => (
+            "head_passed",
+            "receipt-1=head_passed join=request_and_task_identity",
+            r#"vec!["receipt-1".to_string()]"#,
+        ),
+        (false, false) => (
+            "not_executed",
+            "planned proof task has no terminal receipt joined by request or task identity",
+            "Vec::<String>::new()",
+        ),
+    };
+    format!(
+        r#"use match_arm_tuple_derived_local::{{ProofReceipt, terminalize_proof}};
+use std::collections::BTreeMap;
+#[test]
+fn terminal_projection() {{
+    let receipts = vec![ProofReceipt {{ id: "receipt-1".to_string(), result: "head_passed".to_string() }}];
+    let proof_request_ids = BTreeMap::from([("{task}".to_string(), vec!["request-1".to_string(), "request-1".to_string()])]);
+    let receipt_request_ids = BTreeMap::from([("receipt-1".to_string(), vec!["{request}".to_string()])]);
+    let terminal = terminalize_proof("{task}", "planned", &receipts, &proof_request_ids, &receipt_request_ids).unwrap();
+    assert_eq!(terminal.0, "{status}");
+    assert_eq!(terminal.1, "{reason}", "request_identity_v2");
+    assert_eq!(terminal.2, vec!["request-1".to_string()]);
+    assert_eq!(terminal.3, {receipt_ids});
+}}
+"#
+    )
+}
+
+#[test]
+fn real_terminal_request_derivation_and_reason_projection() -> Result<(), String> {
+    let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
+    let output = repo.check()?;
+    let finding = changed_request_only_arm(&output)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "real consumer must observe the current request-only arm: {finding:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn real_terminal_sibling_projections_remain_unverified() -> Result<(), String> {
+    for (request, task) in [(false, true), (true, true), (false, false)] {
+        let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(request, task))?;
+        let output = repo.check()?;
+        assert_unverified(changed_request_only_arm(&output)?, "real terminal sibling");
+    }
+    Ok(())
+}
+
 const CANDIDATE_SOURCE: &str = r#"use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, PartialEq, Eq)]
