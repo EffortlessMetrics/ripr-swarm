@@ -5,6 +5,8 @@
 //! These are pure-data enums shared between the analysis adapter layer and
 //! the output renderers that emit additive optional language metadata fields.
 
+use std::path::Path;
+
 /// Program prefix of a generated pytest verify command.
 ///
 /// `python -m pytest` rather than bare `pytest`: `-m` puts the working
@@ -199,6 +201,83 @@ pub(crate) fn perl_fact_packet_guidance() -> String {
     )
 }
 
+/// Shallow Rust markers used only to decide whether an enablement tip should
+/// name `rust` (#7648). Matches doctor's `detect_languages` Rust arm:
+/// `Cargo.toml` at the root, or a `.rs` file at the root, `src/`, or one
+/// child directory. This is not adapter routing and does not change which
+/// files analysis admits.
+pub(crate) fn rust_markers_at(root: &Path) -> bool {
+    root.join("Cargo.toml").exists() || shallow_has_extension(root, "rs")
+}
+
+/// Same shallow scan doctor uses for language markers: `root`, `root/src/`,
+/// and one level of child directories. Fail-closed on `read_dir` errors.
+fn shallow_has_extension(root: &Path, extension: &str) -> bool {
+    let src = root.join("src");
+    let dirs_to_scan: [&Path; 2] = [root, &src];
+    for dir in dirs_to_scan {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some(extension) {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if child.is_dir() {
+                let sub_entries = std::fs::read_dir(&child).into_iter().flatten().flatten();
+                for sub in sub_entries {
+                    let path = sub.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some(extension) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Languages to name in a copy-paste `[languages] enabled = [...]` tip.
+///
+/// Keep every already-enabled language except default `rust` when the
+/// workspace has no Rust markers, then append each language the tip is
+/// asking the user to add. Following the tip must not disable another
+/// preview adapter, and a TypeScript-only repo must not be told to enable
+/// Rust (#7648).
+pub(crate) fn enablement_tip_languages(
+    enabled: &[LanguageId],
+    rust_detected: bool,
+    to_add: impl IntoIterator<Item = LanguageId>,
+) -> Vec<LanguageId> {
+    let mut target: Vec<LanguageId> = enabled
+        .iter()
+        .copied()
+        .filter(|id| *id != LanguageId::Rust || rust_detected)
+        .collect();
+    for id in to_add {
+        if !target.contains(&id) {
+            target.push(id);
+        }
+    }
+    target
+}
+
+/// The `enabled = [...]` line doctor and check human tips share so the two
+/// surfaces cannot drift (#7648).
+pub(crate) fn format_languages_enabled_toml(languages: &[&str]) -> String {
+    let quoted = languages
+        .iter()
+        .map(|language| format!("\"{language}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("enabled = [{quoted}]")
+}
+
 /// Whether an adapter is the reference (`Stable`) implementation for a
 /// language or a `Preview` adapter.
 ///
@@ -338,6 +417,12 @@ pub enum StaticLimitKind {
     /// `reachable_unrevealed` gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0240.
     RustAssertionContextUnresolved,
+    /// A changed `log::` record is checked by a related test that installs a
+    /// capturing logger before calling the owner and asserts on the captured
+    /// store, but ripr does not resolve the logger or the format template
+    /// against the asserted value. The gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0231 / #7133.
+    RustLogCaptureUnresolved,
 }
 
 impl StaticLimitKind {
@@ -377,6 +462,7 @@ impl StaticLimitKind {
                 "python_transitive_reach_unresolved"
             }
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
+            StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
         }
     }
 
@@ -479,6 +565,12 @@ impl StaticLimitKind {
                  file did not parse, the test carries a feature `cfg`, or a glob import may \
                  rebind the macro). ripr does not claim a gap; this is a named limitation, not \
                  a coverage claim."
+            }
+            StaticLimitKind::RustLogCaptureUnresolved => {
+                "A related Rust test installs a capturing logger, runs this code and asserts on \
+                 the captured records, but ripr does not resolve the logger or match the log \
+                 format against the asserted text. ripr does not claim a gap; this is a named \
+                 limitation, not a coverage claim."
             }
         }
     }
@@ -607,6 +699,91 @@ mod tests {
     }
 
     #[test]
+    fn enablement_tip_omits_default_rust_when_rust_is_not_detected() {
+        assert_eq!(
+            enablement_tip_languages(&[LanguageId::Rust], false, [LanguageId::TypeScript]),
+            vec![LanguageId::TypeScript]
+        );
+        assert_eq!(
+            format_languages_enabled_toml(&["typescript"]),
+            r#"enabled = ["typescript"]"#
+        );
+    }
+
+    #[test]
+    fn enablement_tip_keeps_rust_when_rust_is_detected() {
+        assert_eq!(
+            enablement_tip_languages(&[LanguageId::Rust], true, [LanguageId::TypeScript]),
+            vec![LanguageId::Rust, LanguageId::TypeScript]
+        );
+        assert_eq!(
+            format_languages_enabled_toml(&["rust", "typescript"]),
+            r#"enabled = ["rust", "typescript"]"#
+        );
+    }
+
+    #[test]
+    fn enablement_tip_keeps_other_enabled_preview_languages_without_inventing_rust() {
+        assert_eq!(
+            enablement_tip_languages(
+                &[LanguageId::Rust, LanguageId::Python],
+                false,
+                [LanguageId::TypeScript]
+            ),
+            vec![LanguageId::Python, LanguageId::TypeScript]
+        );
+        assert_eq!(
+            enablement_tip_languages(
+                &[LanguageId::Rust, LanguageId::Python],
+                true,
+                [LanguageId::TypeScript]
+            ),
+            vec![LanguageId::Rust, LanguageId::Python, LanguageId::TypeScript]
+        );
+    }
+
+    #[test]
+    fn rust_markers_at_sees_cargo_toml_and_rs_and_ignores_nested_only_rust() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-rust-markers-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        assert!(
+            !rust_markers_at(&root),
+            "empty root must not look like Rust"
+        );
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        assert!(rust_markers_at(&root), ".rs under src/ is a Rust marker");
+        std::fs::remove_file(root.join("src/lib.rs"))
+            .map_err(|err| format!("remove lib.rs: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        assert!(rust_markers_at(&root), "root Cargo.toml is a Rust marker");
+        std::fs::remove_file(root.join("Cargo.toml"))
+            .map_err(|err| format!("remove Cargo.toml: {err}"))?;
+        std::fs::create_dir_all(root.join("rust"))
+            .map_err(|err| format!("create nested rust: {err}"))?;
+        std::fs::write(
+            root.join("rust/Cargo.toml"),
+            "[package]\nname = \"nested\"\nversion = \"0.1.0\"\n",
+        )
+        .map_err(|err| format!("write nested Cargo.toml: {err}"))?;
+        assert!(
+            !rust_markers_at(&root),
+            "nested rust/Cargo.toml is not a root marker"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn language_status_wire_strings_are_stable() {
         assert_eq!(LanguageStatus::Stable.as_str(), "stable");
         assert_eq!(LanguageStatus::Preview.as_str(), "preview");
@@ -698,6 +875,10 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved.as_str(),
             "rust_assertion_context_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustLogCaptureUnresolved.as_str(),
+            "rust_log_capture_unresolved"
+        );
     }
 
     #[test]
@@ -723,6 +904,7 @@ mod tests {
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
             StaticLimitKind::RustAssertionContextUnresolved,
+            StaticLimitKind::RustLogCaptureUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

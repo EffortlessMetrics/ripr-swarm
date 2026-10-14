@@ -1,0 +1,12 @@
+diff --git a/src/chargeTimes.ts b/src/chargeTimes.ts
+index 0000000..1111111 100644
+--- a/src/chargeTimes.ts
++++ b/src/chargeTimes.ts
+@@ -4,6 +4,6 @@
+ 
+ export function chargeTimes(owner: string, cents: number[], notifier: TimesNotifier): number {
+   const total = cents.reduce((sum, c) => sum + c, 0);
+-  notifier.send(owner, "charged " + total);
++  notifier.send(owner, "charged " + total + " cents");
+   return total;
+ }

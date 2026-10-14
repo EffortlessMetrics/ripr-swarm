@@ -1,0 +1,12 @@
+diff --git a/src/limitMessage.ts b/src/limitMessage.ts
+index 0000000..1111111 100644
+--- a/src/limitMessage.ts
++++ b/src/limitMessage.ts
+@@ -1,6 +1,6 @@
+ export function limitMessage(amount: number, max: number): number {
+   if (amount > max) {
+-    throw new RangeError("limit " + max);
++    throw new RangeError("limit ");
+   }
+   return amount;
+ }

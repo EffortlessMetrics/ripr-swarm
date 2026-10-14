@@ -1,0 +1,22 @@
+{
+  "case_id": "vitest-spec0254-ex05-region-key",
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "anchor": "src/unitPriceRegion.ts:2",
+  "behavior_family": "lookup_constant",
+  "test_shape": "vitest_resolves_tobe_key_second_parameter",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
