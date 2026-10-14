@@ -1847,6 +1847,18 @@ fn ok_literal() {
                 "check(300)\n        .and(Err(E::Other))\n        .unwrap_err();",
                 vec![],
             ),
+            // Innermost `{` is a real block; an enclosing `(` around a
+            // closure must not hide the statement inside it (#7955).
+            (
+                "unwrap_err_in_block",
+                "{\n        check(300)\n            .unwrap_err();\n    }",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unwrap_err_in_invoked_closure",
+                "(|| {\n        check(300)\n            .unwrap_err();\n    })();",
+                vec![(BroadError, Weak)],
+            ),
         ];
         assert_both_adapters_read(&cases)
     }
@@ -1927,6 +1939,28 @@ fn ok_literal() {
             }
         }
         remaining.is_empty()
+    }
+
+    /// A `}` or `;` on an earlier row is not a statement boundary when
+    /// `(` / `[` are still open, or after a mismatched closer. The join
+    /// must not mint BroadError/Weak there (#7955).
+    #[test]
+    fn spec_0227_lexical_fallback_ignores_unwrap_err_in_unclosed_delimiters() -> Result<(), String>
+    {
+        for body in [
+            "consume(\n    {}\n    check(300)\n        .unwrap_err();",
+            "let values = [\n    {}\n    check(300)\n        .unwrap_err();",
+            "];\n{}\ncheck(300)\n    .unwrap_err();",
+            "consume([\n)];\n{}\ncheck(300)\n    .unwrap_err();",
+        ] {
+            let facts = crate::analysis::extract::extract_assertions(body, 3);
+            if !facts.is_empty() {
+                return Err(format!(
+                    "wanted no lexical facts in unclosed context, got {facts:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// A named test body and the oracle kinds both adapters must read.

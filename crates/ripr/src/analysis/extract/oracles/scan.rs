@@ -2499,7 +2499,10 @@ fn take_semicolon_terminated_statement(
 ) -> Option<(String, usize, String)> {
     let lines: Vec<&str> = body.lines().collect();
     let first = lines.get(offset)?.trim();
-    if first.is_empty() || is_control_or_block_start(first) {
+    if first.is_empty()
+        || is_control_or_block_start(first)
+        || !inherited_delimiter_context_allows_statement(body, offset)
+    {
         return None;
     }
     let mut joined = String::new();
@@ -2561,6 +2564,44 @@ fn is_control_or_block_start(line: &str) -> bool {
         || line.starts_with("loop ")
         || line.starts_with("unsafe ")
         || line.starts_with('{')
+}
+
+/// Whether a new semicolon-terminated statement may start at `offset`.
+/// Innermost unclosed `{` is a block body and may hold an error-side
+/// extraction; unclosed `(` / `[` or a mismatched closer must not mint a
+/// fact from a later `unwrap_err` tail (#7955).
+fn inherited_delimiter_context_allows_statement(body: &str, offset: usize) -> bool {
+    let mut stack = Vec::new();
+    for (index, line) in body.lines().enumerate() {
+        if index >= offset {
+            break;
+        }
+        if !push_masked_delimiters(&mask_comments_and_strings(line), &mut stack) {
+            return false;
+        }
+    }
+    matches!(stack.last(), None | Some(b'{'))
+}
+
+fn push_masked_delimiters(masked: &str, stack: &mut Vec<u8>) -> bool {
+    for byte in masked.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => stack.push(byte),
+            b')' | b']' | b'}' => {
+                let open = match byte {
+                    b')' => b'(',
+                    b']' => b'[',
+                    _ => b'{',
+                };
+                match stack.pop() {
+                    Some(top) if top == open => {}
+                    _ => return false,
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether `next` may attach to an unfinished statement. Tails start with
