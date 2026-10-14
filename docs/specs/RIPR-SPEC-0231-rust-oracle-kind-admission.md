@@ -271,7 +271,19 @@ Two pattern terms are used below.
    negates only its own operand (`!flag && matches!(..)` is a chain). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
-   `matches!` (the polarity rule above) keep their readings. `^` and a
+   `matches!` (the polarity rule above) keep their readings. Spellings that
+   keep a comparison or a literal read the same way (#7931): a comparison
+   method on a receiver or its `PartialEq`/`PartialOrd` path call
+   (`r.eq(&Err(E::Bad))`, `score(2).ne(&0)`, `PartialEq::eq(&r, &x)`,
+   `.lt`, `.le`, `.gt`, `.ge`) reads like its operator, so only `eq`
+   asserted true may pin, and an `eq` or `ne` with a literal side is that
+   literal comparison (`(r == Err(E::Bad)).eq(&false)` is `== false`); a
+   literal behind `&`, a one-expression block, `as bool` or
+   `bool::from(..)` is that literal; and the operand through a
+   one-expression block, `&`, `as bool` or `bool::from(..)` is the operand
+   (`assert_eq!({ r == Err(E::Bad) }, false)`,
+   `assert_eq!(bool::from(r == Err(E::Bad)), false)`).
+   `^` and a
    single `|` over an operand holding a `matches!` or a comparison, with no
    top-level comparison of their own, also cap (`assert_eq!((r ==
    Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
@@ -281,7 +293,10 @@ Two pattern terms are used below.
    is an operand (`"x+" < s` compares). In a boolean assertion condition, or an
    equality-macro operand compared with a boolean literal, a `matches!`
    that is an operand of `^`, `|`, `<`, `>`, `<=` or `>=` (on either
-   side; a closure's parameter bars are not `|`), cast with `as`, an
+   side; a closure's parameter bars are not `|`), cast with `as`, the
+   receiver of a method call through only grouping parentheses
+   (`matches!(..).eq(&false)`, `matches!(..).then(|| false).unwrap_or(true)`;
+   a method after a call that takes the `matches!` is the call's), an
    argument at any position of a call that is the whole condition
    (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
    directly or through nested calls), or inside the condition or
@@ -727,6 +742,13 @@ rejected alternative. Any can be reversed later without touching the rest.
     `relational_check` / weak (all `exact_value` or `exact_error_variant` /
     strong before #7598). `assert_eq!(check(20) == Err(E::Bad), true)` and
     `assert_eq!(!is_valid(5), true)` keep their exact readings.
+32. `assert_eq!(score(2).ne(&0), true)`, `assert_eq!(check(20).eq(&Err(E::Bad)),
+    false)`, `assert_eq!(check(20) == Err(E::Bad), false as bool)`,
+    `assert_eq!({ check(20) == Err(E::Bad) }, false)` and
+    `assert!(matches!(check(20), Err(E::Bad)).then(|| false).unwrap_or(true))`:
+    `relational_check` / weak (all `exact_value` or `exact_error_variant` /
+    strong before #7931). `assert_eq!(check(20).eq(&Err(E::Bad)), true)`
+    keeps `exact_error_variant`.
 
 ## Test Mapping
 
@@ -742,6 +764,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::compound_matches_forms_read_no_stronger_than_their_pattern`
   and the corpus case `spec0231-matches-nested-wildcard` (the nested,
   commented and bool-compared forms of example 7, #7715).
+- Existing: `relational_tests.rs::bool_valued_operands_read_as_what_they_assert`
+  and the corpus cases `spec0231-bool-compared-inequality` (example 31,
+  #7598) and `spec0231-bool-method-inequality` (example 32's method
+  spelling, #7931).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).

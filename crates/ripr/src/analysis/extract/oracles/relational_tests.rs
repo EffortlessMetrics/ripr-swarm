@@ -828,6 +828,30 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         // Controls: a comparison asserted true, a bare value or call, a
         // pinning chain and a pattern in a closure keep today's reading.
         ("assert_eq!(r == Err(E::Bad), true);", &err),
+        // #7931 controls: an `eq` method or a literal spelling asserted true
+        // pins like `==`, and a method after a call that takes the pattern
+        // belongs to the call.
+        ("assert_eq!(r.eq(&Err(E::Bad)), true);", &err),
+        ("assert_eq!(r == Err(E::Bad), true as bool);", &err),
+        ("assert_eq!({ r == Err(E::Bad) }, true);", &err),
+        ("assert_eq!(score(2).eq(&6), bool::from(true));", &exact),
+        ("assert_eq!((r == Err(E::Bad)).eq(&true), true);", &err),
+        (
+            "assert_eq!(std::cmp::PartialEq::eq(&r, &Err(E::Bad)), true);",
+            &err,
+        ),
+        ("assert_eq!(flag.eq(&false), true);", &exact),
+        // A double negation through literal spellings asserts the
+        // comparison itself, like `(r == Err(E::Bad)) == false` asserted
+        // false.
+        (
+            "assert_eq!((r == Err(E::Bad)) == false as bool, false);",
+            &err,
+        ),
+        (
+            "assert!(xs.iter().filter(|x| matches!(x, Some(3))).count() == 2);",
+            &exact,
+        ),
         ("assert_eq!(true, score(2) == 6);", &exact),
         ("assert_eq!(!is_valid(x), true);", &exact),
         ("assert_eq!(is_valid(x), false);", &exact),
@@ -876,6 +900,26 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert_eq!(\"x+\" < s, true);",
         "assert_eq!((r != Err(E::Bad)) & flag, true);",
         "assert!(ready | matches!(r, Err(E::Bad)));",
+        // #7931: method-call, combinator, cast, call and block spellings.
+        "assert!(matches!(r, Err(E::Bad)).eq(&false));",
+        "assert_eq!(r.eq(&Err(E::Bad)), false);",
+        "assert!(matches!(r, Err(E::Bad)).then(|| false).unwrap_or(true));",
+        "assert!((matches!(r, Err(E::Bad))).then(|| false).unwrap_or(true));",
+        "assert_eq!(r == Err(E::Bad), false as bool);",
+        "assert_eq!(r == Err(E::Bad), bool::from(false));",
+        "assert_eq!({ r == Err(E::Bad) }, false);",
+        "assert_eq!(r.ne(&Err(E::Bad)), true);",
+        "assert_eq!(score(2).ne(&0), true);",
+        "assert_eq!(score(2).lt(&3), true);",
+        "assert_eq!(&(r == Err(E::Bad)), &false);",
+        "assert_eq!((r == Err(E::Bad)).eq(&false), true);",
+        "assert_eq!(r.eq(&Err(E::Bad)).eq(&false), true);",
+        "assert_eq!(score(2).eq(&6).ne(&true), true);",
+        "assert_eq!(PartialEq::eq(&r, &Err(E::Bad)), false);",
+        "assert_eq!(std::cmp::PartialOrd::lt(&score(2), &3), true);",
+        "assert_eq!((r == Err(E::Bad)) as bool, false);",
+        "assert_eq!(bool::from(r == Err(E::Bad)), false);",
+        "assert_eq!(flag && r.ne(&Err(E::Bad)), true);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
