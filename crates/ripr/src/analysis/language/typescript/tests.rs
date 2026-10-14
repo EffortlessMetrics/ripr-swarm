@@ -15746,6 +15746,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;

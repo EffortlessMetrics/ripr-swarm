@@ -516,6 +516,14 @@ impl ArmSelector {
             resolve(original, self);
         }
         self.changed_from = changed_from;
+        // Later arms decide where a moved input lands (#7670).
+        let mut later = self.later.take();
+        later
+            .iter_mut()
+            .flatten()
+            .filter_map(|arm| arm.alternatives.as_mut())
+            .for_each(|arm| resolve(arm, self));
+        self.later = later;
     }
 
     /// An uncased pattern name becomes a `Variant` when its qualifier names
@@ -2905,6 +2913,26 @@ mod tests {
     }
 
     const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+
+    /// #7670: an input that moved from the changed arm to a later uncased
+    /// arm earns moved-input credit once that later arm reads as the
+    /// declared variant, and none while `Kind` is undeclared.
+    #[test]
+    fn a_later_uncased_arm_resolves_for_moved_input_credit() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        Kind::B => 2,\n        _ => 0,\n    }\n}\n";
+        let mut narrowed = arm_probe("Kind::A => 1,", 3);
+        narrowed.before = Some("Kind::A | Kind::B =>".to_string());
+        let selector = ArmSelector::establish(&narrowed, &owner(body, "f"))
+            .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n    C,\n}}\n{body}");
+        let resolved = resolve_with(&selector, Some(&declared));
+        assert!(resolved.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        // An input that stayed in this arm earns nothing from moving.
+        assert!(!resolved.assertion_selects("assert_eq!(f(Kind::C), 0);"));
+        let undeclared = resolve_with(&selector, Some(body));
+        assert!(!undeclared.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        Ok(())
+    }
 
     #[test]
     fn uncased_variants_read_only_when_the_owner_file_declares_the_enum() -> Result<(), String> {

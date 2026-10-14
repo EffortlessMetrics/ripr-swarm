@@ -248,7 +248,7 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
-| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium |
+| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
@@ -276,9 +276,11 @@ unexercised second throw — reads `broad_error` / weak for that change.
 `rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
 verdict.
 
-A snapshot never reaches
+A medium snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
-`typescript_snapshot_discriminator_unresolved`. A mock matcher never
+`typescript_snapshot_discriminator_unresolved`. A literal inline snapshot
+(RIPR-SPEC-0247 rule 3) or a committed entry the test names
+(RIPR-SPEC-0258) reads strong and can. A mock matcher never
 reaches `exposed` either, even with a literal payload.
 
 The exact error payload override reads `exact_error_variant` / strong for
@@ -551,7 +553,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    static-limited" protects. RIPR-SPEC-0027 is amended. Rejected: weak,
    which would split TypeScript from Rust for no class difference.
    Amended by RIPR-SPEC-0247 rule 3: an inline snapshot with literal text
-   reads `snapshot` / strong.
+   reads `snapshot` / strong. Amended by RIPR-SPEC-0258: so does a
+   `toMatchSnapshot()` whose committed entry the test file names.
 2. **Value-family guard.** Adopted: the code's guard on ReturnValue and
    FieldConstruction, because it is the fail-closed reading and existing
    tests pin it (`ts_returnvalue_unrelated_strong_assertion_downgrades`).
@@ -682,6 +685,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
+   Amended by RIPR-SPEC-0258: with a committed
+   `tests/__snapshots__/lib.test.ts.snap` holding the entry `price 1`, it
+   reads `snapshot` / strong and `exposed`.
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,

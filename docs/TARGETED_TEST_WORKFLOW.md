@@ -392,8 +392,10 @@ ripr calibrate cargo-mutants \
 ```
 
 `cargo mutants` writes `mutants.out/` in the crate root by default. Pass that
-directory, `mutants.out/outcomes.json`, or `mutants.out/mutants.json`. Use
-cargo-mutants selection flags to narrow a long run.
+directory, `mutants.out/outcomes.json`, or `mutants.out/mutants.json`. A
+mutants.json-only path counts unexecuted candidates in `matched_total`;
+those rows have no runtime observation. Use cargo-mutants selection flags to
+narrow a long run.
 
 The boundary-gap case study has a checked-in sample for trying this without
 running mutation tests:
