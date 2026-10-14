@@ -5006,7 +5006,21 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
                 .is_some_and(|name| names_constructor(name.text().to_string()))
         })
         .collect();
-    if !matches!(definitions.as_slice(), [ast::Adt::Struct(_)]) {
+    let [ast::Adt::Struct(definition)] = definitions.as_slice() else {
+        return false;
+    };
+    let Some(function) = resolve_owner_fn(parse.tree().syntax(), source, scope) else {
+        return false;
+    };
+    let (Some(owner_scope), Some(test_scope)) = (
+        syntax.item_nesting(index, &owner.file, &owner.name, owner.start_line),
+        syntax.item_nesting(index, &test.file, &test.name, test.start_line),
+    ) else {
+        return false;
+    };
+    if definition.syntax().parent() != function.syntax().parent()
+        || !test_scope.modules.starts_with(&owner_scope.modules)
+    {
         return false;
     }
     let Some(facts) = local_type_equality(source, constructor) else {

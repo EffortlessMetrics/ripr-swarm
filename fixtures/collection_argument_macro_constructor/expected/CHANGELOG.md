@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — collection_argument_macro_constructor (4)
+
+Reason:
+RIPR-SPEC-0094: test-module generated constructor preserves independent standard-field refusal (#7966)
+
+Command:
+`cargo xtask goldens bless collection_argument_macro_constructor --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

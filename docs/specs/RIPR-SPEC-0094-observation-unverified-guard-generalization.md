@@ -261,6 +261,8 @@ projection passed by `&mut` in a direct owner call, for example
   value-equality authority. Raw type bindings retain the same name identity.
   The same-file root is a uniquely bound direct struct construction, without
   competing constructor calls/values, generic declarations or field attributes.
+  Its declaration shares the owner's lexical module, enclosing the test's
+  module; a same-named sibling declaration does not establish this binding.
   Constructor imports through another module refuse even when that module's
   source is absent from the index; only direct local namespace imports qualify.
   Constructor definitions in macro token trees and arbitrary macro expansion

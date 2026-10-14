@@ -18,16 +18,16 @@ impl std::ops::Deref for Numbers {
 impl std::ops::DerefMut for Numbers {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
-pub mod real { pub struct Bag(pub Vec<u32>); }
+pub struct Bag(pub Vec<u32>);
 pub struct Payload(pub Numbers);
-#[derive(factory::Factory)]
-pub struct Trigger;
 pub fn add(v: &mut Vec<u32>, x: u32) {
     v.push(x * 1);
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(factory::Factory)]
+    pub struct Trigger;
     #[test]
     fn records_into_the_bag() {
         let mut b = Bag(Vec::new());

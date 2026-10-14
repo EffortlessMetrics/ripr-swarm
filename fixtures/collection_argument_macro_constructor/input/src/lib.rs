@@ -18,7 +18,7 @@ impl std::ops::Deref for Numbers {
 impl std::ops::DerefMut for Numbers {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
-pub mod real { pub struct Bag(pub Vec<u32>); }
+pub struct Bag(pub Vec<u32>);
 pub struct Payload(pub Numbers);
 macro_rules! make_factory {
     ($name:ident) => {
@@ -26,13 +26,13 @@ macro_rules! make_factory {
         pub fn $name(_: Vec<u32>) -> Payload { Payload(Numbers::new()) }
     };
 }
-make_factory!(Bag);
 pub fn add(v: &mut Vec<u32>, x: u32) {
     v.push(x * 1);
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    make_factory!(Bag);
     #[test]
     fn records_into_the_bag() {
         let mut b = Bag(Vec::new());
