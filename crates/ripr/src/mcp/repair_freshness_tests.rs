@@ -2,10 +2,10 @@
 
 use super::*;
 use crate::app::repair_attempt::{
-    BeforeArtifactSource, BeginRepairAttemptOptions, RepairAttemptId, begin_repair_attempt_with,
-    edit_cage_policy_from_packet, find_manifest_artifact_by_role, finish_repair_attempt,
-    load_repair_attempt_manifest, receipt_binding_from, retain_terminal_evidence,
-    write_edit_cage_baseline,
+    begin_repair_attempt_with, edit_cage_policy_from_packet, find_manifest_artifact_by_role,
+    finish_repair_attempt, load_repair_attempt_manifest, receipt_binding_from,
+    retain_terminal_evidence, write_edit_cage_baseline, BeforeArtifactSource,
+    BeginRepairAttemptOptions, RepairAttemptId,
 };
 use std::path::PathBuf;
 
@@ -243,8 +243,8 @@ fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), St
 }
 
 #[test]
-fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt()
--> Result<(), String> {
+fn durable_currentness_refuses_diverged_continuation_without_rewriting_attempt(
+) -> Result<(), String> {
     let (root, id) = prepared("diverged")?;
     let manifest_path = root.join(format!(
         "target/ripr/repair-attempts/{}/attempt.json",
@@ -322,8 +322,8 @@ fn issue_terminal_receipt_with_grip(
     expected_movement: &str,
 ) -> Result<(), String> {
     use crate::output::agent_receipt::{
-        AgentReceiptAnalysisOutcome, AgentReceiptArtifactProvenance, AgentReceiptProvenance,
-        render_agent_receipt_value_json,
+        render_agent_receipt_value_json, AgentReceiptAnalysisOutcome,
+        AgentReceiptArtifactProvenance, AgentReceiptProvenance,
     };
     let after_path = "target/ripr/workflow/after.json";
     let verify_path = "target/ripr/workflow/agent-verify.json";
@@ -443,8 +443,8 @@ fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(),
 }
 
 #[test]
-fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head()
--> Result<(), String> {
+fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_head(
+) -> Result<(), String> {
     let (root, id) = prepared("tampered")?;
     finish_and_issue(&root, &id)?;
     let before = receipt_document(&root, &id)?;
@@ -584,7 +584,27 @@ fn selected_action_parity(
     assert_eq!(document["currentness"]["state"], cli.attempt.currentness);
     if expected_step == Some("repair_attempt_after") {
         assert_eq!(document["command_routes"].as_array().map(Vec::len), Some(2));
-        assert_eq!(document["next_command"], manifest.next_command);
+        // Ordinary after-phase routes share the status renderer (#7879):
+        // MCP/CLI next_command name `ripr continue`. Persisted attempt.json
+        // keeps the advanced spelling for machine drivers and trust-bound
+        // routes the façade cannot run.
+        let rendered = document["next_command"]
+            .as_str()
+            .ok_or_else(|| "missing awaiting next_command".to_string())?;
+        assert!(
+            rendered.starts_with("ripr continue --root "),
+            "ordinary after-phase projection must name `ripr continue`: {rendered}"
+        );
+        assert!(
+            !rendered.contains("--phase after"),
+            "ordinary after-phase projection must not teach `--phase after`: {rendered}"
+        );
+        assert_ne!(document["next_command"], json!(manifest.next_command));
+        assert!(
+            manifest.next_command.contains("--phase after"),
+            "persisted next_command stays advanced: {}",
+            manifest.next_command
+        );
     } else {
         assert_eq!(document["command_routes"], json!([]));
         assert_ne!(document["next_command"], manifest.next_command);
@@ -637,13 +657,11 @@ fn durable_selected_action_failed_current_restarts_before() -> Result<(), String
         after.verdict.status,
         crate::edit_cage::EditCageVerdictStatus::Violated
     );
-    assert!(
-        after
-            .verdict
-            .violations
-            .iter()
-            .any(|violation| violation.path == "outside.rs")
-    );
+    assert!(after
+        .verdict
+        .violations
+        .iter()
+        .any(|violation| violation.path == "outside.rs"));
     assert_eq!(
         load_repair_attempt_manifest(&root, &id)?.state,
         RepairAttemptState::Failed
