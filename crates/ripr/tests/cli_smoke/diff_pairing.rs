@@ -153,10 +153,15 @@ fn pure_short_conjunct_pairing_keeps_current_arms_and_unpaired_history()
             std::fs::write(root.join(path), after)?;
         }
         let patch = fixture_git_output(&root, &["diff", "--unified=0", "HEAD", "--"])?;
-        assert!(patch.contains("@@ -0,0 +1 @@"), "{patch}");
-        assert!(patch.contains("@@ -3 +4 @@"), "{patch}");
-        assert!(patch.contains("@@ -3 +3 @@"), "{patch}");
-        assert!(patch.contains("@@ -3 +2,0 @@"), "{patch}");
+        assert_eq!(
+            patch
+                .lines()
+                .filter_map(|line| line.strip_prefix("@@")?.split_once("@@"))
+                .map(|(range, _)| range.trim())
+                .collect::<Vec<_>>(),
+            vec!["-0,0 +1", "-3 +4", "-3 +3", "-3 +3", "-3 +2,0"],
+            "{patch}"
+        );
         let output = run_command(
             env!("CARGO_BIN_EXE_ripr"),
             Some(&root),

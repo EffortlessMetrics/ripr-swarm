@@ -601,10 +601,17 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
         ("src/c.rs", old_chain, new_chain),
         ("src/d.rs", old_chain, deleted),
     ])?;
-    assert!(fixture.patch.contains("@@ -0,0 +1 @@"), "{}", fixture.patch);
-    assert!(fixture.patch.contains("@@ -3 +4 @@"), "{}", fixture.patch);
-    assert!(fixture.patch.contains("@@ -3 +3 @@"), "{}", fixture.patch);
-    assert!(fixture.patch.contains("@@ -3 +2,0 @@"), "{}", fixture.patch);
+    assert_eq!(
+        fixture
+            .patch
+            .lines()
+            .filter_map(|line| line.strip_prefix("@@")?.split_once("@@"))
+            .map(|(range, _)| range.trim())
+            .collect::<Vec<_>>(),
+        vec!["-0,0 +1", "-3 +4", "-3 +3", "-3 +3", "-3 +2,0"],
+        "{}",
+        fixture.patch
+    );
     assert_eq!(
         fixture
             .files
