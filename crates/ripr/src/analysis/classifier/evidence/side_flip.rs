@@ -15,6 +15,11 @@
 //! (`map_err`, `ok_or`, a variant path): a side oracle never confirms which
 //! error was returned (rule 1).
 //!
+//! Decision 5 also reads `assert_eq!(owner(..).ok(), None)` as that `Err`
+//! assertion, written directly, through a constant-row table row whose
+//! expected cell is `None`, or through a check helper the test calls with
+//! `None`.
+//!
 //! Like the tuple-match producer this refines only a weak discriminator and
 //! never repairs reach or propagation. Any unsupported shape leaves the
 //! existing evidence unchanged, so the finding keeps its gap.
@@ -26,7 +31,9 @@ use crate::analysis::facts::cfg_predicates::{
 };
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Confidence, ProbeFamily, RelationReason, StageEvidence, StageState};
-use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasGenericArgs, HasName};
+use ra_ap_syntax::ast::{
+    HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
+};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 
 pub(super) const QUESTION_MARK_SIDE_FLIP: &str = "Result-side oracle observes the `?` side flip: this `?` is the owner's only source of `Err`, and a test asserts the owner call returns `Err` (RIPR-SPEC-0227 rule 3b)";
@@ -104,7 +111,13 @@ pub(super) fn discrimination(
     }
 
     for (test, reason) in &context.related_tests {
-        if *reason != RelationReason::DirectOwnerCall {
+        // Decision 5 reads a check helper's assertion, so a test that
+        // reaches the owner through a helper is examined too; the
+        // structural checks below decide whether its call is read.
+        if !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        ) {
             continue;
         }
         let Some(test_facts) = find_file_facts(context.index, &test.file) else {
@@ -136,7 +149,7 @@ pub(super) fn discrimination(
         let Some(test_function) = unique_function(test_root.syntax(), &test.name) else {
             continue;
         };
-        if asserts_owner_err(&test_function, &owner.name) {
+        if asserts_owner_err(test_root.syntax(), &test_function, &owner.name) {
             return Some(StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
@@ -440,11 +453,11 @@ fn shapes_error(operand: &SyntaxNode) -> bool {
 /// A plain `#[test]` whose body, at its top level, asserts that a direct
 /// owner call returns `Err`, with nothing in the test able to skip the
 /// assertion or rebind the owner's name.
-fn asserts_owner_err(function: &ast::Fn, owner: &str) -> bool {
-    asserts_owner_err_inner(function, owner).unwrap_or(false)
+fn asserts_owner_err(root: &SyntaxNode, function: &ast::Fn, owner: &str) -> bool {
+    asserts_owner_err_inner(root, function, owner).unwrap_or(false)
 }
 
-fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
+fn asserts_owner_err_inner(root: &SyntaxNode, function: &ast::Fn, owner: &str) -> Option<bool> {
     let attributes = function.attrs().collect::<Vec<_>>();
     let [attribute] = attributes.as_slice() else {
         return None;
@@ -480,22 +493,277 @@ fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
         }
     }
     let statements = body.stmt_list()?;
-    Some(statements.statements().any(|statement| {
-        let ast::Stmt::ExprStmt(statement) = statement else {
-            return false;
-        };
+    // Decision 5 reads the text `None`; a file that can rebind that name
+    // (`const None`, `use x::None`, a variant named `None`) gives none of
+    // its three forms.
+    let none_is_prelude = !file_binds_name(root, "None", None);
+    let observes = |expression: &ast::Expr| {
         // `#[cfg(..)] assert!(..);` may never compile.
-        if statement
+        !expression
             .syntax()
             .descendants()
             .any(|node| ast::Attr::can_cast(node.kind()))
+            && if ok_side_expected(expression, owner).is_some() {
+                none_is_prelude && observes_err_side(expression, owner)
+            } else {
+                observes_err_side(expression, owner)
+                    || (none_is_prelude
+                        && (table_row_observes_err(expression, function, owner)
+                            || helper_call_observes_err(expression, root, function, owner)))
+            }
+    };
+    Some(
+        statements
+            .statements()
+            .filter_map(|statement| match statement {
+                ast::Stmt::ExprStmt(statement)
+                    if !statement
+                        .syntax()
+                        .children()
+                        .any(|node| ast::Attr::can_cast(node.kind())) =>
+                {
+                    statement.expr()
+                }
+                _ => None,
+            })
+            // A loop that ends the body is its tail expression.
+            .chain(statements.tail_expr())
+            .any(|expression| observes(&expression)),
+    )
+}
+
+/// RIPR-SPEC-0227 decision 5: `assert_eq!(owner(..).ok(), want)` (either
+/// operand order) returns the expected operand's text when the other is
+/// `.ok()` with no arguments on a direct owner call. A passing comparison
+/// with `None` proves that call returned `Err`, exactly as `is_err()` does.
+fn ok_side_expected(expression: &ast::Expr, owner: &str) -> Option<String> {
+    let arguments = macro_arguments(expression, "assert_eq")?;
+    let [left, right, ..] = arguments.as_slice() else {
+        return None;
+    };
+    let ok_side = |text: &str| {
+        parse_expression(text).is_some_and(|operand| match operand {
+            ast::Expr::MethodCallExpr(call) => {
+                call.name_ref().is_some_and(|name| name.text() == "ok")
+                    && call
+                        .arg_list()
+                        .is_some_and(|list| list.args().next().is_none())
+                    && call
+                        .receiver()
+                        .is_some_and(|receiver| is_direct_owner_call(&receiver, owner))
+            }
+            _ => false,
+        })
+    };
+    if ok_side(left) {
+        Some(right.trim().to_string())
+    } else if ok_side(right) {
+        Some(left.trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Decision 5 through a constant-row table (#5328): a top-level unlabeled
+/// `for` whose body holds `assert_eq!(owner(..).ok(), want)` as a direct
+/// statement, nothing in the body can skip a row, and `want` is a column
+/// of the table with a `None` cell. The loop runs that row, so its call
+/// returned `Err`.
+fn table_row_observes_err(expression: &ast::Expr, function: &ast::Fn, owner: &str) -> bool {
+    let ast::Expr::ForExpr(for_expr) = expression else {
+        return false;
+    };
+    if for_expr.label().is_some() {
+        return false;
+    }
+    let Some(body) = for_expr.loop_body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if body.syntax().descendants().any(|node| {
+        ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind())
+    }) {
+        return false;
+    }
+    let fn_text = function.syntax().text().to_string();
+    body.statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(body.tail_expr())
+        .any(|assertion| {
+            ok_side_expected(&assertion, owner).is_some_and(|expected| {
+                is_plain_identifier(&expected)
+                    && crate::analysis::syntax::constant_table_column(&fn_text, &expected)
+                        .is_some_and(|cells| cells.iter().any(|cell| cell.trim() == "None"))
+            })
+        })
+}
+
+/// Decision 5 through a check helper: a top-level call `helper(.., None, ..)`
+/// to a unique free function declared beside the test, in the same module,
+/// whose body asserts `assert_eq!(owner(..).ok(), want)` as a direct
+/// statement, where `want` is the plain, never-rebound parameter that call
+/// fills with `None`. No other item, import or binding in the file may
+/// carry the helper's name, so the call resolves to that function. The
+/// helper body may not return early (including through `?`), hold a
+/// closure, nested item or other macro, or bind the owner's or a
+/// parameter's name.
+fn helper_call_observes_err(
+    expression: &ast::Expr,
+    root: &SyntaxNode,
+    test: &ast::Fn,
+    owner: &str,
+) -> bool {
+    let ast::Expr::CallExpr(call) = expression else {
+        return false;
+    };
+    let Some(name) = call.expr().map(|callee| callee.syntax().text().to_string()) else {
+        return false;
+    };
+    if name == owner || !is_plain_identifier(&name) {
+        return false;
+    }
+    let Some(arguments) = call.arg_list().map(|list| list.args().collect::<Vec<_>>()) else {
+        return false;
+    };
+    if arguments.iter().any(|argument| {
+        argument.syntax().descendants().any(|node| {
+            ast::MacroCall::can_cast(node.kind())
+                || ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::can_cast(node.kind())
+                || ast::CallExpr::can_cast(node.kind())
+                || ast::MethodCallExpr::can_cast(node.kind())
+        })
+    }) {
+        return false;
+    }
+    let Some(helper) = unique_function(root, &name) else {
+        return false;
+    };
+    if helper.syntax().parent() != test.syntax().parent()
+        || file_binds_name(root, &name, helper.name().as_ref())
+    {
+        return false;
+    }
+    let nested = helper.syntax().ancestors().skip(1).any(|node| {
+        ast::Impl::can_cast(node.kind())
+            || ast::Trait::can_cast(node.kind())
+            || ast::Fn::can_cast(node.kind())
+    });
+    if nested
+        || helper.attrs().next().is_some()
+        || helper.async_token().is_some()
+        || helper.generic_param_list().is_some()
+    {
+        return false;
+    }
+    let Some(parameters) = helper.param_list().map(|list| {
+        list.params()
+            .map(|parameter| match parameter.pat() {
+                Some(ast::Pat::IdentPat(pattern))
+                    if pattern.mut_token().is_none() && pattern.ref_token().is_none() =>
+                {
+                    pattern.name().map(|name| name.text().to_string())
+                }
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    }) else {
+        return false;
+    };
+    let Some(parameters) = parameters else {
+        return false;
+    };
+    if helper
+        .param_list()
+        .is_some_and(|list| list.self_param().is_some())
+        || parameters.len() != arguments.len()
+    {
+        return false;
+    }
+    let Some(body) = helper.body() else {
+        return false;
+    };
+    for node in body.syntax().descendants() {
+        if ast::ReturnExpr::can_cast(node.kind())
+            || ast::ClosureExpr::can_cast(node.kind())
+            || ast::Fn::can_cast(node.kind())
+            || ast::BreakExpr::can_cast(node.kind())
+            || ast::ContinueExpr::can_cast(node.kind())
+            || ast::TryExpr::can_cast(node.kind())
         {
             return false;
         }
-        statement
-            .expr()
-            .is_some_and(|expression| observes_err_side(&expression, owner))
-    }))
+        if let Some(macro_call) = ast::MacroCall::cast(node.clone())
+            && !macro_call.path().is_some_and(|path| {
+                ASSERTION_MACROS.contains(&path.syntax().text().to_string().as_str())
+            })
+        {
+            return false;
+        }
+        if ast::IdentPat::cast(node).is_some_and(|pattern| {
+            pattern.name().is_some_and(|bound| {
+                let bound = bound.text();
+                bound == owner
+                    || (parameters.iter().any(|parameter| *parameter == bound)
+                        && !pattern
+                            .syntax()
+                            .parent()
+                            .is_some_and(|parent| ast::Param::can_cast(parent.kind())))
+            })
+        }) {
+            return false;
+        }
+    }
+    let Some(statements) = body.stmt_list() else {
+        return false;
+    };
+    statements
+        .statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(statements.tail_expr())
+        .any(|assertion| {
+            ok_side_expected(&assertion, owner).is_some_and(|expected| {
+                parameters
+                    .iter()
+                    .position(|parameter| *parameter == expected)
+                    .and_then(|position| arguments.get(position))
+                    .is_some_and(|argument| argument.syntax().text() == "None")
+            })
+        })
+}
+
+/// Whether anything in the file other than `except` can bind `name`: an
+/// item, variant, field-less declaration, `as` rename or local binding of
+/// that name, or a `use` whose last segment is that name. A bare
+/// identifier pattern reads as a binding too, so `None =>` in a `match`
+/// refuses as well (fail closed).
+fn file_binds_name(root: &SyntaxNode, name: &str, except: Option<&ast::Name>) -> bool {
+    root.descendants().any(|node| {
+        if let Some(bound) = ast::Name::cast(node.clone()) {
+            return bound.text() == name && except.is_none_or(|except| *except != bound);
+        }
+        ast::UseTree::cast(node).is_some_and(|tree| {
+            tree.rename().is_none()
+                && tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|segment| segment.text() == name)
+        })
+    })
+}
+
+fn is_plain_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 /// A `cfg` gate that requires a test build and is enabled in one
@@ -519,9 +787,13 @@ fn enclosing_modules_are_test_only(function: &ast::Fn) -> bool {
 }
 
 /// `assert!(owner(..).is_err())`, `assert!(!owner(..).is_ok())`,
-/// `assert!(matches!(owner(..), Err(_)))` or a statement
-/// `owner(..).unwrap_err()` / `.expect_err(..)`.
+/// `assert!(matches!(owner(..), Err(_)))`, `assert_eq!(owner(..).ok(),
+/// None)` (decision 5) or a statement `owner(..).unwrap_err()` /
+/// `.expect_err(..)`.
 fn observes_err_side(expression: &ast::Expr, owner: &str) -> bool {
+    if ok_side_expected(expression, owner).is_some_and(|expected| expected == "None") {
+        return true;
+    }
     if let ast::Expr::MethodCallExpr(call) = expression {
         return call.name_ref().is_some_and(|name| {
             matches!(
@@ -679,9 +951,104 @@ mod tests {
     }
 
     fn test_observes(source: &str, test: &str, owner: &str) -> bool {
-        parsed(source)
-            .and_then(|root| unique_function(root.syntax(), test))
-            .is_some_and(|function| asserts_owner_err(&function, owner))
+        parsed(source).is_some_and(|root| {
+            unique_function(root.syntax(), test)
+                .is_some_and(|function| asserts_owner_err(root.syntax(), &function, owner))
+        })
+    }
+
+    #[test]
+    fn ok_compared_with_none_observes_the_flip() {
+        // RIPR-SPEC-0227 decision 5: `.ok() == None` is `is_err()`, written
+        // directly, through a constant-row table row or a check helper.
+        let direct = "#[test]\nfn t() {\n    assert_eq!(port(\"http\").ok(), None);\n}\n";
+        assert!(test_observes(direct, "t", "port"));
+        let swapped =
+            "#[test]\nfn t() {\n    assert_eq!(None, port(\"http\").ok(), \"words\");\n}\n";
+        assert!(test_observes(swapped, "t", "port"));
+        let table = "#[test]\nfn t() {\n    let cases = [(\"50%\", Some(50)), (\"lots\", None)];\n    for (text, want) in cases {\n        assert_eq!(port(text).ok(), want, \"{text}\");\n    }\n}\n";
+        assert!(test_observes(table, "t", "port"));
+        let helper = "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want, \"{text}\");\n}\n#[test]\nfn t() {\n    check(\"80\", Some(80));\n    check(\"http\", None);\n}\n";
+        assert!(test_observes(helper, "t", "port"));
+    }
+
+    #[test]
+    fn ok_compared_with_some_or_unrun_does_not_observe_the_flip() {
+        for (label, source) in [
+            (
+                "a Some expectation",
+                "#[test]\nfn t() {\n    assert_eq!(port(\"80\").ok(), Some(80));\n}\n",
+            ),
+            (
+                "assert_ne",
+                "#[test]\nfn t() {\n    assert_ne!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "no None row",
+                "#[test]\nfn t() {\n    let cases = [(\"50\", Some(50)), (\"7\", Some(7))];\n    for (text, want) in cases {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a computed table",
+                "#[test]\nfn t() {\n    let cases = rows();\n    for (text, want) in cases {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a row that may be skipped",
+                "#[test]\nfn t() {\n    let cases = [(\"lots\", None)];\n    for (text, want) in cases {\n        if text.is_empty() { continue; }\n        assert_eq!(port(text).ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a conditional assertion in the loop",
+                "#[test]\nfn t() {\n    let cases = [(\"lots\", None)];\n    for (text, want) in cases {\n        if text.len() > 9 {\n            assert_eq!(port(text).ok(), want);\n        }\n    }\n}\n",
+            ),
+            (
+                "a helper called with Some only",
+                "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"80\", Some(80));\n}\n",
+            ),
+            (
+                "a helper that rebinds its parameter",
+                "fn check(text: &str, want: Option<u16>) {\n    let want = Some(1);\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper that may return first",
+                "fn check(text: &str, want: Option<u16>) {\n    if text.is_empty() { return; }\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper asserting another function",
+                "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(other(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper call inside a closure",
+                "fn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    let f = || check(\"http\", None);\n}\n",
+            ),
+            (
+                "a shadowing const None",
+                "const None: Option<u16> = Some(3);\n#[test]\nfn t() {\n    assert_eq!(port(\"80\").ok(), None);\n}\n",
+            ),
+            (
+                "an imported None in a table",
+                "use other::None;\n#[test]\nfn t() {\n    let cases = [(\"lots\", None)];\n    for (text, want) in cases {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n",
+            ),
+            (
+                "a None variant passed to a helper",
+                "enum E { None }\nfn check(text: &str, want: Option<u16>) {\n    assert_eq!(port(text).ok(), want);\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper name that resolves to an import",
+                "use other::check;\nmod dead {\n    fn check(text: &str, want: Option<u16>) {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper name renamed onto a struct",
+                "struct Check(&'static str, Option<u16>);\nuse Check as check;\nmod dead {\n    pub fn check(text: &str, want: Option<u16>) {\n        assert_eq!(port(text).ok(), want);\n    }\n}\n#[test]\nfn t() {\n    check(\"http\", None);\n}\n",
+            ),
+            (
+                "a helper that may leave through ?",
+                "fn check(text: &str, want: Option<u16>) -> Option<()> {\n    text.chars().next()?;\n    assert_eq!(port(text).ok(), want);\n    Some(())\n}\n#[test]\nfn t() {\n    check(\"\", None);\n}\n",
+            ),
+        ] {
+            assert!(
+                !test_observes(source, "t", "port"),
+                "{label} must not observe the flip"
+            );
+        }
     }
 
     #[test]
