@@ -331,7 +331,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         // failing point is diagnosable from the CI log alone.
         throw new Error(`code actions for ${uri} failed: ${String(error)}`
           + ` open=${vscode.workspace.textDocuments.map(d => d.uri.toString()).join(', ')}`
-          + ` phase=${phase}`);
+          + ` phase=${phase}`, { cause: error });
       }
       const commands = (actions ?? []).flatMap(action => {
         const command = typeof action.command === 'string' ? action as vscode.Command : action.command;
@@ -366,7 +366,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }) as { analysis_status?: Record<string, unknown> };
         throw new Error(`context copy verification failed with clipboard ${JSON.stringify(packet.slice(0, 300))}: ${String(error)}`
-          + ` status=${JSON.stringify(status.analysis_status)}`);
+          + ` status=${JSON.stringify(status.analysis_status)}`, { cause: error });
       }
       const rootedCommands = commands.filter(c => c.command.startsWith('ripr.copy')
         && typeof c.arguments?.[0]?.command === 'string');

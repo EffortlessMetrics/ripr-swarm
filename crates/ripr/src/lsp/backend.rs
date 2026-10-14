@@ -367,22 +367,13 @@ impl Backend {
     /// See RIPR-SPEC-0105 for the design rationale.
     pub(super) async fn refresh_diagnostics(&self, scope: RefreshScope, reason: RefreshReason) {
         if self.configuration_failure().is_some() {
-            eprintln!("[RD] bail config_failure scope={scope:?} reason={reason:?}");
             return;
         }
         let authority = self.workspace_root_authority();
         let Some(root) = authority.effective_root.clone() else {
-            eprintln!(
-                "[RD] bail no-root scope={scope:?} reason={reason:?} state={:?}",
-                authority.state
-            );
             return;
         };
         if !authority.allows_analysis() {
-            eprintln!(
-                "[RD] authority-blocked scope={scope:?} reason={reason:?} state={:?}",
-                authority.state
-            );
             if matches!(
                 (&authority.state, scope),
                 (WorkspaceRootState::RootChanged, RefreshScope::Full)
@@ -1312,6 +1303,13 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn is_current_refresh_generation(&self, generation: u64) -> bool {
         self.refresh_scheduler.is_current_generation(generation)
+    }
+
+    #[cfg(test)]
+    pub(super) fn refresh_telemetry_for_test(
+        &self,
+    ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
+        self.refresh_scheduler.telemetry()
     }
 
     pub(super) fn workspace_revision(&self) -> u64 {

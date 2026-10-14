@@ -9156,9 +9156,10 @@ async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Res
     let (service, _socket) =
         LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
     let backend = service.inner();
-    // The backend is deliberately authority-uninitialized: the refresh path
-    // bails before any analysis runs, keeping these revision-level
-    // assertions fast and hermetic.
+    // Phase 1 runs deliberately authority-uninitialized: the fresh-session
+    // contract under test is the revision advance, and the uninitialized
+    // authority keeps the scheduled analysis from running inline on this
+    // bare temp root.
 
     // Fresh session: the first matching open must keep today's refresh path
     // — the first opened document establishes the session's analysis — so
@@ -9179,6 +9180,13 @@ async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Res
             backend.workspace_revision()
         ));
     }
+
+    // The workspace-root authority is initialized here so phase 2's
+    // scheduler assertion is meaningful: with the authority selected, a
+    // regressed matching open WOULD reach RefreshScheduler through
+    // refresh_diagnostics.
+    backend.initialize_test_workspace_root();
+    let did_open_requests_baseline = backend.refresh_telemetry_for_test().did_open_requests;
 
     // With session analysis state (a completed refresh record), the same
     // matching open adds no saved-workspace input: it must not advance the
@@ -9216,6 +9224,32 @@ async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Res
             backend.workspace_revision()
         ));
     }
+    if backend.refresh_telemetry_for_test().did_open_requests != did_open_requests_baseline {
+        return Err(format!(
+            "a matching open with analysis state reached the scheduler: did_open_requests={} \
+             baseline={}",
+            backend.refresh_telemetry_for_test().did_open_requests,
+            did_open_requests_baseline
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_open_diverging_persisted_content_keeps_the_interactive_refresh() -> Result<(), String>
+{
+    let root = unique_lsp_test_root("did-open-diverging-open")?;
+    let file = root.path().join("lib.rs");
+    std::fs::write(&file, "fn persisted() {}\n")
+        .map_err(|error| format!("write fixture: {error}"))?;
+    let uri = crate::lsp::uri::file_uri_for_path(&file)?;
+    let (service, _socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    let backend = service.inner();
+    // The backend is deliberately authority-uninitialized: the conservative
+    // contract under test is the handler-owned revision advance, and the
+    // uninitialized authority keeps the scheduled analysis from running
+    // inline on this bare temp root.
 
     // Control: a diverging (recovered dirty) buffer keeps today's
     // interactive refresh path, including the revision advance.
@@ -9229,7 +9263,7 @@ async fn did_open_matching_persisted_content_skips_revision_and_refresh() -> Res
             ),
         })
         .await;
-    if backend.workspace_revision() != 2 {
+    if backend.workspace_revision() != 1 {
         return Err(format!(
             "a diverging open did not advance the revision exactly once: {}",
             backend.workspace_revision()
