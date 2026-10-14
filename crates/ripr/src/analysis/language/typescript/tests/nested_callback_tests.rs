@@ -227,6 +227,93 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
     Ok(())
 }
 
+const STRICT_CUSTOM_IDENTITY: &str = "import { ready } from \"../src/settings\";\nexpect.extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";
+
+/// RIPR-SPEC-0246 rule 1 / #7924: a credited strict custom matcher compares
+/// objects by identity, so a copy-for-identity change stays `exposed`. The
+/// gate reads the assertion's identity property, not `exact_value` (which
+/// `toEqual` shares) and not a widened matcher-name list.
+#[test]
+fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String> {
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), STRICT_CUSTOM_IDENTITY);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "toBeSame")
+        .ok_or_else(|| "expected a toBeSame assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::ExactValue);
+    assert_eq!(assertion.oracle_strength, OracleStrength::Strong);
+    assert!(
+        assertion.compares_reference_identity,
+        "credited toBeSame must carry reference identity, got {assertion:?}"
+    );
+    assert!(assertion.has_dynamic_matcher_arg);
+
+    let finding = settings_finding(
+        "identity-copy-strict-custom",
+        STRICT_CUSTOM_IDENTITY,
+        "  return cfg;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // `toEqual` is also `exact_value` / strong and must not pin identity.
+    let structural = extract_tests(Path::new("tests/settings.test.ts"), STRUCTURAL_TEST);
+    let to_equal = &structural[0].assertions[0];
+    assert_eq!(to_equal.matcher, "toEqual");
+    assert_eq!(to_equal.oracle_kind, OracleKind::ExactValue);
+    assert!(
+        !to_equal.compares_reference_identity,
+        "toEqual shares exact_value and must not carry identity, got {to_equal:?}"
+    );
+
+    // A refused custom matcher (`==`) stays unknown and does not pin identity.
+    let loose = "import { ready } from \"../src/settings\";\nexpect.extend({ toBeSame(r, e) { return { pass: r == e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), loose);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "toBeSame")
+        .ok_or_else(|| "expected a refused toBeSame assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::Unknown);
+    assert!(
+        !assertion.compares_reference_identity,
+        "a refused custom matcher must not carry identity, got {assertion:?}"
+    );
+    let finding = settings_finding("identity-copy-loose-custom", loose, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // A literal expected value still pins a branch, not the returned object.
+    let literal = "import { ready } from \"../src/settings\";\nexpect.extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(null);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), literal);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "toBeSame")
+        .ok_or_else(|| "expected a toBeSame(null) assertion".to_string())?;
+    assert!(assertion.compares_reference_identity);
+    assert!(
+        !assertion.has_dynamic_matcher_arg,
+        "toBeSame(null) must keep the literal exclusion, got {assertion:?}"
+    );
+    let finding = settings_finding("identity-copy-custom-literal", literal, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // #7916 remains refused: a comment between `expect` and `.extend` is not
+    // credited, so this PR must not loosen that guard to pass identity.
+    let commented = "import { ready } from \"../src/settings\";\nexpect /* token */ .extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";
+    let tests = extract_tests(Path::new("tests/settings.test.ts"), commented);
+    let assertion = tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .find(|assertion| assertion.matcher == "toBeSame")
+        .ok_or_else(|| "expected a commented-extend toBeSame assertion".to_string())?;
+    assert_eq!(assertion.oracle_kind, OracleKind::Unknown);
+    assert!(!assertion.compares_reference_identity);
+    let finding = settings_finding("identity-copy-comment-extend", commented, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
 #[test]
 fn identity_pin_counts_only_oracle_relations() -> Result<(), String> {
     let source = "test(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBe(cfg);\n});\n";

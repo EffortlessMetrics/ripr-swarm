@@ -664,6 +664,16 @@ pub(crate) fn expect_assertion_from_expression(
 
     let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
+    // RIPR-SPEC-0262: the file's own matcher passes only on `===`. The same
+    // credit carries reference identity for RIPR-SPEC-0246 rule 1; `toEqual`
+    // is also `exact_value` and must not inherit that property.
+    let credited_strict_custom = async_modifier != Some("rejects")
+        && bindings.strict_matchers.iter().any(|name| name == matcher)
+        && outer_call.arguments.len() == 1
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(|argument| argument.as_expression().is_some());
     let (mut oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
     } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
@@ -673,19 +683,14 @@ pub(crate) fn expect_assertion_from_expression(
     } else if inline_snapshot_is_literal(matcher, outer_call) {
         // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
         (OracleKind::Snapshot, OracleStrength::Strong)
-    } else if async_modifier != Some("rejects")
-        && bindings.strict_matchers.iter().any(|name| name == matcher)
-        && outer_call.arguments.len() == 1
-        && outer_call
-            .arguments
-            .first()
-            .is_some_and(|argument| argument.as_expression().is_some())
-    {
-        // RIPR-SPEC-0262: the file's own matcher passes only on `===`.
+    } else if credited_strict_custom {
         (OracleKind::ExactValue, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
     };
+    let compares_reference_identity =
+        TypeScriptAssertion::built_in_compares_reference_identity(matcher)
+            || credited_strict_custom;
 
     // Oracle metadata (RIPR-SPEC-0085 §PR5).
     // Extract observed_expression from the first argument of `expect(...)`.
@@ -737,6 +742,7 @@ pub(crate) fn expect_assertion_from_expression(
         oracle_confidence,
         rendered_call,
         loose_number_expected: false,
+        compares_reference_identity,
     })
 }
 
@@ -805,6 +811,9 @@ pub(crate) fn ava_assertion_from_expression(
         oracle_confidence,
         rendered_call: None,
         loose_number_expected: false,
+        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
+            method,
+        ),
     })
 }
 
@@ -1451,6 +1460,9 @@ fn assert_call_assertion(
         oracle_confidence,
         rendered_call: Some(rendered_call),
         loose_number_expected,
+        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
+            method,
+        ),
     })
 }
 
@@ -1746,6 +1758,9 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_confidence,
         rendered_call: Some(rendered),
         loose_number_expected: false,
+        compares_reference_identity: TypeScriptAssertion::built_in_compares_reference_identity(
+            terminal,
+        ),
     })
 }
 

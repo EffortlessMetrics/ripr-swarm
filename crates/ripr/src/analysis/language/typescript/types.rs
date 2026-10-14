@@ -475,6 +475,22 @@ pub(crate) struct TypeScriptAssertion {
     /// credits it against an owner declared to return `number`
     /// (`ts_typed_loose_number_facts`).
     pub(crate) loose_number_expected: bool,
+    /// Whether this matcher compares objects by reference identity
+    /// (`===` / `Object.is`), so RIPR-SPEC-0246 rule 1 can pin a
+    /// copy-for-identity change. Built-in `toBe`, `strictEqual`, and AVA
+    /// `is` are true. A RIPR-SPEC-0262 credited custom matcher is true
+    /// because its `pass` requires `received === expected`. `toEqual` and
+    /// other `exact_value` matchers stay false: sharing a kind is not
+    /// identity. A refused or non-strict custom matcher stays false.
+    pub(crate) compares_reference_identity: bool,
+}
+
+impl TypeScriptAssertion {
+    /// Built-in matchers that compare objects by identity. `toEqual` shares
+    /// `exact_value` with `toBe` and is not included.
+    pub(crate) fn built_in_compares_reference_identity(matcher: &str) -> bool {
+        matches!(matcher, "toBe" | "strictEqual" | "is")
+    }
 }
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the
