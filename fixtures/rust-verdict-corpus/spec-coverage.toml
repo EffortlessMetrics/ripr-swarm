@@ -554,6 +554,12 @@ id = "RIPR-SPEC-0256"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 
+# TypeScript committed snapshot entry
+[[spec]]
+id = "RIPR-SPEC-0258"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # In-scope specs that corpus cases cite but whose acceptance examples are
 # prose, not numbered. Reported as `unmeasured_specs`; never counted.
 

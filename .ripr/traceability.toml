@@ -10915,6 +10915,9 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_fails_closed_without_owner_identity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_foreign_type_names_and_quoted_paths",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages",
   "crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::qualified_calls_settle_on_the_module_they_spell",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_use_import_settles_a_bare_call",
@@ -12276,6 +12279,7 @@ spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
@@ -12363,6 +12367,12 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_slice_method_name_resolves_to_the_slice_first",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::inherent_method_needs_a_receiver_of_its_own_type",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::bare_call_names_only_a_module_level_function",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pins_through_a_directly_imported_owner_type",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pin_refuses_other_names_for_the_type",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pin_refuses_a_cfg_gated_owner",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pin_refuses_a_longer_import_path",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pin_is_not_established_beside_a_competitor",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::associated_function_pin_resolves_the_importing_crate_through_manifests",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::bare_call_is_defeated_by_another_free_function_or_a_local_binding",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_needs_the_changed_tail_on_the_pinned_path",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::lexical_fallback_owner_is_not_established",
@@ -14207,6 +14217,10 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_bare_variant_imported_from_another_enum_is_not_read",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::uncased_variants_read_only_when_the_owner_file_declares_the_enum",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_later_uncased_arm_resolves_for_moved_input_credit",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::an_input_moved_onto_a_later_uncased_arm_exposes_the_narrowed_arm",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::a_later_arm_naming_an_associated_constant_earns_no_moved_input_credit",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::a_later_struct_constant_arm_earns_no_moved_input_credit",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_uncased_pattern_reads_only_through_the_bare_scrutinee_type",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::self_names_the_scrutinee_enum_only_in_its_own_impl",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::uncased_variants_need_an_unqualified_scrutinee_type",
@@ -14493,6 +14507,35 @@ outputs = [
 ]
 metrics = [
   "typescript_mock_object_argument_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0258"
+name = "TypeScript committed snapshot entry"
+spec = "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_jest_snapshot_entry_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_snapshot_keys_join_describe_titles_per_runner",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_without_its_committed_entry_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_whose_counter_cannot_be_named_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_location_or_update_override_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_input_differing_from_head_stays_medium",
+  "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
+  "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
+  "crates/ripr/src/analysis/committed_source.rs",
+  "crates/ripr/src/analysis/language/router.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md",
+]
+metrics = [
+  "typescript_committed_snapshot_mismatch",
 ]
 
 [[behavior]]
