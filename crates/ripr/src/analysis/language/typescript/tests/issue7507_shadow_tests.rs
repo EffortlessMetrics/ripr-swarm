@@ -477,6 +477,7 @@ fn issue7507_wrapped_reassignment_drops_owner() -> Result<(), String> {
     for source in [
         "export let price = (n: number) => n - 20;\nvoid (price = (n: number) => 140);\n",
         "export let price = (n: number) => n - 20;\n0 + (price = (n: number) => 140);\n",
+        "export let price = (n: number) => n - 20;\nawait (price = (n: number) => 140);\n",
     ] {
         let owners = owners_of_lib(source);
         if owners.iter().any(|owner| owner.name == "price") {
