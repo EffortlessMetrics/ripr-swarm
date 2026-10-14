@@ -5945,6 +5945,7 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
     // exit is not the other variant.
     let early_literal =
         with_exit("return Err(Config { retries: 4, name: \"x\".into(), count: Count(n) });");
+    assert!(whole_value_pin(&early_literal, "parse", &tests).1.is_some());
     for rebinding in [
         "#[allow(non_snake_case)]\npub fn Err(c: Config) -> Result<Config, String> {\n    Ok(c)\n}\n",
         "use std::result::Result::Ok as Err;\n",
@@ -5953,6 +5954,22 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
         let (_, pin) = whole_value_pin(&lib, "parse", &tests);
         assert!(pin.is_none(), "{lib}");
     }
+    // #7940 review: a std-rooted alias inside the owner itself also rebinds.
+    let signature = "pub fn parse(s: &str) -> Result<Config, String> {\n";
+    let local = early_literal.replace(
+        signature,
+        &format!("{signature}    use std::result::Result::Ok as Err;\n"),
+    );
+    assert_ne!(local, early_literal);
+    let (_, pin) = whole_value_pin(&local, "parse", &tests);
+    assert!(pin.is_none(), "{local}");
+    // So does a rebound `None` beside a `Some` tail.
+    let none_const = format!(
+        "#[allow(non_upper_case_globals)]\npub const None: Option<u32> = Some(1);\n{}",
+        maybe_with("return None;")
+    );
+    let (_, pin) = whole_value_pin(&none_const, "maybe", &maybe_tests);
+    assert!(pin.is_none(), "{none_const}");
 }
 
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
