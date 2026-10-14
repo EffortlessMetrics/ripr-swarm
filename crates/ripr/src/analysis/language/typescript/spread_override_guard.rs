@@ -8,6 +8,8 @@
 //! change is one such field keeps its credit only when an observed owner
 //! call passes an input that lacks the field or holds another literal there.
 
+use super::{identifier_offsets, ts_mask_literals_and_comments, ts_members_written};
+
 /// The field one side of the change sets after spreading `subject` and the
 /// other side lacks: `return { ...x, k: L }` against `return { ...x }` (other
 /// entries equal), in either direction.
@@ -155,14 +157,95 @@ pub(crate) fn ts_test_local_object(body: &str, name: &str) -> Option<String> {
             if keyword != "const" || found.is_some() {
                 return None;
             }
-            let initializer = tail.trim_start().strip_prefix('=')?.trim_start();
+            let initializer = skip_type_annotation(tail.trim_start())?
+                .strip_prefix('=')?
+                .trim_start();
             if !initializer.starts_with('{') {
                 return None;
             }
             found = Some(balanced_object(initializer)?.to_string());
         }
     }
+    // A member written later (`cfg.ok = false`), or a callback parameter of
+    // the same name, means the call may not see the bound literal.
+    let masked = ts_mask_literals_and_comments(body);
+    if ts_members_written(&masked, name, false) || bound_as_parameter(&masked, name) {
+        return None;
+    }
     found
+}
+
+/// The text after a `: Type` annotation (up to the top-level `=` that is no
+/// `=>`, `==` or `>=`), or `text` itself when no annotation opens it.
+fn skip_type_annotation(text: &str) -> Option<&str> {
+    let Some(annotation) = text.strip_prefix(':') else {
+        return Some(text);
+    };
+    let mut depth = 0usize;
+    let mut previous = ' ';
+    for (at, ch) in annotation.char_indices() {
+        match ch {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' if previous != '=' => depth = depth.saturating_sub(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0
+                && !annotation[at + 1..].starts_with(['>', '='])
+                && !matches!(previous, '=' | '!' | '<' | '>') =>
+            {
+                return Some(&annotation[at..]);
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    None
+}
+
+/// `true` when `name` is a parameter of a function or arrow written in the
+/// masked body: `name => ...`, `(a, name) => ...` or `function f(name)`.
+fn bound_as_parameter(masked: &str, name: &str) -> bool {
+    identifier_offsets(masked, name).into_iter().any(|at| {
+        let after = &masked[at + name.len()..];
+        if after.trim_start().starts_with("=>") {
+            return true;
+        }
+        let mut depth = 0usize;
+        let Some(open) = masked[..at].char_indices().rev().find_map(|(index, c)| {
+            match c {
+                ')' | ']' | '}' => depth += 1,
+                '(' if depth == 0 => return Some(index),
+                '(' | '[' | '{' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            None
+        }) else {
+            return false;
+        };
+        let mut depth = 0usize;
+        let Some(close) = masked[open..].char_indices().find_map(|(index, c)| {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(open + index + 1);
+                    }
+                }
+                _ => {}
+            }
+            None
+        }) else {
+            return false;
+        };
+        let follows = masked[close..].trim_start();
+        let head = masked[..open].trim_end();
+        let word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+        // `(name): T => ...` is an arrow; `owner(name) : x` ends a ternary.
+        follows.starts_with("=>")
+            || (follows.starts_with(':') && !head.ends_with(word))
+            || head.ends_with("function")
+            || head.trim_end_matches(word).trim_end().ends_with("function")
+    })
 }
 
 /// The entries of `return { ... }` on one line, trimmed.
@@ -216,15 +299,18 @@ fn balanced_object(text: &str) -> Option<&str> {
 /// comma allowed. A comment inside the object refuses the read.
 fn object_entries(object: &str) -> Option<Vec<String>> {
     let inner = object.strip_prefix('{')?.strip_suffix('}')?;
-    if inner.contains("//") || inner.contains("/*") {
-        return None;
-    }
     let mut entries = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;
+    let mut slash = false;
     for ch in inner.chars() {
+        // A comment outside a string could hide or fake entries.
+        let after_slash = std::mem::replace(&mut slash, quote.is_none() && ch == '/');
+        if after_slash && (ch == '/' || ch == '*') {
+            return None;
+        }
         if let Some(open) = quote {
             current.push(ch);
             if escaped {
@@ -334,6 +420,12 @@ mod tests {
         let added =
             SpreadOverride::read("return {...cfg, a: 1}", "return {...cfg, ok: \"y\", a: 1}");
         assert_eq!(added.map(|o| o.key), Some("ok".to_string()));
+        // A quoted key, and a `//` inside a string, still read.
+        let quoted = SpreadOverride::read(
+            r#"return { ...cfg, url: "http://x", "ok": true };"#,
+            r#"return { ...cfg, url: "http://x" };"#,
+        );
+        assert_eq!(quoted.map(|o| o.key), Some("ok".to_string()));
         for (old, new) in [
             // a replaced value, not a dropped field
             (
@@ -365,6 +457,14 @@ mod tests {
                 "return { ...cfg, ok: true /* , x: 1 */ };",
                 "return { ...cfg };",
             ),
+            // a comment on its own entry would otherwise read as one field
+            (
+                "return { ...cfg, ok: true, // x\n };",
+                "return { ...cfg, };",
+            ),
+            // an escape or quote inside the string is not read
+            (r#"return { ...cfg, ok: "a\"b" };"#, "return { ...cfg };"),
+            ("return { ...cfg, ok: 'it\\'s' };", "return { ...cfg };"),
         ] {
             assert_eq!(SpreadOverride::read(old, new), None, "{old} -> {new}");
         }
@@ -387,6 +487,9 @@ mod tests {
             (r#"{ ["o" + "k"]: false }"#, OverrideInput::Unknown),
             (r#"{ get ok() { return false; } }"#, OverrideInput::Unknown),
             (r#"{ ok: true /* real: false */ }"#, OverrideInput::Unknown),
+            (r#"{ url: "http://x", ok: true }"#, OverrideInput::Carries),
+            (r#"{ url: "http://x" }"#, OverrideInput::Differs),
+            (r#"{ ok: "a\"b" }"#, OverrideInput::Unknown),
             ("cfg", OverrideInput::Unknown),
         ] {
             assert_eq!(change.input(object), expected, "{object}");
@@ -402,17 +505,73 @@ mod tests {
     }
 
     #[test]
+    fn an_owner_that_writes_or_passes_on_its_parameter_is_seen() {
+        let written = |text: &str, any_call: bool| {
+            ts_members_written(&ts_mask_literals_and_comments(text), "cfg", any_call)
+        };
+        for text in [
+            "cfg.ok = false;",
+            "cfg?.inner.ok += 1;",
+            "cfg[\"ok\"] = false;",
+            "cfg.count++;",
+            "++cfg.count;",
+            "cfg!.ok ??= true;",
+            "delete cfg.ok;",
+            "Object.assign(cfg, extra);",
+            "Object.defineProperty(cfg, \"ok\", d);",
+        ] {
+            assert!(written(text, false), "{text}");
+        }
+        for text in [
+            "return { ...cfg, ok: cfg.ok };",
+            "if (cfg.ok === true) { return cfg.name; }",
+            "const n = cfg.count + 1;",
+            "log(\"cfg.ok = false\");",
+            "other.cfg = 1;",
+            "normalize(cfg);",
+            "check({ ...cfg });",
+        ] {
+            assert!(!written(text, false), "{text}");
+        }
+        assert!(written("normalize(cfg);", true));
+        assert!(written("normalize(a, cfg);", true));
+        assert!(!written("check({ ...cfg });", true));
+        assert!(!written("if (cfg) { return 1; }", true));
+    }
+
+    #[test]
     fn reads_a_test_local_bound_once_to_an_object_literal() {
         let body = "const cfg = { name: \"bo\", ok: true };\n  expect(markOk(cfg)).toEqual(cfg);";
         assert_eq!(
             ts_test_local_object(body, "cfg").as_deref(),
             Some("{ name: \"bo\", ok: true }")
         );
+        assert_eq!(
+            ts_test_local_object("const cfg: Settings = { ok: true };", "cfg").as_deref(),
+            Some("{ ok: true }")
+        );
+        assert_eq!(
+            ts_test_local_object(
+                "const cfg: Map<string, () => boolean> = { ok: true };",
+                "cfg"
+            )
+            .as_deref(),
+            Some("{ ok: true }")
+        );
         for body in [
             "let cfg = { ok: true };",
             "const cfg = load();",
             "const cfg = { ok: true }; { const cfg = { ok: false }; }",
             "var cfg = { ok: true };",
+            // a member written later, or the binding handed to a mutator
+            "const cfg = { ok: true }; cfg.ok = false;",
+            "const cfg = { ok: true }; cfg[\"ok\"] ||= false;",
+            "const cfg = { ok: true }; delete cfg.ok;",
+            "const cfg = { ok: true }; Object.assign(cfg, { ok: false });",
+            // a callback parameter of the same name shadows the binding
+            "const cfg = { ok: true }; [{}].forEach((cfg) => check(ready(cfg)));",
+            "const cfg = { ok: true }; [{}].forEach(cfg => check(ready(cfg)));",
+            "const cfg = { ok: true }; [{}].forEach(function (cfg) { check(ready(cfg)); });",
         ] {
             assert_eq!(ts_test_local_object(body, "cfg"), None, "{body}");
         }
@@ -420,5 +579,18 @@ mod tests {
             ts_test_local_object("const cfgs = { ok: true };", "cfg"),
             None
         );
+        // Reading a member, passing the binding to a call, or a ternary
+        // after a call keeps the read.
+        for body in [
+            "const cfg = { ok: true }; expect(ready(cfg).ok).toBe(cfg.ok);",
+            "const cfg = { ok: true }; const r = flag ? ready(cfg) : null;",
+            "const cfg = { ok: true }; if (cfg.ok == true) { log(cfg); }",
+        ] {
+            assert_eq!(
+                ts_test_local_object(body, "cfg").as_deref(),
+                Some("{ ok: true }"),
+                "{body}"
+            );
+        }
     }
 }

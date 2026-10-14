@@ -144,23 +144,32 @@ same spread `...x` of an owner parameter `x`, and one side has exactly one
 more entry `k: L`, a plain or quoted key with a literal value (a number,
 a string with no escape and no quote character inside, `true`, `false`
 or `null`; numbers compare by value and sign, so `-0` is not `0`), the change only sets
-or drops that field. Other entries must match in order, hold no second
-spread and no second `k`, and the object may hold no comment. The owner
-must never rebind `x` (the RIPR-SPEC-0248 rule 1 stability check). An
-input whose `k` already holds `L` comes back equal on both versions,
-however exact the matcher is.
+or drops that field. Other entries must be `key: value` pairs (a
+shorthand entry stops the rule), match in order, and hold no second
+spread and no second `k`; the object may hold no comment outside a
+string. The owner must never rebind `x` (the RIPR-SPEC-0248 rule 1
+stability check), write or delete a member of `x`, or pass `x` itself to
+a call, since the object it spreads would then not be the input the test
+wrote. An input whose `k` already holds `L` comes back equal on both
+versions, however exact the matcher is.
 
 The rule reads every owner call whose whole result a strong
 `exact_value`, `whole_object_equality` or snapshot assertion observes (as
 RIPR-SPEC-0248 rule 1 does). Its argument for `x` is read when it is an
 object literal, inline or a name the test binds once by
-`const name = { ... }` and by no `let` or `var`.
+`const name = { ... }` (a type annotation is allowed) and by no `let` or
+`var`. A name whose member the test writes, deletes or hands to
+`Object.assign`, or that a callback in the test also takes as a
+parameter, cannot be read.
 That input lacks the field when it has no `k` entry and no spread,
 computed, method or accessor entry, or when its last `k` entry holds
-another literal. If one observed input lacks the field, the ladder result
-stands. Otherwise, when at least one call is observed, an `exposed`
-ladder result reads `weakly_exposed`, whether every input carries `k: L`
-or some input cannot be read. With no observed call the ladder result
+another literal. A strong assertion on the `k` member of an owner call
+(`owner(cfg).k`, `owner(cfg)?.k`, `owner(cfg)["k"]`) also counts when its
+input lacks the field; on any other input it is not an observation. If
+one such input lacks the field, the ladder result stands. Otherwise, when
+at least one whole-result call is observed, an `exposed` ladder result
+reads `weakly_exposed`, whether every input carries `k: L` or some input
+cannot be read. With no observed whole-result call the ladder result
 stands. Rule 3 runs after RIPR-SPEC-0243 rule 8 and before RIPR-SPEC-0248
 rule 1, on the same value seams.
 
@@ -199,9 +208,16 @@ and the rejected alternative.
    With no observed call the ladder stands, so a test that only asserts a
    member (`expect(ready(cfg).ok).toBe(true)`) keeps its credit, even when
    its input already carries the field: that case remains a known false
-   `exposed`. The input read is textual: a field written after the binding
-   (`cfg.ok = true`) or a binding in another scope can make an input read
-   as lacking the field, which keeps the ladder result (no new credit). Rejected:
+   `exposed`. The input read is textual. A member written after the
+   binding, or a callback parameter of the same name, makes the input
+   unreadable (`weakly_exposed`), and so does an input it cannot read,
+   such as an escaped string or `undefined`: both remove credit, never add
+   it. A binding in an outer scope that an inner one shadows, or a member
+   written through an alias, can still make an input read as lacking the
+   field, which keeps the ladder result (no new credit). Member pins
+   through a local (`const r = owner(cfg); expect(r.ok)`) and
+   `toHaveProperty` / `toMatchObject` assertions are not read as witnesses,
+   so an input they would separate can still be demoted. Rejected:
    leave example 3 at `exposed`, which credits a test that passes on both
    versions; and demote every dropped override, which would remove credit
    from tests whose input lacks the field.
@@ -267,12 +283,17 @@ and the rejected alternative.
 13. As example 3 with `const cfg = load()` or `const cfg = { ...base }`:
     `weakly_exposed`. Dropping two fields (`{ ...cfg, ok: true, extra: 1 }`
     to `{ ...cfg }`) is not rule 3.
+14. As example 3 with `const cfg: Settings = { name: "bo" }`, or with a
+    second assertion `expect(markOk({ name: "bo" }).ok).toBe(true)`:
+    `exposed`. With `cfg.ok = false` written after the binding:
+    `weakly_exposed`. With an owner that runs `cfg.ok = false` or
+    `normalize(cfg)` before the return: the ladder result, `exposed`.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 13; `spread_override_guard.rs` unit tests pin the
-  rule 3 shape and input reads.
+  pins examples 1 to 14; `spread_override_guard.rs` unit tests pin the
+  rule 3 shape, input reads and member-write detection.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows.
 
 ## Implementation Mapping
@@ -287,8 +308,9 @@ and the rejected alternative.
   `expect_assertion_from_expression` sets the property for a credited
   RIPR-SPEC-0262 matcher; `collect_nested_callback_assertions` (rule 2).
 - `crates/ripr/src/analysis/language/typescript/spread_override_guard.rs`:
-  `SpreadOverride`, `ts_test_local_object`; `classifier.rs`:
-  `ts_spread_override_unseen` (rule 3).
+  `SpreadOverride`, `ts_test_local_object`; `dropped_term_guard.rs`:
+  `ts_members_written`; `classifier.rs`: `ts_spread_override_unseen`,
+  `ts_owner_call_member_arguments` (rule 3).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 

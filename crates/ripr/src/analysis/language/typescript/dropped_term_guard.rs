@@ -249,6 +249,117 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
     })
 }
 
+/// RIPR-SPEC-0246 rule 3: `true` when the masked text `masked` changes a
+/// member of `name` in place: it writes one (`name.k = v`, `name[k] += v`,
+/// `name.k++`), deletes one (`delete name.k`), or hands `name` to
+/// `Object.assign` / `Object.defineProperty`. With `any_call`, passing `name`
+/// whole to any call counts too, since the callee could write a member.
+pub(crate) fn ts_members_written(masked: &str, name: &str, any_call: bool) -> bool {
+    identifier_offsets(masked, name).into_iter().any(|at| {
+        let before = masked[..at].trim_end();
+        if before
+            .strip_suffix("delete")
+            .is_some_and(|head| !head.ends_with(is_identifier_part))
+            || before.ends_with("++")
+            || before.ends_with("--")
+        {
+            return true;
+        }
+        let after = &masked[at + name.len()..];
+        if let Some(rest) = after_member_path(after) {
+            let rest = rest.trim_start();
+            return rest.starts_with("++") || rest.starts_with("--") || assigns_after(rest);
+        }
+        call_argument_callee(masked, at).is_some_and(|callee| {
+            any_call || callee == "Object.assign" || callee == "Object.defineProperty"
+        })
+    })
+}
+
+/// The text after a non-empty member path (`.k`, `?.k`, `[e]`, `!`, in any
+/// order) at the start of `after`, or `None` when no member follows.
+fn after_member_path(after: &str) -> Option<&str> {
+    let mut rest = after;
+    let mut stepped = false;
+    loop {
+        let trimmed = rest.trim_start();
+        let next = if let Some(tail) = trimmed.strip_prefix("?.") {
+            if tail.trim_start().starts_with('[') {
+                tail.trim_start()
+            } else {
+                skip_identifier(tail.trim_start())?
+            }
+        } else if let Some(tail) = trimmed.strip_prefix('.') {
+            skip_identifier(tail.trim_start())?
+        } else if trimmed.starts_with('[') {
+            let mut depth = 0usize;
+            let end = trimmed.char_indices().find_map(|(index, c)| {
+                match c {
+                    '[' | '(' | '{' => depth += 1,
+                    ']' | ')' | '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            return Some(index + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            })?;
+            &trimmed[end..]
+        } else if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+            &trimmed[1..]
+        } else {
+            return stepped.then_some(rest);
+        };
+        stepped = true;
+        rest = next;
+    }
+}
+
+fn skip_identifier(text: &str) -> Option<&str> {
+    let end = text
+        .char_indices()
+        .find(|(_, c)| !is_identifier_part(*c))
+        .map_or(text.len(), |(index, _)| index);
+    (end > 0).then(|| &text[end..])
+}
+
+/// The callee (`f`, `a.b`) of the call whose argument list holds the name at
+/// `at` directly (not inside an object, array or nested function), or `None`
+/// when the name is no call argument. `if (x)`, `while (x)` and the like are
+/// no calls.
+fn call_argument_callee(masked: &str, at: usize) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, c) in masked[..at].char_indices().rev() {
+        match c {
+            ')' | ']' | '}' => depth += 1,
+            '(' if depth == 0 => {
+                open = Some(index);
+                break;
+            }
+            '[' | '{' if depth == 0 => return None,
+            '(' | '[' | '{' => depth -= 1,
+            ';' if depth == 0 => return None,
+            _ => {}
+        }
+    }
+    let head = masked[..open?].trim_end();
+    let start = head
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_identifier_part(*c) || *c == '.')
+        .last()
+        .map(|(index, _)| index)?;
+    let callee = &head[start..];
+    (!matches!(
+        callee,
+        "if" | "while" | "for" | "switch" | "catch" | "return" | "typeof" | "await"
+    ) && !callee.is_empty())
+    .then_some(callee)
+}
+
 /// `true` when `after` (the text after a name) opens with an assignment
 /// operator: `=`, a compound `op=`, or a logical `&&=` / `||=` / `??=`,
 /// however the right-hand side starts (`fee=-0` assigns).

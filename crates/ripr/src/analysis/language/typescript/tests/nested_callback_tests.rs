@@ -140,20 +140,31 @@ const SETTINGS: &str = "export function ready(cfg: { ok: boolean }) {\n  return 
 const SETTINGS_LINE: (usize, &str) = (2, "  return { ...cfg };");
 
 fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, String> {
+    settings_finding_in(label, SETTINGS, SETTINGS_LINE, test, removed)
+}
+
+/// `settings_finding` with another owner source and changed line.
+fn settings_finding_in(
+    label: &str,
+    source: &str,
+    line: (usize, &str),
+    test: &str,
+    removed: &str,
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
-    ts_write_file(&root.join("src/settings.ts"), SETTINGS)?;
+    ts_write_file(&root.join("src/settings.ts"), source)?;
     ts_write_file(&root.join("tests/settings.test.ts"), test)?;
     let changed = ChangedFile {
         path: PathBuf::from("src/settings.ts"),
         added_lines: vec![crate::analysis::diff::ChangedLine {
-            line: SETTINGS_LINE.0,
-            text: SETTINGS_LINE.1.to_string(),
-            new_side_line: SETTINGS_LINE.0,
+            line: line.0,
+            text: line.1.to_string(),
+            new_side_line: line.0,
         }],
         removed_lines: vec![crate::analysis::diff::ChangedLine {
-            line: SETTINGS_LINE.0,
+            line: line.0,
             text: removed.to_string(),
-            new_side_line: SETTINGS_LINE.0,
+            new_side_line: line.0,
         }],
     };
     let result = TypeScriptAdapter.analyze_diff(
@@ -165,7 +176,7 @@ fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, S
     result?
         .findings
         .into_iter()
-        .find(|finding| finding.probe.location.line == SETTINGS_LINE.0)
+        .find(|finding| finding.probe.location.line == line.0)
         .ok_or_else(|| format!("{label}: expected a finding on the changed line"))
 }
 
@@ -299,13 +310,116 @@ fn spread_override_needs_an_input_that_lacks_the_field() -> Result<(), String> {
             "const cfg = { ...base };\n  expect(ready(cfg)).toEqual(cfg);",
             ExposureClass::WeaklyExposed,
         ),
+        // A typed binding and a `//` inside a string still read.
+        (
+            "spread-typed-local-lacks",
+            "const cfg: Settings = { name: \"bo\" };\n  expect(ready(cfg)).toEqual({ name: \"bo\", ok: true });",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-typed-local-carries",
+            "const cfg: Record<string, boolean> = { ok: true };\n  expect(ready(cfg)).toEqual(cfg);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-url-string",
+            "expect(ready({ url: \"http://x\" })).toEqual({ url: \"http://x\", ok: true });",
+            ExposureClass::Exposed,
+        ),
+        // An unreadable input does not cancel one that lacks the field.
+        (
+            "spread-unknown-and-lacks",
+            "const a = load();\n  expect(ready(a)).toEqual(a);\n  expect(ready({ name: \"bo\" })).toEqual({ name: \"bo\", ok: true });",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-strict-carries",
+            "expect(ready({ ok: true })).toStrictEqual({ ok: true });",
+            ExposureClass::WeaklyExposed,
+        ),
+        // A strong pin on the key itself sees an input that lacks the field;
+        // a pin on another member, or on an input that carries it, does not.
+        (
+            "spread-key-pin-lacks",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).ok).toBe(true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-key-bracket-pin-lacks",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" })[\"ok\"]).toBe(true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "spread-other-member-pin",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ name: \"bo\" }).name).toBe(\"bo\");",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "spread-key-pin-carries",
+            "expect(ready({ ok: true })).toEqual({ ok: true });\n  expect(ready({ ok: true }).ok).toBe(true);",
+            ExposureClass::WeaklyExposed,
+        ),
     ] {
         let finding = settings_finding(label, &test(body), "  return { ...cfg, ok: true };")?;
         assert_eq!(finding.class, expected, "{label}");
     }
+    // A member written after the binding makes the input unreadable, so the
+    // finding is not described as carrying the field.
+    let finding = settings_finding(
+        "spread-local-mutated",
+        &test(
+            "const cfg = { ok: true };\n  cfg.ok = false;\n  expect(ready(cfg)).toEqual({ ok: true });",
+        ),
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("no tested input is shown to lack it")),
+        "{:?}",
+        finding.missing
+    );
+    // The added direction reads the same way.
+    let added =
+        "export function ready(cfg: { ok: boolean }) {\n  return { ...cfg, ok: true };\n}\n";
+    let finding = settings_finding_in(
+        "spread-added-field",
+        added,
+        (2, "  return { ...cfg, ok: true };"),
+        &test("expect(ready({ ok: true })).toEqual({ ok: true });"),
+        "  return { ...cfg };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // An owner that writes, passes on or rebinds `cfg` keeps the ladder
+    // verdict: the input it spreads is not the input the test wrote.
+    for (label, source) in [
+        (
+            "spread-owner-writes",
+            "export function ready(cfg: { ok: boolean }) {\n  cfg.ok = false;\n  return { ...cfg };\n}\n",
+        ),
+        (
+            "spread-owner-passes",
+            "export function ready(cfg: { ok: boolean }) {\n  normalize(cfg);\n  return { ...cfg };\n}\n",
+        ),
+        (
+            "spread-owner-rebinds",
+            "export function ready(cfg: { ok: boolean }) {\n  cfg = { ok: false };\n  return { ...cfg };\n}\n",
+        ),
+    ] {
+        let finding = settings_finding_in(
+            label,
+            source,
+            (3, "  return { ...cfg };"),
+            &test("expect(ready({ ok: true })).toEqual({ ok: true });"),
+            "  return { ...cfg, ok: true };",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{label}");
+    }
     // Dropping two fields is not rule 3: the ladder verdict stands.
     let finding = settings_finding(
-        "spread-added",
+        "spread-two-fields",
         &test("expect(ready({ ok: true })).toEqual({ ok: true });"),
         "  return { ...cfg, ok: true, extra: 1 };",
     )?;

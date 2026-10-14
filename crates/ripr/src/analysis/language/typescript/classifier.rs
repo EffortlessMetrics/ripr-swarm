@@ -4900,11 +4900,11 @@ pub(crate) fn ts_spread_override_unseen(
     workspace_root: Option<&Path>,
 ) -> Option<&'static str> {
     let index = owner.params.iter().position(|p| p == &change.subject)?;
-    if !owner
-        .source_text
-        .as_deref()
-        .is_some_and(|source| ts_parameter_is_stable(source, &change.subject))
-    {
+    if !owner.source_text.as_deref().is_some_and(|source| {
+        ts_parameter_is_stable(source, &change.subject)
+            && masked_owner_body(source)
+                .is_some_and(|body| !ts_members_written(&body, &change.subject, true))
+    }) {
         return None;
     }
     let (mut carries, mut unknown) = (false, false);
@@ -4918,22 +4918,43 @@ pub(crate) fn ts_spread_override_unseen(
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
-            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
-                || !matches!(
-                    assertion.oracle_kind,
-                    OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
-                )
-            {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
                 continue;
             }
-            let Some(arguments) = ts_observed_owner_call_arguments(
-                candidate.test,
-                assertion,
-                &names,
-                owner,
-                &receivers,
-            ) else {
-                continue;
+            let whole = matches!(
+                assertion.oracle_kind,
+                OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+            )
+            .then(|| {
+                ts_observed_owner_call_arguments(
+                    candidate.test,
+                    assertion,
+                    &names,
+                    owner,
+                    &receivers,
+                )
+            })
+            .flatten();
+            // A strong pin on the key itself (`owner(cfg).ok`) also tells the
+            // versions apart when its input lacks the field; on any other
+            // input it neither witnesses nor observes the whole result.
+            let (arguments, member) = match whole {
+                Some(arguments) => (arguments, false),
+                None => match assertion
+                    .observed_expression
+                    .as_deref()
+                    .and_then(|observed| {
+                        ts_owner_call_member_arguments(
+                            observed,
+                            &names,
+                            owner,
+                            &receivers,
+                            &change.key,
+                        )
+                    }) {
+                    Some(arguments) => (arguments, true),
+                    None => continue,
+                },
             };
             let object = arguments.get(index).and_then(|argument| {
                 let argument = argument.trim();
@@ -4945,6 +4966,7 @@ pub(crate) fn ts_spread_override_unseen(
             });
             match object.map_or(OverrideInput::Unknown, |object| change.input(&object)) {
                 OverrideInput::Differs => return None,
+                _ if member => {}
                 OverrideInput::Carries => carries = true,
                 OverrideInput::Unknown => unknown = true,
             }
@@ -5141,6 +5163,75 @@ fn ts_whole_owner_call_arguments(
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
         .and_then(|rest| balanced_call_arguments(&rest[1..]))
+}
+
+/// RIPR-SPEC-0246 rule 3: the arguments of the owner call (named as
+/// `ts_whole_owner_call_arguments` names it) whose member `key` `observed`
+/// reads first: `owner(...).key`, `owner(...)?.key` or `owner(...)["key"]`,
+/// optionally followed by a deeper path. `None` for anything else.
+fn ts_owner_call_member_arguments(
+    observed: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+    key: &str,
+) -> Option<Vec<String>> {
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let qualified = receivers
+        .iter()
+        .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
+        .filter_map(|rest| rest.trim_start().strip_prefix('.'))
+        .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
+    let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
+    for rest in bare.chain(qualified).map(str::trim_start) {
+        if !rest.starts_with('(') {
+            continue;
+        }
+        let masked = ts_mask_literals_and_comments(rest);
+        let mut depth = 0usize;
+        let Some(end) = masked.char_indices().find_map(|(index, c)| {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(index + 1);
+                    }
+                }
+                _ => {}
+            }
+            None
+        }) else {
+            continue;
+        };
+        let tail = rest[end..].trim_start();
+        let optional = tail.strip_prefix("?.").map(str::trim_start);
+        let dotted = optional
+            .filter(|tail| !tail.starts_with('['))
+            .or_else(|| tail.strip_prefix('.').map(str::trim_start))
+            .and_then(|tail| tail.strip_prefix(key))
+            .is_some_and(|after| !after.starts_with(is_identifier_part));
+        let bracketed = optional
+            .unwrap_or(tail)
+            .strip_prefix('[')
+            .map(str::trim_start)
+            .and_then(|inner| {
+                ['"', '\''].into_iter().find_map(|quote| {
+                    inner
+                        .strip_prefix(quote)?
+                        .strip_prefix(key)?
+                        .strip_prefix(quote)
+                })
+            })
+            .is_some_and(|after| after.trim_start().starts_with(']'));
+        if dotted || bracketed {
+            return balanced_call_arguments(&rest[1..]);
+        }
+    }
+    None
 }
 
 /// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change
