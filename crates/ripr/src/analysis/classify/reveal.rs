@@ -878,7 +878,7 @@ fn analyze_related_assertions(
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
-        arm_helper_selected: false,
+        arm_lent_selected: false,
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
         sibling_excluded: false,
@@ -1153,8 +1153,8 @@ fn analyze_related_assertions(
                     .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
                 // A helper-lending test never names the owner, so the
                 // selector the mention filter dropped still reads its loan.
-                arm_helper_selected: unfiltered_arm_selector
-                    .is_some_and(|selector| selector.helper_loan_selects(test, assertion)),
+                arm_lent_selected: unfiltered_arm_selector
+                    .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
                 ..match_context
             };
@@ -1635,10 +1635,11 @@ struct RevealMatchContext<'a> {
     /// pattern pin (a verified local `assert_matches!`) whose value
     /// operand is a direct owner call selecting the arm.
     arm_pattern_pinned: bool,
-    /// RIPR-SPEC-0229 decision 5: the current assertion is borrowed from a
-    /// check helper (#6482) and an eager helper call feeds the owner call
-    /// in it an input that selects the arm.
-    arm_helper_selected: bool,
+    /// RIPR-SPEC-0229 decisions 5 and 7: an input lent to the owner call in
+    /// the current assertion selects the arm, either from an eager call of
+    /// the check helper (#6482) it is borrowed from or from a row of the
+    /// constant-row table (#5328) it loops over.
+    arm_lent_selected: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -2530,7 +2531,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_selector,
         arm_inputs_readable,
         arm_pattern_pinned,
-        arm_helper_selected,
+        arm_lent_selected,
         owner_scoped_tokens,
         owner_shadowed: _,
         sibling_excluded,
@@ -2645,7 +2646,7 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if arm_helper_selected && matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
         // RIPR-SPEC-0229 decision 5: the helper's owner call receives a
         // literal that selects the arm, under the same owner defeats.
         !import_defeats_owner && !cross_package_defeats_owner
@@ -2794,7 +2795,7 @@ fn assertion_matches_probe_detail(
             arm_selector: None,
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
-            arm_helper_selected: false,
+            arm_lent_selected: false,
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
@@ -5092,7 +5093,7 @@ mod tests {
                 arm_selector: None,
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
-                arm_helper_selected: false,
+                arm_lent_selected: false,
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
