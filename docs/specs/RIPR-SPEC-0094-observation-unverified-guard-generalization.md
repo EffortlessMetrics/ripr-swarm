@@ -257,11 +257,13 @@ projection passed by `&mut` in a direct owner call, for example
 
 - the owner body contains only the unconditional parameter `push`;
 - the asserted single tuple/named field and receiver referent are the same
-  standard `Vec` of unshadowed integer types admitted by the shared
+  standard prelude `Vec` or `std::vec::Vec` of unshadowed integer types admitted by the shared
   value-equality authority. Raw type bindings retain the same name identity.
   The same-file root is a uniquely bound direct struct construction, without
   competing constructor calls/values, generic declarations or field attributes.
-  Standard-library root bindings and the closed manifest authority must also
+  Constructor imports through another module refuse even when that module's
+  source is absent from the index; only direct local namespace imports qualify.
+  Standard-library root bindings and closed `std`/`core` manifest authority must also
   admit standard identity; qualified spelling alone is insufficient;
 - the shared free-call binding authority admits that exact called owner;
 - the test constructs the root value, then calls the owner and compares the

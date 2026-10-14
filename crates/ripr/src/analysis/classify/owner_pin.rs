@@ -4886,6 +4886,9 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     if !index
         .drop_in_manifests
         .unbound_standard_root(&test.file, "std")
+        || !index
+            .drop_in_manifests
+            .unbound_standard_root(&test.file, "core")
         || index.files().values().any(|facts| {
             let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
             let modules = declared_module_names(&masked);
@@ -4920,7 +4923,23 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
     if index.files().iter().any(|(file, facts)| {
         let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-        if file_aliases_type(&masked, constructor) || file_renames_to(&masked, constructor) {
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
             return true;
         }
         let Some(parsed) = parse_clean_source_file(&facts.source) else {
@@ -4991,7 +5010,7 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         let [element] = elements.as_slice() else {
             return None;
         };
-        (path_base_name(path) == Some("Vec")
+        (matches!(path, "Vec" | "std::vec::Vec" | "::std::vec::Vec")
             && INTEGER_TYPES.contains(element)
             && !index.files().values().any(|facts| {
                 let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
@@ -4999,6 +5018,14 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
                     declares_type(&masked, name)
                         || file_aliases_type(&masked, name)
                         || file_renames_to(&masked, name)
+                        || flattened_use_paths(&masked).iter().any(|import| {
+                            let segments: Vec<_> =
+                                import.path.trim_start_matches("::").split("::").collect();
+                            segments.first() == Some(&"alloc")
+                                && segments
+                                    .last()
+                                    .is_some_and(|last| *last == *name || *last == "*")
+                        })
                 })
             })
             && !declares_type(&declaring, "Vec")
