@@ -178,6 +178,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | Last segment | Kind / strength |
 | --- | --- |
 | `assertEqual`, `assertDictEqual` | `exact_value` / strong |
+| `assertListEqual` | `unknown`, shape `unknown_custom_helper`; the bounded standard unittest context in RIPR-SPEC-0028 promotes to `exact_value` / strong |
 | `assertIn`, `assertRegex`, `assertNotEqual` | `relational_check` / weak |
 | `assertTrue`, `assertFalse` | `smoke_only` / smoke |
 | `assertRaisesRegex` | `exact_error_variant` / strong |
@@ -195,7 +196,8 @@ code, field, boundary, exact, exception, mock, helper) is evidence only and
 never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3,
-12, 14 and 15 below as the only changes (rule 15 changes row 5 for `and`).
+12, 14 and 15 below and the RIPR-SPEC-0028 `assertListEqual` context as
+the changes (rule 15 changes row 5 for `and`).
 Rule 13 changes relations and, for pytest's callable form, reads `match=`
 as `broad_error`. Rule 17 reads a mock assertion
 as strong for one credit branch only; its table row is unchanged.

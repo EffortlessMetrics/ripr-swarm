@@ -474,6 +474,33 @@ mod tests {
     }
 
     #[test]
+    fn corpus_consumer_versions_match_live_cache_identity() -> Result<(), String> {
+        // These independently authored real-producer controls intentionally pin
+        // an expected generation. Bind both pins to the producer here so a
+        // cache bump cannot silently leave one consumer behind. Historical and
+        // unsupported-version negatives remain outside this current inventory.
+        for (consumer, source) in [
+            (
+                "xtask projection",
+                include_str!("../../../../xtask/src/tests/rust_corpus_projection.rs"),
+            ),
+            (
+                "LSP currentness",
+                include_str!("../../tests/lsp_lifecycle/gap_corpus_currentness.rs"),
+            ),
+        ] {
+            let expected = unique_const_str(source, "CURRENT_CORPUS_CACHE_SCHEMA_VERSION")?;
+            let live = crate::analysis::seam_cache::CACHE_SCHEMA_VERSION;
+            if expected != live {
+                return Err(format!(
+                    "{consumer} must track live corpus generation {live}, got {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn rerun_example_nested_versions_match_live_cache_identity() -> Result<(), String> {
         let doc = output_schema_doc()?;
         let example = fenced_json_after(&doc, "targeted-rerun receipt shape:")?;
