@@ -6,4 +6,4 @@
   and an owner no test reaches). The spec's seam-table, pilot and test-name
   examples (1 to 15, 20 to 22 and 27) are waived with reasons, so the spec is
   fully accounted for. Spec-example coverage moves from 112 of 144 to 120 of
-  125, and the ledger floor rises to 120 (#5411).
+  125, and the ledger floor rises to 120 (#7957).
