@@ -2637,7 +2637,7 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
                 let output = capture?;
                 if !output.timed_out || output.status.is_none_or(|status| status.success()) {
                     return Err(
-                        "physical timeout must retain its actual flag and killed status".into(),
+                        "physical timeout must retain its actual flag and terminated status".into(),
                     );
                 }
                 if output.stdout_bytes != 18
