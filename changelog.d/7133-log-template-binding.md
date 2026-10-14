@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The `rust_log_capture_unresolved` limit now binds to the changed record's own format template. A record with a `target:` or `key = value;` prefix reads its real template, the template's static text must appear in order inside one string literal of the assertion, and a template whose static text has no letters or digits (`"{}: {}"`) keeps the gap, so an assertion on a different record of the same owner no longer withholds the finding (#7133).

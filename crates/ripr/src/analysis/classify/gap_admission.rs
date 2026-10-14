@@ -288,9 +288,9 @@ fn captured_and_asserted_around(
         let (masked_assertion, string_quotes) =
             crate::analysis::extract::mask_with_string_delimiter_quotes(&operands);
         assertion.line > call_line
-            && fragments
+            && string_literal_contents(&operands)
                 .iter()
-                .all(|fragment| operands.contains(fragment.as_str()))
+                .any(|literal| contains_in_order(literal, fragments))
             && matches!(
                 assertion.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
@@ -298,6 +298,78 @@ fn captured_and_asserted_around(
             && string_quotes >= 2
             && !has_count_or_status_projection(&masked_assertion)
             && stores.iter().any(|store| names(&masked_assertion, store))
+    })
+}
+
+/// The raw contents of the plain string literals in `code`, skipping line
+/// and block comments and character literals.
+fn string_literal_contents(code: &str) -> Vec<String> {
+    let mut literals = Vec::new();
+    let mut chars = code.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                for skipped in chars.by_ref() {
+                    if skipped == '\n' {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = ' ';
+                for skipped in chars.by_ref() {
+                    if previous == '*' && skipped == '/' {
+                        break;
+                    }
+                    previous = skipped;
+                }
+            }
+            '\'' => {
+                // A character literal (`'"'`, `'\''`); a lifetime has no
+                // closing quote within two characters and is left alone.
+                let mut lookahead = chars.clone();
+                let first = lookahead.next();
+                let closes = if first == Some('\\') {
+                    lookahead.next();
+                    lookahead.next() == Some('\'')
+                } else {
+                    lookahead.next() == Some('\'')
+                };
+                if closes {
+                    chars = lookahead;
+                }
+            }
+            '"' => {
+                let mut literal = String::new();
+                while let Some(inner) = chars.next() {
+                    match inner {
+                        '\\' => {
+                            literal.push(inner);
+                            if let Some(escaped) = chars.next() {
+                                literal.push(escaped);
+                            }
+                        }
+                        '"' => break,
+                        _ => literal.push(inner),
+                    }
+                }
+                literals.push(literal);
+            }
+            _ => {}
+        }
+    }
+    literals
+}
+
+/// Whether every fragment occurs in `literal`, each after the previous one.
+fn contains_in_order(literal: &str, fragments: &[String]) -> bool {
+    let mut rest = literal;
+    fragments.iter().all(|fragment| {
+        rest.find(fragment.as_str()).is_some_and(|at| {
+            rest = &rest[at + fragment.len()..];
+            true
+        })
     })
 }
 
@@ -323,16 +395,70 @@ fn has_count_or_status_projection(masked: &str) -> bool {
         .any(|projection| masked.contains(projection))
 }
 
+/// The format-template argument of a `log::` macro call, starting at its
+/// opening quote: the first argument after an optional `target: <expr>,`
+/// and an optional `key = value, ..;` list. `None` when that argument is
+/// not a plain string literal, so the record cannot be bound to a test.
+fn log_template_literal(expression: &str) -> Option<&str> {
+    let open = expression.find("!(")? + 2;
+    let arguments = &expression[open..];
+    let (commas, semicolons) = top_level_separators(arguments);
+    let mut start = 0;
+    let leading = arguments.trim_start();
+    if leading
+        .strip_prefix("target")
+        .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    {
+        start = commas.first()? + 1;
+    }
+    if let Some(semicolon) = semicolons.iter().find(|at| **at >= start) {
+        start = semicolon + 1;
+    }
+    let template = arguments[start..].trim_start();
+    template.starts_with('"').then_some(template)
+}
+
+/// Byte offsets of the depth-zero `,` and `;` in macro `arguments`, outside
+/// string and character literals; scanning stops at the closing `)`.
+fn top_level_separators(arguments: &str) -> (Vec<usize>, Vec<usize>) {
+    let (mut commas, mut semicolons) = (Vec::new(), Vec::new());
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut chars = arguments.char_indices();
+    while let Some((at, ch)) = chars.next() {
+        if in_string {
+            match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => break,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => commas.push(at),
+            ';' if depth == 0 => semicolons.push(at),
+            _ => {}
+        }
+    }
+    (commas, semicolons)
+}
+
 /// The static text fragments of a `log::` record's format template
 /// (`"audited {}"` gives `["audited "]`). Empty when the template cannot be
 /// read or has no static text.
 fn log_template_fragments(expression: &str) -> Vec<String> {
-    let Some(open) = expression.find('"') else {
+    let Some(template) = log_template_literal(expression) else {
         return Vec::new();
     };
     let mut fragments = Vec::new();
     let mut current = String::new();
-    let mut chars = expression[open + 1..].chars().peekable();
+    let mut chars = template[1..].chars().peekable();
     let mut closed = false;
     while let Some(ch) = chars.next() {
         match ch {
@@ -369,10 +495,20 @@ fn log_template_fragments(expression: &str) -> Vec<String> {
         return Vec::new();
     }
     fragments.push(current);
-    fragments
+    let fragments: Vec<String> = fragments
         .into_iter()
         .filter(|fragment| !fragment.trim().is_empty())
-        .collect()
+        .collect();
+    // Static text of only spaces and punctuation (`"{}: {}"`) shows up in
+    // unrelated records, so it cannot bind the assertion to this record.
+    if fragments
+        .iter()
+        .any(|fragment| fragment.chars().any(char::is_alphanumeric))
+    {
+        fragments
+    } else {
+        Vec::new()
+    }
 }
 
 /// Plain-binding arguments of `log::set_logger(..)` /
@@ -1043,6 +1179,39 @@ mod tests {
     }
 
     #[test]
+    fn template_fragments_need_static_text_in_order() {
+        assert_eq!(
+            log_template_fragments("log::info!(\"{}: {}\", a, b);"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            log_template_fragments("log::info!(\"audited {}: ok\", a);"),
+            vec!["audited ".to_string(), ": ok".to_string()]
+        );
+        let ordered = ["audited".to_string(), "42".to_string()];
+        assert!(contains_in_order("audited 42", &ordered));
+        let reversed = ["42".to_string(), "audited".to_string()];
+        assert!(!contains_in_order("audited 42", &reversed));
+        let repeated = ["audited".to_string(), "audited".to_string()];
+        assert!(!contains_in_order("audited 42", &repeated));
+    }
+
+    #[test]
+    fn a_targeted_or_keyed_record_binds_its_own_template() {
+        let index = log_index();
+        for expression in [
+            "log::info!(target: \"audit\", \"audited {}\", amount * 7);",
+            "log::info!(user = \"bob\"; \"audited {}\", amount * 7);",
+        ] {
+            let mut finding = log_finding("audit_logs_the_scaled_amount", expression);
+            assert!(
+                withhold_log_capture_gap(&mut finding, &index, Some("audit")),
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
     fn an_uncaptured_or_misordered_log_test_keeps_the_gap() {
         let index = log_index();
         for test in [
@@ -1115,6 +1284,33 @@ mod tests {
         let mut other_record = log_finding(test, "log::info!(\"finished {}\", amount);");
         assert!(!withhold_log_capture_gap(
             &mut other_record,
+            &index,
+            Some("audit")
+        ));
+        let mut target_prefix = log_finding(
+            test,
+            "log::info!(target: \"audited\", \"finished {}\", amount);",
+        );
+        assert!(!withhold_log_capture_gap(
+            &mut target_prefix,
+            &index,
+            Some("audit")
+        ));
+        let mut identifier_fragment = log_finding(test, "log::warn!(\"lines\");");
+        assert!(!withhold_log_capture_gap(
+            &mut identifier_fragment,
+            &index,
+            Some("audit")
+        ));
+        let mut out_of_order = log_finding(test, "log::info!(\"42{}audited\", amount);");
+        assert!(!withhold_log_capture_gap(
+            &mut out_of_order,
+            &index,
+            Some("audit")
+        ));
+        let mut punctuation_only = log_finding(test, "log::info!(\"{}: {}\", a, b);");
+        assert!(!withhold_log_capture_gap(
+            &mut punctuation_only,
             &index,
             Some("audit")
         ));
