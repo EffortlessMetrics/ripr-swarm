@@ -736,6 +736,7 @@ pub(crate) fn expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call,
+        loose_number_expected: false,
     })
 }
 
@@ -803,6 +804,7 @@ pub(crate) fn ava_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: None,
+        loose_number_expected: false,
     })
 }
 
@@ -1404,6 +1406,14 @@ fn assert_call_assertion(
         oracle_kind = OracleKind::ExactValue;
         oracle_strength = OracleStrength::Strong;
     }
+    // Rule 2's typed amendment: `0` and `1` stay weak here, and the
+    // classifier credits them against an owner declared to return `number`.
+    let loose_number_literal = call
+        .arguments
+        .get(1)
+        .filter(|_| loose_equality && matches!(oracle_kind, OracleKind::RelationalCheck))
+        .and_then(|expected| finite_number_literal_text(expected, source));
+    let loose_number_expected = loose_number_literal.is_some();
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -1416,10 +1426,11 @@ fn assert_call_assertion(
         OracleKind::ExactValue | OracleKind::RelationalCheck
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) = match resolved_const {
-        Some(literal) => (Some(literal.to_string()), false),
-        None => expected_argument_metadata(expected_arg, source),
-    };
+    let (expected_value_or_variant, has_dynamic_matcher_arg) =
+        match resolved_const.or(loose_number_literal) {
+            Some(literal) => (Some(literal.to_string()), false),
+            None => expected_argument_metadata(expected_arg, source),
+        };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
     let rendered_call = match &error_payload {
@@ -1439,6 +1450,7 @@ fn assert_call_assertion(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered_call),
+        loose_number_expected,
     })
 }
 
@@ -1733,6 +1745,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         has_dynamic_matcher_arg,
         oracle_confidence,
         rendered_call: Some(rendered),
+        loose_number_expected: false,
     })
 }
 

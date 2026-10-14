@@ -97,7 +97,10 @@ pub use next_action::{
 pub(crate) use next_action::{
     NextActionAttemptView, NextActionInput, current_command_platform, select_canonical_next_action,
 };
-pub(crate) use probe::{ARM_UNSELECTED_REASON_PREFIX, exact_assertion_fact, input_boundary_fact};
+pub(crate) use probe::{
+    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
+    input_boundary_fact, is_unselected_input_reason,
+};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,

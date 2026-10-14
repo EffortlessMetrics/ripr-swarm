@@ -24,7 +24,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 111
+floor = 112
 
 # LSP Repair Packet Command
 [[spec]]
@@ -511,6 +511,12 @@ scope = "in"
 [[spec]]
 id = "RIPR-SPEC-0262"
 scope = "in"
+
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "out"
+reason = "Rust analyzer rule; its examples are Rust diffs and test shapes, so a TypeScript case cannot label them"
 
 # TypeScript Preview Static Facts
 [[unmeasured]]

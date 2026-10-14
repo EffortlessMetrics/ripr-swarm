@@ -2246,6 +2246,39 @@ fn has_effect_text(text: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+/// The expect-test comparison methods, called on an `expect![[..]]` or
+/// `expect_file![..]` value (bare or `expect_test::` qualified).
+const EXPECT_TEST_COMPARISONS: &[&str] = &["assert_eq", "assert_debug_eq"];
+
+pub(crate) fn is_expect_test_comparison(call: &ast::MethodCallExpr) -> bool {
+    call.name_ref().is_some_and(|name| {
+        EXPECT_TEST_COMPARISONS
+            .iter()
+            .any(|known| name.text() == *known)
+    }) && expect_test_receiver(call).is_some()
+}
+
+/// The receiver macro's path (`expect`, `expect_test::expect`, `expect_file`
+/// or `expect_test::expect_file`) when an expect-test comparison's receiver
+/// is that macro's invocation.
+pub(crate) fn expect_test_receiver(call: &ast::MethodCallExpr) -> Option<String> {
+    let ast::Expr::MacroExpr(receiver) = call.receiver()? else {
+        return None;
+    };
+    let path = receiver
+        .macro_call()?
+        .path()?
+        .syntax()
+        .text()
+        .to_string()
+        .replace(' ', "");
+    matches!(
+        path.as_str(),
+        "expect" | "expect_test::expect" | "expect_file" | "expect_test::expect_file"
+    )
+    .then_some(path)
+}
+
 fn is_effect_call_name(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
@@ -2348,6 +2381,68 @@ fn extract_parser_oracles(
         });
     }
 
+    // #6578: an expect-test comparison (`expect![[..]].assert_eq(actual)`)
+    // is a method call on the macro's value, which the macro walk above never
+    // sees. Its whole expression is the oracle, graded `snapshot` / medium
+    // (RIPR-SPEC-0231 step 6); the line scan below must
+    // not also read the `.assert_debug_eq(..)` continuation of a multi-line
+    // expectation as an assertion of its own.
+    let mut expect_test_lines = Vec::new();
+    for method_call in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+        .filter(is_expect_test_comparison)
+        // Only a statement or the tail of the function's own body: nested
+        // in `ready || { .. }`, a branch or a closure it may never run,
+        // which the classifier cannot see from the call text alone. The
+        // line scan below still reads those lines as it always has.
+        .filter(|call| {
+            let Some(parent) = call.syntax().parent() else {
+                return false;
+            };
+            let list = if parent.kind() == ra_ap_syntax::SyntaxKind::EXPR_STMT {
+                parent.parent()
+            } else {
+                Some(parent)
+            };
+            list.is_some_and(|list| {
+                function
+                    .body()
+                    .and_then(|body| body.stmt_list())
+                    .is_some_and(|own| own.syntax() == &list)
+            })
+        })
+    {
+        let range = method_call.syntax().text_range();
+        let assertion_text = slice_macro_call_text(text, range.start(), range.end());
+        // The parser verified the comparison's shape, so its `snapshot` /
+        // medium grade does not depend on the substring recognizer's
+        // spelling (`expect![..]`, `expect! [[..]]`, `.assert_eq (..)`, a
+        // call split across lines). That grade is a ceiling: a weaker
+        // reading of the compared value (a tautology, a broad `is_err()`)
+        // is kept, as the line scan keeps it.
+        let classification = classify_assertion(&assertion_text);
+        let (kind, strength) = if matches!(
+            classification.strength,
+            OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
+        ) {
+            (classification.kind, classification.strength)
+        } else {
+            (OracleKind::Snapshot, OracleStrength::Medium)
+        };
+        let line = line_index.line(range.start());
+        expect_test_lines.push(line..=line_index.line_for_range_end(range.end()));
+        assertions.push(OracleFact {
+            line,
+            kind,
+            strength,
+            observed_tokens: extract_identifier_tokens(&assertion_text),
+            text: assertion_text,
+            ok_value_observed: None,
+        });
+    }
+
     let function_start = line_index.line(function.syntax().text_range().start());
     // #3284: terminal Err-return guards credit as their assertion twins
     // on the parser path too, so both adapters agree.
@@ -2386,6 +2481,11 @@ fn extract_parser_oracles(
     for oracle in extract_line_scanned_oracles(&function_text, function_start)
         .into_iter()
         .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
+        .filter(|oracle| {
+            !expect_test_lines
+                .iter()
+                .any(|lines| lines.contains(&oracle.line))
+        })
     {
         assertions.push(oracle);
     }
