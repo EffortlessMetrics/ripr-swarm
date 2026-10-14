@@ -1949,9 +1949,8 @@ impl OwnerReturnPin {
         // nested `vec!` only as a single-element index.
         let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
         let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
-        let reads_assert_eq = renders
-            || indexes
-            || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
+        let reads_assert_eq =
+            renders || indexes || (!is_guard && is_plain_macro(&assertion.text, "assert_eq"));
         let equality = if reads_assert_eq {
             None
         } else {
@@ -6851,8 +6850,8 @@ fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a 
         // `_12` is an identifier, not a literal: the first byte is a digit.
         (text.as_bytes().first().is_some_and(u8::is_ascii_digit)
             && text.bytes().all(|b| b.is_ascii_digit() || b == b'_'))
-            .then(|| text.replace('_', "").parse().ok())
-            .flatten()
+        .then(|| text.replace('_', "").parse().ok())
+        .flatten()
     };
     let expected = decimal(expected)?;
     let operand = operand.trim();
@@ -6867,7 +6866,7 @@ fn exact_integer_projection<'a>(operand: &'a str, expected: &str) -> Option<&'a 
             && let Some(bound) = operand[at + method.len()..].strip_suffix(')')
             && let Some(bound) = decimal(bound)
         {
-            return keeps(expected, bound).then_some(&operand[..at]);
+            return keeps(expected, bound).then_some(operand[..at].trim_end());
         }
     }
     let after = |text: &'a str, operator: char, identity: char| {
@@ -6904,7 +6903,8 @@ fn single_element_index(operand: &str) -> Option<&str> {
         return None;
     }
     match split_top_level_arguments(inner)?.as_slice() {
-        [call] | [call, ""] => Some(call),
+        [call] => Some(call.trim()),
+        [call, rest] if rest.trim().is_empty() => Some(call.trim()),
         _ => None,
     }
 }

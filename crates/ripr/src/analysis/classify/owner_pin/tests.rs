@@ -7726,6 +7726,7 @@ fn an_integer_projection_that_keeps_the_value_pins() {
     for body in [
         "assert_eq!(crate::weight(4).min(100), 12);",
         "assert_eq!(12, crate::weight(4).min(1_000));",
+        "assert_eq!(crate::weight(4)\n            .min(100), 12);",
         "assert_eq!(crate::weight(4).max(3), 12);",
         "assert_eq!(crate::weight(4) * 1, 12);",
         "assert_eq!(1 * crate::weight(4), 12);",
@@ -7780,6 +7781,7 @@ fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
         "assert_eq!(vec![crate::weight(4)][0], 12);",
         "assert_eq!(12, vec![crate::weight(4)][0]);",
         "assert_eq!(vec![crate::weight(4),][0], 12);",
+        "assert_eq!(vec![\n            crate::weight(4),\n        ][0], 12);",
         "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
     ] {
         let lib = unit_tests("", body);
