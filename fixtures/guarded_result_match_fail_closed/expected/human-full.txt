@@ -98,7 +98,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  The related test `direct_owner_call_keeps_the_file_related` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
 Drill in:
   ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:4a5bf6b6
   ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:4a5bf6b6

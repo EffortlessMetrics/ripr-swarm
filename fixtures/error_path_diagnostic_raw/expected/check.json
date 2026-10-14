@@ -119,8 +119,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
-      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "recommended_next_step": "The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
+      "suggested_next_action": "The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

@@ -1,8 +1,8 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
+    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -78,6 +78,20 @@ pub(in crate::analysis) fn build_finding(
             Some(refused_assertion_next_step(
                 evidence.assertion_refusal.as_ref(),
             ))
+        } else if class == ExposureClass::WeaklyExposed
+            && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
+            && exact_error_variant(&context.probe.expression).is_none()
+            && let Some(step) = exact_oracle_gap_next_step(
+                context.probe,
+                &class,
+                &evidence.related_tests,
+                &evidence.activation.missing_discriminators,
+            )
+        {
+            // #7393: the family template presumes an assertion shape the
+            // related test does not have; the strongest related oracle is
+            // already exact, so name the input that is actually missing.
+            Some(step)
         } else {
             recommended_next_step(
                 context.probe,

@@ -15082,3 +15082,21 @@ outputs = [
   "schemas/ripr/check.schema.json",
 ]
 metrics = ["unit_test_pass_rate"]
+[[behavior]]
+id = "RIPR-SPEC-0259"
+name = "Next step follows the related oracle shape"
+spec = "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md"
+tests = [
+  "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_error_path",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_return_value",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::non_exact_oracle_keeps_the_family_template",
+]
+code = [
+  "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = ["unit_test_pass_rate"]
