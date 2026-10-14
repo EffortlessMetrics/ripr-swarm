@@ -9,6 +9,8 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/replacement_identity_tests.rs",
+  "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/slice_boundary.rs::unresolved_calls_cannot_credit_skipped_slice_rows",
   "crates/ripr/tests/slice_boundary.rs::fallible_slice_observations_cannot_credit_later_rows",
   "crates/ripr/tests/slice_boundary.rs::ignored_fallible_closure_cannot_credit_skipped_slice_rows",
