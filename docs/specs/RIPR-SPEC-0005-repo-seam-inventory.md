@@ -92,6 +92,13 @@ inclusions are consumed config for its artifact input identity, including when
 diff adapter selection excludes Rust: the inventory producer remains Rust-only.
 A before/after pair with different inclusion policy is not comparable.
 
+Classified cache reuse binds the effective typed producer-consumed configuration
+through the same canonical identity as repo-exposure artifacts. Changing an oracle
+strength while retaining identical raw configuration text, including absent text,
+invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
+current-input export keys agree on that identity. Raw configuration text remains
+an additional conservative invalidator; parser file facts remain oracle-policy-independent.
+
 ### Stable Seam ID Rules
 
 Seam IDs must be stable across runs and across input file walk reorderings.

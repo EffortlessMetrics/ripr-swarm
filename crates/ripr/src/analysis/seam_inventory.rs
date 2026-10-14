@@ -2336,7 +2336,7 @@ fn collect_workspace_state_from_files(
         workspace_root: root.to_path_buf(),
         files: sorted_files,
         files_content_hash: builder.finish(),
-        config_text: config.source_text().map(str::to_string),
+        config_text: Some(classified_config_identity(config)),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     })
@@ -2357,6 +2357,17 @@ fn scan_corpus_fingerprint(
     discover_analyzable_rust_corpus(root, config)
 }
 
+/// Bind classified reuse to the same effective producer-consumed configuration
+/// as repo-exposure artifacts. Retain raw text as an additional conservative
+/// invalidator; public typed overrides need not update that provenance text.
+fn classified_config_identity(config: &RiprConfig) -> String {
+    format!(
+        "{}\0{}",
+        crate::config::repo_exposure_config_identity_hash(config),
+        config.source_text().unwrap_or("")
+    )
+}
+
 /// Cache-key inputs other than the corpus content hash, in owned form so
 /// the fingerprint fast path can build a key without holding file bytes.
 struct WorkspaceKeyInputs {
@@ -2369,7 +2380,7 @@ struct WorkspaceKeyInputs {
 fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs {
     WorkspaceKeyInputs {
         cfg_features: std::env::var("RIPR_CFG_FEATURES").ok(),
-        config_text: config.source_text().map(str::to_string),
+        config_text: Some(classified_config_identity(config)),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
@@ -4780,6 +4791,291 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(out)
     }
 
+    #[test]
+    fn effective_oracle_policy_invalidates_classified_cache() -> Result<(), String> {
+        use crate::domain::{OracleKind, OracleStrength};
+        let mut stale_rows = Vec::new();
+        for loaded in [false, true] {
+            let root = make_tempdir(if loaded {
+                "policy-loaded"
+            } else {
+                "policy-absent"
+            })?;
+            struct OwnedRoot(PathBuf);
+            impl Drop for OwnedRoot {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+            let _owned = OwnedRoot(root.clone());
+            write_file(
+                &root.join("src/lib.rs"),
+                r#"
+pub fn reject(value: i32) -> Result<i32, ()> {
+    if value > 0 { Ok(value) } else { Err(()) }
+}
+#[cfg(test)]
+mod tests {
+    use super::reject;
+    #[test]
+    fn rejects_negative() { assert!(reject(-1).is_err()); }
+}
+"#,
+            )?;
+            let mut original = RiprConfig::default();
+            if loaded {
+                write_file(
+                    &root.join("ripr.toml"),
+                    "[oracles]\nbroad_error_strength = \"weak\"\n",
+                )?;
+                original = crate::config::load_for_root(&root)?;
+                assert!(original.source_text.is_some());
+            }
+            let strengths = |classified: &[ClassifiedSeam]| -> Result<Vec<OracleStrength>, String> {
+                let values = classified
+                    .iter()
+                    .flat_map(|seam| &seam.evidence.related_tests)
+                    .filter(|test| test.oracle_kind == OracleKind::BroadError)
+                    .map(|test| test.oracle_strength.clone())
+                    .collect::<Vec<_>>();
+                if values.is_empty() {
+                    return Err("fixture must retain a BroadError related-test oracle".into());
+                }
+                Ok(values)
+            };
+            let cold = inventory_classified_seams_report_at_with_config(&root, &original)?;
+            let cold_strengths = strengths(&cold.classified)?;
+            assert!(
+                cold_strengths
+                    .iter()
+                    .all(|strength| *strength == OracleStrength::Weak)
+            );
+            let unchanged = inventory_classified_seams_report_at_with_config(&root, &original)?;
+            assert_eq!(
+                serde_json::to_value(&unchanged.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&cold.classified).map_err(|e| e.to_string())?
+            );
+            if list_cache_entries(&root)?.len() != 1 {
+                return Err(
+                    "cold and unchanged runs must populate one classified cache entry".into(),
+                );
+            }
+            let mut changed = original.clone();
+            changed.oracles.broad_error_strength = OracleStrength::Strong;
+            assert_eq!(changed.source_text, original.source_text);
+            let fresh = inventory_classified_seams_uncached_with_config(&root, &changed)?;
+            let fresh_strengths = strengths(&fresh)?;
+            assert!(
+                fresh_strengths
+                    .iter()
+                    .all(|strength| *strength == OracleStrength::Strong)
+            );
+            let warm = inventory_classified_seams_report_at_with_config(&root, &changed)?;
+            let warm_strengths = strengths(&warm.classified)?;
+            eprintln!(
+                "policy row loaded={loaded}: cold={cold_strengths:?} fresh={fresh_strengths:?} warm={warm_strengths:?}; seams={}",
+                cold.classified.len()
+            );
+            if warm_strengths
+                .iter()
+                .any(|strength| *strength != OracleStrength::Strong)
+            {
+                stale_rows.push(loaded);
+            }
+        }
+        assert!(
+            stale_rows.is_empty(),
+            "changed effective policy served stale Weak oracle strength in rows loaded={stale_rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn effective_snapshot_policy_invalidates_full_and_compact_caches() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{OracleKind, OracleStrength};
+        for loaded in [false, true] {
+            let root = make_tempdir(if loaded {
+                "snapshot-loaded"
+            } else {
+                "snapshot-absent"
+            })?;
+            struct OwnedRoot(PathBuf);
+            impl Drop for OwnedRoot {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+            let _owned = OwnedRoot(root.clone());
+            write_file(
+                &root.join("src/lib.rs"),
+                r#"
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+#[cfg(test)] mod tests {
+    use super::discount;
+    #[test] fn snapshots_discount() { insta::assert_snapshot!(discount(12, 10)); }
+}
+"#,
+            )?;
+            let medium = if loaded {
+                write_file(
+                    &root.join("ripr.toml"),
+                    "[oracles]\nsnapshot_strength = \"medium\"\n",
+                )?;
+                crate::config::load_for_root(&root)?
+            } else {
+                RiprConfig::default()
+            };
+            assert_eq!(medium.source_text.is_some(), loaded);
+            let mut weak = medium.clone();
+            weak.oracles.snapshot_strength = OracleStrength::Weak;
+            assert_eq!(medium.source_text, weak.source_text);
+            let check = |seams: &[ClassifiedSeam],
+                         strength: OracleStrength,
+                         class: SeamGripClass,
+                         full: bool|
+             -> Result<(), String> {
+                assert_eq!(
+                    seams.len(),
+                    2,
+                    "snapshot fixture must retain exactly two seams"
+                );
+                let returned = seams
+                    .iter()
+                    .find(|entry| entry.seam.kind() == SeamKind::ReturnValue)
+                    .ok_or("missing return-value seam")?;
+                assert_eq!(returned.class, class);
+                if full {
+                    let related = returned
+                        .evidence
+                        .related_tests
+                        .iter()
+                        .find(|test| test.test_name.ends_with("snapshots_discount"))
+                        .ok_or("missing exact snapshot related test")?;
+                    assert_eq!(related.oracle_kind, OracleKind::Snapshot);
+                    assert_eq!(related.oracle_strength, strength);
+                } else {
+                    assert!(
+                        returned.evidence.related_tests.is_empty(),
+                        "compact facts omit related-test payloads"
+                    );
+                }
+                let strong = seams
+                    .iter()
+                    .filter(|entry| entry.class == SeamGripClass::StronglyGripped)
+                    .count();
+                let weak_count = seams
+                    .iter()
+                    .filter(|entry| entry.class == SeamGripClass::WeaklyGripped)
+                    .count();
+                assert_eq!(
+                    (strong, weak_count),
+                    if class == SeamGripClass::StronglyGripped {
+                        (1, 1)
+                    } else {
+                        (0, 2)
+                    }
+                );
+                Ok(())
+            };
+            let cold = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            check(
+                &cold.classified,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                true,
+            )?;
+            let counts = inventory_seam_grip_class_counts_at_with_config(&root, &medium)?;
+            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 1);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
+            let compact_cold = inventory_compact_classified_seams_at_with_config(&root, &medium)?;
+            check(
+                &compact_cold,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                false,
+            )?;
+            let unchanged = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            assert_eq!(
+                serde_json::to_value(&cold.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&unchanged.classified).map_err(|e| e.to_string())?
+            );
+            let fresh = inventory_classified_seams_uncached_with_config(&root, &weak)?;
+            check(
+                &fresh,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                true,
+            )?;
+            let warm = inventory_classified_seams_report_at_with_config(&root, &weak)?;
+            check(
+                &warm.classified,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                true,
+            )?;
+            assert_eq!(
+                serde_json::to_value(&warm.classified).map_err(|e| e.to_string())?,
+                serde_json::to_value(&fresh).map_err(|e| e.to_string())?
+            );
+            let counts = inventory_seam_grip_class_counts_at_with_config(&root, &weak)?;
+            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 0);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 2);
+            let compact_warm = inventory_compact_classified_seams_at_with_config(&root, &weak)?;
+            check(
+                &compact_warm,
+                OracleStrength::Weak,
+                SeamGripClass::WeaklyGripped,
+                false,
+            )?;
+            let reverse = inventory_classified_seams_report_at_with_config(&root, &medium)?;
+            check(
+                &reverse.classified,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                true,
+            )?;
+            let compact_reverse =
+                inventory_compact_classified_seams_at_with_config(&root, &medium)?;
+            check(
+                &compact_reverse,
+                OracleStrength::Medium,
+                SeamGripClass::StronglyGripped,
+                false,
+            )?;
+            assert_eq!(list_cache_entries(&root)?.len(), 2);
+            assert_eq!(list_compact_cache_entries(&root)?.len(), 2);
+            let baseline_key = workspace_cache_key_at_with_config(&root, &medium)?;
+            for policy in 0..3 {
+                let mut changed = medium.clone();
+                match policy {
+                    0 => changed.oracles.snapshot_strength = OracleStrength::Weak,
+                    1 => changed.oracles.mock_expectation_strength = OracleStrength::Strong,
+                    _ => changed.oracles.broad_error_strength = OracleStrength::Strong,
+                }
+                let content_key = collect_workspace_state(&root, &changed)?.cache_key();
+                let fingerprint_key = workspace_cache_key_at_with_config(&root, &changed)?;
+                assert_ne!(baseline_key.config_hash, content_key.config_hash);
+                assert_eq!(content_key, fingerprint_key);
+                let (export_key, file_keys) = current_cache_keys_at(&root, &changed)?;
+                assert_eq!(export_key, content_key);
+                assert_eq!(file_keys.len(), 1);
+            }
+            let mut raw_changed = weak.clone();
+            raw_changed.source_text = Some(format!(
+                "{}\n# provenance changed\n",
+                weak.source_text().unwrap_or("")
+            ));
+            assert_ne!(
+                workspace_cache_key_at_with_config(&root, &weak)?.config_hash,
+                workspace_cache_key_at_with_config(&root, &raw_changed)?.config_hash
+            );
+        }
+        Ok(())
+    }
+
     // ---- streaming workspace state (issue #4996) ----------------------
     //
     // Production inventory folds content identity incrementally and builds
@@ -4867,11 +5163,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // The streaming key must equal the legacy snapshot key field for
         // field, so warm cache entries stay authoritative across the cutover.
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
+        let config_identity = classified_config_identity(&config);
         let legacy_key = super::super::seam_cache::WorkspaceState {
             workspace_root: &root,
             files: &loaded,
             cfg_features: cfg_features.as_deref(),
-            config_text: config.source_text(),
+            config_text: Some(&config_identity),
             test_intent_text: None,
             suppressions_text: None,
         }
