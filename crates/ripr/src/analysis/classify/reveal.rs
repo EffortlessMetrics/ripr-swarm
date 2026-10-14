@@ -992,10 +992,10 @@ fn analyze_related_assertions(
         // to an effect in the owner reached by another test. Unknown
         // standard-method dispatch is not an observation witness. Keep
         // token/collection confirmation and opaque macro allowances.
-        let effect_kind_confirms = !is_effect_family(&probe.family)
-            || !(owner_reaching_related
-                && is_proximity_only(*reason)
-                && !invokes_opaque_macro(&test.body));
+        let effect_kind_confirms = !(is_effect_family(&probe.family)
+            && owner_reaching_related
+            && is_proximity_only(*reason)
+            && !invokes_opaque_macro(&test.body));
         let assertions: Vec<_> = test
             .assertions
             .iter()
