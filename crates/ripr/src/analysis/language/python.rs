@@ -829,12 +829,14 @@ impl PythonAdapter {
             // bounds above; a capped-out file degrades to empty ranges,
             // exactly the pre-existing unreadable-file path, and the file
             // itself is already named in the limitation set.
-            let (old_docstring_ranges, old_import_ranges) = workspace_read
+            let old_source = workspace_read
                 .sources
                 .get(&changed.path)
-                .and_then(|source| reconstruct_old_source(source, changed))
+                .and_then(|source| reconstruct_old_source(source, changed));
+            let (old_docstring_ranges, old_import_ranges) = old_source
+                .as_deref()
                 .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, &source);
+                    let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
@@ -957,6 +959,7 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    source: old_source.as_deref(),
                 },
                 workspace_read
                     .sources
