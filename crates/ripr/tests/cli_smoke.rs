@@ -27,6 +27,9 @@ mod closed_stderr;
 #[path = "common/mod.rs"]
 mod common;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_absolute_root.rs"]
+mod diff_absolute_root;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
 #[cfg(all(unix, feature = "lang-rust"))]
