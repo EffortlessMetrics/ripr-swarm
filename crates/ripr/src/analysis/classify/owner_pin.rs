@@ -5137,17 +5137,48 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
         })
 }
 
-/// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like. Related-test reach shares the
-/// single-file rename refusal (#7067).
+/// Whether the file renames some item to `name` (`use a::b as name;`,
+/// `extern crate a as name;`), so `name` may not be the item it looks like.
+/// Related-test reach shares the single-file rename refusal (#7067).
+///
+/// Only an `as` inside a `use` or `extern crate` item renames: a cast
+/// (`letters as u32`) or a qualified path (`<T as Clone>::clone`) binds no
+/// name, so it does not make `u32` or `Clone` something else. Lexical, so
+/// a `use` in any module, function body or macro body counts.
 pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "as")
+    let spans = rename_item_spans(&masked);
+    whole_word_offsets(&masked, "as").into_iter().any(|offset| {
+        spans.iter().any(|span| span.contains(&offset))
+            && starts_with_word(masked[offset + "as".len()..].trim_start(), name)
+    })
+}
+
+/// The byte spans of every `use ..;` and `extern crate ..;` item in
+/// `masked`, from the keyword to its `;` (or the end of the text when the
+/// `;` is missing, which keeps an unterminated item renaming).
+fn rename_item_spans(masked: &str) -> Vec<std::ops::Range<usize>> {
+    let item_end = |from: usize| {
+        masked[from..]
+            .find(';')
+            .map_or(masked.len(), |end| from + end)
+    };
+    let mut spans: Vec<std::ops::Range<usize>> = whole_word_offsets(masked, "use")
         .into_iter()
-        .any(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .map(|offset| offset..item_end(offset))
+        .collect();
+    spans.extend(
+        whole_word_offsets(masked, "extern")
+            .into_iter()
+            .filter(|offset| {
+                starts_with_word(masked[offset + "extern".len()..].trim_start(), "crate")
+            })
+            .map(|offset| offset..item_end(offset)),
+    );
+    spans
 }
 
 /// An alias cannot be excluded merely because its spelling differs from an

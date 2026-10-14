@@ -4406,6 +4406,48 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     }
 }
 
+/// Only a `use` or `extern crate` item renames. A cast to the field's type
+/// (`letters as u32`) or a qualified path (`<u32 as Default>`) elsewhere in
+/// the workspace binds no name, so it leaves `u32` the standard type; the
+/// same name renamed in a `use` group, a function-local `use` or a macro
+/// body still refuses (spot-window-clone-field-whole-equality).
+#[test]
+fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
+    let glob_tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let with = |extra: &str| format!("{WINDOW_LIB}{glob_tests}{extra}");
+    for (lib, credits) in [
+        (with(""), true),
+        (
+            with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        (
+            with("pub fn zero() -> u32 {\n    <u32 as Default>::default()\n}\n"),
+            true,
+        ),
+        (with("use x::{Other, Thing as u32};\n"), false),
+        (with("pub fn f() {\n    use x::Thing as u32;\n}\n"), false),
+        (
+            with("macro_rules! bind {\n    () => {\n        use x::Thing as u32;\n    };\n}\n"),
+            false,
+        ),
+        (with("extern crate other as u32;\n"), false),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+    // The cast in another workspace file: `use super::*;` reaches the
+    // workspace-wide re-export scan, which reads every file's renames.
+    let caster = "pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n";
+    let lib = format!("{WINDOW_LIB}{glob_tests}");
+    let index = index(&[
+        (LIB, lib.as_str()),
+        ("src/score.rs", caster),
+        (TESTS, WINDOW_TESTS),
+    ]);
+    assert!(field_pin(&index, &lib, "start: self.start,", "start: self.start,").is_some());
+}
+
 /// #6692 review: the receiver must not itself come from the clone under
 /// test (an idempotent wrong field, `start: 0` or `start: self.end`, would
 /// then survive) or be changed after it is bound. A literal or the type's
