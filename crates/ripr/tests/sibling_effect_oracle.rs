@@ -124,9 +124,11 @@ fn direct_effect_observer_retains_strong_credit() -> Result<(), String> {
         source.to_string(),
         source.replace("#[test]", "fn through_helper(recorder: &Recorder, payload: &str) { record(recorder, payload); }\n#[test]").replace("record(&recorder, \"note\")", "through_helper(&recorder, \"note\")"),
     ] {
-        let finding = effect(&source, diff, "recorder.sent.borrow_mut().push(payload.to_owned())")?;
+        for family in ["side_effect", "call_deletion"] {
+        let finding = finding(&source, diff, "recorder.sent.borrow_mut().push(payload.to_owned())", family)?;
         assert_eq!(finding["classification"], "exposed", "{finding}");
         assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+        }
     }
     Ok(())
 }
@@ -256,5 +258,163 @@ fn lone_proximity_retains_discrimination_with_weak_reach() -> Result<(), String>
     assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
     assert_eq!(finding["ripr"]["reach"]["state"], "weak", "{finding}");
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+const UNUSED_TRAIT: &str =
+    include_str!("../../../fixtures/rust_unused_trait_effect_oracle/input/src/lib.rs");
+
+#[test]
+fn unused_reverse_trait_does_not_authorize_parser_oracle() -> Result<(), String> {
+    for source in [UNUSED_TRAIT.to_string(), UNUSED_TRAIT.replace("let input=", "let _counter=Counter { sink:Rc::new(RefCell::new(Vec::new())), finished:false };\n    let input=")] {
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
+            assert_eq!(row["classification"], "weakly_exposed", "{row}");
+            assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "parser_only" && r["miss"] == "observation_unconfirmed"), "{row}");
+        }
+    }
+    Ok(())
+}
+
+const REVERSE_OBSERVER: &str = r#"#[test]
+fn implicit_observer() {
+    let sink=Rc::new(RefCell::new(Vec::new()));
+    let counter=Counter { sink:sink.clone(), finished:false };
+    for _ in counter {}
+    assert_eq!(Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) });
+}
+"#;
+
+#[test]
+fn paired_implicit_dispatch_matrix_binds_both_effect_families() -> Result<(), String> {
+    let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
+    let add = iterator.replace("impl Iterator for Counter {\n    type Item=();\n    fn next(&mut self)->Option<()> {\n        if self.finished { return None; }\n        self.finished=true;\n        record(&self.sink);\n        Some(())\n    }\n}", "impl std::ops::Add<()> for Counter {\n    type Output=();\n    fn add(self, _: ()) {\n        record(&self.sink);\n    }\n}").replace("for _ in counter {}", "let _=counter + ();");
+    assert!(add.contains("impl std::ops::Add"));
+    let paths = [
+        iterator.clone(),
+        iterator.replace("for _ in counter {}", "counter.for_each(|_| {});"),
+        iterator
+            .replace("let counter=", "let mut counter=")
+            .replace("for _ in counter {}", "while counter.next().is_some() {}"),
+        add,
+    ];
+    for reverse in paths {
+        let direct = reverse
+            .replace("    output.borrow_mut().push(1);", "")
+            .replace("record(&self.sink);", "self.sink.borrow_mut().push(1);");
+        let direct = if direct.contains("impl std::ops::Add") {
+            format!(
+                "use std::ops::Add;\n{}",
+                direct.replace(
+                    "record(&sink);",
+                    "let counter=Counter { sink,finished:false }; let _=counter.add(());",
+                )
+            )
+        } else {
+            direct.replace(
+                "record(&sink);",
+                "let _=Counter { sink,finished:false }.next();",
+            )
+        };
+        for (source, expression) in [
+            (reverse.clone(), "output.borrow_mut().push(1)"),
+            (direct, "self.sink.borrow_mut().push(1)"),
+        ] {
+            for family in ["side_effect", "call_deletion"] {
+                let row = finding(
+                    &source,
+                    &changed_effect(&source, expression),
+                    expression,
+                    family,
+                )?;
+                assert_eq!(row["classification"], "exposed", "{row}");
+                assert_eq!(row["ripr"]["discriminate"]["state"], "yes", "{row}");
+                let rows = row["related_tests"].as_array().ok_or("missing rows")?;
+                assert!(
+                    rows.iter()
+                        .any(|r| r["name"] == "implicit_observer" && r["miss"].is_null()),
+                    "{row}"
+                );
+                assert!(
+                    rows.iter()
+                        .any(|r| r["name"] == "parser_only"
+                            && r["miss"] == "observation_unconfirmed"),
+                    "{row}"
+                );
+            }
+        }
+        // Same owner and indexed trait, but this test never dispatches it.
+        let negative = reverse
+            .split("#[test]\nfn implicit_observer")
+            .next()
+            .ok_or("missing observer")?;
+        for family in ["side_effect", "call_deletion"] {
+            let expression = "output.borrow_mut().push(1)";
+            let row = finding(
+                negative,
+                &changed_effect(negative, expression),
+                expression,
+                family,
+            )?;
+            assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+        }
+    }
+    // A reverse path cannot choose between an indexed trait and inherent name.
+    let ambiguous = format!("{iterator}\nstruct Other; impl Other {{ fn next(&self) {{}} }}\n");
+    for family in ["side_effect", "call_deletion"] {
+        let expression = "output.borrow_mut().push(1)";
+        let row = finding(
+            &ambiguous,
+            &changed_effect(&ambiguous, expression),
+            expression,
+            family,
+        )?;
+        assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+    }
+    Ok(())
+}
+
+#[test]
+fn free_inherent_and_wrong_receiver_push_matrix_stays_weak() -> Result<(), String> {
+    let iterator = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}");
+    let inherent = iterator
+        .replace(
+            "impl Iterator for Counter {\n    type Item=();",
+            "impl Counter {",
+        )
+        .replace("for _ in counter {}", "let _=counter;")
+        .replace("vec![1]", "vec![]");
+    let free = inherent
+        .replace(
+            "impl Counter {\n    fn next(&mut self)->Option<()> {",
+            "fn next(counter: &mut Counter)->Option<()> {",
+        )
+        .replace("self.", "counter.")
+        .replace("    }\n}\n#[derive", "}\n#[derive");
+    let wrong = iterator
+        .replace("for _ in counter {}", "let _=counter; for _ in [()] {}")
+        .replace("vec![1]", "vec![]");
+    for source in [inherent, free, wrong] {
+        for source in [
+            source.clone(),
+            format!(
+                "{source}\nstruct Other; impl Iterator for Other {{ type Item=(); fn next(&mut self)->Option<()> {{ None }} }}\n"
+            ),
+        ] {
+            for family in ["side_effect", "call_deletion"] {
+                let expression = "output.borrow_mut().push(1)";
+                let row = finding(
+                    &source,
+                    &changed_effect(&source, expression),
+                    expression,
+                    family,
+                )?;
+                assert_eq!(row["classification"], "weakly_exposed", "{row}");
+                assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+            }
+        }
+    }
     Ok(())
 }

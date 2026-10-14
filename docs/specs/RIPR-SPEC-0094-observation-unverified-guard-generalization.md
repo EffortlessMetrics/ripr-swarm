@@ -276,7 +276,13 @@ reachable from known trait methods such as `Iterator::next` and `Add::add`
 are distinct from unknown standard calls and lexical containers. Free and
 inherent methods with those names do not gain this allowance, even beside
 a same-name trait declaration. Direct dispatch is bound to the actual owner;
-a reverse name path requires a unique indexed trait declaration. Unknown standard
+a reverse name path requires a unique indexed trait declaration. The current
+observer test must also contain a dispatch witness on a receiver bound to that
+impl: a loop, recognized operator, `for_each` or explicit method call. Merely
+indexing or constructing the implementor cannot authorize a parser equality.
+A refused parser row retains `observation_unconfirmed` even beside another
+confirmed observer. Both effect families have paired direct/reverse positives
+and unused/wrong-receiver/free/inherent/ambiguous negatives. Unknown standard
 method dispatch does not itself establish that an equality observes the changed
 effect; this slice neither rules out that dispatch nor resolves value flow.
 This is separate from #7778's predicate/string-literal guard and preserves
@@ -284,7 +290,8 @@ This is separate from #7778's predicate/string-literal guard and preserves
 
 Proof: `sibling_effect_oracle` public API metamorphic and direct-effect controls,
 loop/operator preservation and free/inherent-name refusal controls,
-the exact consumer fixture `rust_sibling_effect_oracle`, and its independent
+the exact consumer fixture `rust_sibling_effect_oracle`, the compiling review
+counterexample `rust_unused_trait_effect_oracle`, and their independent
 honesty-corpus invariant. Native removal experiments are separate runtime
 evidence rather than a static mutation claim.
 
