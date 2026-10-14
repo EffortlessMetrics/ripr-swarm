@@ -580,10 +580,10 @@ rule only for an assertion whose context was admitted.
    other qualified paths stay unknown because their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
-   unqualified nested `matches!` or `format!` expands to one call over
-   operands the scan already reads, so it is admitted and its name joins
-   this binding check (see "Literal `matches!` pins" and "Rendered scalar
-   pins"). A path before the nested name (`std::format!`) refuses; inside
+   unqualified nested `matches!`, `format!` or `vec!` expands to one call
+   over operands the scan already reads, so it is admitted and its name
+   joins this binding check (see "Literal `matches!` pins", "Rendered scalar
+   pins" and "Exact projections"). A path before the nested name (`std::format!`) refuses; inside
    a token tree `::` lexes as two `:` tokens, which count as a path. Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
@@ -1342,6 +1342,47 @@ it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
 qualified `expect_test::expect!`, and every `insta` macro stay
 `snapshot` / medium.
 
+### Exact projections
+
+For an owner whose declared return type is a built-in integer under the
+cell-0094 primitive-scalar check, `assert_eq!` on these projections of the
+owner call against a plain decimal literal `e` pins the call
+(trap-ceiling-wide-min-control, trap-muffle-times-one-control):
+
+1. `call.min(k)` with `e < k`: a result below the bound is the call's own
+   value, and any other value yields either itself or `k`, both unlike `e`.
+2. `call.max(k)` with `e > k`, symmetrically.
+3. `call * 1`, `1 * call`, `call + 0` and `0 + call`, which keep every
+   value.
+
+`.min` and `.max` are the prelude `Ord`'s methods only while nothing
+rebinds them (#7932 review). The projection refuses when the workspace
+declares a `fn min` (for `.min`) or `fn max` (for `.max`), declares a
+`trait Ord`, names `Ord` in a `use` item, or carries
+`no_implicit_prelude`, or when the test's file globs a foreign module. A
+local `trait Ord` shadows the prelude's, so `.min(k)` would resolve to it.
+`* 1` and `+ 0` keep std's operator impls, which coherence fixes for a
+primitive, so they do not read that scan.
+
+`k` and `e` are plain decimal literals (`_` separators allowed): a
+constant, a suffix, a hex literal or a negative number refuses. The call
+is the owner call shape of rule 1 with nothing else around it; chained
+projections, `assert_ne!` and `assert!` stay refused. The trap twins stay
+gaps: `cap(2).min(1) == 1` clamps (`e == k`) and `dampen(2) * 0 == 0`
+keeps no value. Residuals: a `#![no_implicit_prelude]` file whose own trait
+supplies `min`, and a generic parameter named like the integer type.
+
+For any primitive-scalar owner under the same check, `vec![call][0]`
+compared by `assert_eq!` pins the call (trap-pile-first-element-control):
+a one-element vector indexed at zero holds the call's own value. The
+assertion's only nested macros are plain, unqualified `vec!` calls; a
+second element, another index, the repeat form `vec![call; n]`, anything
+around the index, `assert_ne!` and `assert!` refuse. As with `format!`,
+admitting a nested `vec!` is an execution fact shared by every
+`assert_eq!` the syntax gate reads: the trap twin
+`trap-stack-container-length` (`assert_eq!(vec![stack(2)].len(), 1)`) now
+reaches the ordinary token rule and reads `weakly_exposed`, still a gap.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -1757,7 +1798,9 @@ assertions. This repair shares the existing callback without that larger migrati
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`); rendered scalar pins
   (`a_scalar_rendering_compared_with_exact_text_pins`,
-  `each_refusal_names_the_gate_that_failed`);
+  `each_refusal_names_the_gate_that_failed`); exact projections
+  (`an_integer_projection_that_keeps_the_value_pins`,
+  `a_one_element_vec_indexed_at_zero_pins_the_owner`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
   `T::name(..)` calls (#6617:

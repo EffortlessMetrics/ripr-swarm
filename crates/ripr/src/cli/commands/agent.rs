@@ -1270,7 +1270,7 @@ fn run_agent_repair_phase(
             .map_err(|error| error.to_string())?;
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+                    .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -2361,11 +2361,21 @@ fn before_phase_dirty_premise_refusal(
 /// nothing was started, states the observable packet field (#4332 — the
 /// producer-jargon cause alone leaves the agent guessing what to look at),
 /// points at the surfaces that only offer a repair start for seams that
-/// pass this check, and points at the repair help carrying the scope
-/// boundary (#5210).
-fn before_phase_refusal(seam_id: &str, error: &str) -> String {
+/// pass this check, names the root-pinned `agent stub` forward route for
+/// the same state (#7735 — the pick-another-seam advice is a dead end when
+/// no seam can start a repair; `--root` keeps the route usable from any
+/// directory because the before phase does not require the shell to sit at
+/// the workspace, and `--kind` pins the probe family so a line holding
+/// several gap families cannot stub another seam), states the inline-test
+/// boundary with its remedy — an ambiguous multi-module inline layout
+/// proposes no target, while one governed inline module would qualify
+/// (#5210) — and points at the repair help carrying the scope boundary.
+fn before_phase_refusal(seam_id: &str, root: &Path, error: &str) -> String {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start. Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface). Pick a seam whose `ripr pilot` output or review card shows a repair start; when none does — for example a crate whose inline tests are spread over several `#[cfg(test)]` modules, where the ambiguous layout proposes no target and one governed inline module would qualify — add a `tests/`-surface test file, or move this gap forward with `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` (FILE:LINE and KIND are the finding location and probe family `ripr check` prints for the same state). Repair scope, including the inline-test boundary, is in `ripr agent repair --help`. Cause: {error}"
     )
 }
 
