@@ -1025,6 +1025,11 @@ id = "RIPR-SPEC-0008"
 name = "SARIF and CI policy"
 spec = "docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md"
 tests = [
+  "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_ascii",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_bmp",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_non_bmp",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_repo_seam",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_empty_control",
   "crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids",
   "crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids",
   "crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity",
