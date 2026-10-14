@@ -259,13 +259,15 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         .analysis_status?.attempt_id;
       let attemptAfterRefresh = attemptBeforeRefresh;
       for (let issued = 0; issued < 3 && attemptAfterRefresh === attemptBeforeRefresh; issued++) {
-        try {
-          await vscode.commands.executeCommand('ripr.refreshDiagnostics');
-        } catch (error) {
-          // The command channel itself can reject during the startup window;
-          // the attempt check below decides whether a re-issue is needed.
-          stages.push({ phase, refresh_issue: issued, rejected: String(error) });
-        }
+        // Drive the same framed wire command the palette command wraps: the
+        // VS Code command dispatch of this palette id has been observed to
+        // reject during the session-start settling window (bare
+        // illegal-argument from the command channel) while the framed
+        // request path answers throughout, and the attempt id below remains
+        // the commit oracle either way.
+        await bounded(client.sendRequest('workspace/executeCommand', {
+          command: 'ripr.refresh', arguments: [],
+        }), 'framed full refresh');
         attemptAfterRefresh = (await bounded(client.sendRequest('workspace/executeCommand', {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }), 'framed workspace status') as { analysis_status?: { attempt_id?: string } })
