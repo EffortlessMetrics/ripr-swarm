@@ -1328,15 +1328,19 @@ pub(crate) fn evidence_promotion_external_semantic_violations(
     case: &EvidencePromotionExternalCase,
     check_json: &Value,
 ) -> Vec<String> {
-    evidence_promotion_semantic_violations_scoped(
+    // Validated `--diff {external_patch}` launches are diff-sourced (#3952,
+    // #7880). Pass the patch path so the shared scope owner can excuse `base`
+    // without fabricating a fixture `diff.patch` or a revision.
+    let source_fixture = evidence_promotion_pinned_external_is_diff_sourced(case)
+        .then(|| case.external_patch.to_str())
+        .flatten();
+    evidence_promotion_semantic_violations(
         &case.id,
-        None,
+        source_fixture,
         &case.assertions,
         check_json,
         None,
         false,
-        None,
-        Some(evidence_promotion_pinned_external_is_diff_sourced(case)),
     )
 }
 
@@ -1356,7 +1360,6 @@ pub(crate) fn evidence_promotion_semantic_violations(
         human_text,
         fixture_human_required,
         None,
-        None,
     )
 }
 
@@ -1365,9 +1368,6 @@ pub(crate) fn evidence_promotion_semantic_violations(
 /// `probe.family` matches are judged, so one fixture can carry both a
 /// refused-family control and a promoted-family positive control. A selector
 /// that matches no finding is a violation, never a vacuous pass.
-///
-/// `diff_sourced_override` lets a pinned-external `--diff` launch reuse the
-/// existing #3952 `base` exemption without fabricating a fixture `diff.patch`.
 pub(crate) fn evidence_promotion_semantic_violations_scoped(
     case_id: &str,
     source_fixture: Option<&str>,
@@ -1376,12 +1376,9 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
     human_text: Option<&str>,
     fixture_human_required: bool,
     probe_family: Option<&str>,
-    diff_sourced_override: Option<bool>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     let case_label = evidence_promotion_assertion_case_label(case_id, source_fixture);
-    let diff_sourced = diff_sourced_override
-        .unwrap_or_else(|| evidence_promotion_case_is_diff_sourced(source_fixture));
     let mut findings: Vec<Value> = check_json
         .get("findings")
         .and_then(Value::as_array)
@@ -1500,6 +1497,7 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 }
             }
             EvidencePromotionSemanticAssertion::MustDiscloseScope => {
+                let diff_sourced = evidence_promotion_case_is_diff_sourced(source_fixture);
                 let missing_scope =
                     evidence_promotion_missing_scope_fields(check_json, diff_sourced);
                 if !missing_scope.is_empty() {
@@ -3211,7 +3209,13 @@ fn evidence_promotion_missing_scope_fields(
 /// pinned `diff.patch` (the fixture runner always passes `--diff`, so the
 /// envelope's scope is the diff file rather than a base revision).
 fn evidence_promotion_case_is_diff_sourced(source_fixture: Option<&str>) -> bool {
-    source_fixture.is_some_and(|fixture| Path::new(fixture).join("diff.patch").exists())
+    source_fixture.is_some_and(|fixture| {
+        let path = Path::new(fixture);
+        path.join("diff.patch").exists()
+            || path
+                .extension()
+                .is_some_and(|ext| ext == "diff" || ext == "patch")
+    })
 }
 
 /// Pinned-external launches are command-template-bound to
@@ -4470,7 +4474,6 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
                 source_human_text.as_deref(),
                 !source_fixture.is_empty(),
                 probe_family,
-                None,
             ));
             continue;
         }
@@ -5019,5 +5022,16 @@ mod harness_limitation_assertion_tests {
             vec!["base"]
         );
         assert!(evidence_promotion_missing_scope_fields(&diff_sourced, true).is_empty());
+    }
+
+    #[test]
+    fn pinned_external_patch_paths_are_diff_sourced() {
+        assert!(evidence_promotion_case_is_diff_sourced(Some(
+            "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
+        )));
+        assert!(!evidence_promotion_case_is_diff_sourced(None));
+        assert!(!evidence_promotion_case_is_diff_sourced(Some(
+            "fixtures/split_test_boundary_oracle"
+        )));
     }
 }

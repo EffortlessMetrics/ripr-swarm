@@ -1938,7 +1938,6 @@ fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_ma
         None,
         false,
         Some("predicate"),
-        None,
     );
     assert!(scoped.is_empty(), "{scoped:?}");
 
@@ -1950,7 +1949,6 @@ fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_ma
         None,
         false,
         Some("return_value"),
-        None,
     );
     assert_eq!(promoted_family.len(), 1, "{promoted_family:?}");
     assert!(
@@ -1976,7 +1974,6 @@ fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_ma
         None,
         false,
         Some("call_deletion"),
-        None,
     );
     assert_eq!(empty_match.len(), 1, "{empty_match:?}");
     assert!(
