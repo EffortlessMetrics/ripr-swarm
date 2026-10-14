@@ -620,6 +620,23 @@ pub(crate) fn eligible_json_root(root: &Path) -> bool {
         })
 }
 
+fn json_manifest_digests(
+    metadata: &serde_json::Value,
+    root: &Path,
+) -> Option<BTreeMap<PathBuf, String>> {
+    let mut digests = BTreeMap::new();
+    for package in metadata.get("packages")?.as_array()? {
+        let path = PathBuf::from(package.get("manifest_path")?.as_str()?)
+            .canonicalize()
+            .ok()?;
+        if path.starts_with(root) {
+            let bytes = read_optional(&path)??;
+            digests.insert(path, digest(&bytes));
+        }
+    }
+    Some(digests)
+}
+
 pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity> {
     if !eligible_json_root(root) {
         return None;
@@ -662,19 +679,14 @@ pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity>
         return None;
     }
     let package_id = package.get("id")?.as_str()?.to_string();
-    let manifest_digests = packages
-        .iter()
-        .filter_map(|package| {
-            let path = PathBuf::from(package.get("manifest_path")?.as_str()?)
-                .canonicalize()
-                .ok()?;
-            path.starts_with(&root).then_some(path)
-        })
-        .map(|path| {
-            let bytes = read_optional(&path)??;
-            Some((path, digest(&bytes)))
-        })
-        .collect::<Option<BTreeMap<_, _>>>()?;
+    let manifest_digests = json_manifest_digests(&metadata, &root)?;
+    // Discovery metadata supplies the member path set. Bracket a confirming
+    // probe with those manifests: old metadata must not acquire a receipt for
+    // member bytes first observed after Cargo resolved a different dependency.
+    let confirmed_bytes = metadata_probe(&root)?;
+    if bytes != confirmed_bytes || manifest_digests != json_manifest_digests(&metadata, &root)? {
+        return None;
+    }
     let after = snapshot(&root)?;
     if before != after {
         return None;
@@ -692,6 +704,39 @@ pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_member_snapshots_revoke_changed_or_missing_manifests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-json-member-receipt-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("member"))?;
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let root = root.canonicalize()?;
+            let member = root.join("member/Cargo.toml");
+            std::fs::write(&member, "[dependencies]\nserde_json='=1.0.151'\n")?;
+            let metadata = serde_json::json!({"packages":[{"manifest_path":member}]});
+            let before = json_manifest_digests(&metadata, &root).ok_or("missing snapshot")?;
+            assert_eq!(
+                before,
+                json_manifest_digests(&metadata, &root).ok_or("unstable snapshot")?
+            );
+            std::fs::write(&member, "[dependencies]\nserde_json={path='../fake'}\n")?;
+            assert_ne!(
+                before,
+                json_manifest_digests(&metadata, &root).ok_or("missing changed snapshot")?
+            );
+            std::fs::remove_file(&member)?;
+            assert!(json_manifest_digests(&metadata, &root).is_none());
+            assert!(json_manifest_digests(&serde_json::json!({"packages":[{}]}), &root).is_none());
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)?;
+        result
+    }
 
     #[test]
     fn windows_environment_names_preserve_registry_and_home_authority() {

@@ -64,3 +64,21 @@ changed. Commands and fuller logs/raw reports are retained in the executor under
 - `crates/ripr/src/analysis/workspace/assertion_dependency.rs`: `991fe1313690d6b7a82379d4dd9ded482e324f5f21077eba4a7911f09b56727a`
 - `crates/ripr/src/analysis/workspace/mod.rs`: `8838ed21d33dc057767ff54baf7f148b65a3460b0a79734be03677ee28c2c2ec`
 - `crates/ripr/src/analysis/seam_cache.rs`: `1597e7e8bcde716740ffa264405ab68e3174cd6a10615a5da51d891e9c0ccabd`
+
+## Fresh review: workspace-member receipt race
+
+Exact-head review of d94028ef reproduced an ordinary Cargo metadata race:
+canonical baseline admitted; changing a member dependency to a local path after
+metadata output appeared still admitted the stale registry graph. Root and
+nested snapshots remained valid. This was accepted as a blocking defect.
+
+The same candidate now hashes discovered member manifests around a second
+bounded Cargo metadata probe, requiring unchanged graph bytes, manifests and
+root authority. Missing or malformed manifest paths refuse. Using the repaired
+module and the same ordinary Cargo adapter, the canonical baseline admits and
+20/20 actual member rewrites during the discovery probe refuse. A separate
+20/20 rewrites during the confirming probe also refuse. This establishes bounded
+consistency detection under the existing worktree assumptions, not an atomic
+snapshot against timed ABA rewrites. It does not replace the original consumer
+replay with a claim of consumer clearance. Raw harnesses and results remain at
+`/workspace/scratch/7776-review` for the lane handoff.
