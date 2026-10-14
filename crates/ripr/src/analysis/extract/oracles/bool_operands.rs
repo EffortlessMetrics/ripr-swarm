@@ -54,6 +54,12 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     if negated {
         positive = !positive;
     }
+    // A whole `matches!` asserted false through a peeled spelling
+    // (`assert_eq!(matches!(..).eq(&true), false)`) excludes the pattern;
+    // the polarity rule sees only `matches!(..)` compared directly.
+    if !positive && is_whole_pattern(core) {
+        return Some(BoolOperandReading::Capped);
+    }
     // A single `&` requires both sides like `&&`, so the operand reads as
     // the same `&&` chain.
     let conjoined = conjoin_single_ampersands(core);
@@ -321,13 +327,17 @@ fn split_two_arguments(arguments: &str) -> Option<(&str, &str)> {
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
             // Inside a turbofish every `<` opens a nested generic
             // (`::<Vec<u8>, u8>`).
-            b'<' if generics > 0
-                || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..])) =>
+            b'<' if depth == 0
+                && (generics > 0
+                    || (index >= 2 && bytes.get(index - 2..index) == Some(&b"::"[..]))) =>
             {
                 generics += 1;
             }
             // `->` inside generics (`Fn() -> T`) closes nothing.
-            b'>' if generics > 0 && (index == 0 || bytes.get(index - 1) != Some(&b'-')) => {
+            b'>' if depth == 0
+                && generics > 0
+                && (index == 0 || bytes.get(index - 1) != Some(&b'-')) =>
+            {
                 generics -= 1;
             }
             b',' if depth == 0 && generics == 0 => {
@@ -614,6 +624,12 @@ pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     })
 }
 
+/// Whether `text` is one `matches!` invocation and nothing else.
+fn is_whole_pattern(text: &str) -> bool {
+    let text = text.trim();
+    matches!(pattern_invocation_spans(text).as_slice(), [(0, end)] if *end == text.len())
+}
+
 /// Whether masked `text` spells a comparison as a call anywhere
 /// (`r.eq(&Err(E::Bad)) ^ true`, `PartialOrd::lt(&a, &b) | flag`; #7931).
 fn holds_comparison_call(text: &str) -> bool {
@@ -656,21 +672,29 @@ fn method_on_pattern(before: &str, after: &str) -> bool {
         head = rest;
     }
     let mut rest = after.trim_start();
-    for closer in closers {
-        match rest.strip_prefix(closer) {
-            Some(next) => rest = next.trim_start(),
+    let mut open = closers.as_slice();
+    while let Some((closer, outer)) = open.split_first() {
+        match rest.strip_prefix(*closer) {
+            Some(next) => {
+                rest = next.trim_start();
+                open = outer;
+            }
             None => break,
         }
     }
-    rest.starts_with('.') && !rest.starts_with("..") && !asserts_pattern_through_literal_calls(rest)
+    rest.starts_with('.')
+        && !rest.starts_with("..")
+        && !(head.is_empty() && asserts_pattern_through_literal_calls(rest, open))
 }
 
-/// Whether `rest`, the method chain on a `matches!` result, is only `eq` or
-/// `ne` calls against boolean literals that keep the pattern's polarity
-/// (`.eq(&true)`, `.ne(&false)`, `.eq(&false).eq(&false)`), ending the
-/// operand. Such a chain asserts the pattern itself; any other method,
-/// operator or odd number of negations leaves it unread.
-fn asserts_pattern_through_literal_calls(mut rest: &str) -> bool {
+/// Whether `rest`, the method chain on a `matches!` result that starts the
+/// condition, is only `eq` or `ne` calls against boolean literals that keep
+/// the pattern's polarity (`.eq(&true)`, `.ne(&false)`,
+/// `.eq(&false).eq(&false)`), followed by nothing but the `open` wrappers'
+/// closers. Such a chain is the whole condition and asserts the pattern; any
+/// other method, operator, enclosing call or chain (`flag && ..`,
+/// `Not::not(..)`), or odd number of negations leaves it unread.
+fn asserts_pattern_through_literal_calls(mut rest: &str, open: &[char]) -> bool {
     let mut negated = false;
     let mut calls = 0;
     while let Some(method) = rest.strip_prefix('.') {
@@ -691,8 +715,13 @@ fn asserts_pattern_through_literal_calls(mut rest: &str) -> bool {
         calls += 1;
         rest = tail.get(close + 1..).unwrap_or_default().trim_start();
     }
-    let rest = rest.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
-    calls > 0 && !negated && (rest.is_empty() || rest.starts_with("&&") || rest.starts_with("||"))
+    for closer in open {
+        match rest.strip_prefix(*closer) {
+            Some(next) => rest = next.trim_start(),
+            None => return false,
+        }
+    }
+    calls > 0 && !negated && rest.trim().is_empty()
 }
 
 /// The index of the `)` that closes the `(` starting `text`.

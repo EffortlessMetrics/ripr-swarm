@@ -849,6 +849,7 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             "assert!((matches!(r, Err(E::Bad))).eq(&false).eq(&false));",
             &err,
         ),
+        ("assert!((matches!(r, Err(E::Bad)).eq(&true)));", &err),
         ("assert_eq!(r == Err(E::Bad), (true as bool));", &err),
         ("assert_eq!(&(r == Err(E::Bad)) == &false, false);", &err),
         // A double negation through literal spellings asserts the
@@ -954,6 +955,17 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         "assert!(matches!(r, Err(E::Bad)).ne(&true));",
         "assert!(matches!(r, Err(E::Bad)).eq(&true).then(|| false).unwrap_or(true));",
         "assert!(matches!(r, Err(E::Bad)).eq(&true) ^ flag);",
+        // A polarity-keeping literal chain asserts the pattern only as the
+        // whole condition (review of abe9f96).
+        "assert_eq!(matches!(r, Err(E::Bad)).eq(&true), false);",
+        "assert_eq!(!matches!(r, Err(E::Bad)).eq(&true), true);",
+        "assert_eq!(false, matches!(r, Err(E::Bad)).ne(&false));",
+        "assert!(std::ops::Not::not(matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(check(matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(!(flag || matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!(!(flag && matches!(r, Err(E::Bad)).eq(&true)));",
+        "assert!((matches!(r, Err(E::Bad)).eq(&true)) ^ flag);",
+        "assert_eq!(PartialEq::eq(&f::<{ A < B }>(), &x), false);",
     ] {
         if !is_inequality_assertion(text) {
             return Err(format!("{text}: must read as an inequality"));
