@@ -243,7 +243,10 @@ pub(in crate::analysis) fn shared_owner_call_identity(
     // A poisoned lock only costs the sharing, never a wrong answer: the
     // fallback rebuilds fresh, exactly as before the memo existed.
     if let Ok(mut identities) = index.call_identity_memos.identities.lock() {
-        identities.entry(key).or_insert(built.clone());
+        // A concurrent miss may have stored its construction first; serve
+        // the stored instance so the per-test memo and scope parses stay
+        // shared, and drop this redundant twin.
+        return identities.entry(key).or_insert(built).clone();
     }
     built
 }
