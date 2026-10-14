@@ -3113,6 +3113,14 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_preserves_ast_call_identity",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_module_binding_and_framework_writes",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_nested_unittest_registration",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_keeps_duplicate_method_declarations_distinct",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_derived_owner_results",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_requires_changed_python_literal_value",
   "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_literal_path_dots_cannot_name_another_module",
   "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::unittest_dot_free_paths_preserve_qualified_and_quoted_selectors",
   "crates/ripr/src/analysis/language/python/related_tests/verify_command_tests.rs::repair_placement_uses_first_runnable_oracle_relation",
@@ -3217,6 +3225,11 @@ fixtures = [
   "fixtures/python_rebound_constant_boundary_limit",
   "fixtures/python_async_owner",
   "fixtures/python_unittest_basic",
+  "fixtures/python_unittest_list_equal",
+  "fixtures/python_unittest_list_equal_effectful_argument",
+  "fixtures/python_unittest_list_equal_nested_class",
+  "fixtures/python_unittest_list_equal_derived_result",
+  "fixtures/python_unittest_list_equal_equal_values",
   "fixtures/python_method_owner",
   "fixtures/python_class_method_owner",
   "fixtures/python_parametrize_basic",
@@ -3280,6 +3293,7 @@ fixtures = [
 code = [
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
