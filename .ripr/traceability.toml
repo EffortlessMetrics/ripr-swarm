@@ -9323,6 +9323,22 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_inputs_preserved",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_terminal_type_arguments",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_trailing_comments",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_offsets",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_rows_preserve_offsets",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_opaque_and_mixed_refusals",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_module_provenance",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_enclosing_context",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_crate_attributes",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_no_implicit_prelude_binding",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_qualified_assertion_roots",
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::inactive_prelude_flags_keep_unknown_and_malformed_boundaries",
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::source_preservation_closes_stable_crate_metadata_without_cfg_credit",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_known_empty_macro_stays_masked",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_declaration_only_invalidation",
   "crates/ripr/src/analysis/seam_cache.rs::tests::same_key_classified_payload_and_metadata_edits_are_corrupt",
   "crates/ripr/src/analysis/seam_cache.rs::tests::classified_integrity_rejects_whole_shard_set_and_never_hides_corrupt_single",
   "crates/ripr/src/analysis/seam_cache.rs::tests::given_cache_base_is_a_regular_file_when_loading_file_facts_then_reason_names_the_condition",
@@ -9401,6 +9417,7 @@ fixtures = [
   "benchmarks/targeted_rerun_benchmark/input",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/targeted_calls.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs",

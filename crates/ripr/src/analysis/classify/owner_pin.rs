@@ -594,6 +594,186 @@ impl OwnerPinSyntax {
             .cloned()
     }
 
+    /// Exact call syntax is authority only when the selected source composes
+    /// through admitted module declarations. This shares the assertion gate,
+    /// including its supported test-build cfg rules.
+    pub(in crate::analysis) fn targeted_source_provenance_is_admitted(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> bool {
+        if self.source_provenance_refusal(test, index).is_some() {
+            return false;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        let mut by_file = self.by_file.borrow_mut();
+        facts.role_provenance.edges.iter().all(|edge| {
+            let Some(parent) = index.files().get(&edge.parent) else {
+                return false;
+            };
+            by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_targeted_module_declaration(edge.line, &edge.declaration)
+        })
+    }
+
+    /// Call occurrence parsing borrows binding authority only. It does not
+    /// grant assertion execution, oracle strength or receiver identity.
+    pub(in crate::analysis) fn targeted_macro_binding_is_unambiguous(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
+            let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
+                return false;
+            };
+            let verified = if matches!(root, "std" | "core") {
+                matches!(leaf, "assert" | "assert_eq" | "assert_ne")
+                    && index
+                        .drop_in_manifests
+                        .unbound_standard_root(&test.file, root)
+            } else {
+                matches!(leaf, "assert_eq" | "assert_ne")
+                    && index.drop_in_manifests.verified(&test.file, root)
+            };
+            if !verified {
+                return false;
+            }
+            // A qualified root does not borrow a custom bare leaf's
+            // ambiguity. Source availability and all binding-capable
+            // statement macros are checked separately by the collector.
+            let Some(facts) = index.files().get(&test.file) else {
+                return false;
+            };
+            return self.targeted_source_provenance_is_admitted(test, index)
+                && std::iter::once(&test.file)
+                    .chain(facts.role_provenance.edges.iter().map(|e| &e.parent))
+                    .all(|path| {
+                        index.files().get(path).is_some_and(|facts| {
+                            crate::analysis::syntax::parse_clean_source_file(&facts.source)
+                                .is_some_and(|file| {
+                                    crate::analysis::syntax::ra::assertion_root_is_available(
+                                        name,
+                                        file.tree().syntax(),
+                                    )
+                                })
+                        })
+                    })
+                && facts.role_provenance.edges.iter().all(|edge| {
+                    parse_clean_source_file(&edge.declaration).is_some_and(|file| {
+                        file.tree()
+                            .syntax()
+                            .descendants()
+                            .filter_map(ast::Module::cast)
+                            .all(|module| {
+                                crate::analysis::syntax::ra::assertion_root_is_available(
+                                    name,
+                                    module.syntax(),
+                                )
+                            })
+                    })
+                });
+        } else {
+            if name.contains("::") {
+                return false;
+            }
+            name
+        };
+        self.targeted_source_provenance_is_admitted(test, index)
+            && !self.trusted_macro_ambiguities(index).contains(name)
+            && !self
+                .scoped_names_for(test, line)
+                .iter()
+                .any(|candidate| candidate == name)
+            && !self
+                .crate_names_for(test, index)
+                .iter()
+                .any(|candidate| candidate == name)
+    }
+
+    fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
+        ambiguous
+            .get_or_insert_with(|| {
+                let (mut global, scoped, by_root) =
+                    trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
+                *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+                let mut by_root = by_root;
+                for (root, names) in &self.withheld.by_root {
+                    by_root
+                        .entry(root.clone())
+                        .or_default()
+                        .extend(names.iter().cloned());
+                }
+                *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+                // Withheld crate-root files' crate-local sites are routed by
+                // root below; every other withheld site is workspace-wide.
+                global.extend(self.withheld.trusted.iter().cloned());
+                global
+            })
+            .clone()
+    }
+
+    /// File composition authority shared by assertion admission and targeted
+    /// assertion operands. Syntax in an included or unadmitted module cannot
+    /// borrow a standard macro binding from an incomplete scope view.
+    fn source_provenance_refusal(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let Some(facts) = index
+            .files()
+            .get(&test.file)
+            .filter(|facts| !facts.used_lexical_fallback)
+        else {
+            return Some(AssertionRefusal::LexicalFallback);
+        };
+        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
+            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
+        }
+        let mut by_file = self.by_file.borrow_mut();
+        for edge in &facts.role_provenance.edges {
+            // Module composition already owns resolution. Include expansions
+            // lack an exact declaration coordinate here, so remain unknown.
+            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                return Some(AssertionRefusal::IncludedFile {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                });
+            }
+            let Some(parent) = index
+                .files()
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+            else {
+                return Some(AssertionRefusal::LexicalFallback);
+            };
+            if !by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_module_declaration(edge.line, &edge.declaration)
+            {
+                return Some(AssertionRefusal::ModuleDeclaration {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                    declaration: edge.declaration.clone(),
+                });
+            }
+        }
+        None
+    }
+
     /// The gates every assertion of `test` shares, whatever its macro: a
     /// parser-backed file, resolved module composition, and each module
     /// declaration on the chain admitted. `Ok` holds the macro names some
@@ -604,28 +784,14 @@ impl OwnerPinSyntax {
         line: usize,
         index: &RustIndex,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
+        if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            return Err(Box::new(refusal));
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
-        let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped, by_root) =
-                trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
-            *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
-            let mut by_root = by_root;
-            for (root, names) in &self.withheld.by_root {
-                by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .extend(names.iter().cloned());
-            }
-            *self.crate_macro_bindings.borrow_mut() = Some(by_root);
-            // Withheld crate-root files' crate-local sites are routed by
-            // root below; every other withheld site is workspace-wide.
-            global.extend(self.withheld.trusted.iter().cloned());
-            global
-        });
+        let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
             .files()
             .get(&test.file)
@@ -633,9 +799,6 @@ impl OwnerPinSyntax {
         else {
             return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
-            return Err(Box::new(AssertionRefusal::UnresolvedModule(reason.clone())));
-        }
         let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
         let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
             let names = local_empty_macro_names(&facts.source);
@@ -665,35 +828,6 @@ impl OwnerPinSyntax {
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
         ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
-        let mut by_file = self.by_file.borrow_mut();
-        for edge in &facts.role_provenance.edges {
-            // Module composition already owns resolution. Include expansions
-            // lack an exact declaration coordinate here, so remain unknown.
-            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-                return Err(Box::new(AssertionRefusal::IncludedFile {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                }));
-            }
-            let Some(parent) = index
-                .files()
-                .get(&edge.parent)
-                .filter(|facts| !facts.used_lexical_fallback)
-            else {
-                return Err(Box::new(AssertionRefusal::LexicalFallback));
-            };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
-                .admits_module_declaration(edge.line, &edge.declaration)
-            {
-                return Err(Box::new(AssertionRefusal::ModuleDeclaration {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                    declaration: edge.declaration.clone(),
-                }));
-            }
-        }
         Ok(ambiguous)
     }
 

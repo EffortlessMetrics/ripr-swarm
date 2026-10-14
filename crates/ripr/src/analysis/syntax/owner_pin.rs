@@ -32,7 +32,13 @@ type FunctionKey = (usize, usize, String);
 pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
-    module_declarations: BTreeMap<(usize, String), bool>,
+    module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ModuleDeclarationAdmission {
+    context: bool,
+    source_preserved: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,8 +134,17 @@ impl OwnerPinAssertions {
     pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
         self.module_declarations
             .get(&(line, declaration.to_string()))
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|admission| admission.context)
+    }
+
+    pub(crate) fn admits_targeted_module_declaration(
+        &self,
+        line: usize,
+        declaration: &str,
+    ) -> bool {
+        self.module_declarations
+            .get(&(line, declaration.to_string()))
+            .is_some_and(|admission| admission.context && admission.source_preserved)
     }
 
     /// The first gate that refuses this assertion, or `None` when it is
@@ -1051,7 +1066,7 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 /// Discarded call-argument spans from the same bounded local resolver used by
 /// execution admission. This only removes evidence; workspace macro ambiguity
 /// still independently refuses positive assertion admission.
-pub(super) fn empty_local_macro_invocation_ranges(
+pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
     let empty = local_empty_macros(root);
@@ -1097,11 +1112,14 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
-        let admitted = supported_item_context(module.syntax());
+        let admitted = ModuleDeclarationAdmission {
+            context: supported_item_context(module.syntax()),
+            source_preserved: supported_targeted_item_context(module.syntax()),
+        };
         result
             .module_declarations
             .entry(key)
-            .and_modify(|previous| *previous = false)
+            .and_modify(|previous| *previous = ModuleDeclarationAdmission::default())
             .or_insert(admitted);
     }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
@@ -1778,6 +1796,20 @@ fn insert_function(
 /// attributes include inner attributes on ItemList, not only outer attrs.
 pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
+}
+
+/// Targeted call syntax also needs container attributes to preserve source
+/// items. The selected function's own harness attributes are outside this
+/// check; its parent and the resolved module declarations supply the context.
+pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
+    supported_item_context(item)
+        && item.ancestors().all(|node| {
+            node.children().filter_map(ast::Attr::cast).all(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                    &attr.syntax().text().to_string(),
+                )
+            })
+        })
 }
 
 /// Why `item` is not a plain item reachable from the file root under test
