@@ -360,14 +360,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       let parsedPacket: unknown;
       try {
         parsedPacket = JSON.parse(packet);
+        assertContextPacket(parsedPacket, expected);
       } catch (error) {
         const status = await client.sendRequest('workspace/executeCommand', {
           command: 'ripr.collectWorkspaceStatus', arguments: [],
         }) as { analysis_status?: Record<string, unknown> };
-        throw new Error(`context copy produced non-JSON clipboard ${JSON.stringify(packet)}: ${String(error)}`
+        throw new Error(`context copy verification failed with clipboard ${JSON.stringify(packet.slice(0, 300))}: ${String(error)}`
           + ` status=${JSON.stringify(status.analysis_status)}`);
       }
-      assertContextPacket(parsedPacket, expected);
       const rootedCommands = commands.filter(c => c.command.startsWith('ripr.copy')
         && typeof c.arguments?.[0]?.command === 'string');
       for (const command of rootedCommands) {
