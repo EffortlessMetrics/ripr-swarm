@@ -1155,13 +1155,18 @@ pub(crate) fn same_connectives(after: &str, before: &str) -> bool {
     // Masked, so `&&` or `||` inside a string or comment is not a connective.
     // A `||` that opens an argument or a value (`unwrap_or_else(|| x)`,
     // `= || x`) is an empty closure, not an operator.
-    // The closure test reads the unmasked text: masking blanks a literal, so
-    // `s == "a" || x` would otherwise end in `=` and pass for `= || x`
-    // (#7943 review). Masking keeps byte offsets, so `at` lines up.
+    // Masking blanks a literal, so `s == "a" || x` would end in `=` and pass
+    // for `= || x`: a `||` right after a literal's closing quote is an
+    // operator. Other context reads the masked text, so a comment before
+    // `||` cannot pose as an opener or an operand (#7943 review). Masking
+    // keeps byte offsets, so `at` lines up with the source.
     let connectives = |source: &str| {
         let text = crate::analysis::extract::mask_comments_and_strings(source);
         let opens_closure = |at: usize| {
-            let before = source[..at].trim_end();
+            if source[..at].trim_end().ends_with(['"', '\'', '#']) {
+                return false;
+            }
+            let before = text[..at].trim_end();
             // `move` and `return` count only as whole keywords: `should_remove
             // || x` and the raw identifier `r#move || x` are operators
             // (#7943 review).
@@ -2142,6 +2147,9 @@ mod tests {
         assert!(!same_connectives("100 < p", "c == 'x' || 100 <= p"));
         assert!(!same_connectives("100 < p", "flag == '(' || 100 <= p"));
         assert!(same_connectives("f(\"a\", || 1)", "f(\"b\", || 2)"));
+        // A comment before `||` changes neither reading.
+        assert!(!same_connectives("x || y", "f(/*c*/ || 1)"));
+        assert!(!same_connectives("100 < p", "a // note:\n || 100 <= p"));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
     }
