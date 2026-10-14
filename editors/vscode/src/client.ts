@@ -75,6 +75,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function disabledStatus(): RiprStatusState {
+  return {
+    kind: 'disabled',
+    summary: 'ripr editor analysis is disabled by configuration.',
+    detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
+    nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
+  };
+}
+
 /**
  * Status-bar colour pair for one attempt-status tone, or `undefined` for the
  * theme default (pass/info). Mirrors the main status bar's convention:
@@ -545,18 +554,18 @@ export class RiprClientController {
     const config = this.runtime.getConfig(
       this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
     );
-    await this.refreshSetupStatusFiles();
 
     if (!config.enabled) {
-      this.updateStatus({
-        kind: 'disabled',
-        summary: 'ripr editor analysis is disabled by configuration.',
-        detail: 'Set ripr.enabled to true to start saved-workspace diagnostics.',
-        nextStep: 'Set ripr.enabled to true, then run ripr: Restart Server.'
-      });
+      // Hide before the async setup-file read so a disable restart does not
+      // leave `ripr: stopped` (or the constructor's initial stopped item)
+      // visible while those reads complete.
+      this.updateStatus(disabledStatus());
       this.output.appendLine('ripr editor analysis is disabled by configuration.');
+      await this.refreshSetupStatusFiles();
       return;
     }
+
+    await this.refreshSetupStatusFiles();
 
     if (this.workspaceRootState.kind === 'ambiguousMultiRoot') {
       this.updateStatus({
@@ -932,12 +941,20 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
-    this.updateStatus({
-      kind: 'stopped',
-      summary: 'ripr server has stopped.',
-      detail: 'Run ripr: Restart Server to start analysis again.',
-      nextStep: 'Run ripr: Restart Server.'
-    });
+    // Config is already the new value when onDidChangeConfiguration restarts.
+    // Prefer `disabled` over visible `stopped` so a disable transition does
+    // not occupy the status bar for the rest of stop()/startOnce().
+    const config = this.runtime.getConfig(
+      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+    );
+    this.updateStatus(config.enabled
+      ? {
+          kind: 'stopped',
+          summary: 'ripr server has stopped.',
+          detail: 'Run ripr: Restart Server to start analysis again.',
+          nextStep: 'Run ripr: Restart Server.'
+        }
+      : disabledStatus());
     return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 

@@ -3753,6 +3753,48 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('disable restart hides the status item before setup-file reads finish', async () => {
+    let releaseRead: (() => void) | undefined;
+    let sawDisabledRead: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const disabledReadStarted = new Promise<void>((resolve) => {
+      sawDisabledRead = resolve;
+    });
+    let holdReads = false;
+    const context = createControllerTestContext({
+      beforeReadFile: async () => {
+        if (!holdReads) {
+          return;
+        }
+        sawDisabledRead?.();
+        await readGate;
+      }
+    });
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      holdReads = true;
+      context.setEnabled(false);
+      const restarting = context.controller.restart();
+      await disabledReadStarted;
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disable must hide the main item before setup-file reads finish'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseRead?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+    } finally {
+      releaseRead?.();
+      await context.dispose();
+    }
+  });
+
   test('status bar hides when disabled and reappears after re-enable', async () => {
     const context = createControllerTestContext({});
     try {
@@ -5142,6 +5184,7 @@ interface ControllerTestOptions {
   resolveFailure?: { message: string; detail: string };
   serverVersion?: string;
   workspaceTrusted?: boolean;
+  beforeReadFile?: () => Promise<void>;
 }
 
 // Mirror of the server's `shell_arg` (crates/ripr/src/agent/loop_commands.rs).
@@ -5585,7 +5628,12 @@ function createControllerTestContext(options: ControllerTestOptions) {
       watcherPatterns.push(pattern);
       return fakeFileSystemWatcher();
     },
-    readFile: async (filePath) => testFileContents(filePath, options),
+    readFile: async (filePath) => {
+      if (options.beforeReadFile) {
+        await options.beforeReadFile();
+      }
+      return testFileContents(filePath, options);
+    },
     runRipr: async (command, args, cwd) => {
       runRiprCalls.push({ command, args, cwd });
       return options.cliResult ?? '{}';
