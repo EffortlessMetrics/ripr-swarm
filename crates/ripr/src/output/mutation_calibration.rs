@@ -2850,6 +2850,64 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn matched_and_unmatched_tables_render_genre_not_replacement() -> Result<(), String> {
+        let repo = repo_json_for("seam-max", "strongly_gripped", "src/lib.rs", 101);
+        let mutants = r#"{
+  "outcomes": [
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:101:9: replace values.iter().copied().max() with None",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 101, "column": 9}, "end": {"line": 101, "column": 40}},
+        "replacement": "None",
+        "genre": "FnValue"
+      }},
+      "summary": "MissedMutant"
+    },
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:200:1: replace leftover with ()",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 200, "column": 1}, "end": {"line": 200, "column": 2}},
+        "replacement": "()",
+        "genre": "FnValue"
+      }},
+      "summary": "MissedMutant"
+    }
+  ]
+}"#;
+        let report = mutation_calibration_report_from_json(&repo, mutants)?;
+        let markdown = render_mutation_calibration_md(&report);
+        let matched = markdown
+            .split("## Matched Mutants")
+            .nth(1)
+            .and_then(|rest| rest.split("## ").next())
+            .ok_or_else(|| "matched table missing".to_string())?;
+        assert!(
+            matched.contains("| FnValue | missed |"),
+            "matched operator cell should be genre, got:\n{matched}"
+        );
+        assert!(
+            !matched.contains("| None |"),
+            "matched table must not render replacement None as the operator:\n{matched}"
+        );
+        let unmatched = markdown
+            .split("## Unmatched Runtime Mutants")
+            .nth(1)
+            .and_then(|rest| rest.split("## ").next())
+            .ok_or_else(|| "unmatched table missing".to_string())?;
+        assert!(
+            unmatched.contains("| FnValue | missed |"),
+            "unmatched operator cell should be genre, got:\n{unmatched}"
+        );
+        assert!(
+            !unmatched.contains("| () |"),
+            "unmatched table must not render replacement () as the operator:\n{unmatched}"
+        );
+        Ok(())
+    }
+
     fn spanned_seam(
         id: &str,
         file: &str,
