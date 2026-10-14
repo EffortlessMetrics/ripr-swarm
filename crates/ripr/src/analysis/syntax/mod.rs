@@ -7,7 +7,6 @@ mod name_scope;
 mod nesting;
 mod owner_pin;
 mod pattern_pin;
-#[cfg(test)]
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
