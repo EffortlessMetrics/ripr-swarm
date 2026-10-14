@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "return_value",
   "test_shape": "nodetest_context_t_bracket_assert_equal",
-  "hard_case": "`t[\"assert\"].equal` runs the same loose (`==`) comparison as `t.assert.equal`, but the spec reads no assertion through a computed member",
+  "hard_case": "`t[\"assert\"].equal` runs the same loose (`==`) comparison as `t.assert.equal`; the spec read no assertion through a computed member before RIPR-SPEC-0252 rule 1 accepted a string-literal key (2026-10-14)",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test asserts `t[\"assert\"].equal(holdFee(4), 5)`; the edit adds two, so 6 is compared with 5 and the test fails. RIPR-SPEC-0252 example 6 reads no assertion through `t[\"assert\"]`, so the owner call is reached but unobserved. ripr reports `weakly_exposed` with an `unknown` oracle, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "The test asserts `t[\"assert\"].equal(holdFee(4), 5)`; the edit adds two, so 6 is compared with 5 and the test fails. RIPR-SPEC-0252 rule 1 (amended 2026-10-14) reads a string-literal computed member `t[\"assert\"]` as `t.assert`, so the assertion is exact_value / strong and the finding reads `credited`. Before the amendment the computed member read no assertion and the row was a false actionable gap.",
   "labeling_observation": {
     "ripr_commit": "9073928",
     "full_checkout_verdict": "gap",
@@ -43,6 +43,6 @@
     "excerpt_parity": "matched"
   },
   "spec_examples": [
-    "RIPR-SPEC-0252#6"
+    "RIPR-SPEC-0252#7"
   ]
 }
