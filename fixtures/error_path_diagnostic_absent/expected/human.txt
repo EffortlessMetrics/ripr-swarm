@@ -17,7 +17,9 @@ Start here:
   Changed behavior: let n = rdr.read(&mut buf)?;
   Missing discriminator: No exact error variant discriminator was detected
   Related test: src/lib.rs:14 reads_successfully (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Assert the exact error variant or payload instead of only is_err().
+  Next step: The related test `reads_successfully` already asserts an exact value; the gap is not
+    the assertion shape. Add a test input that executes the changed error arm and assert the exact
+    variant or payload it produces.
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach read_all: reads_successfully
     - infection yes: Reachable tests can plausibly activate this changed behavior

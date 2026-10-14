@@ -39,7 +39,7 @@ Weakness
   - No exact error variant discriminator was detected
 
 Next step
-  Assert the exact error variant or payload instead of only is_err().
+  The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_operand_error_lexeme/input --diff <cwd>/fixtures/error_path_operand_error_lexeme/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_operand_error_lexeme/input --diff <cwd>/fixtures/error_path_operand_error_lexeme/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
