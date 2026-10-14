@@ -187,6 +187,18 @@ mod tests {
                     "panic-hook child omitted the formatted report; stderr: {stderr}"
                 ));
             }
+            // Readable stderr must notice if the captured-backtrace line or the
+            // uncaptured recovery note is removed; prefix+payload still pass (#7870).
+            let expected_diagnostic = if backtrace == "1" {
+                "stack backtrace:"
+            } else {
+                "note: set RUST_BACKTRACE=1"
+            };
+            if !stderr.contains(expected_diagnostic) {
+                return Err(format!(
+                    "panic-hook child omitted `{expected_diagnostic}` for RUST_BACKTRACE={backtrace}; stderr: {stderr}"
+                ));
+            }
         }
 
         let output = std::process::Command::new(&executable)
