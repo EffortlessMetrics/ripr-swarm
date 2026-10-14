@@ -254,7 +254,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    attribute (`#[cfg(..)]`) in either literal, an `r#` helper name, a name
    a macro may declare, or any workspace glob `use` rooted outside `crate`,
    `self`, `super` and the workspace packages (standard library included,
-   since the index cannot list what it binds) gives no credit. Both forms apply to the test's own
+   since the index cannot list what it binds) or passing through a segment
+   that is not a workspace `mod` (`extern crate other as ext;` then
+   `use self::ext::*;`) gives no credit. `fn r#default` counts as a
+   `default`. Both forms apply to the test's own
    `assert_eq!` operands, not to `==` conditions or borrowed
    check-helper assertions. The substituted literal then passes every rule 2 gate, so the
    changed field still needs an independent value, whether written in the

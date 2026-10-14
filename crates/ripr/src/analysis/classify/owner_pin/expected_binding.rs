@@ -1,8 +1,8 @@
 //! Bounded SPEC-0225 expected literal bindings; no general value-flow resolution.
 
 use super::{
-    OracleFact, RustIndex, TestSummary, file_use_statements, is_plain_identifier,
-    is_workspace_root, starts_with_word, use_statement_first_segment, whole_word_offsets,
+    OracleFact, RustIndex, TestSummary, UsePath, flattened_use_paths, is_plain_identifier,
+    is_workspace_root, starts_with_word, whole_word_offsets, workspace_module_names,
     wrapper_may_be_rebound,
 };
 use crate::analysis::extract::mask_comments_and_strings;
@@ -82,12 +82,6 @@ pub(super) fn expected_item_literal(
     operand: &str,
     type_name: &str,
 ) -> Option<String> {
-    // A glob from outside the workspace can bind the helper's name or
-    // `Default` in the test's scope, directly or through `use super::*`,
-    // and the index cannot read what it brings (#7954 review).
-    if workspace_has_opaque_glob(index) {
-        return None;
-    }
     let parse = parse_clean_source_file(&format!("fn ripr_expected() {{ ({operand}); }}"))?;
     let value = parse
         .tree()
@@ -111,7 +105,7 @@ pub(super) fn expected_item_literal(
             let name = segment.name_ref()?.text().to_string();
             // `r#name` and `name` are one identifier the text scans would
             // count apart.
-            if name.starts_with("r#") {
+            if name.starts_with("r#") || workspace_has_opaque_glob(index) {
                 return None;
             }
             let helper = sole_helper(index, &name)?;
@@ -130,6 +124,7 @@ pub(super) fn expected_item_literal(
                     .path()
                     .is_none_or(|path| path.syntax().text() != type_name)
                 || wrapper_may_be_rebound("Default", index)
+                || workspace_has_opaque_glob(index)
             {
                 return None;
             }
@@ -174,15 +169,33 @@ pub(super) fn expected_item_literal(
 }
 
 /// Whether any indexed file glob-imports from a root other than `crate`,
-/// `self`, `super` or a workspace package; standard-library globs count.
+/// `self`, `super` or a workspace package (standard-library globs count),
+/// or through a segment that is not a workspace `mod`: `use crate::ext::*;`
+/// after `extern crate other as ext;` or `pub use other::prelude;` reads
+/// another crate's items. Such a glob can bind the helper's name or
+/// `Default` in the test's scope, directly or through `use super::*`
+/// (#7954 review); callers check it only once the operand has one of the
+/// two shapes.
 fn workspace_has_opaque_glob(index: &RustIndex) -> bool {
-    index.files().values().any(|facts| {
-        facts.source.contains('*')
-            && file_use_statements(&facts.source).iter().any(|statement| {
-                statement.contains('*')
-                    && use_statement_first_segment(statement)
-                        .is_none_or(|root| !is_workspace_root(root, index))
-            })
+    let globs: Vec<UsePath> = index
+        .files()
+        .values()
+        .filter(|facts| facts.source.contains('*'))
+        .flat_map(|facts| flattened_use_paths(&facts.source))
+        .filter(|item| item.path.ends_with('*'))
+        .collect();
+    if globs.is_empty() {
+        return false;
+    }
+    let modules = workspace_module_names(index);
+    globs.iter().any(|glob| {
+        let path = glob.path.trim_start_matches("::");
+        let mut segments = path.split("::");
+        let root = segments.next().unwrap_or_default();
+        !is_workspace_root(root, index)
+            || segments
+                .filter(|segment| *segment != "*")
+                .any(|segment| !modules.contains(segment))
     })
 }
 
@@ -197,7 +210,10 @@ fn functions_named(index: &RustIndex, name: &str) -> Option<Vec<ast::Fn>> {
         let masked = mask_comments_and_strings(&facts.source);
         let declared = whole_word_offsets(&masked, "fn")
             .into_iter()
-            .filter(|offset| starts_with_word(masked[offset + 2..].trim_start(), name))
+            .filter(|offset| {
+                let rest = masked[offset + 2..].trim_start();
+                starts_with_word(rest.strip_prefix("r#").unwrap_or(rest), name)
+            })
             .count();
         if declared == 0 {
             continue;
@@ -211,7 +227,8 @@ fn functions_named(index: &RustIndex, name: &str) -> Option<Vec<ast::Fn>> {
             .filter(|function| {
                 function
                     .name()
-                    .is_some_and(|candidate| candidate.text() == name)
+                    // `fn r#name` declares `name` too (#7954 review).
+                    .is_some_and(|candidate| candidate.text().trim_start_matches("r#") == name)
             })
             .collect();
         if found.len() != declared {

@@ -6361,13 +6361,30 @@ fn an_expected_helper_or_default_base_reads_as_its_literal() {
             "{lib}"
         );
         // A standard-library glob leaves the pin standing; decision 7
-        // still refuses to read through a glob it cannot list.
+        // still refuses to read through a glob it cannot list, and so
+        // through a workspace path whose segment an import binds.
+        for helpers in [
+            "pub use std::fmt::*;\n",
+            "extern crate other as ext;\npub use self::ext::*;\n",
+            "pub use other::prelude;\npub use self::prelude::*;\n",
+        ] {
+            assert_eq!(through(lib, helpers, body), Some(false), "{helpers}{lib}");
+        }
         assert_eq!(
-            through(lib, "pub use std::fmt::*;\n", body),
-            Some(false),
+            through(lib, "pub mod inner {}\npub use self::inner::*;\n", body),
+            Some(true),
             "{lib}"
         );
     }
+    // Review (#7954): `fn r#default` is `default`; an inherent one wins
+    // `Config::default()` over the trait's literal.
+    assert!(!admits(
+        &format!(
+            "{defaulted}impl Config {{\n    pub fn r#default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
     // Review: a `#[cfg]`-disabled explicit field leaves the default's
     // computed value in force, so it may not override it in the merge.
     let computed =
