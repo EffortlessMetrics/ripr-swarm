@@ -641,6 +641,65 @@ fn a_macro_may_declare_the_guard_binding_as_a_constant() -> Result<(), String> {
 }
 
 #[test]
+fn a_statement_macro_in_the_owner_may_declare_the_guard_binding() -> Result<(), String> {
+    // Control (review on #7922): `consts!();`, defined in another file,
+    // may expand to `const p: i64 = 7;` scoped to the match.
+    let lib = tier("    consts!();\n").replace("p if 100 <= p", "p if 100 < p");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "statement macro");
+    Ok(())
+}
+
+#[test]
+fn an_item_macro_in_a_nested_module_may_declare_the_guard_binding() -> Result<(), String> {
+    // Control (review on #7922): the call sits inside `mod inner`, below
+    // the file's top level, next to the owner it may give a `const p`.
+    let lib = format!(
+        "pub use inner::{{Tier, tier}};\n\nmod inner {{\nconsts!();\n\n{}}}\n",
+        tier("").replace("p if 100 <= p", "p if 100 < p")
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "nested item macro");
+    Ok(())
+}
+
+#[test]
+fn a_statement_macro_in_another_function_keeps_the_guard_binding() -> Result<(), String> {
+    // Twin of the statement-macro control: a macro inside another
+    // function scopes its items to that function, so the binding still
+    // reads the scrutinee's boundary inputs.
+    let lib = format!(
+        "{}\npub fn helper() {{\n    consts!();\n}}\n",
+        tier("").replace("p if 100 <= p", "p if 100 < p")
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_let_in_the_guard_may_rebind_the_guard_binding() -> Result<(), String> {
     // Control (review on #7922): `p if let p = other && 100 < p` compares
     // `other`, and the guard has no brace to reject it by.

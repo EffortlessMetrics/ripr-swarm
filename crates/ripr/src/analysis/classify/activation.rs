@@ -1,5 +1,5 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
-use super::arm_selection::may_name_constant;
+use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -2741,9 +2741,13 @@ fn boundary_local_operand_parameter(
             // (`const p: i64 = 0;`), which the guard then compares instead
             // of the scrutinee; without the owner file that stays unread,
             // and so does a file whose items a macro may declare.
-            || (owner_source.is_some_and(|source| {
-                !may_name_constant(source, operand) && !may_declare_items_by_macro(source)
-            }) && body_contains_guard_binding_alias(&function.body, operand, parameter))
+            // The cheap body read runs first, so only a real guard alias
+            // pays for the owner file's parse.
+            || (body_contains_guard_binding_alias(&function.body, operand, parameter)
+                && owner_source.is_some_and(|source| {
+                    !may_name_constant(source, operand)
+                        && !may_declare_items_in_owner_scope(source, &function.name)
+                }))
         {
             return Some(parameter.clone());
         }
@@ -2899,33 +2903,6 @@ fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool 
             .iter()
             .any(|keyword| mentions_identifier(condition, keyword));
     !mentions_identifier(body, operand) && !rebinds
-}
-
-/// The file defines a `macro_rules!`, calls `include!`, or calls a macro
-/// at the top level, where it may declare items (`def_const!(p);` making a
-/// constant `p`) that no text search of the file finds (#7863).
-fn may_declare_items_by_macro(source: &str) -> bool {
-    let masked = crate::analysis::extract::mask_comments_and_strings(source);
-    if masked.contains("macro_rules!") || masked.contains("include!") {
-        return true;
-    }
-    let mut depth = 0usize;
-    masked.lines().any(|line| {
-        let trimmed = line.trim_start();
-        let name_end = trimmed
-            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
-            .unwrap_or(trimmed.len());
-        let item_macro =
-            depth == 0 && name_end > 0 && trimmed[name_end..].trim_start().starts_with('!');
-        for ch in line.chars() {
-            match ch {
-                '{' => depth += 1,
-                '}' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        }
-        item_macro
-    })
 }
 
 fn mentions_identifier(line: &str, name: &str) -> bool {

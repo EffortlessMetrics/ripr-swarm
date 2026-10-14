@@ -247,8 +247,10 @@ inputs and can name `p == 100` as missing. The operand stays unread when:
 - the binding's name may resolve to a constant (a `const` or `static` of
   that name in the owner file, or an import of it), since the pattern then
   compares the constant instead of binding the scrutinee, or the owner
-  file is unavailable or may declare items through a macro
-  (`macro_rules!`, `include!`, or a top-level macro call);
+  file is unavailable, does not parse cleanly, or may declare items through
+  a macro (`macro_rules!`, `include!`, a macro call at the item level of
+  any module, or a statement macro inside the owner; a statement macro in
+  another function scopes its items there and does not count);
 - the binding is not a bare identifier.
 
 The old line such an edit replaced (its positional counterpart, not any
