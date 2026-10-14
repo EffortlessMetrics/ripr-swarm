@@ -7,9 +7,9 @@ use super::arguments::{
 };
 use super::classify::classify_assertion;
 use super::patterns::{
-    contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
-    is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_unwrap_err_bound_error_assertion, without_expect_err,
+    contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
+    is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
+    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -2629,15 +2629,22 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
-    // zero-argument `expect_err()` is a mock's expectation for a method
-    // named `err`, not `Result::expect_err`.
+    // `.expect_err(<message>)` whose argument group closes `expr`. An empty
+    // group (`expect_err()`, `expect_err( )`) is a mock's expectation for a
+    // method named `err`, not `Result::expect_err`; `without_expect_err`
+    // applies the same rule, so both adapters agree on it.
+    // Masking keeps byte offsets, and blanks a message's quotes, so the
+    // arguments are read back from `expr` itself, by the same rule
+    // `without_expect_err` applies.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
-        return false;
-    }
-    // Find last `.expect_err(`
-    expr.contains(".expect_err(")
+    let masked = mask_comments_and_strings(expr);
+    let masked = masked.trim_end();
+    let close = masked.len().saturating_sub(1);
+    masked
+        .match_indices(".expect_err(")
+        .map(|(start, call)| start + call.len() - 1)
+        .find(|&open| balanced_group_end(masked, open) == Some(close))
+        .is_some_and(|open| has_argument_tokens(&expr[open + 1..close]))
 }
 
 pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
