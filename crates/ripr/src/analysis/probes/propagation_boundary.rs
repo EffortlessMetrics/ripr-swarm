@@ -89,7 +89,9 @@ fn current_subjects(
         {
             continue;
         }
-        let owner = find_owner_function(index, file, line)?;
+        let Some(owner) = find_owner_function(index, file, line) else {
+            continue;
+        };
         let mut direct_owner = false;
         for ancestor in expression.syntax().ancestors().skip(1) {
             if let Some(function) = ast::Fn::cast(ancestor.clone()) {

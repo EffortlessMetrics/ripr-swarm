@@ -409,3 +409,40 @@ fn propagation_path_keeps_a_strong_oracle_without_inventing_activation() -> Resu
     );
     Ok(())
 }
+
+#[test]
+fn unowned_candidate_keeps_other_owned_propagation_subjects() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = format!(
+        "{SOURCE}const UNOWNED: Result<(), &str> = {{\n    let _ = None::<()>.ok_or(\n        \"missing\"\n    )?;\n    Ok(())\n}};\n{}",
+        SOURCE.replace("fn finish(", "fn second(")
+    );
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
+    assert!(
+        !facts.used_lexical_fallback,
+        "control requires a clean syntax parse"
+    );
+    let mut index = RustIndex::default();
+    index.insert_file(path.clone(), facts, true);
+    let changed = source
+        .lines()
+        .enumerate()
+        .filter(|(_, text)| text.trim().ends_with(")?;"))
+        .map(|(line, text)| ChangedLine {
+            line: line + 1,
+            new_side_line: line + 1,
+            text: text.to_string(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(changed.len(), 3, "two functions and one unowned constant");
+    let found = super::propagation_boundary::closing_propagation_subjects(&index, &path, &changed);
+    assert_eq!(
+        found.len(),
+        2,
+        "an owner failure must skip only that candidate"
+    );
+    assert!(found.contains_key(&changed[0].new_side_line));
+    assert!(!found.contains_key(&changed[1].new_side_line));
+    assert!(found.contains_key(&changed[2].new_side_line));
+    Ok(())
+}
