@@ -41,6 +41,7 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+pub(super) mod closure_adaptor;
 mod fallible_check;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -1447,6 +1448,12 @@ enum ReturnPathGate {
     /// `PartialEq`, so every field of the clone is compared with the
     /// original's.
     CloneReceiver,
+    /// RIPR-SPEC-0260 rule 2: the changed tail is the owner's whole body,
+    /// `P.iter().A(|x| E)[.T()]`, whose closure runs once per element of
+    /// the parameter at `position`. The pinned call must pass that
+    /// parameter a non-empty literal sequence, so the closure runs at least
+    /// once on the pinned input.
+    Adaptor { position: usize },
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -1516,7 +1523,19 @@ impl OwnerReturnPin {
         }
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
-        let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
+        let path = match return_path_gate(&owner.body, &probe.expression, changed_line) {
+            Some(path) => path,
+            // RIPR-SPEC-0260 rule 2: only a changed return value that is the
+            // whole admitted adaptor tail; the test side reads the input.
+            None if matches!(probe.family, ProbeFamily::ReturnValue) => {
+                closure_adaptor::owner_adaptor_tail(owner)
+                    .filter(|tail| tail.tail_is(&probe.expression))
+                    .map(|tail| ReturnPathGate::Adaptor {
+                        position: tail.position,
+                    })?
+            }
+            None => return None,
+        };
         // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
         // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
         // `fn Ok` in the owner's file can build a second source of the
@@ -1779,7 +1798,9 @@ impl OwnerReturnPin {
         } else {
             equality_condition_operands(&assertion.text)
         };
-        let (call, expected) = if reads_assert_eq {
+        // RIPR-SPEC-0260: the text of the owner call, when one operand is it,
+        // so an adaptor gate can read the argument the call passes.
+        let (call, expected, call_text): (_, _, Option<&str>) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -1787,8 +1808,8 @@ impl OwnerReturnPin {
                 self.awaited_call_shape(operands[0], &self.name),
                 self.awaited_call_shape(operands[1], &self.name),
             ) {
-                (Some(call), None) => (call, operands[1]),
-                (None, Some(call)) => (call, operands[0]),
+                (Some(call), None) => (call, operands[1], Some(operands[0])),
+                (None, Some(call)) => (call, operands[0], Some(operands[1])),
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
                 // Only a test that names the owner outside this assertion
                 // can bind its result, and only in the test's own body: a
@@ -1799,12 +1820,16 @@ impl OwnerReturnPin {
                         && owner_named_outside(test, &assertion.text, &self.name) =>
                 {
                     let bound = |at: usize| {
-                        let_bound_owner_call(test, assertion, operands[at], &self.name)
-                            .and_then(|call| self.awaited_call_shape(call, &self.name))
+                        let_bound_owner_call(test, assertion, operands[at], &self.name).and_then(
+                            |text| {
+                                self.awaited_call_shape(text, &self.name)
+                                    .map(|call| (call, text))
+                            },
+                        )
                     };
                     match (bound(0), bound(1)) {
-                        (Some(call), None) => (call, operands[1]),
-                        (None, Some(call)) => (call, operands[0]),
+                        (Some((call, text)), None) => (call, operands[1], Some(text)),
+                        (None, Some((call, text))) => (call, operands[0], Some(text)),
                         // RIPR-SPEC-0225 rule 1: `let c = owner(..);` named
                         // only by its `let` and this comparison.
                         (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
@@ -1812,8 +1837,8 @@ impl OwnerReturnPin {
                                 bound_owner_call(test, operands[0], &self.name),
                                 bound_owner_call(test, operands[1], &self.name),
                             ) {
-                                (Some(call), None) => (call, operands[1]),
-                                (None, Some(call)) => (call, operands[0]),
+                                (Some(call), None) => (call, operands[1], None),
+                                (None, Some(call)) => (call, operands[0], None),
                                 _ => return false,
                             }
                         }
@@ -1827,8 +1852,8 @@ impl OwnerReturnPin {
                 self.awaited_call_shape(left, &self.name),
                 self.awaited_call_shape(right, &self.name),
             ) {
-                (Some(call), None) => (call, right.as_str()),
-                (None, Some(call)) => (call, left.as_str()),
+                (Some(call), None) => (call, right.as_str(), Some(left.as_str())),
+                (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
                 _ => return false,
             }
         } else if !is_guard
@@ -1856,7 +1881,11 @@ impl OwnerReturnPin {
             }) {
                 return false;
             }
-            (call, matches_operands[1].as_str())
+            (
+                call,
+                matches_operands[1].as_str(),
+                Some(matches_operands[0].as_str()),
+            )
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
@@ -1873,7 +1902,7 @@ impl OwnerReturnPin {
             let Some(call) = self.awaited_call_shape(operand, &self.name) else {
                 return false;
             };
-            (call, expected)
+            (call, expected, Some(operand))
         } else {
             return false;
         };
@@ -1885,9 +1914,8 @@ impl OwnerReturnPin {
         // calls eagerly (#6482). A harness trial's body is only its
         // registration, and an assertion attributed to it from anywhere else
         // sees bindings that are not in it.
-        let helper = syntax
-            .helper_loan(test, assertion, index)
-            .map(|loan| loan.helper);
+        let loan = syntax.helper_loan(test, assertion, index);
+        let helper = loan.as_ref().map(|loan| loan.helper.clone());
         let in_body = (test.start_line..=test.end_line).contains(&assertion.line);
         if in_body == helper.is_some() {
             return false;
@@ -1938,6 +1966,21 @@ impl OwnerReturnPin {
             ) => return false,
             (path, _) => {
                 if !path.admits(expected) {
+                    return false;
+                }
+                // RIPR-SPEC-0260 rule 2: the pinned call must run the
+                // closure at least once.
+                if let ReturnPathGate::Adaptor { position } = path
+                    && !call_text.is_some_and(|text| {
+                        closure_adaptor::pinned_call_runs_closure(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                        )
+                    })
+                {
                     return false;
                 }
                 // The expected `Err(..)` / `Ok(..)` / `Some(..)` / `None`
@@ -2803,7 +2846,7 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any => true,
+            Self::Any | Self::Adaptor { .. } => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }

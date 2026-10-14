@@ -230,6 +230,21 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    // RIPR-SPEC-0260 rule 3: a comparison that is the whole closure body of
+    // an admitted iterator-adaptor tail decides, per element, what the tail
+    // (the owner's whole body) returns.
+    if let Some((owner_fn, tail)) = owner_fn.and_then(|function| {
+        super::owner_pin::closure_adaptor::owner_adaptor_tail(function)
+            .filter(|tail| tail.closure_body_is(&probe.expression))
+            .map(|tail| (function, tail))
+    }) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            tail.tail.clone(),
+            owner_fn.start_line + tail.tail_line_offset,
+            owner,
+        )];
+    }
     if let Some(tail) = predicate_as_owner_tail(probe, owner_fn) {
         return vec![flow_sink(
             FlowSinkKind::ReturnValue,

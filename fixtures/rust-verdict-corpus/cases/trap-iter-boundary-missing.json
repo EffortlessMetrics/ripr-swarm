@@ -1,0 +1,62 @@
+{
+  "case_id": "trap-iter-boundary-missing",
+  "subject_id": "authored-spec0260-iter-adaptor",
+  "diff": "cases/trap-iter-boundary-missing.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "closure_in_iterator_adaptor",
+  "test_shape": "exact_pin_assert_without_boundary_element",
+  "hard_case": "The pinned slice &[3, 7] runs the closure, so the returned count is pinned, but no element sits on the boundary x == 0: the x >= 0 mutant survives.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "xs.iter().filter(|&&x| x >= 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x >= 0).count()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: count_positive(&[0]) is 1 instead of 0; the test passes no 0 element"
+      },
+      {
+        "replacement": "xs.iter().filter(|&&x| x < 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x < 0).count()",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_two_positive_without_zero",
+        "equivalence_review": "not equivalent: counts_two_positive_without_zero fails on it"
+      },
+      {
+        "replacement": "xs.iter().filter(|&&x| x == 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x == 0).count()",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_two_positive_without_zero",
+        "equivalence_review": "not equivalent: counts_two_positive_without_zero fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "counts_two_positive_without_zero pins count_positive(&[3, 7]) to 2. The closure runs on 3 and 7, so the owner-return pin holds (RIPR-SPEC-0260 rule 2), but neither element is 0, so the boundary mutant x >= 0 survives; 2 of 3 listed mutants fail cargo test. The predicate must keep its missing x == 0 discriminator. Spec cells: RIPR-SPEC-0260 example 4.",
+  "labeling_observation": {
+    "ripr_commit": "43e03065",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0260#4"
+  ]
+}

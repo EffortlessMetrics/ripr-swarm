@@ -8,9 +8,11 @@
 use super::super::facts::CallFact;
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
 use super::activation::{
-    call_arguments, comparison_operands, function_parameters, owner_argument_values,
+    call_arguments, comparison_operands, function_parameters, literal_operand_value,
+    owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
+use super::owner_pin::closure_adaptor::{AdaptorTail, argument_sequences, owner_adaptor_tail};
 use super::reveal::assertion_comparison_operands;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
@@ -124,6 +126,7 @@ fn test_pairs_boundary_input_with_oracle(
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
+    let element = adaptor_element_boundary(probe, owner);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
@@ -142,11 +145,19 @@ fn test_pairs_boundary_input_with_oracle(
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
+                    || element.as_ref().is_some_and(|element| {
+                        loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
+                    })
             });
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
+            || element.as_ref().is_some_and(|element| {
+                owner_call_sites(&assertion_subject(&operands), owner)
+                    .iter()
+                    .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
+            })
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
             // rule: the owner-return pin judges the owner's own call, never
@@ -317,6 +328,70 @@ fn loan_pairs_boundary_call(
                 && fact.text.contains(&helper_call.text)
                 && fact_matches_fed_literals(&fact.value, &fed)
         })
+    })
+}
+
+/// RIPR-SPEC-0260 rule 1 pairing: the admitted adaptor tail whose closure
+/// body is the changed comparison, and the literal boundary the closure
+/// binding is compared with.
+fn adaptor_element_boundary(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<(AdaptorTail, String)> {
+    let tail = owner_adaptor_tail(owner).filter(|tail| tail.closure_body_is(&probe.expression))?;
+    let (left, right) = comparison_operands(&probe.expression)?;
+    let boundary = match (tail.reads_element(&left), tail.reads_element(&right)) {
+        (true, false) => right,
+        (false, true) => left,
+        _ => return None,
+    };
+    literal_operand_value(&boundary).map(|value| (tail, value))
+}
+
+/// Whether one owner call's argument for the iterated parameter is, on some
+/// run, a literal sequence that reaches the boundary value.
+fn arguments_feed_boundary_element(
+    test: &TestSummary,
+    loan: Option<&HelperLoan>,
+    arguments: &[String],
+    (tail, boundary): &(AdaptorTail, String),
+) -> bool {
+    arguments
+        .get(tail.position)
+        .and_then(|argument| argument_sequences(test, loan, argument))
+        .is_some_and(|runs| {
+            runs.iter()
+                .any(|run| tail.run_reaches_boundary(run, boundary))
+        })
+}
+
+/// [`loan_pairs_boundary_call`] for an element boundary: the borrowed
+/// assertion compares one whole owner call whose iterated argument is a
+/// helper parameter, and some eager call of the helper in the test passes a
+/// literal sequence holding the boundary value.
+fn loan_pairs_boundary_element(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    loan: &HelperLoan,
+    assertion_text: &str,
+    element: &(AdaptorTail, String),
+) -> bool {
+    if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
+        return false;
+    }
+    let Some(compared) = assertion_comparison_operands(assertion_text) else {
+        return false;
+    };
+    compared.iter().any(|operand| {
+        let operand = operand.trim();
+        let lists = owner_call_argument_lists(operand, &owner.name);
+        let [(_, arguments)] = lists.as_slice() else {
+            return false;
+        };
+        operand.starts_with(&format!("{}(", owner.name))
+            && delimited_contents_at(operand, owner.name.len())
+                .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len())
+            && arguments_feed_boundary_element(test, Some(loan), arguments, element)
     })
 }
 
