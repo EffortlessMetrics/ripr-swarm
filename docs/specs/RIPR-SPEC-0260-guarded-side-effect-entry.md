@@ -75,9 +75,13 @@ counterpart for side effects.
    enter the guard with a value no test passes. The self-mention check is
    textual, so a method that calls a same-named method on a field
    (`self.items.push(x)` inside `fn push`) is refused too; that is a known
-   over-refusal, never a false reading. An owner that invokes a macro other
-   than the standard assertion and formatting macros is refused too, since
-   the expansion may call the owner back.
+   over-refusal, never a false reading. An owner, or a function it
+   reaches, that invokes a macro other than the standard assertion and
+   formatting macros is refused too, since the expansion may call the owner
+   back. Any indexed file that renames the owner (`use crate::add as
+   push_big;`, or a cast `add as fn(..)`) is refused, since calls under the
+   new name run it; the scan is textual, so a comment spelling `add as` also
+   refuses.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -88,7 +92,8 @@ counterpart for side effects.
 
    The same refusals as RIPR-SPEC-0229 apply. A partial workspace index, a
    same-named function elsewhere, a test that may reach the owner through a
-   helper or an unread macro, or a test file that imports a foreign
+   helper or an unread macro (in its own body or in a helper it reaches),
+   or a test file that imports a foreign
    same-named function or whose package defines one leaves the guard
    unnamed.
 5. **Reading.** When rule 4 holds, the probe gets a missing discriminator
@@ -134,8 +139,10 @@ counterpart for side effects.
 4. `let n = 4; add(&mut v, n);`: no guard named (fail closed).
 5. `if x > LIMIT`: no guard named (named bound).
 6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
-   calls a helper that calls it back: no guard named (recursion). The same holds when a macro the owner invokes
-   calls it back.
+   calls a helper that calls it back: no guard named (recursion). The same
+   holds when a macro the owner, a helper it calls or a test helper invokes
+   calls it back, and when a test calls the owner under a renamed import
+   (`use crate::add as push_big;` then `push_big(&mut v, 20)`).
 
 ## Test Mapping
 

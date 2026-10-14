@@ -1455,7 +1455,15 @@ fn missing_guard_entry_discriminator(
     // enters the guard (mutual recursion), which no test input shows.
     // A macro the owner invokes may expand to a call back into the owner
     // (`bump!(v)` → `add(v, 20)`), which neither check above can read.
-    if owner_may_reenter(owner, &functions_by_name) || invokes_unread_macro(&owner.body) {
+    // A renamed import (`use crate::add as push_big;`) calls the owner under
+    // a name no body scan for the owner finds.
+    if owner_may_reenter(owner, &functions_by_name)
+        || invokes_unread_macro(&owner.body)
+        || index
+            .files()
+            .values()
+            .any(|file| renames_function(&file.source, &owner.name))
+    {
         return None;
     }
     let mut inputs = Vec::new();
@@ -1483,9 +1491,9 @@ fn missing_guard_entry_discriminator(
     })
 }
 
-/// Whether a function the owner reaches through its calls names the owner,
-/// so the owner may run again with an argument computed inside the call
-/// chain rather than passed by a test.
+/// Whether a function the owner reaches through its calls names the owner
+/// or invokes an unread macro, so the owner may run again with an argument
+/// computed inside the call chain rather than passed by a test.
 fn owner_may_reenter(
     owner: &FunctionSummary,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
@@ -1502,7 +1510,9 @@ fn owner_may_reenter(
             continue;
         }
         for function in functions_by_name.get(name).into_iter().flatten() {
-            if super::reveal::contains_as_whole_word(&function.body, &owner.name) {
+            if super::reveal::contains_as_whole_word(&function.body, &owner.name)
+                || invokes_unread_macro(&function.body)
+            {
                 return true;
             }
             pending.extend(
@@ -1520,7 +1530,8 @@ fn owner_may_reenter(
 /// Whether the test may run the owner through something its own body does
 /// not show: a call to an indexed function whose body names the owner (a
 /// helper such as `check_none()`), or a macro other than the standard
-/// assertion and formatting macros, whose expansion is not read.
+/// assertion and formatting macros, whose expansion is not read, in the
+/// test or in any helper it reaches.
 fn may_reach_owner_unread(
     test: &TestSummary,
     owner: &str,
@@ -1545,7 +1556,9 @@ fn may_reach_owner_unread(
             .flatten()
             .filter(|function| !(function.name == test.name && function.file == test.file))
         {
-            if super::reveal::contains_as_whole_word(&function.body, owner) {
+            if super::reveal::contains_as_whole_word(&function.body, owner)
+                || invokes_unread_macro(&function.body)
+            {
                 return true;
             }
             pending.extend(
@@ -1558,6 +1571,26 @@ fn may_reach_owner_unread(
         }
     }
     invokes_unread_macro(&test.body)
+}
+
+/// Whether `source` renames `function` (`use crate::add as push_big;`, or a
+/// cast such as `add as fn(u32)`), so calls under the new name run it. Read
+/// on raw text, so a comment or string spelling `add as` also counts; that
+/// only withholds the guard reading.
+fn renames_function(source: &str, function: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    source.match_indices(function).any(|(offset, _)| {
+        let before = source[..offset].chars().next_back();
+        let rest = &source[offset + function.len()..];
+        if before.is_some_and(is_word) || rest.chars().next().is_some_and(is_word) {
+            return false;
+        }
+        let trimmed = rest.trim_start();
+        trimmed.len() < rest.len()
+            && trimmed
+                .strip_prefix("as")
+                .is_some_and(|tail| !tail.chars().next().is_some_and(is_word))
+    })
 }
 
 /// The standard assertion and formatting macros whose expansion cannot

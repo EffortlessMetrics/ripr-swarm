@@ -346,7 +346,39 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
         )
     };
     let method_test = "use guarded_side_effect::S;\n\n#[test]\nfn adds() {\n    let s = Box::new(S { v: Vec::new() });\n    let v = s.add(11, 4);\n    assert_eq!(v, vec![11]);\n}\n";
+    // A helper the owner calls invokes a macro that calls the owner back
+    // with 20; the helper's body never names the owner.
+    let helper_macro = |push: &str| {
+        format!(
+            "macro_rules! bump {{\n    ($v:expr) => {{\n        add($v, 20)\n    }};\n}}\n\npub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    fixup(v);\n}}\n\nfn fixup(v: &mut Vec<u32>) {{\n    if v.is_empty() {{\n        bump!(v);\n    }}\n}}\n"
+        )
+    };
+    // A test helper invokes a macro that passes 20 to the owner.
+    let test_helper_macro = "use guarded_side_effect::add;\n\nmacro_rules! bump {\n    ($v:expr) => {\n        add($v, 20)\n    };\n}\n\nfn setup(v: &mut Vec<u32>) {\n    bump!(v);\n}\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    setup(&mut v);\n    assert_eq!(v, vec![20]);\n}\n";
+    // A renamed import calls the owner with 20 under another name.
+    let renamed_test = "use guarded_side_effect::add;\nuse guarded_side_effect::add as push_big;\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    push_big(&mut v, 20);\n    assert_eq!(v, vec![20]);\n}\n";
     let cases = [
+        (
+            "helper macro",
+            helper_macro("v.push(x);"),
+            helper_macro("v.push(x * 1);"),
+            9,
+            test_calling("    add(&mut v, 4);"),
+        ),
+        (
+            "test helper macro",
+            source("x > 10", "v.push(x);"),
+            source("x > 10", "v.push(x * 1);"),
+            3,
+            test_helper_macro.to_string(),
+        ),
+        (
+            "renamed import",
+            source("x > 10", "v.push(x);"),
+            source("x > 10", "v.push(x * 1);"),
+            3,
+            renamed_test.to_string(),
+        ),
         (
             "macro recursion",
             via_macro("v.push(x);"),
@@ -399,5 +431,22 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
             );
         }
     }
+    // The typed-receiver row discriminates only if the method reading names
+    // the guard when its argument does miss it: `s.add(4, 11)` passes 4.
+    let missing_method_test = method_test.replace("s.add(11, 4)", "s.add(4, 11)");
+    let method_findings = custom_findings(
+        &typed_receiver("v.push(x);"),
+        &typed_receiver("v.push(x * 1);"),
+        9,
+        &missing_method_test,
+    )?;
+    assert!(
+        method_findings.iter().any(names_unentered_guard),
+        "typed receiver with 4: the guard must be named: {:?}",
+        method_findings
+            .iter()
+            .map(|finding| &finding.ripr.infect)
+            .collect::<Vec<_>>()
+    );
     Ok(())
 }

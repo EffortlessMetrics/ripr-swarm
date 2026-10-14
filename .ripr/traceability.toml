@@ -15149,7 +15149,9 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/infection.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/output/human/explain.rs",
   "crates/ripr/src/output/related_test_miss.rs",
 ]
