@@ -384,7 +384,7 @@ fn native_collision_fixture_compiles_and_runs_all_three_real_tests() -> Result<(
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             break status;
         }
-        if started.elapsed() >= Duration::from_secs(120) {
+        if started.elapsed() >= Duration::from_mins(2) {
             child.terminate_tree()?;
             return Err("native collision fixture exceeded 120-second runtime budget".to_owned());
         }
