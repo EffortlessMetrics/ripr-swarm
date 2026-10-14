@@ -153,7 +153,11 @@ impl GuardEntry {
                 // The guard must be the owner's only mention of the name: a
                 // parameter, local `let` or nested `const` of that name
                 // would shadow the item the caller resolves.
-                if whole_word_offsets(&masked, &name).len() != 1 {
+                // A `use` in the owner's body (`use std::u8::*;`) may bind
+                // the name closer than the file-level item.
+                if whole_word_offsets(&masked, &name).len() != 1
+                    || !whole_word_offsets(&masked, "use").is_empty()
+                {
                     return None;
                 }
                 resolve_bound(&name)?
@@ -303,20 +307,19 @@ fn integer_range(type_name: &str) -> Option<(i128, i128)> {
         "u64" => (0, u64::MAX.into()),
         // `integer_value` reads at most `i128::MAX`.
         "u128" => (0, i128::MAX),
-        "usize" => (0, u64::MAX.into()),
+        "usize" => (0, u32::MAX.into()),
         "i8" => (i8::MIN.into(), i8::MAX.into()),
         "i16" => (i16::MIN.into(), i16::MAX.into()),
         "i32" => (i32::MIN.into(), i32::MAX.into()),
         "i64" => (i64::MIN.into(), i64::MAX.into()),
         "i128" => (i128::MIN, i128::MAX),
-        "isize" => (i64::MIN.into(), i64::MAX.into()),
+        "isize" => (i32::MIN.into(), i32::MAX.into()),
         _ => return None,
     })
 }
 
 /// Whether `value` is representable in `range` without wrapping. `usize`
-/// and `isize` use the 64-bit range: a value past a 32-bit target's range
-/// is a deny-by-default lint error there.
+/// and `isize` use the 32-bit range, which every supported target holds.
 fn fits(value: i128, (min, max): (i128, i128)) -> bool {
     (min..=max).contains(&value)
 }
@@ -375,17 +378,31 @@ fn parameter_comparison(condition: &str) -> Option<(String, Comparison, Bound)> 
     let (at, width, comparison) = single_comparison(condition)?;
     let left = condition.get(..at)?.trim();
     let right = condition.get(at + width..)?.trim();
-    let bound = |side: &str| {
-        integer_value(side)
-            .map(Bound::Literal)
-            .or_else(|| is_constant_name(side).then(|| Bound::Named(side.to_string())))
+    // A literal bound takes any identifier as the parameter, upper-case
+    // included (`X > 10`); only between two names does the upper-case one
+    // read as the bound.
+    let named = |bound: &str, parameter: &str| {
+        is_constant_name(bound) && is_identifier(parameter) && !is_constant_name(parameter)
     };
-    let parameter = |side: &str| is_identifier(side) && !is_constant_name(side);
-    match (bound(left), bound(right)) {
-        (None, Some(bound)) if parameter(left) => Some((left.to_string(), comparison, bound)),
-        (Some(bound), None) if parameter(right) => {
-            Some((right.to_string(), comparison.flipped(), bound))
+    match (integer_value(left), integer_value(right)) {
+        (None, Some(bound)) if is_identifier(left) => {
+            Some((left.to_string(), comparison, Bound::Literal(bound)))
         }
+        (Some(bound), None) if is_identifier(right) => Some((
+            right.to_string(),
+            comparison.flipped(),
+            Bound::Literal(bound),
+        )),
+        (None, None) if named(right, left) => Some((
+            left.to_string(),
+            comparison,
+            Bound::Named(right.to_string()),
+        )),
+        (None, None) if named(left, right) => Some((
+            right.to_string(),
+            comparison.flipped(),
+            Bound::Named(left.to_string()),
+        )),
         _ => None,
     }
 }
@@ -572,6 +589,10 @@ mod tests {
             Some(("x".to_string(), Comparison::NotEqual, Bound::Literal(0)))
         );
         assert_eq!(
+            parameter_comparison("X > 10"),
+            Some(("X".to_string(), Comparison::Greater, Bound::Literal(10)))
+        );
+        assert_eq!(
             parameter_comparison("LIMIT_2 <= x"),
             Some((
                 "x".to_string(),
@@ -588,7 +609,7 @@ mod tests {
             "x >> 2 > 1",
             "let Some(v) = x",
             "LIMIT > MAX",
-            "X > y",
+            "x > Limit",
         ] {
             assert_eq!(parameter_comparison(unread), None, "{unread}");
         }

@@ -285,6 +285,8 @@ fn an_unreadable_guard_names_nothing() -> Result<(), String> {
     for prelude in [
         // The input enters the named bound.
         "pub const LIMIT: u32 = 3;\n",
+        // Any attribute on the const may change it; `cfg` may remove it.
+        "#[doc(hidden)]\npub const LIMIT: u32 = 10;\n",
         // A computed or non-integer constant is not evaluated.
         "pub const LIMIT: u32 = 5 * 2;\n",
         // A `static` may be read through interior paths; only `const` reads.
@@ -712,6 +714,20 @@ fn a_named_bound_the_owner_shadows_or_cannot_see_names_no_guard() -> Result<(), 
             "use std::u8::*;\n#[cfg(not(test))]\nconst MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > MIN {\n        v.push(x);\n    }\n}\n",
             "use std::u8::*;\n#[cfg(not(test))]\nconst MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x > MIN {\n        v.push(x * 1);\n    }\n}\n",
             6,
+        ),
+        // An input past the parameter's type wraps the same way: read as
+        // written, 260 misses `x < 10`, but as a `u8` it is 4, which enters.
+        (
+            "#![allow(overflowing_literals)]\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x < 10 {\n        v.push(x);\n    }\n}\n#[test]\nfn wraps() {\n    let mut v = Vec::new();\n    add(&mut v, 260);\n}\n",
+            "#![allow(overflowing_literals)]\npub fn add(v: &mut Vec<u8>, x: u8) {\n    if x < 10 {\n        v.push(x * 1);\n    }\n}\n#[test]\nfn wraps() {\n    let mut v = Vec::new();\n    add(&mut v, 260);\n}\n",
+            4,
+        ),
+        // A glob import in the owner's body binds `MIN` closer than the
+        // file-level const: `std::u8::MIN` is 0, which 10 enters.
+        (
+            "const MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    use std::u8::*;\n    if x > MIN {\n        v.push(x);\n    }\n}\n",
+            "const MIN: u8 = 100;\npub fn add(v: &mut Vec<u8>, x: u8) {\n    use std::u8::*;\n    if x > MIN {\n        v.push(x * 1);\n    }\n}\n",
+            5,
         ),
         // A bound typed through an alias is not an integer type the reading
         // trusts.
