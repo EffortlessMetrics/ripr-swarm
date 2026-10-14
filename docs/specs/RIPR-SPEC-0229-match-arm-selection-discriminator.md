@@ -295,7 +295,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    `check_color('S', want)` lends nothing; a variable, an expression or a
    call argument lends nothing. This credits
    only: a helper call still blocks naming an arm as unselected
-   (decision 3). Rejected: keep helper arguments unresolved, which reads
+   (decision 3). A lending test that also names the owner must pass the
+   direct path's identity gates (every mention a readable call, no owner
+   result bound with `let`, no local shadow of the owner), as in
+   decision 7. Rejected: keep helper arguments unresolved, which reads
    a helper-wrapped table of literal checks as unproven.
 6. **Integer scrutinee arithmetic and value-equal respelling (#7989).**
    Adopted: a scrutinee written `param / N` or `param % N`, with `param` a
@@ -322,6 +325,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    `for` that binds the column, with no `continue`, `break`, `return` or
    `?` before it in that body and no block, closure or call around it; an
    assertion borrowed from a check helper never reads the test's table.
+   As on the direct path, an assertion whose every compared operand names
+   the owner never selects.
    The test must still pass
    the direct path's owner-identity gates: every owner mention a readable
    call, no owner result bound with `let`, and no local shadow of the
@@ -631,7 +636,11 @@ the diff changes `None => 1` to `None => 0`.
   verified local `assert_matches!`, parsed once per file per run.
 
 - `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
-  reading, scrutinee binding and first-match selection.
+  reading, scrutinee binding and first-match selection; integer scrutinee
+  arithmetic and value-equal respelling (decision 6); helper loans and
+  table rows (`with_helper_loans`, `with_table_rows`, decisions 5 and 7),
+  fed from `crates/ripr/src/analysis/classifier/evidence.rs` and reading
+  table columns through `analysis/syntax` `constant_table_column`.
 - `crates/ripr/src/analysis/classify/activation.rs`: selection facts and the
   `match_arm` missing discriminator; keep constructors on observed values.
 - `crates/ripr/src/analysis/classify/infection.rs`: an unselected arm reads
