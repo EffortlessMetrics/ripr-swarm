@@ -2913,7 +2913,12 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             print!("{}", output::diff_report::render_diff_report_json(&report)?)
         }
     }
-    Ok(())
+    // Preserve the already-rendered report, including supported subjects in
+    // an unsupported input. A second refusal would corrupt JSON stdout.
+    crate::cli::commands_context::analysis_outcome_exit_result(
+        "diff",
+        output.analysis_outcome.as_ref(),
+    )
 }
 
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {

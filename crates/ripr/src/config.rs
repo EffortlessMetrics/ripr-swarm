@@ -654,8 +654,28 @@ impl RiprConfig {
             if perl.timeout_ms == Some(0) {
                 return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
             }
+            // #7669: `[perl].producer` is a closed managed-mode selector.
+            // Reuse `is_managed_perl_producer` so a typo cannot pass
+            // `ripr config validate` and then silently skip managed mode.
+            let producer = match perl.producer {
+                Some(value) => {
+                    let name = value.get_ref();
+                    if !crate::app::is_managed_perl_producer(name) {
+                        return Err(Box::new(ConfigDiagnostic::at_value(
+                            format!(
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                            ),
+                            "perl.producer",
+                            value.span(),
+                            text,
+                        )));
+                    }
+                    Some(name.clone())
+                }
+                None => None,
+            };
             config.perl = PerlConfig {
-                producer: perl.producer,
+                producer,
                 executable: perl.executable.map(PathBuf::from),
                 timeout_ms: perl.timeout_ms.unwrap_or(30_000),
                 // Repository config: ripr creates, writes and renames files
@@ -850,7 +870,7 @@ struct RawTypescriptLanguageConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawPerlConfig {
-    producer: Option<String>,
+    producer: Option<toml::Spanned<String>>,
     executable: Option<String>,
     timeout_ms: Option<u64>,
     cache_dir: Option<String>,

@@ -111,6 +111,14 @@ chooses to raise the full-cache shard size.
 
 ## JSON Contract
 
+The streamed-file runner publishes only after stdout and stderr capture finish.
+A drain deadline or capture read error refuses publication; a completed empty
+stdout remains distinct from missing completion. Failed capture cleanup uses
+the existing owned process-group/job authority, settles its writer within a
+bounded grace, and removes only its attempt's staging file. Unsettled writers
+or failed removal retain a named staging path. This is runner-level behavior;
+the audit's existing error branch can independently remove its generated input.
+
 The JSON shape is defined in
 [OUTPUT_SCHEMA.md](../OUTPUT_SCHEMA.md#lane-1-evidence-quality-audit). It
 includes:
@@ -446,6 +454,18 @@ movement remains static evidence movement rather than mutation proof.
 - `xtask::run::tests::capture_stdout_to_file_with_timeout_streams_stdout_to_file`
   pins runner-owned stdout streaming, byte counts, and stale capture overwrite
   for generated repo-exposure inputs.
+- `xtask::run::tests::stdout_file_capture_incomplete_stdout_cleans_owned_descendant`
+  and `xtask::run::tests::stdout_file_capture_incomplete_stderr_cleans_owned_descendant`
+  refuse early-parent-exit capture with resistant owned Linux descendants.
+- `xtask::run::tests::stdout_file_capture_stderr_error_preserves_prior_artifact`
+  pins publication after the real latency-reader stderr error boundary.
+- `xtask::run::tests::stdout_file_capture_timeout_retains_actual_observation`
+  retains literal captured bytes and the real enforced timeout disposition.
+- `xtask::run::tests::stdout_file_capture_complete_empty_and_nonzero_are_distinct`
+  and `xtask::run::tests::stdout_file_capture_empty_completion_is_not_a_drain_deadline`
+  distinguish actual empty completion, nonzero exit, and absent completion.
+- `xtask::run::tests::stdout_file_capture_publication_failure_cleans_staging`
+  retains a publication blocker and removes only completed attempt staging.
 - `xtask::tests::lane1_evidence_audit_rejects_repo_exposure_without_seams` pins
   malformed input handling.
 - `xtask::tests::lane1_repo_exposure_file_completion_check_requires_seams_and_closing_brace`

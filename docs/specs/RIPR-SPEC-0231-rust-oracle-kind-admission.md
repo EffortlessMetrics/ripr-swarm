@@ -313,6 +313,18 @@ Two pattern terms are used below.
    that value; a self-comparison (`value == value`) pins nothing and
    neither exempts the chain nor earns rule 1's exact credit.
    `prop_assert!` reads a whole `matches!` condition as `assert!` does.
+   Outside those whole forms, a `matches!` invocation earns no exact credit
+   from its text alone. One nested in a call or closure
+   (`xs.iter().any(|x| matches!(x, Some(_)))`) or compared with a bool
+   (`matches!(r, Ok(_)) == true`, with or without redundant parentheses,
+   which is no pinning `==` either) is credited only when its own pattern
+   pins a value or a pinning `==` conjunct keeps the chain (#7715). A
+   `matches!` named only in a comment or string is no invocation and earns
+   nothing, and a comment around the pattern's constructor
+   (`matches!(x, /* , */ Some(_))`) does not hide it (#7772). A user macro, by path (`custom::matches!`,
+   `helpers::std::matches!`) or by name (`expect_matches!`), keeps today's
+   reading; only `matches!`, `std::matches!` and `core::matches!` (with an
+   optional leading `::`) are the std pattern test.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -656,6 +668,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern`
   and the corpus case `spec0231-matches-wildcard-conjunct` (the `&&` chain
   forms of example 7, #7695).
+- Existing: `relational_tests.rs::compound_matches_forms_read_no_stronger_than_their_pattern`
+  and the corpus case `spec0231-matches-nested-wildcard` (the nested,
+  commented and bool-compared forms of example 7, #7715).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).

@@ -95,6 +95,9 @@ pub(crate) enum TestStubError {
     /// The selector named no gap ripr can stub; the message says where to
     /// look instead.
     NotFound(String),
+    /// Several candidate files or disjoint tied seams match the selector;
+    /// no seam was selected and the message names how to disambiguate.
+    Ambiguous(String),
     Operational(String),
 }
 
@@ -408,7 +411,7 @@ fn resolve_at(
         // A suffix like `src/lib.rs` can name several crates' files; reading
         // one file and applying another file's seam offsets would build a
         // stub for the wrong function.
-        return Err(TestStubError::NotFound(format!(
+        return Err(TestStubError::Ambiguous(format!(
             "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
             files.join(", ")
         )));
@@ -476,7 +479,7 @@ fn resolve_at(
                 .iter()
                 .map(|seam| format!("--seam-id {}", seam.id().as_str()))
                 .collect::<Vec<_>>();
-            return Err(TestStubError::NotFound(format!(
+            return Err(TestStubError::Ambiguous(format!(
                 "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
                 lead.seam().display_line(),
                 lead.seam().kind().as_str(),
@@ -780,7 +783,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(&result, Err(TestStubError::NotFound(message))
+            matches!(&result, Err(TestStubError::Ambiguous(message))
                 if message.contains("crates/a/src/lib.rs, crates/b/src/lib.rs")
                     && message.contains("seam ID")),
             "{:?}",

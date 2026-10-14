@@ -302,6 +302,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         TestImportContext {
             body: &imports,
             definition: &[],
+            standard_unittest_list: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
@@ -311,6 +312,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
+    super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
         file,
         source,

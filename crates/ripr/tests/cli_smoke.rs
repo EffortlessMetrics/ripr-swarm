@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "common/advisory_write_safety.rs"]
 mod advisory_write_safety;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/agent_policy_guidance.rs"]
+mod agent_policy_guidance;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
@@ -32,6 +35,9 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/init_followups.rs"]
+mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -67,6 +73,9 @@ mod unknown_explain;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unsupported_check_exit.rs"]
 mod unsupported_check_exit;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/unsupported_diff_exit.rs"]
+mod unsupported_diff_exit;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -9055,11 +9064,10 @@ fn agent_packet_rejects_configured_off_seam() -> Result<(), Box<dyn std::error::
             .join("fixtures/boundary_gap/expected/llm-work-loop/configured-off/stderr.txt"),
     )?;
     assert!(stderr.contains(expected.trim()));
-    // #4332: the policy-omitted refusal names the listing route instead of
-    // dead-ending.
+    // #7736: policy omission names policy inspection rather than re-listing.
     assert!(
-        stderr.contains("Run `ripr pilot"),
-        "the policy-omitted refusal must name the listing command:\n{stderr}"
+        stderr.contains("Inspect the agent policy with `ripr agent brief"),
+        "the policy-omitted refusal must name policy inspection:\n{stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
