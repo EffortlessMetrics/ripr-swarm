@@ -1555,7 +1555,6 @@ fn ok_literal() {
     /// parser path; a binding a later assertion compares adds nothing.
     #[test]
     fn spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle() -> Result<(), String> {
-        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         use OracleKind::{BroadError, ExactErrorVariant};
         use OracleStrength::{Strong, Weak};
         let cases = [
@@ -1709,8 +1708,81 @@ fn ok_literal() {
                 vec![(BroadError, Weak)],
             ),
         ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// RIPR-SPEC-0227 decision 2 lists `r.expect_err(..)` beside
+    /// `r.unwrap_err()`: whose value is never compared, it observes the `Err`
+    /// side and reads `broad_error` / weak, not a medium mock expectation
+    /// (#7604). A mock's own `expect_*` call still reads as one.
+    #[test]
+    fn spec_0227_uncompared_expect_err_reads_like_unwrap_err() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation};
+        use OracleStrength::{Medium, Strong, Weak};
+        let cases = [
+            (
+                "expect_err_underscore_binding",
+                "let _e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_discarded",
+                "check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_unused_binding",
+                "let e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_formatted_message",
+                "check(300).expect_err(&format!(\"len {}\", 300));",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_grouped_call",
+                "(check(300)).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_compared_binding",
+                "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "expect_err_method_on_the_error",
+                "let k = check(300).expect_err(\"too long\").kind();",
+                vec![],
+            ),
+            (
+                "expect_err_fallback_error",
+                "check(300).and(Err(E::Other)).expect_err(\"too long\");",
+                vec![],
+            ),
+            (
+                "mock_expectation_still_reads_medium",
+                "mock.expect_publish().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expect_err_prefixed_name",
+                "mock.expect_err_report().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+        ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// A named test body and the oracle kinds both adapters must read.
+    type ParityCase<'a> = (&'a str, &'a str, Vec<(OracleKind, OracleStrength)>);
+
+    /// Each body read by the line scanner and, as its own test, by the
+    /// parser path, must yield exactly the expected oracle kinds.
+    fn assert_both_adapters_read(cases: &[ParityCase<'_>]) -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         let mut source = String::new();
-        for (name, body, expected) in &cases {
+        for (name, body, expected) in cases {
             let lexical = crate::analysis::extract::extract_assertions(body, 1)
                 .iter()
                 .map(|fact| (fact.kind.clone(), fact.strength.clone()))
@@ -1722,7 +1794,7 @@ fn ok_literal() {
         }
         let facts =
             RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
-        for (name, _, expected) in &cases {
+        for (name, _, expected) in cases {
             let test = facts
                 .tests
                 .iter()

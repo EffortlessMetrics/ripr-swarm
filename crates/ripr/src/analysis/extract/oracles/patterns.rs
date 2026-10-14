@@ -1197,9 +1197,18 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     None
 }
 
+/// `line` with every `.expect_err(` call name removed, so an `expect_`
+/// name sniff sees only the other `expect_*` calls.
+pub(super) fn without_expect_err(line: &str) -> String {
+    line.replace(".expect_err(", ".(")
+}
+
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    let has_expectation_call = lower.contains("expect_") && lower.contains('(');
+    // `r.expect_err(..)` is a `Result` read, not a mock expectation
+    // (RIPR-SPEC-0227 decision 2, #7604).
+    let has_expectation_call =
+        without_expect_err(&lower).contains("expect_") && lower.contains('(');
     let has_mock_verification_call = lower.contains("mock")
         && [
             ".assert_",
