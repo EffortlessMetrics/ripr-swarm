@@ -140,12 +140,13 @@ implementation skips vocabulary scanning for a whole file when it contains
 `TERMINOLOGY.md` anywhere. The `product_copy` unit tests exercise that rule.
 
 `cargo xtask check-packaged-readme` is the cut-step companion for the crate
-README crates.io actually renders. It runs `cargo package -p ripr --list`,
-requires that list to include the crate `readme`, and asserts the packaged
-file names the workspace version and documents the default-base cascade
-starting at `origin/HEAD` instead of teaching `ripr check --base origin/main`.
-A working-tree README fix is not enough if cargo would still omit or ship the
-wrong file.
+README selected for packaging. It runs `cargo package -p ripr --list`,
+requires that list to include the crate `readme`, and asserts the working-tree
+file cargo would pack names the workspace version and documents the
+default-base cascade starting at `origin/HEAD` instead of teaching
+`ripr check --base origin/main`. It does not extract the `.crate` archive or
+prove byte equality with the published crates.io page. A working-tree README
+fix is not enough if cargo would still omit or ship the wrong file.
 
 A passing result does not establish plain language, good section order, readable
 rendering, or working examples. A terminology link helps navigation; it is not

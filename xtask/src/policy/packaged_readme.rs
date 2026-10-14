@@ -87,7 +87,7 @@ pub(crate) fn packaged_readme_violations(inputs: &PackagedReadmeInputs<'_>) -> V
         ));
     }
 
-    if !inputs.readme.contains(inputs.workspace_version) {
+    if !names_version(inputs.readme, inputs.workspace_version) {
         violations.push(format!(
             "packaged README does not name workspace version `{}`",
             inputs.workspace_version
@@ -99,7 +99,7 @@ pub(crate) fn packaged_readme_violations(inputs: &PackagedReadmeInputs<'_>) -> V
         inputs.workspace_version,
     ));
 
-    if !inputs.readme.contains(CASCADE_HEAD) {
+    if !documents_cascade_start(inputs.readme) {
         violations.push(format!(
             "packaged README is missing the default-base cascade start `{CASCADE_HEAD}`"
         ));
@@ -125,7 +125,7 @@ fn stale_current_line_violations(readme: &str, workspace_version: &str) -> Vec<S
             violations.push(format!(
                 "packaged README names `{claimed}` as the current public release line; workspace version is `{workspace_version}`"
             ));
-        } else if line.contains(CURRENT_LINE_CLAIM) && !line.contains(workspace_version) {
+        } else if line.contains(CURRENT_LINE_CLAIM) && !names_version(line, workspace_version) {
             violations.push(format!(
                 "packaged README names a current public release line that is not workspace version `{workspace_version}`: {}",
                 line.trim()
@@ -168,17 +168,52 @@ fn looks_like_version(value: &str) -> bool {
     }
 }
 
-fn claimed_current_x_line(line: &str) -> Option<String> {
-    if !line.contains("current") || historical_line_marker(line) {
-        return None;
+fn names_version(text: &str, version: &str) -> bool {
+    text.match_indices(version).any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after = text[idx + version.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_digit() || c == '.')
+            && !after.is_some_and(|c| c.is_ascii_digit() || c == '.' || c == '-')
+    })
+}
+
+fn documents_cascade_start(readme: &str) -> bool {
+    readme.lines().any(line_documents_cascade_start)
+}
+
+fn line_documents_cascade_start(line: &str) -> bool {
+    if !line.contains(CASCADE_HEAD) || negated_origin_head(line) {
+        return false;
     }
-    for chunk in line.split('`').skip(1).step_by(2) {
-        let (major_minor, rest) = match chunk.split_once(".x") {
-            Some(parts) => parts,
-            None => continue,
-        };
-        if (rest.starts_with(" line") || rest.is_empty()) && looks_like_version(major_minor) {
-            return Some(major_minor.to_string());
+    let lower = line.to_ascii_lowercase();
+    lower.contains("default") || lower.contains("cascade") || lower.contains("trying")
+}
+
+fn negated_origin_head(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let Some(idx) = lower.find("origin/head") else {
+        return false;
+    };
+    let before = &lower[..idx];
+    before.contains("not ")
+        || before.contains("don't ")
+        || before.contains("do not ")
+        || before.contains("never ")
+}
+
+fn claimed_current_x_line(line: &str) -> Option<String> {
+    for clause in line.split(';') {
+        if !clause.contains("current") || historical_line_marker(clause) {
+            continue;
+        }
+        for chunk in clause.split('`').skip(1).step_by(2) {
+            let (major_minor, rest) = match chunk.split_once(".x") {
+                Some(parts) => parts,
+                None => continue,
+            };
+            if (rest.starts_with(" line") || rest.is_empty()) && looks_like_version(major_minor) {
+                return Some(major_minor.to_string());
+            }
         }
     }
     None
@@ -195,7 +230,12 @@ fn teaches_origin_main_default(readme: &str) -> bool {
     readme.lines().any(|line| {
         let trimmed = line.trim().trim_start_matches('$').trim();
         ripr_check_teaches_origin_main(command_text(trimmed))
+            || backtick_commands(trimmed).any(ripr_check_teaches_origin_main)
     })
+}
+
+fn backtick_commands(line: &str) -> impl Iterator<Item = &str> {
+    line.split('`').skip(1).step_by(2).map(str::trim)
 }
 
 fn ripr_check_teaches_origin_main(command: &str) -> bool {
@@ -645,6 +685,96 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("`0.10.x` line as current")),
             "historical .x mention must not fail the cut; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn historical_clause_does_not_hide_later_stale_current_x_line() {
+        let readme = CURRENT_LIKE.replace(
+            "This source package is **0.11.0 development, pending publication**.",
+            "The historical `0.8.x` line is retired; the `0.9.x` line is current.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("`0.9.x` line as current")),
+            "stale current .x after a historical clause must still fail; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn longer_version_token_does_not_satisfy_workspace_version() {
+        let readme = CURRENT_LIKE.replace("0.11.0", "10.11.0");
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("does not name workspace version `0.11.0`")),
+            "10.11.0 must not count as 0.11.0; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn prerelease_suffix_does_not_satisfy_workspace_version() {
+        let readme = CURRENT_LIKE.replace("0.11.0", "0.11.0-rc.1");
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("does not name workspace version `0.11.0`")),
+            "0.11.0-rc.1 must not count as 0.11.0; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn negated_origin_head_is_not_the_cascade_start() {
+        let readme = CURRENT_LIKE.replace(
+            "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
+            "Do not use `origin/HEAD` as the default base; try `origin/main` first,",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
+            "negated origin/HEAD must not count as the cascade start; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn unrelated_origin_head_mention_is_not_the_cascade_start() {
+        let readme = CURRENT_LIKE.replace(
+            "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
+            "Clone from `origin/HEAD` when bisecting.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
+            "unrelated origin/HEAD must not count as the cascade start; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn inline_backtick_command_still_counts_as_taught_default() {
+        let readme = CURRENT_LIKE.replace(
+            "ripr check\n",
+            "For the default check, run `ripr check --base origin/main`.\n",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
+            "expected inline taught command to count; got {violations:?}"
         );
     }
 
