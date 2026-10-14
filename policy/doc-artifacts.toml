@@ -1485,6 +1485,14 @@ owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
 
 [[artifact]]
+id = "RIPR-SPEC-0263"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the if-guard counterpart of RIPR-SPEC-0229 for side effects (#7132): a changed side_effect or call_deletion line directly inside a literal parameter guard that no related test input enters reads weakly_exposed, not exposed, with every unreadable shape failing closed."
+
+[[artifact]]
 id = "RIPR-SPEC-0257"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0257-current-cache-export.md"

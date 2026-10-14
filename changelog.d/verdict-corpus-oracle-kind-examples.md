@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: 28 authored cases cover the RIPR-SPEC-0231 oracle-kind
   admission examples. The related test's oracle kind or strength differs
   from the spec on 18 of them. Most read `exact_value` or

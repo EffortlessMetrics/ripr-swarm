@@ -438,7 +438,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. Rejected: requiring the classifier to read that shape as
+   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
+   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   step 6's `snapshot` / medium kind, and only an owner pin that admits that
+   exact spelling raises its probe-relative strength; `insta`,
+   `expect_file!` and `assert_debug_eq` snapshots never pin
+   (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
+   Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
    in the oracle extractor. Rejected: a new kind for weak whole-object
    inequality (decision 1).
@@ -496,7 +502,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
-  exact owner pin needs a strong oracle (decision 4).
+  exact owner pin needs a strong oracle, apart from the bool-owner and
+  inline expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples

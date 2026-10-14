@@ -657,3 +657,234 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
     }
     Ok(())
 }
+#[cfg(target_os = "linux")]
+fn directory_swap_cache_snapshot(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_dir() {
+            snapshots.extend(directory_swap_cache_snapshot(&path)?);
+        } else {
+            snapshots.push((
+                path.clone(),
+                fs::read(path).map_err(|error| error.to_string())?,
+            ));
+        }
+    }
+    Ok(snapshots)
+}
+
+#[cfg(target_os = "linux")]
+fn directory_swap_preserves_current_cache_output(format: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    // Literal expectations were derived from the parser's seam contract,
+    // independently of the fingerprint or a cache-isolated comparison run.
+    const BEFORE: &str = "pub fn alpha(x: i32) -> bool { x >= 2 }\n";
+    const AFTER: &str = "pub fn bravo(x: i32) -> bool { true }  \n";
+    assert_eq!(BEFORE.len(), AFTER.len());
+    let root = temp_dir(format);
+    let source = root.join("src/lib.rs");
+    let staged = root.join("target/staged-src/lib.rs");
+    fs::create_dir_all(source.parent().ok_or("source parent")?)
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(staged.parent().ok_or("staged parent")?)
+        .map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='swap_fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(root.join(".gitignore"), "target/\n").map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"swap_fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(&source, BEFORE).map_err(|error| error.to_string())?;
+    fs::write(&staged, AFTER).map_err(|error| error.to_string())?;
+    common::fixture_git::fixture_git_ok(&root, &["init", "-q"])?;
+    common::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+    common::fixture_git::fixture_git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=Cache fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+
+    let old_file = fs::File::options()
+        .write(true)
+        .open(&source)
+        .map_err(|error| error.to_string())?;
+    let new_file = fs::File::options()
+        .write(true)
+        .open(&staged)
+        .map_err(|error| error.to_string())?;
+    let mtime = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let old_tuple = |metadata: &fs::Metadata| -> Result<_, String> {
+        Ok((
+            metadata.len(),
+            metadata.modified().map_err(|error| error.to_string())?,
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+        ))
+    };
+    // Two files may receive the same ctime tick. Require that stimulus before
+    // testing: a changed ctime would let the old implementation pass.
+    let mut aligned = false;
+    for _ in 0..10_000 {
+        old_file
+            .set_modified(mtime)
+            .map_err(|error| error.to_string())?;
+        new_file
+            .set_modified(mtime)
+            .map_err(|error| error.to_string())?;
+        if old_tuple(&old_file.metadata().map_err(|error| error.to_string())?)?
+            == old_tuple(&new_file.metadata().map_err(|error| error.to_string())?)?
+        {
+            aligned = true;
+            break;
+        }
+    }
+    if !aligned {
+        return Err("fixture setup: could not align different files' old stat tuples".into());
+    }
+    let before_stat = fs::metadata(&source).map_err(|error| error.to_string())?;
+    let replacement_stat = fs::metadata(&staged).map_err(|error| error.to_string())?;
+    assert_ne!(
+        (before_stat.dev(), before_stat.ino()),
+        (replacement_stat.dev(), replacement_stat.ino())
+    );
+    let cache = root.join("target/cache-history");
+    let assert_subject = |value: &serde_json::Value, replaced: bool| -> Result<(), String> {
+        let count = if replaced { 1 } else { 2 };
+        if format == "repo-exposure-json" {
+            let seams = value["seams"].as_array().ok_or("nonempty seam array")?;
+            assert_eq!(seams.len(), count);
+            let owner = if replaced {
+                "src/lib.rs::bravo"
+            } else {
+                "src/lib.rs::alpha"
+            };
+            for seam in seams {
+                assert_eq!(seam["owner"], owner);
+                assert_eq!(seam["expression"], if replaced { "true" } else { "x >= 2" });
+                assert_eq!(seam["grip_class"], "ungripped");
+                assert_eq!(seam["related_tests_total"], 0);
+            }
+            let mut kinds = seams
+                .iter()
+                .map(|seam| seam["kind"].as_str().ok_or("seam kind"))
+                .collect::<Result<Vec<_>, _>>()?;
+            kinds.sort();
+            let expected = if replaced {
+                vec!["return_value"]
+            } else {
+                vec!["predicate_boundary", "return_value"]
+            };
+            assert_eq!(kinds, expected);
+        } else {
+            assert_eq!(value["metrics"]["raw_seams"], count);
+            assert_eq!(value["metrics"]["grip_class"]["ungripped"], count);
+            assert_eq!(
+                value["top_files"]
+                    .as_array()
+                    .ok_or("top files array")?
+                    .len(),
+                1
+            );
+            assert_eq!(value["top_files"][0]["file"], "src/lib.rs");
+            assert_eq!(value["top_files"][0]["raw_seams"], count);
+        }
+        Ok(())
+    };
+    let run = |cache: &Path| -> Result<_, String> {
+        let (mut value, trace) = harness_report(&root, cache, format)?;
+        // A full artifact's generation time and its enclosing content digest
+        // vary between invocations. Keep all semantic and input identity fields.
+        if let Some(artifact) = value
+            .get_mut("artifact")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            artifact.remove("generated_at");
+            artifact.remove("content_sha256");
+        }
+        Ok((value, trace))
+    };
+    let (cold, _) = run(&cache)?;
+    assert_subject(&cold, false)?;
+    let (warm, trace) = run(&cache)?;
+    assert_eq!(warm, cold);
+    assert!(
+        trace.contains("cache_hit"),
+        "initial restarted process must hit: {trace}"
+    );
+    if format == "repo-exposure-json" {
+        assert!(
+            trace.contains("phase=collect_workspace_state status=fingerprint"),
+            "stat mapping must actually be consumed: {trace}"
+        );
+    }
+    let preserved = directory_swap_cache_snapshot(&cache)?;
+    assert!(
+        !preserved.is_empty(),
+        "real producer must publish cache entries"
+    );
+
+    // Renaming containing directories leaves child inode timestamps intact.
+    // Both discovery inputs remain regular files at the same relative path.
+    fs::rename(root.join("src"), root.join("target/old-src")).map_err(|error| error.to_string())?;
+    fs::rename(root.join("target/staged-src"), root.join("src"))
+        .map_err(|error| error.to_string())?;
+    let after_stat = fs::metadata(&source).map_err(|error| error.to_string())?;
+    assert_eq!(old_tuple(&before_stat)?, old_tuple(&after_stat)?);
+    assert_ne!(before_stat.ino(), after_stat.ino());
+    assert_eq!(
+        fs::read_to_string(&source).map_err(|error| error.to_string())?,
+        AFTER
+    );
+    let (fresh, _) = run(&root.join("target/cache-independent"))?;
+    assert_subject(&fresh, true)?;
+    let (recovered, _) = run(&cache)?;
+    assert_eq!(
+        recovered, fresh,
+        "directory replacement must match all current-input cold semantics"
+    );
+    let (restarted, trace) = run(&cache)?;
+    assert_eq!(restarted, fresh);
+    assert!(
+        trace.contains("cache_hit"),
+        "replacement facts must warm-hit after restart: {trace}"
+    );
+    // No cache clearing: the earlier source and both fact generations survive.
+    assert_eq!(
+        fs::read_to_string(root.join("target/old-src/lib.rs")).map_err(|error| error.to_string())?,
+        BEFORE
+    );
+    for (path, bytes) in preserved {
+        assert_eq!(
+            fs::read(path).map_err(|error| error.to_string())?,
+            bytes,
+            "earlier cache entries must remain intact"
+        );
+    }
+    remove_base(&root)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn full_directory_swap_cache_matches_cold_after_restart() -> Result<(), String> {
+    directory_swap_preserves_current_cache_output("repo-exposure-json")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn compact_directory_swap_cache_matches_cold_after_restart() -> Result<(), String> {
+    directory_swap_preserves_current_cache_output("repo-exposure-summary-json")
+}

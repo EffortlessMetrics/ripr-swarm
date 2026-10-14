@@ -448,6 +448,79 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
 }
 
 #[tokio::test]
+async fn list_gaps_accepts_filters_at_the_dispatch_edge() -> Result<(), String> {
+    // #7464: filter arguments are part of the input contract. A pre-refresh
+    // server answers past dispatch with typed `no_snapshot` — proving the
+    // arguments were accepted — while malformed values stay invalid params.
+    let server = healthy_server()?;
+    for arguments in [
+        serde_json::json!({"file": "src/checkout.rs"}),
+        serde_json::json!({"class": "weakly_exposed"}),
+        serde_json::json!({"language": "rust"}),
+        serde_json::json!({"repair_ready": true}),
+        serde_json::json!({"repair_ready": false}),
+        serde_json::json!({
+            "file": "src/checkout.rs",
+            "class": "weakly_exposed",
+            "language": "rust",
+            "repair_ready": true,
+            "offset": 0,
+            "limit": 10,
+        }),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let response = server
+            .list_gaps_tool(arguments)
+            .await
+            .map_err(|error| format!("dispatch must accept filter arguments: {error:?}"))?;
+        let result = match response {
+            rmcp::model::CallToolResponse::Complete(result) => result,
+            other => {
+                return Err(format!(
+                    "accepted filter arguments must reach the typed failure, got {other:?}"
+                ));
+            }
+        };
+        let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        if value
+            .pointer("/structuredContent/failure/code")
+            .and_then(serde_json::Value::as_str)
+            != Some(workspace::CODE_NO_SNAPSHOT)
+        {
+            return Err(format!("filtered call lost no_snapshot: {value}"));
+        }
+    }
+    for arguments in [
+        serde_json::json!({"file": ""}),
+        serde_json::json!({"file": 7}),
+        serde_json::json!({"file": null}),
+        serde_json::json!({"class": ""}),
+        serde_json::json!({"class": null}),
+        serde_json::json!({"language": 7}),
+        serde_json::json!({"repair_ready": "true"}),
+        serde_json::json!({"repair_ready": 1}),
+        serde_json::json!({"repair_ready": null}),
+        serde_json::json!({"repairReady": true}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        match server.list_gaps_tool(arguments).await {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            Ok(response) => {
+                return Err(format!(
+                    "list_gaps must reject malformed filter arguments with invalid params: {response:?}"
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "list_gaps must reject malformed filter arguments with invalid params, got {error:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
