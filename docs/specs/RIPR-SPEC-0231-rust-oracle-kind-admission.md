@@ -252,20 +252,35 @@ Two pattern terms are used below.
    one boolean-literal operand (`assert_eq!(X, true)`, `assert_ne!(false,
    X)` and the `debug_` and `prop_` spellings), or a boolean assertion
    whose whole condition is such a comparison (`ensure!((a == b) ==
-   false)`), when `X` has a top-level `==`, `!=`, spaced `<`, `>`, `<=` or
-   `>=`, `||` or `&&` (through any `!` or `.not()`), an `X` asserted false,
+   false)`), when `X` has a top-level `==`, `!=`, `<`, `>`, `<=` or `>=` (a
+   turbofish, `->`, `=>` and a shift are not comparisons), `||` or `&&`
+   (through any `!` or `.not()`), an `X` asserted false,
    an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
    relational all cap the reading at `relational_check` / weak. An `&&`
    chain asserted true with a `matches!` conjunct and no pinning `==`
    conjunct reads like the same chain in `assert!` (rule 3). A comparison
    asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
    call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
-   `matches!` (the polarity rule above) keep their readings. A `matches!`
-   that is an operand of `^`, `<`, `>`, `<=` or `>=`, a call argument
-   (`std::ops::Not::not(matches!(..))`, `check(matches!(..))`) or an
-   `if`, `while` or `match` operand may be inverted or discarded, so it
-   caps the reading like a negated pattern; one in a closure body keeps
-   rule 3's reading. At
+   `matches!` (the polarity rule above) keep their readings. `^`, `&`
+   and `|` over an operand holding a `matches!` or a comparison, with no
+   top-level comparison of their own, also cap (`assert_eq!((r ==
+   Err(E::Bad)) ^ true, true)`); over plain bool values (`is_a(x) ^ true`)
+   they still pin a bool result. In a boolean assertion condition, or an
+   equality-macro operand compared with a boolean literal, a `matches!`
+   that is an operand of `^`, `&`, `|`, `<`, `>`, `<=` or `>=`, an
+   argument at any position of a call that is the whole condition
+   (`std::ops::Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
+   directly or through nested calls), or inside an `if`, `while` or
+   `match` condition may be inverted or discarded, so it caps the reading
+   like a negated pattern: in a top-level `&&` chain with no top-level `||`
+   its conjunct drops out and the other conjuncts decide
+   (`ensure!(check(matches!(r, Ok(3))) && score == 4)` reads as
+   `ensure!(score == 4)`). A call whose result is read again
+   (`foo(matches!(..)).is_ok()`, `Some(true) == Some(matches!(..))`), a
+   `matches!` scrutinee (`matches!(build(matches!(..)), Ok(_))`) and a
+   closure body (`xs.iter().any(|x| f(matches!(x, Some(3))))`) keep their
+   readings. A whole condition compared with a literal whose operand is an
+   `&&` chain keeps the compared-pattern cap above. At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns

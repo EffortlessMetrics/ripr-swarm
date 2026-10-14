@@ -6,6 +6,7 @@ use super::arguments::{
 };
 use super::bool_operands::{
     BoolOperandReading, bool_literal_comparison_reading, contains_unread_pattern_operand,
+    unread_pattern_conjunct_rest,
 };
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
@@ -94,6 +95,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             classify_assertion(&rest)
         };
     }
+    // A conjunct whose `matches!` sits under an unread operator, call or
+    // `if` pins nothing, but the other conjuncts are still required, so
+    // they decide, as beside a negated pattern (#7598).
+    if let Some(rest) = unread_pattern_conjunct_rest(line) {
+        return if rest.is_empty() {
+            INEQUALITY
+        } else {
+            classify_assertion(&rest)
+        };
+    }
     // A parenthesized `&&` conjunct that a `||` decides pins nothing, so the
     // other conjuncts decide, as beside a negated pattern; with nothing else
     // left the group is only a relation (#7558). The rest's own reading is
@@ -166,7 +177,8 @@ pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     let polarity = pattern_comparison_polarity(line);
     is_inequality_macro_assertion(line)
         || bool_literal_comparison_reading(line) == Some(BoolOperandReading::Capped)
-        || contains_unread_pattern_operand(line)
+        || (contains_unread_pattern_operand(line)
+            && unread_pattern_conjunct_rest(line).is_none_or(|rest| rest.is_empty()))
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
         || (contains_negated_pattern(line)

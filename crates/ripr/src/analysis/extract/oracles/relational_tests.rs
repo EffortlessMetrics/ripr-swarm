@@ -650,6 +650,39 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             "assert!(if matches!(r, Err(E::Bad)) { false } else { true });",
             &weak,
         ),
+        ("assert!(check::<bool>(matches!(r, Err(E::Bad))));", &weak),
+        ("assert!(make()(matches!(r, Err(E::Bad))));", &weak),
+        ("assert!(checks[0](matches!(r, Err(E::Bad))));", &weak),
+        // A non-ASCII name before the call is still read on a char boundary.
+        ("assert!(prüfe(matches!(r, Err(E::Bad))));", &weak),
+        // An unspaced comparison is still a relation.
+        ("assert_eq!(score(2)>0, true);", &weak),
+        ("assert_eq!(true, 0<score(2));", &weak),
+        // `^`, `&` and `|` over a pattern or comparison may invert it, in
+        // either assertion form, and so may a call taking it at any position.
+        ("assert_eq!(matches!(r, Ok(3)) ^ true, true);", &weak),
+        ("assert_eq!((r == Err(E::Bad)) ^ true, true);", &weak),
+        ("assert_eq!(f(matches!(r, Err(E::Bad))), true);", &weak),
+        ("assert!(f(1, matches!(r, Err(E::Bad))));", &weak),
+        ("assert!(f(g(matches!(r, Err(E::Bad)))));", &weak),
+        ("assert!(matches!(r, Err(E::Bad)) | true);", &weak),
+        ("assert!(matches!(r, Err(E::Bad)) & ready);", &weak),
+        (
+            "assert!(match r { Ok(_) => matches!(s, Ok(3)), _ => false });",
+            &weak,
+        ),
+        // A compared chain in a whole condition keeps the compared-pattern
+        // cap; the chain reading never raises it.
+        ("assert!((ready && matches!(r, Ok(3))) == true);", &weak),
+        // The conjunct with the unread pattern drops out and the other
+        // required conjuncts decide.
+        ("ensure!(check(matches!(r, Ok(3))) && score == 4);", &exact),
+        ("ensure!(score == 4 && check(matches!(r, Ok(3))));", &exact),
+        (
+            "assert!(check(matches!(r, Ok(3))) && matches!(s, Err(E::Bad)));",
+            &err,
+        ),
+        ("ensure!(check(matches!(r, Ok(3))) && ready);", &weak),
         // Controls: a comparison asserted true, a bare value or call, a
         // pinning chain and a pattern in a closure keep today's reading.
         ("assert_eq!(r == Err(E::Bad), true);", &err),
@@ -659,6 +692,24 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(is_a(x) && is_b(x), true);", &exact),
         ("assert_eq!(a == b && c == d, true);", &exact),
         ("assert_eq!(Vec::<u8>::new() == v, true);", &exact),
+        ("assert_eq!(Vec::<u8 >::new() == v, true);", &exact),
+        ("assert_eq!(Vec::<Vec<u8>>::new() == v, true);", &exact),
+        ("assert_eq!(a << 2 == b, true);", &exact),
+        ("assert_eq!(a & mask == b, true);", &exact),
+        ("assert_eq!(is_a(x) ^ true, true);", &exact),
+        // A call whose result is read again, a nested pattern scrutinee and a
+        // closure body are not unread operands.
+        (
+            "assert!(matches!(build(matches!(k, Kind::A)), Ok(Mode::Dark)));",
+            &exact,
+        ),
+        ("assert!(foo(matches!(x, A)).is_ok());", &exact),
+        ("assert!(Some(true) == Some(matches!(r, Ok(3))));", &exact),
+        (
+            "assert!(xs.iter().any(|x| f(matches!(x, Some(3)))));",
+            &exact,
+        ),
+        ("assert!(iffy(x) && matches!(r, Ok(3)));", &exact),
         ("assert_eq!(score(2), 6);", &exact),
         ("assert!(matches!(r, Ok(3)) == true);", &exact),
         ("assert!((matches!(r, Ok(3))) == true);", &exact),
@@ -685,8 +736,15 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         };
         require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)?;
     }
-    if is_inequality_assertion("assert_eq!(r == Err(E::Bad), true);") {
-        return Err("a comparison asserted true is not an inequality".to_string());
+    for text in [
+        "assert_eq!(r == Err(E::Bad), true);",
+        "ensure!(check(matches!(r, Ok(3))) && score == 4);",
+        "assert!(matches!(build(matches!(k, Kind::A)), Ok(Mode::Dark)));",
+        "assert!(foo(matches!(x, A)).is_ok());",
+    ] {
+        if is_inequality_assertion(text) {
+            return Err(format!("{text}: must not read as an inequality"));
+        }
     }
     Ok(())
 }

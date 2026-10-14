@@ -5,11 +5,12 @@
 
 use super::arguments::{
     AssertionComparison, assertion_comparison, boolean_assertion_macro_condition,
+    is_complete_macro_invocation, split_top_level_commas,
 };
 use super::patterns::{
     boolean_literal_value, has_top_level_disjunction, has_top_level_exact_equality,
-    pattern_conjunct_assertions, pattern_invocation_spans, pattern_operand_negations,
-    split_top_level_conjuncts, strip_not_call, top_level_comparison_operator, unwrap_parentheses,
+    pattern_conjunct_assertions, pattern_invocation_spans, split_top_level_conjuncts,
+    strip_not_call, top_level_comparison_operator, unwrap_parentheses,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -39,9 +40,11 @@ pub(super) enum BoolOperandReading {
 /// it), or a comparison asserted true that may pin (`assert_eq!(a == b,
 /// true)`).
 pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandReading> {
-    let (operand, mut positive) = compared_with_bool_literal(line)?;
-    if pattern_operand_negations(&operand).is_some() {
-        return None;
+    let (operand, mut positive, in_condition) = compared_with_bool_literal(line)?;
+    // An operand that only feeds a `matches!` to an unread call or operator
+    // may invert it (`assert_eq!(f(matches!(r, Ok(3))), true)`).
+    if contains_unread_pattern_operand(&format!("assert!({operand}\n);")) {
+        return Some(BoolOperandReading::Capped);
     }
     let mut core = unwrap_parentheses(operand.trim());
     loop {
@@ -59,13 +62,30 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     let comparison =
         top_level_comparison_operator(core).and_then(|(at, width)| core.get(at..at + width));
     let relational = has_top_level_relational_operator(core);
-    if !(disjunction || conjunction || comparison.is_some() || relational) {
+    // `^`, `&` and `|` bind tighter than a comparison, so they decide only
+    // an operand with no top-level comparison, and may invert or discard a
+    // pattern or comparison inside it (`matches!(r, Ok(3)) ^ flag`,
+    // `(r == Err(E::Bad)) ^ true`). Over plain bool values
+    // (`is_a(x) ^ true`) they still pin a bool result.
+    let holds_test = {
+        let masked = mask_comments_and_strings(core);
+        masked.contains("matches!") || masked.contains("==") || masked.contains("!=")
+    };
+    let bitwise =
+        comparison.is_none() && !relational && holds_test && has_top_level_bitwise_operator(core);
+    if !(disjunction || conjunction || comparison.is_some() || relational || bitwise) {
         return None;
     }
-    if !positive || disjunction {
+    if !positive || disjunction || bitwise {
         return Some(BoolOperandReading::Capped);
     }
     if conjunction {
+        // A whole condition compared with `true` is already capped by the
+        // compared-pattern rule, so only the equality-macro form is read
+        // as its chain here; the chain never raises that cap.
+        if in_condition {
+            return None;
+        }
         let chain = format!("assert!({core}\n);");
         return (pattern_conjunct_assertions(&chain).is_some()
             && !has_top_level_exact_equality(core))
@@ -74,9 +94,11 @@ pub(super) fn bool_literal_comparison_reading(line: &str) -> Option<BoolOperandR
     (comparison == Some("!=") || relational).then_some(BoolOperandReading::Capped)
 }
 
-/// The non-literal operand of a comparison with a boolean literal, and
-/// whether the assertion states that operand is true.
-fn compared_with_bool_literal(line: &str) -> Option<(String, bool)> {
+/// The non-literal operand of a comparison with a boolean literal, whether
+/// the assertion states that operand is true, and whether the comparison is
+/// a boolean assertion's whole condition rather than an equality macro's
+/// operands.
+fn compared_with_bool_literal(line: &str) -> Option<(String, bool, bool)> {
     let literal = |side: &str| boolean_literal_value(mask_comments_and_strings(side).trim());
     let pick = |left: &str, right: &str, not_equal: bool| match (literal(left), literal(right)) {
         (None, Some(value)) => Some((left.to_string(), value != not_equal)),
@@ -88,7 +110,7 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool)> {
             not_equal,
             left,
             right,
-        } => pick(&left, &right, not_equal),
+        } => pick(&left, &right, not_equal).map(|(operand, positive)| (operand, positive, false)),
         AssertionComparison::Condition(condition) => {
             let condition = unwrap_parentheses(condition.trim());
             // `a && b == true` compares only `b`; the chain rules read it.
@@ -104,63 +126,124 @@ fn compared_with_bool_literal(line: &str) -> Option<(String, bool)> {
                 condition.get(at + width..)?,
                 not_equal,
             )
+            .map(|(operand, positive)| (operand, positive, true))
         }
     }
 }
 
-/// Whether a spaced `<`, `>`, `<=` or `>=` sits outside every delimiter,
-/// string and comment. Unspaced angle brackets are generics, `->` or `=>`.
+/// Whether a `<`, `>`, `<=` or `>=` comparison sits outside every
+/// delimiter, string and comment. A turbofish (`::<u8>`), `->`, `=>`, `<-`
+/// and the shifts `<<` and `>>` are not comparisons.
 fn has_top_level_relational_operator(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
-    for (index, byte) in bytes.iter().enumerate() {
+    let mut generics = 0usize;
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let previous = index.checked_sub(1).and_then(|at| bytes.get(at)).copied();
+        let next = bytes.get(index + 1).copied();
         match byte {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b'<' | b'>' if depth == 0 => {
-                let before = index
-                    .checked_sub(1)
-                    .and_then(|at| bytes.get(at))
-                    .is_some_and(u8::is_ascii_whitespace);
-                let next = bytes.get(index + 1);
-                let after = next.is_some_and(u8::is_ascii_whitespace)
-                    || (next == Some(&b'=')
-                        && bytes.get(index + 2).is_some_and(u8::is_ascii_whitespace));
-                if before && after {
-                    return true;
-                }
+            b'<' | b'>' if depth == 0 && next == Some(byte) => {
+                // A shift, not a comparison.
+                index += 2;
+                continue;
+            }
+            b'<' if depth == 0 && previous == Some(b':') => generics += 1,
+            b'<' if depth == 0 && generics == 0 && next != Some(b'-') => return true,
+            b'>' if depth == 0 && generics > 0 => generics -= 1,
+            b'>' if depth == 0 && !matches!(previous, Some(b'-' | b'=')) => return true,
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Whether `^`, `&` or `|` (not `&&` or `||`) sits outside every
+/// delimiter, string and comment. A leading `&` (a reference) and a closure
+/// parameter list are not operators.
+fn has_top_level_bitwise_operator(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let trimmed = masked.trim_start();
+    if trimmed.starts_with('|') || trimmed.starts_with("move") {
+        return false;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let previous = index.checked_sub(1).and_then(|at| bytes.get(at)).copied();
+        let next = bytes.get(index + 1).copied();
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'&' | b'|' if depth == 0 && next == Some(byte) => {
+                index += 2;
+                continue;
+            }
+            b'^' if depth == 0 => return true,
+            b'&' | b'|'
+                if depth == 0
+                    && previous.is_some_and(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b')' | b']' | b' ' | b'_')
+                    })
+                    && masked
+                        .get(..index)
+                        .is_some_and(|head| !head.trim().is_empty()) =>
+            {
+                return true;
             }
             _ => {}
         }
+        index += 1;
     }
     false
 }
 
 /// Whether a boolean assertion's condition uses a `matches!` as an operand
-/// the classifier does not read: of `^`, `<`, `>`, `<=` or `>=`
-/// (`matches!(..) ^ true`), as a call argument (`Not::not(matches!(..))`,
-/// `check(matches!(..))`) or as an `if`, `while` or `match` operand. Each can
-/// invert or discard the pattern, so the caller caps the reading. A
-/// `matches!` in a closure body, compared with `==` or `!=`, negated, or
-/// joined by `&&` or `||` is read by the other rules.
+/// the classifier does not read: of `^`, `&`, `|`, `<`, `>`, `<=` or `>=`
+/// (`matches!(..) ^ true`), as an argument of a call that is the whole
+/// condition (`Not::not(matches!(..))`, `check::<bool>(1, matches!(..))`,
+/// directly or through nested calls), or in an `if`, `while` or `match`
+/// condition. Each can invert or discard the pattern, so the caller caps the
+/// reading. A `matches!` in a closure body, compared with `==` or `!=`,
+/// negated, joined by `&&` or `||`, or whose call result is read again
+/// (`foo(matches!(..)).is_ok()`, `matches!(build(matches!(..)), Ok(_))`) is
+/// read by the other rules.
 pub(super) fn contains_unread_pattern_operand(line: &str) -> bool {
     let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
         return false;
     };
     let masked = mask_comments_and_strings(&condition);
-    pattern_invocation_spans(&condition)
-        .into_iter()
-        .any(|(start, end)| {
-            let before = masked.get(..start).unwrap_or_default().trim_end();
-            let after = masked
-                .get(end..)
-                .unwrap_or_default()
-                .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
-            unread_operator_before(before)
-                || after.starts_with(['^', '<', '>'])
-                || call_or_keyword_before(before)
-        })
+    let spans = pattern_invocation_spans(&condition);
+    if spans.is_empty() {
+        return false;
+    }
+    let head = unwrap_parentheses(masked.trim());
+    if ["if", "while", "match"].iter().any(|keyword| {
+        head.strip_prefix(keyword)
+            .is_some_and(|rest| rest.starts_with(|ch: char| ch.is_whitespace() || ch == '('))
+    }) {
+        return true;
+    }
+    if call_argument_pattern(&masked) {
+        return true;
+    }
+    spans.into_iter().any(|(start, end)| {
+        let before = masked.get(..start).unwrap_or_default().trim_end();
+        let after = masked
+            .get(end..)
+            .unwrap_or_default()
+            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+        unread_operator_before(before)
+            || after.starts_with(['^', '<', '>'])
+            || (after.starts_with(['&', '|'])
+                && !after.starts_with("&&")
+                && !after.starts_with("||"))
+    })
 }
 
 fn unread_operator_before(before: &str) -> bool {
@@ -172,19 +255,110 @@ fn unread_operator_before(before: &str) -> bool {
     }
 }
 
-/// Whether the text before a `matches!` opens a call argument list or an
-/// `if`, `while` or `match` operand, through any parentheses.
-fn call_or_keyword_before(before: &str) -> bool {
-    let unopened = before.trim_end_matches(|ch: char| ch.is_whitespace() || ch == '(');
-    let opened = before
-        .get(unopened.len()..)
-        .is_some_and(|tail| tail.contains('('));
-    let word_start = unopened
-        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .map_or(0, |at| at + 1);
-    let word = unopened.get(word_start..).unwrap_or_default();
-    if matches!(word, "if" | "while" | "match") {
-        return true;
+/// Whether `expression` (masked) is a call, through parentheses, `!` and
+/// `&`, with a whole `matches!` among its arguments, directly or as an
+/// argument of a nested call. The callee is a path, method chain, turbofish
+/// (`check::<bool>`) or call or index result (`make()`, `checks[0]`), never a
+/// macro (`matches!(build(..), ..)`) or an expression with an operator.
+fn call_argument_pattern(expression: &str) -> bool {
+    let mut text = unwrap_parentheses(expression.trim());
+    while let Some(rest) = text.strip_prefix(['!', '&']) {
+        text = unwrap_parentheses(rest.trim());
     }
-    opened && !word.is_empty()
+    let Some(open) = final_group_open(text) else {
+        return false;
+    };
+    let (Some(callee), Some(arguments)) = (
+        text.get(..open),
+        text.get(open + 1..text.len().saturating_sub(1)),
+    ) else {
+        return false;
+    };
+    if !is_callee(callee) {
+        return false;
+    }
+    split_top_level_commas(arguments).iter().any(|argument| {
+        let mut argument = unwrap_parentheses(argument.trim());
+        while let Some(rest) = argument.strip_prefix(['!', '&']) {
+            argument = unwrap_parentheses(rest.trim());
+        }
+        is_complete_macro_invocation(argument, "matches!") || call_argument_pattern(argument)
+    })
+}
+
+/// Where the parenthesis group that ends `text` opens, when `text` ends with
+/// `)`.
+fn final_group_open(text: &str) -> Option<usize> {
+    if !text.ends_with(')') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    for index in (0..bytes.len()).rev() {
+        match bytes.get(index) {
+            Some(b')' | b']' | b'}') => depth += 1,
+            Some(b'(' | b'[' | b'{') => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return (bytes.get(index) == Some(&b'(')).then_some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `callee` (masked) is a call target with no operator at its top
+/// level: identifiers, `::`, `.`, a turbofish, and call or index groups.
+fn is_callee(callee: &str) -> bool {
+    let callee = callee.trim_end();
+    if callee.is_empty() || callee.ends_with('!') || callee.ends_with("->") {
+        return false;
+    }
+    let mut depth = 0usize;
+    callee.chars().all(|ch| match ch {
+        '(' | '[' | '{' => {
+            depth += 1;
+            true
+        }
+        ')' | ']' | '}' => {
+            depth = depth.saturating_sub(1);
+            true
+        }
+        _ if depth > 0 => true,
+        _ => ch.is_alphanumeric() || matches!(ch, '_' | ':' | '.' | '<' | '>' | ','),
+    })
+}
+
+/// For a boolean assertion whose condition is a top-level `&&` chain with at
+/// least one conjunct holding an unread `matches!` operand, the same
+/// assertion over only the other conjuncts (`None` when the condition is not
+/// such a chain, and an empty string when no other conjunct remains). The
+/// conjunct with the unread pattern pins nothing, but the others are still
+/// required, so they decide the reading, as beside a negated pattern.
+pub(super) fn unread_pattern_conjunct_rest(line: &str) -> Option<String> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let unread = |conjunct: &str| {
+        contains_unread_pattern_operand(&format!("{macro_name}({}\n);", conjunct.trim()))
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| unread(conjunct)) {
+        return None;
+    }
+    let rest = conjuncts
+        .iter()
+        .filter(|conjunct| !unread(conjunct))
+        .map(|conjunct| conjunct.trim())
+        .collect::<Vec<_>>();
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    // Each conjunct ends its own line, so a trailing `//` comment on one
+    // cannot swallow the next conjunct or the closing `);`.
+    Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
