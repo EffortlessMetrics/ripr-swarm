@@ -105,19 +105,22 @@ file may register or replace it:
   which that spec reads as unknown, is read from its body);
 - the file reaches `expect` only by name: it holds no `\u` escape; every
   mention of the word `expect` is `expect(`, `expect.` or a plain
-  `import { expect }`; it has no namespace import, dynamic `import(` or
-  `import` mention beyond its import declarations; no `[` after a name,
-  `)`, `]`, `!`, `?.` or a non-ASCII character holds anything but a
-  number (so no computed member can build `"ext" + "end"`; a keyword
-  counts as a name after `.`); and it never names `global` (outside the
+  `import { expect }`; it has no namespace import, no default import from
+  `@jest/globals`, `@jest/expect`, `vitest` or `bun:test`, and no dynamic
+  `import(` or `import` mention beyond its import declarations; no `[`
+  after a name, `)`, `]`, `}`, `!`, `?.`, a comment or a non-ASCII
+  character holds anything but a number (so no computed member can build
+  `"ext" + "end"`; a reserved word starts an array instead, but not after
+  `.`, and `of`, `keyof` and `readonly` count as names); and it never
+  names `global` (outside the
   whole phrase `declare global`), `globalThis`, `window`, `self`, `this`,
   `document`, `constructor`, `Reflect`, `Function`, `eval`, `require`,
   `requireActual`, `requireMock`, `importActual`, `importMock`,
   `createMockFromModule`, `valueOf`, `getOwnPropertyDescriptor`,
-  `getOwnPropertyDescriptors`, `Symbol` or `chai`, each of
-  which holds `expect`, the runner's matcher table or the Vitest
-  assertion prototype, or runs code, under a spelling the scan cannot
-  see. Comments and strings count too, so a
+  `getOwnPropertyDescriptors`, `Symbol`, `chai`, `getPrototypeOf` or
+  `__proto__`, each of which reaches `expect`, the runner's matcher
+  table or an assertion's prototype, or runs code, under a spelling the
+  scan cannot see. Comments and strings count too, so a
   mention only refuses;
 - the assertion passes exactly one argument, which is not a spread, and
   uses no `.not` or `.rejects` modifier.
@@ -200,8 +203,8 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    block-bodied arrow with `r > 0 && (r === e)`, with inert `message`,
    name and literal values beside `pass`, with `typeof`, call and template
    terms (one holding `"a=b"`), or in a file with a plain
-   `import { expect }`, array patterns, `number[]`, `xs[0]` and
-   `declare global`: strong.
+   `import { expect }`, a default import from a module of the project,
+   array patterns, `number[]`, `xs[0]` and `declare global`: strong.
 2. `r == e`, `r !== e`, `r === e || r === 0`, `!(r === e)`,
    `Math.round(r) === e`, a term that writes a parameter (`r = e`,
    `[r] = [e]`, `r >>= 0`, `r <<= 0`, `r ||= e`, `r++`, `r--`, an `eval`, an
@@ -228,7 +231,10 @@ follows the RIPR-SPEC-0243 ladder, including the observation guard.
    refused root (`expect.valueOf()`, `Object.getOwnPropertyDescriptor`,
    `Symbol.for`, `chai.Assertion` among them), a `global` beside
    a comment `declare global_x`, a default import indexed after a
-   keyword-named property (`.of[`) or through a non-ASCII name,
+   keyword-named property (`.of[`), through a variable named `of`, a
+   non-ASCII name, an object literal or a comment, a default import from
+   `@jest/globals`, a matcher set on `Object.getPrototypeOf(expect(0))` or
+   `expect(0).__proto__`,
    `import { expect as e }`, or `import { fake as expect }`: `unknown`. A matcher named `toBe` keeps the built-in reading.
 4. `toBeCents(150, 2)`, `toBeCents(...args)` or
    `await expect(p).rejects.toBeCents(150)`: `unknown`. `.not.toBeCents(150)`

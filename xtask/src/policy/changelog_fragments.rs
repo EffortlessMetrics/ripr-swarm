@@ -60,6 +60,7 @@ pub(crate) fn check_changelog_fragments_with_args(args: &[String]) -> Result<(),
                 "Name the file `<pr-or-issue>-<short-slug>.md` in lowercase kebab case.",
                 "File `Verdict corpus:` and `Repo ops:` bookkeeping under `Internal / CI`, not Added, Changed, or Fixed.",
                 "Give each CHANGELOG.md Unreleased bullet an issue, PR (`#N` or a link), or RIPR-SPEC-N reference.",
+                "Combine duplicate Unreleased section headings before folding fragments; keep every entry under one heading of its name.",
                 "At the release cut, fold every fragment into CHANGELOG.md and delete it (changelog.d/README.md).",
             ],
             rerun_command: if release_cut {
@@ -272,7 +273,9 @@ fn unreleased_changelog_violations(root: &Path) -> Result<Vec<String>, String> {
     }
     let text =
         fs::read_to_string(&path).map_err(|err| format!("failed to read {CHANGELOG}: {err}"))?;
-    Ok(unreleased_entry_violations(&text))
+    let mut violations = unreleased_entry_violations(&text);
+    violations.extend(unreleased_section_violations(&text));
+    Ok(violations)
 }
 
 fn unreleased_entry_violations(text: &str) -> Vec<String> {
@@ -350,6 +353,43 @@ fn documented_sections(policy: &str) -> Vec<&str> {
         .take_while(|line| !line.starts_with("## "))
         .filter_map(|line| line.trim().strip_prefix("- `")?.strip_suffix('`'))
         .collect()
+}
+
+/// The fold format uses column-zero `### <Section>` headings under the
+/// first `## Unreleased`. Each name must have one destination (#7673).
+/// Indented entry examples and later versioned sections are not destinations.
+fn unreleased_section_violations(text: &str) -> Vec<String> {
+    let mut in_unreleased = false;
+    let mut first_lines = std::collections::BTreeMap::new();
+    let mut violations = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if !in_unreleased {
+            in_unreleased = line.trim() == "## Unreleased";
+            continue;
+        }
+        if line.starts_with("## ") {
+            break;
+        }
+        let Some(section) = line.strip_prefix("### ").map(str::trim) else {
+            continue;
+        };
+        if section.is_empty() {
+            continue;
+        }
+        let line_number = index + 1;
+        match first_lines.entry(section) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(line_number);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                violations.push(format!(
+                    "{CHANGELOG}:{line_number}: duplicate Unreleased section `### {section}` (first at line {}); combine its entries under one heading before folding fragments",
+                    entry.get()
+                ));
+            }
+        }
+    }
+    violations
 }
 
 fn section_of(line: &str) -> Option<&str> {
@@ -593,6 +633,72 @@ mod tests {
             violations[0].ends_with("found `  - x (#1).`"),
             "{violations:?}"
         );
+    }
+
+    #[test]
+    fn duplicate_unreleased_sections_keep_the_first_location() {
+        let text = "# Changelog\n## Unreleased\n### Fixed\n- One (#1).\n### Added\n- Two (#2).\n### Fixed\n- Three (#3).\n### Fixed\n- Four (#4).\n## 0.10.0\n### Fixed\n";
+        assert_eq!(
+            unreleased_section_violations(text),
+            vec![
+                "CHANGELOG.md:7: duplicate Unreleased section `### Fixed` (first at line 3); combine its entries under one heading before folding fragments".to_string(),
+                "CHANGELOG.md:9: duplicate Unreleased section `### Fixed` (first at line 3); combine its entries under one heading before folding fragments".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unique_unreleased_sections_ignore_other_versions_and_indented_examples() {
+        let unique = "# Changelog\n### Fixed\n## Unreleased\n### Fixed\n- Example (#1):\n  ### Fixed\n#### Fixed\n### Internal / CI\n- Tools (#2).\n## 0.10.0\n### Fixed\n### Fixed\n";
+        assert!(unreleased_section_violations(unique).is_empty());
+        assert!(unreleased_section_violations("## 0.10.0\n### Fixed\n### Fixed\n").is_empty());
+        assert!(unreleased_section_violations("## Unreleased\n").is_empty());
+    }
+
+    #[test]
+    fn duplicate_unreleased_sections_normalize_crlf_and_trailing_space() {
+        let text = "## Unreleased\r\n### Fixed\r\n### Added\r\n### Fixed  \r\n";
+        assert_eq!(
+            unreleased_section_violations(text),
+            vec![
+                "CHANGELOG.md:4: duplicate Unreleased section `### Fixed` (first at line 2); combine its entries under one heading before folding fragments".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_unreleased_sections_reach_ordinary_and_release_cut_checks() -> Result<(), String> {
+        let root = fresh_root("changelog-duplicate-sections")?;
+        fs::create_dir_all(root.join(FRAGMENT_DIR)).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("docs")).map_err(|err| err.to_string())?;
+        let policy: String = std::iter::once("## Sections\n\n".to_string())
+            .chain(ALLOWED_SECTIONS.iter().map(|s| format!("- `{s}`\n")))
+            .collect();
+        fs::write(root.join(POLICY_DOC), policy).map_err(|err| err.to_string())?;
+        fs::write(root.join(FRAGMENT_DIR).join(README), "# fragments\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(
+            root.join(CHANGELOG),
+            "## Unreleased\n### Fixed\n- One (#1).\n### Fixed\n- Two (#2).\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let ordinary = changelog_fragment_violations(&root, false);
+        let cut = changelog_fragment_violations(&root, true);
+        fs::write(
+            root.join(CHANGELOG),
+            "## Unreleased\n### Fixed\n- One (#1).\n- Two (#2).\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let repaired = changelog_fragment_violations(&root, true);
+        let _ = fs::remove_dir_all(&root);
+
+        let expected = vec![
+            "CHANGELOG.md:4: duplicate Unreleased section `### Fixed` (first at line 2); combine its entries under one heading before folding fragments".to_string(),
+        ];
+        assert_eq!(ordinary?, expected);
+        assert_eq!(cut?, expected);
+        assert!(repaired?.is_empty());
+        Ok(())
     }
 
     #[test]

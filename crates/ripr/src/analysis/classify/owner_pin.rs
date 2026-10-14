@@ -41,6 +41,7 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+mod expected_binding;
 mod fallible_check;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -1916,6 +1917,29 @@ impl OwnerReturnPin {
         {
             return false;
         }
+        // SPEC-0225 example 5: resolve only the adjacent, immutable,
+        // once-used literal binding in this test's own block. Helpers keep
+        // their own scope, and every existing literal/owner gate below still
+        // checks the initializer rather than trusting its identifier.
+        let expected_literal = if matches!(self.path, ReturnPathGate::WholeValueField(_))
+            && is_plain_identifier(expected.trim())
+        {
+            if !reads_assert_eq || helper.is_some() {
+                return false;
+            }
+            let Some(literal) =
+                expected_binding::expected_literal_binding(test, assertion, expected)
+            else {
+                return false;
+            };
+            Some(literal)
+        } else {
+            None
+        };
+        let expected = match &expected_literal {
+            Some(literal) => literal.as_str(),
+            None => expected,
+        };
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
             || (owner_named_outside(test, &assertion.text, &self.name)

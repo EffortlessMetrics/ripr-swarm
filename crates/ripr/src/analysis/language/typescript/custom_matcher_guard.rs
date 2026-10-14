@@ -91,6 +91,7 @@ fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, sour
             continue;
         };
         imports += 1;
+        let runner = RUNNER_MODULES.contains(&import.source.value.as_str());
         for specifier in import.specifiers.iter().flatten() {
             match specifier {
                 ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
@@ -106,7 +107,12 @@ fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, sour
                     }
                 }
                 ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => return false,
-                ImportDeclarationSpecifier::ImportDefaultSpecifier(_) => {}
+                // A runner module's default export may hold `expect`.
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(_) => {
+                    if runner {
+                        return false;
+                    }
+                }
             }
         }
     }
@@ -126,6 +132,9 @@ fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, sour
             .iter()
             .all(|word| word_mentions(source, word) == 0)
 }
+
+/// Modules whose default export may hold the runner's `expect`.
+const RUNNER_MODULES: &[&str] = &["@jest/globals", "@jest/expect", "vitest", "bun:test"];
 
 /// Names that hold the runner's `expect` (the global object, a module
 /// object or a code string) under a spelling the word scan cannot see.
@@ -150,12 +159,16 @@ const GLOBAL_ROOTS: &[&str] = &[
     "getOwnPropertyDescriptors",
     "Symbol",
     "chai",
+    "getPrototypeOf",
+    "__proto__",
 ];
 
 /// `true` when `source` holds a `[` that may index a value by a name other
-/// than a number literal: one after a name, `)`, `]`, `!` or `?.`. A `[`
-/// after a keyword (`return [a]`, `const [a]`) starts an array or a
-/// pattern instead; one in a type (`number[]`) is empty.
+/// than a number literal: one after a name, `)`, `]`, `}`, `!`, `?.`, a
+/// comment or a non-ASCII character. A `[` after a reserved word
+/// (`return [a]`, `const [a]`) starts an array or a pattern instead; one in
+/// a type (`number[]`) is empty. `of`, `keyof` and `readonly` may name a
+/// variable, so they index.
 fn computed_member_access(source: &str) -> bool {
     const KEYWORDS: &[&str] = &[
         "const",
@@ -163,7 +176,6 @@ fn computed_member_access(source: &str) -> bool {
         "var",
         "return",
         "in",
-        "of",
         "typeof",
         "void",
         "await",
@@ -176,8 +188,6 @@ fn computed_member_access(source: &str) -> bool {
         "do",
         "throw",
         "extends",
-        "keyof",
-        "readonly",
     ];
     let is_identifier = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
     source.match_indices('[').any(|(index, _)| {
@@ -205,7 +215,7 @@ fn computed_member_access(source: &str) -> bool {
             {
                 return false;
             }
-        } else if !matches!(last, ')' | ']' | '!' | '.') {
+        } else if !matches!(last, ')' | ']' | '}' | '!' | '.' | '/') {
             return false;
         }
         let key = source

@@ -41,6 +41,11 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 object (RIPR-SPEC-0190). Orchestrators that discover commands from that
 document should branch on `exit`, not on free-text `stop_states`.
 
+Error and panic diagnostics on stderr are best effort. If a stderr reader
+closes after a JSON refusal has been written, the command retains that stdout
+document and its original exit `2` or `3`. A failed panic diagnostic still
+terminates with `2`; reporting it must not cause a recursive panic or abort.
+
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable

@@ -105,7 +105,7 @@ path.
 For a TypeScript/JavaScript preview finding, `repair_packet_ready` flips from
 `false` to `true` if and only if:
 
-1. All G-A through G-F preconditions hold (see §1.2).
+1. All G-A through G-H preconditions hold (see §1.2).
 2. A `GapRecord` projected from the finding passes the shared
    `validate_agent_gap_record_packet` validator (see §1.1).
 
@@ -123,10 +123,11 @@ with a **named** reason surfaced in `actionability_category` or
 
 ## Required Evidence
 
-- A TypeScript finding that satisfies G-A–G-F: category
+- A TypeScript finding that satisfies G-A–G-H: category
   `incomplete_repair_packet`, non-dynamic concrete oracle,
   import-aware/owner-call related test, discoverable `verify_command` from
-  `package.json`, non-empty `missing_discriminators`.
+  `package.json`, non-empty `missing_discriminators`, and no boundary or
+  effect-observer target refusal.
 - A `GapRecord` projected by `typescript_gap_record_for` carrying all six
   fields validated by `validate_agent_gap_record_packet`: `projection_eligibility`,
   `repair_route`, `verification_commands`, `repairability`, `allowed_edit_surface`,
@@ -188,11 +189,13 @@ The shared validator enforces (verbatim, `agent_seam_packets.rs:839–871`):
 
 ### 1.2 TypeScript-specific preconditions BEFORE the validator (fail-closed)
 
-The validator is necessary but **not sufficient** for preview safety. Before
-a TypeScript finding is even projected into a `GapRecord`, ALL of the
-following must hold, or the finding stays preview with its current
-non-actionable category from `typescript_actionability_for`
-(`crates/ripr/src/analysis/language/typescript/actionability.rs`):
+G-A through G-F guard projection into a `GapRecord`. If any fails, the
+finding stays preview with its current non-actionable category from
+`typescript_actionability_for`
+(`crates/ripr/src/analysis/language/typescript/actionability.rs`). G-G and G-H
+check the projected target: a refusal retains the diagnostic record with
+`agent_packet` ineligible and a named reason. The shared validator consumes
+that ineligibility and remains the sole packet-readiness authority.
 
 - **G-A. Category is `incomplete_repair_packet`.** Only the terminal
   `incomplete_repair_packet` branch (actionability.rs:152) is eligible. Every
@@ -240,13 +243,22 @@ non-actionable category from `typescript_actionability_for`
   Without that evidence, or without literal arguments at both positions, the
   packet fails closed with the boundary placeholder.
 
-If G-A through G-F all hold, the finding has *exactly* the evidence the Rust
+- **G-H. Refused strong effect observer (#7514).** For `SideEffect` and
+  `CallDeletion`, a selected strong oracle whose typed observation state is
+  not `Yes` cannot supply the repair assertion shape. Static evidence does not
+  establish that repeating or strengthening that assertion would observe the
+  changed effect. Retain the diagnostic gap record without an assertion shape, mark
+  its `agent_packet` projection ineligible, and let the shared validator
+  report that an effect-observing assertion is needed. This does not change
+  weaker-oracle strengthening, other probe families, or classification.
+
+If G-A through G-H all hold, the finding has *exactly* the evidence the Rust
 packet requires except the four projection fields named in §3. PR 7 produces
 those four fields, builds the `GapRecord`, and calls the shared validator.
 
 ### 1.3 Result of the gate
 
-- Validator `Ok(())` **and** G-A–G-F hold ⇒ set
+- Validator `Ok(())` **and** G-A–G-H hold ⇒ set
   `repair_packet_ready: true`, set `actionability_category:
   "complete_repair_packet"`, set `gap_state: "actionable"`, clear
   `missing_actionability_fields` to `[]`. `authority_boundary` stays
@@ -274,13 +286,12 @@ let repair_packet_ready = packet
     .is_some_and(|record| validate_agent_gap_record_packet(record).is_ok());
 ```
 
-`typescript_gap_record_for` returns `None` whenever any §1.2 precondition
-(G-A–G-F) fails, so a `None` packet ⇒ `repair_packet_ready: false`
-automatically. This keeps the fail-closed default literally encoded: the flip
-is opt-in per finding, the false case requires no positive proof.
+`typescript_gap_record_for` returns `None` whenever a pre-projection guard
+(G-A–G-F) fails. G-G/G-H refusals retain an ineligible diagnostic `GapRecord`;
+the shared validator rejects it. Both paths keep `repair_packet_ready: false`.
+The flip is opt-in per finding; the false case requires no positive proof.
 
-The projection lives in the TypeScript analysis module
-(`crates/ripr/src/analysis/language/typescript/`) and is consumed by
+The projection lives in `output/typescript_packet_projection.rs` and is consumed by
 `output/preview_actionability.rs`; the *validator* it calls is the existing
 shared function in `output/agent_seam_packets.rs`. No new module.
 
@@ -347,7 +358,7 @@ guard that MUST hold for the flip; failing it ⇒ `repair_packet_ready: false`.
 | F13 | Line-keyed / non-content-addressed `canonical_gap_id` | id is `gap:typescript:<family>:<fp8>` from content-addressed finding id; path normalized `\`→`/` | §3.2; content-addressed-ids invariant |
 | F14 | Preview evidence presented as gate authority | `authority_boundary == "preview_advisory_only"` even when flipped; `must_not_change` includes preview clause | §1.3; §3.2 `must_not_change` |
 | F15 | Projection-eligibility override / bypass | `projection_eligibility["agent_packet"].eligible == true` required | validator cond. 1 (§1.1) |
-| F16 | Confidence-only flip | confidence is a ranking signal, never the flip decider; flip requires the full validator + G-A–G-F | §1; confidence not in gate predicate |
+| F16 | Confidence-only flip | confidence is a ranking signal, never the flip decider; flip requires the full validator + G-A–G-H | §1; confidence not in gate predicate |
 
 Any invariant that cannot be proven for a finding ⇒ the finding stays preview.
 The validator's `Err` reason is surfaced in `why_not_actionable` so the named
@@ -402,7 +413,7 @@ not silent.
 
 ## 6. Additive / golden expectations
 
-- **Most existing TS findings stay `false`.** The flip is gated on G-A–G-F +
+- **Most existing TS findings stay `false`.** The flip is gated on G-A–G-H +
   the shared validator, which the overwhelming majority of preview findings
   fail (dynamic oracles, heuristic relations, missing receipts). Existing
   golden expectations for `repair_packet_ready` remain `false` and must NOT
@@ -582,7 +593,7 @@ explain themselves.
 
 1. `repair_packet_ready` flips `true` for the complete fixture and **only**
    when `validate_agent_gap_record_packet` returns `Ok(())` on a `GapRecord`
-   projected from a TypeScript finding satisfying G-A–G-F.
+   projected from a TypeScript finding satisfying G-A–G-H.
 2. No parallel/mirror TypeScript completeness validator exists; the flip
    calls `agent_seam_packets::validate_agent_gap_record_packet`.
 3. The four new producers (`receipt_command`, `must_not_change`,
@@ -724,7 +735,7 @@ The implementation adds two modules and modifies one:
 
 ```text
 NEW  crates/ripr/src/output/typescript_packet_projection.rs
-     (projection: typescript_gap_record_for, G-A–G-F checks,
+     (projection: typescript_gap_record_for, G-A–G-H checks,
       canonical_gap_id, receipt_command, route_kind mapping)
 
 MOD  crates/ripr/src/output/preview_actionability.rs

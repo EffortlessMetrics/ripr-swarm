@@ -215,6 +215,22 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
         let source = format!("import g from \"./g\";\n{CENTS_MATCHER}{indexed}{CENTS_TEST}");
         assert_eq!(cents_oracles(&source), unknown(), "{indexed}");
     }
+    // A runner module's default export, an object literal, a comment or a
+    // variable named `of` before `[`, and the prototype of an assertion.
+    for extra in [
+        "import g from \"@jest/globals\";\nbeforeAll(() => { for (const v of Object.values(g)) for (const f of Object.values(v)) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
+        "import g from \"./g\";\nconst x = { ...g }[\"exp\" + \"ect\"];\nbeforeAll(() => { for (const f of Object.values(x)) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
+        "import g from \"./g\";\nbeforeAll(() => { for (const f of Object.values(g /**/ [\"exp\" + \"ect\"])) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
+        "import g from \"./g\";\nconst of = g;\nbeforeAll(() => { for (const f of Object.values(of[\"exp\" + \"ect\"])) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
+        "Object.getPrototypeOf(expect(0)).toBeCents = () => {};\n",
+        "expect(0).__proto__.toBeCents = () => {};\n",
+    ] {
+        let source = format!("{extra}{CENTS_MATCHER}{CENTS_TEST}");
+        assert_eq!(cents_oracles(&source), unknown(), "{extra}");
+    }
+    // A default import from another module keeps the reading.
+    let other_default = format!("import money from \"./money\";\n{CENTS_MATCHER}{CENTS_TEST}");
+    assert_eq!(cents_oracles(&other_default), strong());
     // `declare global` alone keeps the reading.
     let declared = format!(
         "{CENTS_MATCHER}declare global {{ namespace jest {{ interface Matchers<R> {{ toBeCents(e: number): R; }} }} }}\n{CENTS_TEST}"

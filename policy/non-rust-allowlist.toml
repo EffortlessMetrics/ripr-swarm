@@ -753,6 +753,15 @@ covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask che
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = "crates/ripr/tests/fixtures/mcp-gap-list-v1.schema.json"
+kind = "json_schema"
+owner = "mcp"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen pre-filter gap-list v1 schema for strict-reader transport compatibility control."
+covered_by = ["cargo test -p ripr --test mcp_stdio", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "tools/python/portable-ripr-consumer/**/*.py"
 kind = "portable_native_consumer"
 owner = "agent/portable-consumer"

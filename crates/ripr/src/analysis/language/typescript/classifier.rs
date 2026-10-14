@@ -190,9 +190,10 @@ pub(crate) struct CreditFacts<'a> {
 /// `import { owner as local }` that gives the same test its
 /// `ImportAliasOwnerCall` relation, or the `local` of a default import of
 /// the owner's own default export behind an `ImportedOwnerCall` relation
-/// (RIPR-SPEC-0251). The effect side-channel test below stays a substring test
-/// (Decision 4): there a miss grants credit, so tightening it would add
-/// credit.
+/// (RIPR-SPEC-0251). The effect side-channel test below also checks admitted
+/// free-function import locals, including mixed direct/aliased calls. It stays
+/// a substring test (Decision 4): there a miss grants credit, so tightening it
+/// would add credit.
 pub(crate) fn ts_changed_value_is_observed(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
@@ -371,7 +372,35 @@ pub(crate) fn ts_changed_value_is_observed(
                 // (a closure-local side-effect variable, a captured mock result,
                 // or any side-channel) — conservatively treat it as observing
                 // the effect.
-                if !observed.contains(owner_name) {
+                if observed.contains(owner_name) {
+                    continue;
+                }
+                // #7514: a renamed free-function owner still returns the
+                // owner's value. Resolve both named and default locals even
+                // when another call wins relation ranking. Method relations
+                // must not borrow a same-named free export's identity.
+                let observes_owner_alias = matches!(
+                    candidate.relation,
+                    TypeScriptRelationKind::DirectOwnerCall
+                        | TypeScriptRelationKind::ImportAliasOwnerCall
+                        | TypeScriptRelationKind::ImportedOwnerCall
+                ) && (import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+                .into_iter()
+                .any(|name| observed.contains(name))
+                    || default_import_owner_locals(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .into_iter()
+                    .any(|name| observed.contains(name)));
+                if !observes_owner_alias {
                     return true;
                 }
             }
