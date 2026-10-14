@@ -1,0 +1,7 @@
+{
+  "crates/ripr/src/analysis/classifier/evidence.rs": "acad5c6876fe49c91200ad1f2dd05ef5e258cb9c7d8eb74c557e3edf50a3d68c",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs": "c9bccae2ea24c0d0a56391653c042d970b28da78f2bbeda6a8273a6fa60378c1",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs": "92ca94177a4b92753acef9fa0cfd33ea5141395936e73985ed467f1707c9d7d1",
+  "crates/ripr/tests/sibling_effect_oracle.rs": "d78b50983693c3603c54a38b5925f54e55d5e4b8baeb785f6e6648d218f48ec7",
+  "fixtures/rust_unused_trait_effect_oracle/input/src/lib.rs": "ae0f0a60961041913d1e60d65ce8949a71221ec5974ea9496ea931a1915635b3"
+}

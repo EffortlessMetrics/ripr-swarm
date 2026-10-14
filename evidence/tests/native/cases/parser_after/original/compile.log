@@ -1,0 +1,10 @@
+warning: struct `Observation` is never constructed
+  --> <evidence-root>/native/parser_after/original/lib.rs:15:35
+   |
+15 | #[derive(Debug,PartialEq)] struct Observation { sink: Rc<RefCell<Vec<usize>>> }
+   |                                   ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

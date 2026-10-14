@@ -1,0 +1,218 @@
+[
+  {
+    "case": "for-reverse",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for-reverse",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for-direct",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for-direct",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for_each-reverse",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for_each-reverse",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for_each-direct",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "for_each-direct",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "next-reverse",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "next-reverse",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "next-direct",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "next-direct",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "add-reverse",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "add-reverse",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "add-direct",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "add-direct",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-ITERATOR_OBSERVER",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-ITERATOR_OBSERVER",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-foreach",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-foreach",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-next",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-next",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-ADD_OBSERVER",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "cell-ADD_OBSERVER",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  }
+]

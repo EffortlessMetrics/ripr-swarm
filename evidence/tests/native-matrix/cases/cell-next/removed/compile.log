@@ -1,0 +1,12 @@
+warning: field `sink` is never read
+ --> <evidence-root>/native-matrix/cell-next/removed/lib.rs:2:18
+  |
+2 | struct Counter { sink: Rc<Cell<usize>>, finished: bool }
+  |        -------   ^^^^
+  |        |
+  |        field in this struct
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

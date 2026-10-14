@@ -1,0 +1,74 @@
+   Compiling ripr v0.11.0 (<candidate-root>/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 50s
+     Running unittests src/lib.rs (target/debug/deps/ripr-7d2d37e15a6b5252)
+
+running 66 tests
+test analysis::classify::transitive_reach::tests::a_test_attribute_only_in_a_string_makes_no_generator ... ok
+test analysis::classify::transitive_reach::tests::a_generator_invoked_inside_a_function_is_not_a_generated_test ... ok
+test analysis::classify::transitive_reach::tests::an_invocation_above_the_generator_definition_is_not_a_generated_test ... ok
+test analysis::classify::transitive_reach::tests::an_invocation_outside_the_definitions_block_is_not_a_generated_test ... ok
+test analysis::classify::transitive_reach::tests::attributes_from_macro_arguments_or_inner_cfg_make_no_generated_test ... ok
+test analysis::classify::transitive_reach::tests::derive_whose_function_does_not_reach_the_owner_gives_no_witness ... ok
+test analysis::classify::transitive_reach::tests::a_same_named_function_elsewhere_does_not_lend_the_derive_reach ... ok
+test analysis::classify::transitive_reach::tests::a_call_witness_outranks_a_derive_witness ... ok
+test analysis::classify::transitive_reach::tests::derive_applied_in_test_file_witnesses_its_proc_macro_function ... ok
+test analysis::classify::transitive_reach::tests::generated_test_names_read_the_first_identifier_argument ... ok
+test analysis::classify::transitive_reach::tests::generated_test_names_follow_the_transcriber ... ok
+test analysis::classify::transitive_reach::tests::direct_test_macro_limitation_detail_names_direct_macro_edge ... ok
+test analysis::classify::transitive_reach::tests::generators_that_may_emit_no_active_test_are_rejected ... ok
+test analysis::classify::transitive_reach::tests::generated_test_sites_skip_comments_and_definition_bodies ... ok
+test analysis::classify::transitive_reach::tests::generated_test_sites_require_module_scope_test_build_and_one_arm ... ok
+test analysis::classify::transitive_reach::tests::given_callee_not_in_crate_then_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_empty_owner_then_witnesses_are_none ... ok
+test analysis::classify::transitive_reach::tests::given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured ... ok
+test analysis::classify::transitive_reach::tests::given_cross_type_same_named_call_then_the_caller_still_reaches ... ok
+test analysis::classify::transitive_reach::tests::given_file_local_test_has_multiple_macro_candidates_then_first_is_stable ... ok
+test analysis::classify::transitive_reach::tests::given_macro_definition_does_not_name_owner_then_macro_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_macro_call_in_test_calls_then_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_macro_walk_exceeds_depth_or_missing_function_then_none ... ok
+test analysis::classify::transitive_reach::tests::given_no_path_to_owner_then_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_macro_walk_follows_helper_calls_before_macro ... ok
+test analysis::classify::transitive_reach::tests::given_path_at_depth_5_then_witness_is_captured ... ok
+test analysis::classify::transitive_reach::tests::given_path_depth_6_then_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_same_named_functions_then_the_walk_follows_each_of_them ... ok
+test analysis::classify::transitive_reach::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured ... ok
+test analysis::classify::transitive_reach::tests::given_test_calls_macro_and_owner_then_macro_witness_is_none ... ok
+test analysis::classify::transitive_reach::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named ... ok
+test analysis::classify::transitive_reach::tests::given_test_invokes_owner_macro_directly_then_macro_witness_is_captured ... ok
+test analysis::classify::transitive_reach::tests::given_two_witnesses_then_first_by_file_line_is_selected ... ok
+test analysis::classify::transitive_reach::tests::given_type_named_away_from_the_call_then_the_test_is_not_corroborated ... ok
+test analysis::classify::transitive_reach::tests::identifier_runs_agree_with_contains_identifier_for_identifier_needles ... ok
+test analysis::classify::transitive_reach::tests::given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type ... ok
+test analysis::classify::transitive_reach::tests::is_macro_call_detects_bang_in_name ... ok
+test analysis::classify::transitive_reach::tests::macro_arms_are_counted_at_the_body_top_level ... ok
+test analysis::classify::transitive_reach::tests::macro_definition_scanner_fail_closes_on_duplicate_macro_names ... ok
+test analysis::classify::transitive_reach::tests::known_implicit_dispatch_requires_this_tests_receiver ... ok
+test analysis::classify::transitive_reach::tests::macro_definition_scanner_handles_non_brace_body_delimiters ... ok
+test analysis::classify::transitive_reach::tests::macro_definition_scanner_requires_boundaries_and_target_macro ... ok
+test analysis::classify::transitive_reach::tests::macro_invocation_parser_handles_delimiters_whitespace_and_invalid_bangs ... ok
+test analysis::classify::transitive_reach::tests::macro_reach_limit_kind_names_direct_test_body_macro_path ... ok
+test analysis::classify::transitive_reach::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim ... ok
+test analysis::classify::transitive_reach::tests::macro_reachers_agree_with_the_forward_walk ... ok
+test analysis::classify::transitive_reach::tests::interned_walk_agrees_with_the_walk_over_names ... ok
+test analysis::classify::transitive_reach::tests::macro_witness_pointer_uses_may_language_and_no_coverage_claim ... ok
+test analysis::classify::transitive_reach::tests::macro_witness_pointer_reports_zero_and_plural_other_tests ... ok
+test analysis::classify::transitive_reach::tests::macro_witness_names_the_path_first_test_and_counts_the_rest ... ok
+test analysis::classify::transitive_reach::tests::one_pass_macro_table_matches_the_per_name_scan ... ok
+test analysis::classify::transitive_reach::tests::proc_macro_derive_entries_pair_each_derive_with_its_function ... ok
+test analysis::classify::transitive_reach::tests::proc_macro_derive_entries_skip_a_non_ascii_identifier ... ok
+test analysis::classify::transitive_reach::tests::path_qualified_derive_is_matched_by_its_last_segment ... ok
+test analysis::classify::transitive_reach::tests::receiver_memo_answers_each_owner_as_a_fresh_index_does ... ok
+test analysis::classify::transitive_reach::tests::receiver_type_lookup_agrees_with_checking_each_type ... ok
+test analysis::classify::transitive_reach::tests::reverse_reach_set_matches_the_forward_walk_from_every_name ... ok
+test analysis::classify::transitive_reach::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch ... ok
+test analysis::classify::transitive_reach::tests::derive_witness_through_the_real_syntax_adapter ... ok
+test analysis::classify::transitive_reach::tests::transitive_reach_limit_kind_names_integration_test_path ... ok
+test analysis::classify::transitive_reach::tests::wire_message_contains_honest_may_language_and_no_coverage_claim ... ok
+test analysis::classify::transitive_reach::tests::transitive_reach_limitation_detail_names_edges_route_and_non_claim ... ok
+test analysis::classify::transitive_reach::tests::witness_pointer_normalizes_backslashes_in_path ... ok
+test analysis::classify::transitive_reach::tests::witness_pointer_uses_may_language_and_no_coverage_claim ... ok
+test analysis::classify::transitive_reach::tests::witness_pointer_reports_plural_other_tests ... ok
+test analysis::classify::transitive_reach::tests::unapplied_or_conditional_derive_gives_no_witness ... ok
+
+test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 10516 filtered out; finished in 0.01s
+

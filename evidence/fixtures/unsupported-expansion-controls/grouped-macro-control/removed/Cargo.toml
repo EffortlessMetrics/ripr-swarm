@@ -1,0 +1,6 @@
+[package]
+name="grouped_macro_removed"
+version="0.1.0"
+edition="2024"
+[dependencies]
+hostile_macros={path="hostile_macros"}

@@ -1,0 +1,21 @@
+   Compiling ripr v0.11.0 (<candidate-root>/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s
+     Running tests/sibling_effect_oracle.rs (target/debug/deps/sibling_effect_oracle-f2a08cb595abe6c9)
+
+running 13 tests
+test direct_effect_observer_retains_strong_credit ... ok
+test free_and_inherent_trait_method_names_do_not_admit_decoys ... ok
+test competing_production_writes_cannot_supply_implicit_discrimination ... ok
+test implicit_trait_effect_observers_retain_strong_credit ... ok
+test free_inherent_and_wrong_receiver_push_matrix_stays_weak ... ok
+test lone_proximity_retains_discrimination_with_weak_reach ... ok
+test implicit_binding_refuses_self_comparison_and_opaque_observers ... ok
+test receiver_construction_cannot_seed_the_observed_effect ... ok
+test parser_only_decoys_cannot_supply_aggregation_discrimination ... ok
+test same_test_dispatch_cannot_credit_disconnected_assertions ... ok
+test unused_reverse_trait_does_not_authorize_parser_oracle ... ok
+test implicit_credit_belongs_to_the_ordered_shared_sink_assertion ... ok
+test paired_implicit_dispatch_matrix_binds_both_effect_families ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+

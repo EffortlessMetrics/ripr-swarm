@@ -1,0 +1,10 @@
+warning: unused variable: `output`
+ --> <evidence-root>/native/fresh_handle/removed/lib.rs:3:11
+  |
+3 | fn record(output: &Rc<RefCell<Vec<usize>>>) {
+  |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_output`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

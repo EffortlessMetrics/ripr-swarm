@@ -1,0 +1,74 @@
+[
+  {
+    "case": "parser_after",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "parser_after",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "parser_before",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "parser_before",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "fresh_handle",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "fresh_handle",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "shared_sink",
+    "mutation": "original",
+    "compile_exit": 0,
+    "test_exit": 0,
+    "summary": [
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "case": "shared_sink",
+    "mutation": "removed",
+    "compile_exit": 0,
+    "test_exit": 101,
+    "summary": [
+      "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pull_request": 7817,
+  "pull_request_state": "open_draft",
+  "candidate_branch": "codex/7794-sibling-effect-credit",
+  "candidate_commit": "a4e22c0c0ee52a5a858077b2639b3737934b55fa",
+  "candidate_tree": "0acdc48cdb96f6267fd7b2b799b918d42910323e",
+  "candidate_parent": "db69f41b771d3ff14fc0be9041fe992c7c3818ee",
+  "candidate_parent_tree": "98adc43a7d2127381c499335638fffb225346a61",
+  "task_intake_head": "9d4d4adf74726854bc106a1e910a1edc2467aafd",
+  "task_intake_tree": "5b932730ea11e44a07e61f921e51a3d9dfe67612",
+  "task_intake_merge_parents": [
+    "b61141690a0dcd9e679ea2ca6f3e9261357c5e62",
+    "ef2bce9017dde50949f4dbf26c7ff25ec6446247"
+  ],
+  "pr_base_branch": "main",
+  "pr_base_commit": "ef2bce9017dde50949f4dbf26c7ff25ec6446247",
+  "pr_base_tree": "76e9686acb199752075568fbe36fa4efb430ad01",
+  "tree_relation": "task-intake 9d4d is a merge of the pre-existing candidate b611 and PR base ef2bce; db69 and a4 are subsequent owned-branch commits. This archive branch is based on a4 and does not alter the candidate branch.",
+  "review_binding": {
+    "agent": "/root/frozen_tree_review_final",
+    "review_basis_head": "db69f41b771d3ff14fc0be9041fe992c7c3818ee",
+    "review_basis_tree": "98adc43a7d2127381c499335638fffb225346a61",
+    "review_scope_note": "The final candidate source was in the working tree at review time. The two fingerprints reported by the reviewer match files in candidate commit a4; reviewer stated no edits or test runs."
+  },
+  "test_provenance": {
+    "focused_receipt": "tests/focused-receipts.json",
+    "focused_receipt_note": "Receipt file timestamp is after candidate commit; it records seven commands with exit 0. Raw post-commit log files preserved here for reveal and transitive. Other command stdout was not captured as post-commit raw logs.",
+    "sibling_effect_oracle": "Reported exit 0, 13 passed on the final repaired source; raw stdout not captured. The older 13/13 raw log is retained under tests/pre-final and is explicitly not bound as exact-candidate output.",
+    "native_fixture_controls": "Rustc fixture-control receipts were recorded before candidate commit a4. They test fixture mutation behavior and are not analyzer executions; source/log receipts are retained without claiming exact-a4 runtime.",
+    "external_corpus": "Full pinned external-corpus qualification remains blocked by inherited setup failure tracked in issue #7880; no full-corpus pass is claimed."
+  }
+}

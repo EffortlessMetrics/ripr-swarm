@@ -1,0 +1,6 @@
+[package]
+name="shadowed_core_original"
+version="0.1.0"
+edition="2024"
+[dependencies]
+hostile_crate={path="hostile_crate"}

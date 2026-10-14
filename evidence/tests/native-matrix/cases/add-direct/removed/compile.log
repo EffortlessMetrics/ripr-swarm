@@ -1,0 +1,26 @@
+warning: unused variable: `output`
+ --> <evidence-root>/native-matrix/add-direct/removed/lib.rs:4:11
+  |
+4 | fn record(output: &Rc<RefCell<Vec<usize>>>) {
+  |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_output`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `sink` and `finished` are never read
+ --> <evidence-root>/native-matrix/add-direct/removed/lib.rs:3:18
+  |
+3 | struct Counter { sink: Rc<RefCell<Vec<usize>>>, finished: bool }
+  |        -------   ^^^^                           ^^^^^^^^
+  |        |
+  |        fields in this struct
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `record` is never used
+ --> <evidence-root>/native-matrix/add-direct/removed/lib.rs:4:4
+  |
+4 | fn record(output: &Rc<RefCell<Vec<usize>>>) {
+  |    ^^^^^^
+
+warning: 3 warnings emitted
+
