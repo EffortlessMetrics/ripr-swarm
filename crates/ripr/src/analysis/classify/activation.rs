@@ -1349,6 +1349,13 @@ fn sequence_runs(
                 continue;
             }
             called = true;
+            // Two owner calls on one line share one call text: a fact
+            // cannot say which call it parsed, so the line is unreadable
+            // (`assert_eq!(score(&[0]), score(&v))` must not read `[0]`
+            // twice and drop `&v`).
+            if super::owner_pin::closure_adaptor::call_count(&call.text, name) != 1 {
+                return None;
+            }
             let arguments = owner_name_call_text(&call.text, name, free)
                 .and_then(|text| call_arguments(text, &call.name))?;
             let argument = arguments.get(position)?;
@@ -7229,6 +7236,9 @@ assert_eq!(input.amount, 100);"#
             "assert_eq!(score(&v), 2);",
             "assert_eq!(score(&vec![0; n]), 0);",
             "assert_eq!(score(&[0, n]), 1);",
+            // Two owner calls on one line: the `&v` call must not read the
+            // first call's `[0]`.
+            "assert_eq!(score(&[0]), score(&v));",
         ] {
             let gathered = adaptor_boundary(
                 filter,

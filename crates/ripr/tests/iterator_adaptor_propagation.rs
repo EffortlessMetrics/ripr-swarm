@@ -198,3 +198,26 @@ fn collect_into_a_rebound_vec_keeps_the_pre_0260_reading() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn self_comparing_boundary_assertion_pairs_nothing() -> Result<(), String> {
+    let new = "xs.iter().filter(|&&x| x > 0).count()";
+    let old = "xs.iter().filter(|&&x| x >= 0).count()";
+    let (_, control) = findings(new, old, "assert_eq!(count_positive(&[0, 3]), 1);")?;
+    assert_eq!(control["classification"], "exposed", "{control}");
+    for test in [
+        // The boundary input is compared with the owner itself.
+        "assert_eq!(count_positive(&[0, 3]), count_positive(&[0, 3]));",
+        "let e = count_positive(&[0, 3]);\n        assert_eq!(count_positive(&[0, 3]), e);",
+        // A tautological boundary assertion beside a discriminating one on
+        // a far input must not combine into `exposed`.
+        "assert_eq!(count_positive(&[0]), count_positive(&[0]));\n        assert_eq!(count_positive(&[5]), 1);",
+    ] {
+        let (_, predicate) = findings(new, old, test)?;
+        assert_ne!(
+            predicate["classification"], "exposed",
+            "{test}: {predicate}"
+        );
+    }
+    Ok(())
+}

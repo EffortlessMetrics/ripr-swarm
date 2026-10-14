@@ -391,7 +391,7 @@ fn test_pairs_boundary_element(
                 loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
             });
         }
-        whole_owner_call_operands(&assertion.text, owner)
+        whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
             .any(|arguments| arguments_feed_boundary_element(test, None, arguments, element))
     })
@@ -428,7 +428,7 @@ fn loan_pairs_boundary_element(
     if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
         return false;
     }
-    whole_owner_call_operands(assertion_text, owner)
+    whole_owner_call_operands(test, assertion_text, owner)
         .iter()
         .any(|arguments| arguments_feed_boundary_element(test, Some(loan), arguments, element))
 }
@@ -440,9 +440,22 @@ fn loan_pairs_boundary_element(
 /// a projection of the owner's result, which may not tell the changed
 /// closure value apart, so it never pairs with an element boundary
 /// (RIPR-SPEC-0260 rule 1).
-fn whole_owner_call_operands(assertion_text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+fn whole_owner_call_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<Vec<String>> {
     let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
-        Some(compared) => compared.iter().map(|operand| operand.to_string()).collect(),
+        // An expected side that reaches the owner again compares the owner
+        // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
+        Some(compared) => {
+            if compared.iter().all(|operand| {
+                super::owner_pin::expected_reaches_owner(test, assertion_text, operand, &owner.name)
+            }) {
+                return Vec::new();
+            }
+            compared.iter().map(|operand| operand.to_string()).collect()
+        }
         None => {
             let Some(index) = find_marker(assertion_text, "assert!(") else {
                 return Vec::new();
@@ -3440,6 +3453,19 @@ mod tests {
         assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[3, 7]), 2);"));
         assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&v), 1);"));
         assert!(!pairs(filter, "x > 0", "assert_eq!(gate(&[0; 2]), 0);"));
+        // An expected side that reaches the owner compares it with itself.
+        assert!(!pairs(
+            filter,
+            "x > 0",
+            "assert_eq!(gate(&[0, 3]), gate(&[0, 3]));"
+        ));
+        assert!(!pairs(
+            filter,
+            "x > 0",
+            "assert_ne!(gate(&[0, 3]), gate(&[5]) + 1);"
+        ));
+        // A bound expected side is read through the test's parsed `let`s,
+        // pinned end to end in `tests/iterator_adaptor_propagation.rs`.
         // A same-file constant boundary is not read here (fail closed).
         assert!(!pairs(
             "xs.iter().filter(|&&x| x > LIMIT).count()",

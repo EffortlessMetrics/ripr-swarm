@@ -1983,9 +1983,7 @@ impl OwnerReturnPin {
             None => expected,
         };
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
-        if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
-            || (owner_named_outside(test, &assertion.text, &self.name)
-                && expected_binding_calls_owner(test, expected, &self.name))
+        if expected_reaches_owner(test, &assertion.text, expected, &self.name)
             || expected_reaches_fixture(test, expected)
         {
             return false;
@@ -6670,6 +6668,22 @@ fn returns_primitive_scalar(owner: &FunctionSummary, index: &RustIndex) -> bool 
             });
         !declared && !imported
     })
+}
+
+/// Whether the expected operand of `assertion` in `test` reaches the owner
+/// `name`: it names the owner, or names a test binding whose initializer
+/// does (`assert_eq!(f(4), f(2) + f(2))`, `let e = f(4); assert_eq!(f(4),
+/// e)`), so the assertion compares the owner with itself. Shared by the
+/// owner-return pin and RIPR-SPEC-0260 element pairing.
+pub(in crate::analysis::classify) fn expected_reaches_owner(
+    test: &TestSummary,
+    assertion: &str,
+    expected: &str,
+    name: &str,
+) -> bool {
+    contains_as_whole_word(&mask_comments_and_strings(expected), name)
+        || (owner_named_outside(test, assertion, name)
+            && expected_binding_calls_owner(test, expected, name))
 }
 
 /// #6974 review: whether the test body names the owner anywhere but the

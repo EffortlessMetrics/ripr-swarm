@@ -468,6 +468,9 @@ pub(in crate::analysis::classify) fn argument_sequences(
                 .iter()
                 .map(|line| {
                     let text = test.body.lines().nth(line.checked_sub(test.start_line)?)?;
+                    if call_count(text, &loan.name) != 1 {
+                        return None;
+                    }
                     let arguments = call_argument_texts(text, &loan.name)?;
                     literal_sequence(arguments.get(index)?)
                 })
@@ -478,6 +481,18 @@ pub(in crate::analysis::classify) fn argument_sequences(
             .map(|cell| literal_sequence(cell))
             .collect(),
     }
+}
+
+/// How many calls of `name` (the whole word followed by `(`) `text` holds,
+/// outside comments and strings. A line holding more than one cannot say
+/// which call a per-call fact meant, so RIPR-SPEC-0260 reads it as
+/// unreadable (fail closed).
+pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize {
+    let masked = mask_comments_and_strings(text);
+    whole_word_offsets(&masked, name)
+        .into_iter()
+        .filter(|offset| masked[offset + name.len()..].trim_start().starts_with('('))
+        .count()
 }
 
 /// The top-level argument texts of the first call of `name` in `text`.
@@ -960,7 +975,7 @@ mod tests {
     fn helper_parameter_runs_are_read_at_each_helper_call() {
         let test = test_body(
             10,
-            "fn checks() {\n    check(&[31], true);\n    check(&[], false);\n    let v = [3];\n    check(&v, true);\n}",
+            "fn checks() {\n    check(&[31], true);\n    check(&[], false);\n    let v = [3];\n    check(&v, true);\n    check(&[30], false); check(&v, true);\n}",
         );
         let loan = |call_lines: Vec<usize>| HelperLoan {
             name: "check".to_string(),
@@ -990,6 +1005,9 @@ mod tests {
                 0,
             )
         };
+        // Two helper calls on line 15: the `&v` one must not read `[30]`.
+        assert_eq!(runs(vec![11, 15], "days"), None);
+        assert!(!pinned(vec![11, 15]));
         assert!(pinned(vec![11, 12]));
         assert!(!pinned(vec![12]));
         assert!(!pinned(vec![11, 14]));
