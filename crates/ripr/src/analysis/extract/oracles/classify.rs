@@ -1851,6 +1851,29 @@ fn ok_literal() {
         assert_both_adapters_read(&cases)
     }
 
+    /// Parser method-call ranges sit on `.unwrap_err()`, so dual-adapter
+    /// kind parity cannot pin first-line attribution. The lexical fallback
+    /// must still credit the `let` line (#7955).
+    #[test]
+    fn spec_0227_lexical_fallback_attributes_wrapped_statement_to_first_line() -> Result<(), String>
+    {
+        let facts = crate::analysis::extract::extract_assertions(
+            "let _e = check(300)\n        .unwrap_err();",
+            3,
+        );
+        let fact = facts
+            .first()
+            .ok_or_else(|| "expected one wrapped unwrap_err fact".to_string())?;
+        if facts.len() != 1
+            || fact.line != 3
+            || fact.kind != OracleKind::BroadError
+            || fact.strength != OracleStrength::Weak
+        {
+            return Err(format!("wanted line 3 BroadError/Weak, got {facts:?}"));
+        }
+        Ok(())
+    }
+
     /// Same-row smoke-first: `.unwrap(` must not hide a later uncompared
     /// `expect_err` on that row. Compared as a kind bag because the parser
     /// walks source order while the line scanner sorts by text (#7955).
