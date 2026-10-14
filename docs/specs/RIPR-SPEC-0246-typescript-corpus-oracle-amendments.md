@@ -77,10 +77,17 @@ or array a structural matcher (`toEqual`, `toStrictEqual`, `deepEqual`,
 An `exposed` ladder result then reads `weakly_exposed` unless a related
 test asserts on the owner call's result itself (`expect(owner(...))` with
 nothing after the argument list, not a member, index or optional chain on
-it, nor a local) with `toBe`, `strictEqual` or AVA `t.is`, which compare
-objects by identity, against a non-literal expected value. A literal such
-as `toBe(null)` pins a branch, not the returned object. chai `equal` does not count, because
-the recorded matcher does not carry the `.deep` flag (fail closed). Any
+it, nor a local) with a matcher that compares objects by identity, against
+a non-literal expected value. Built-in identity matchers are `toBe`,
+`strictEqual` and AVA `t.is`. A same-file custom matcher that
+RIPR-SPEC-0262 credits also compares by identity, because its `pass`
+requires `received === expected`; the assertion carries that property
+rather than inheriting it from `exact_value` (`toEqual` shares that kind)
+or from a widened matcher-name list. A literal such as `toBe(null)` or
+`toBeSame(null)` pins a branch, not the returned object. chai `equal`
+does not count, because the recorded matcher does not carry the `.deep`
+flag (fail closed). A refused or non-strict custom matcher does not
+count. Any
 other change on the line, such as an added or overridden field, is not
 copy-only and keeps the ladder result. Rule 1 runs before RIPR-SPEC-0243
 rule 8, so a copy-only change reads `weakly_exposed` even when rule 8
@@ -207,20 +214,29 @@ and the rejected alternative.
     `expect(ready(cfg).ok).toBe(true); expect(ready(cfg)).toEqual(cfg)`:
     `weakly_exposed`. So too with `ready(cfg)["ok"]`, `ready(cfg)?.ok`, or
     `expect(ready(cfg)).toBe(null)` in place of the member pin.
+11. `return cfg` becomes `return { ...cfg }`, test registers
+    `expect.extend({ toBeSame(r, e) { return { pass: r === e }; } })` and
+    asserts `expect(ready(cfg)).toBeSame(cfg)`: `exposed`. The same change
+    with `toEqual`, with `pass: r == e`, with `toBeSame(null)`, or with a
+    comment between `expect` and `.extend`, stays `weakly_exposed`.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 10.
+  pins examples 1 to 11.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `ts_apply_post_ladder_rules`, `ts_identity_copy_subject`,
-  `ts_test_pins_identity` (rule 1).
+  `ts_test_pins_identity` (rule 1; reads
+  `TypeScriptAssertion::compares_reference_identity`).
+- `crates/ripr/src/analysis/language/typescript/types.rs`:
+  `compares_reference_identity` on the assertion.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_nested_callback_assertions` (rule 2).
+  `expect_assertion_from_expression` sets the property for a credited
+  RIPR-SPEC-0262 matcher; `collect_nested_callback_assertions` (rule 2).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 
