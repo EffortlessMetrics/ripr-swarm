@@ -140,10 +140,11 @@ independence rule 6 gates itself.
 
 The finding does not read `exposed` from whole-value equality when:
 
-- the literal omits `f` through `..base` or `..Default::default()`;
-- the expected value comes from a helper, an alias, or a separate binding
-  outside decision 5's adjacent immutable literal admission; it stays
-  `observation_unverified`;
+- the literal omits `f` through `..base`, or through `..Default::default()`
+  outside decision 7's one manual literal `Default`;
+- the expected value comes from a helper outside decision 7, an alias, or a
+  separate binding outside decision 5's adjacent immutable literal
+  admission; it stays `observation_unverified`;
 - the compared call is not the owner;
 - the assertion is `assert_ne!`: it keeps the `whole_object_equality` kind
   but gives no field credit, because inequality with one wrong value does
@@ -238,13 +239,33 @@ rejected alternative. Any can be reversed later without touching the rest.
    `let r = ship(..).unwrap(); assert_eq!(r, Receipt { .. })` shape a false
    gap (ledger-receipt-remaining).
 
+7. **Literal helpers and literal `Default` bases (2026-10-14).** An expected
+   operand `helper()` reads as the literal its helper returns when `helper`
+   is the workspace's only `fn helper`, a free function (file or module
+   level) without attributes, `async` or generics, whose body is exactly a
+   bare struct literal, and every mention of the name in every file is
+   followed by `(`. A literal `T { .., ..T::default() }` (or
+   `..Default::default()`) reads as `T` with each omitted field taken from
+   the workspace's only `fn default` in an impl of `T`, a manual
+   `impl Default for T` whose body is exactly a bare `T { .. }`/`Self { .. }`
+   literal without its own base, when the workspace does not rebind
+   `Default`. A derived `Default`, a second `default` for `T`, a helper or
+   `default()` with statements, or a name a macro may declare gives no
+   credit. The substituted literal then passes every rule 2 gate, so the
+   changed field still needs an independent value, whether written in the
+   test or in the helper or `default()`. Rejected: keeping examples 6 and 7
+   `weakly_exposed`, which reported a missing discriminator for tests that
+   kill both runtime mutants (spec0225-wv-expected-helper,
+   spec0225-wv-functional-update-default).
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
 - The manual-`PartialEq` control (equality ignores `retries`) does not read
   `exposed`.
-- The `..Default::default()` control, dependent/overwritten expected bindings and the
-  non-owner control do not read `exposed`.
+- A derived or computed `..Default::default()` base, dependent/overwritten
+  expected bindings, a computing helper and the non-owner control do not
+  read `exposed`.
 - The adjacent independent expected literal binding reads `exposed`; unchanged
   literal `4` rejects both `retries: n + 2` and `retries: n` runtime controls.
 - A brace inside a format string in an `assert_eq!` message does not produce
@@ -275,8 +296,12 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 4. `let c = build(3); assert_eq!(c, Config { retries: 4, name: "x".into() })`: `exposed`.
 5. `let c = build(3); let e = Config { retries: 4, name: "x".into() }; assert_eq!(c, e)`:
    `exposed` under decision 5's adjacent immutable binding gates.
-6. `assert_eq!(build(3), expected())`: `weakly_exposed`.
-7. `assert_eq!(build(3), Config { name: "x".into(), ..Config::default() })`: not `exposed`.
+6. `assert_eq!(build(3), expected())` with `fn expected() -> Config { Config { retries: 4, name: "x".into() } }`:
+   `exposed` under decision 7. A helper that computes or calls the owner:
+   `weakly_exposed`.
+7. `assert_eq!(build(3), Config { name: "x".into(), ..Config::default() })` with a manual
+   `impl Default for Config` returning `Config { retries: 4, name: String::new() }`:
+   `exposed` under decision 7. With a derived `Default`: not `exposed`.
 8. `assert_eq!(other(), Config { retries: 4, name: "x".into() })`, `other` not the owner: not `exposed`.
 9. `let c = build(3); assert_eq!(c.name, "x")`: `weakly_exposed`, `FieldValue`
    missing discriminator kept.
@@ -334,7 +359,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   execution admission (`establish_whole_value_field`, `whole_value_tail`,
   `WholeValueField::admits`, `bound_owner_initializer`); decision 6 adds
   `returns_other_variant` and `unwrapped_call`, covered by
-  `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`.
+  `an_unwrapped_ok_tail_with_early_err_returns_pins_its_field`. Decision 7
+  adds `expected_item_literal` in `expected_binding.rs`, covered by
+  `an_expected_helper_or_default_base_reads_as_its_literal`.
 
 ## Metrics
 

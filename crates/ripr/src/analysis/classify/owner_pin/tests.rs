@@ -5903,6 +5903,43 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
     ] {
         assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
     }
+    // #7940 review: an async owner's unwrap reads through `.await`, inline
+    // and once-bound alike; the un-awaited future does not.
+    let awaited = guarded.replace("pub fn parse", "pub async fn parse");
+    assert_ne!(awaited, guarded);
+    for (body, pins) in [
+        (
+            format!("assert_eq!(parse(\"3\").await, Ok({literal}));"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").await.unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").await.unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+        (
+            format!("let c = parse(\"3\");\nassert_eq!(c, Ok({literal}));"),
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use demo::{{parse, Config, Count}};\n#[tokio::test]\nasync fn pins() {{\n{body}\n}}\n"
+        );
+        let (index, pin) = whole_value_pin(&awaited, "parse", &tests);
+        assert!(
+            pin.is_some(),
+            "the async whole-value field pin must establish"
+        );
+        let admits = pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty());
+        assert_eq!(admits, pins, "{body}");
+    }
     // A bare-tail owner has no wrapped value to unwrap.
     assert!(!whole_value_admits(
         CONFIG_LIB,
@@ -5975,6 +6012,179 @@ fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
     );
     let (_, pin) = whole_value_pin(&none_const, "maybe", &maybe_tests);
     assert!(pin.is_none(), "{none_const}");
+}
+
+/// RIPR-SPEC-0225 decision 7, acceptance examples 6 and 7: a zero-argument
+/// helper returning a bare literal, and a functional update whose base is
+/// the one manual `Default` returning a bare literal, read as that literal.
+#[test]
+fn an_expected_helper_or_default_base_reads_as_its_literal() {
+    let admits = |lib: &str, items: &str, body: &str| {
+        let tests = format!("use demo::*;\n{items}#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(lib, "build", &tests);
+        assert!(
+            pin.is_some(),
+            "the whole-value field pin must establish: {lib}"
+        );
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let helper = |body: &str| format!("fn expected() -> Config {{\n    {body}\n}}\n");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let call = "assert_eq!(build(3), expected());";
+    assert!(admits(CONFIG_LIB, &helper(literal), call));
+    assert!(admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert_eq!(expected(), build(3));"
+    ));
+    // A helper that computes, takes an argument, or is not the only `fn
+    // expected` (or not a plain item) gives no credit.
+    for (items, body) in [
+        (
+            helper(&format!("let c = {literal};\n    c")),
+            call.to_string(),
+        ),
+        (
+            helper(r#"Config { retries: build(3).retries, name: "x".into(), count: Count(3) }"#),
+            call.to_string(),
+        ),
+        (helper("build(3)"), call.to_string()),
+        (
+            helper(&format!("let _ = build(3);\n    {literal}")),
+            call.to_string(),
+        ),
+        (
+            format!("fn expected(n: u32) -> Config {{\n    {literal}\n}}\n"),
+            "assert_eq!(build(3), expected(4));".to_string(),
+        ),
+        (
+            format!(
+                "{}mod more {{\n    {}}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            format!(
+                "{}macro_rules! make {{\n    () => {{ {} }};\n}}\nmod hidden {{\n    make!();\n}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            helper(literal),
+            format!("let expected = || build(3);\n{call}"),
+        ),
+        (format!("#[inline]\n{}", helper(literal)), call.to_string()),
+        (format!("async {}", helper(literal)), call.to_string()),
+        (
+            helper(literal),
+            "assert_eq!(build(3), more::expected());".to_string(),
+        ),
+    ] {
+        assert!(!admits(CONFIG_LIB, &items, &body), "{items}{body}");
+    }
+    // The helper's own literal must name `retries` independently.
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(r#"Config { name: "x".into(), count: Count(3), retries: four() }"#),
+        call
+    ));
+
+    let default_of = |body: &str| {
+        format!(
+            "{CONFIG_LIB}impl Default for Config {{\n    fn default() -> Self {{\n        {body}\n    }}\n}}\n"
+        )
+    };
+    let defaulted = default_of(r#"Config { retries: 4, name: String::new(), count: Count(3) }"#);
+    let update = r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#;
+    assert!(admits(&defaulted, "", update));
+    assert!(admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+    ));
+    assert!(admits(
+        &default_of(r#"Self { retries: 4, name: String::new(), count: Count(3) }"#),
+        "",
+        update
+    ));
+    // The test's explicit field wins over the default's.
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { retries: four(), ..Config::default() });"#
+    ));
+    for lib in [
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#),
+        default_of("build(3)"),
+        default_of(
+            r#"let c = Config { retries: 4, name: String::new(), count: Count(3) };
+        c"#,
+        ),
+        default_of(r#"Config { retries: 4, ..base() }"#),
+        format!(
+            "{defaulted}impl Config {{\n    pub fn default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        format!("{defaulted}pub trait Default {{\n    fn default() -> Self;\n}}\n"),
+        CONFIG_LIB.replace(
+            "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+            "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+        ),
+    ] {
+        assert!(!admits(&lib, "", update), "{lib}");
+    }
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..base() });"#
+    ));
+    // Review: a `#[cfg]`-disabled explicit field leaves the default's
+    // computed value in force, so it may not override it in the merge.
+    let computed =
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#);
+    assert!(admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    assert!(!admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { #[cfg(any())] retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    // A raw-identifier helper, an attributed `impl Default`, or a derived
+    // `Default` beside an inherent `default` gives no credit.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("fn r#expected() -> Config {{\n    {literal}\n}}\n"),
+        "assert_eq!(build(3), r#expected());"
+    ));
+    let derived = CONFIG_LIB.replace(
+        "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+        "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+    );
+    for lib in [
+        defaulted.replace(
+            "impl Default for Config",
+            "#[cfg(any())]\nimpl Default for Config",
+        ),
+        format!(
+            "{derived}impl Config {{\n    pub fn default() -> Self {{\n        Config {{ retries: 4, name: String::new(), count: Count(3) }}\n    }}\n}}\n"
+        ),
+    ] {
+        assert_ne!(lib, defaulted);
+        assert!(
+            !admits(
+                &lib,
+                "",
+                r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+            ),
+            "{lib}"
+        );
+    }
 }
 
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal

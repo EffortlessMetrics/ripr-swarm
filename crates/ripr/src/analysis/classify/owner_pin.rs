@@ -2057,12 +2057,14 @@ impl OwnerReturnPin {
                             let bound_whole = |at: usize| {
                                 let initializer =
                                     bound_owner_initializer(test, operands[at], &self.name)?;
-                                owner_call_shape(initializer, &self.name)
+                                self.awaited_call_shape(initializer, &self.name)
                                     .map(|call| (call, false))
                                     .or_else(|| {
                                         unwrap_wrapper
                                             .and(unwrapped_call(initializer))
-                                            .and_then(|call| owner_call_shape(call, &self.name))
+                                            .and_then(|call| {
+                                                self.awaited_call_shape(call, &self.name)
+                                            })
                                             .map(|call| (call, true))
                                     })
                             };
@@ -2189,6 +2191,16 @@ impl OwnerReturnPin {
             else {
                 return false;
             };
+            Some(literal)
+        } else if let ReturnPathGate::WholeValueField(gate) = &self.path
+            && reads_assert_eq
+            && helper.is_none()
+            && let Some(literal) =
+                expected_binding::expected_item_literal(index, expected, &gate.type_name)
+        {
+            // SPEC-0225 decision 7: `expected()` and `T { .., ..T::default() }`
+            // read as the one literal each stands for; the gates below check
+            // that literal.
             Some(literal)
         } else {
             None
