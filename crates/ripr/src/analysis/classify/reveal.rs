@@ -434,6 +434,16 @@ fn keyed_field_read_confirms(
     let Some(impl_type) = owner.impl_type() else {
         return false;
     };
+    // A `#[should_panic]` test passes when the values differ.
+    if test
+        .attrs
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(test.body.as_str()))
+        .any(|text| text.contains("should_panic"))
+    {
+        return false;
+    }
     assertion_keyed_getter_reads(&assertion.text)
         .into_iter()
         .any(|read| {
@@ -446,6 +456,8 @@ fn keyed_field_read_confirms(
                     &KeyedCall {
                         binding: &read.binding,
                         method: owner.name(),
+                        getter: &read.getter,
+                        expected: &read.expected,
                         impl_type,
                         returns_value: return_admission.owner_returns_value,
                         index: key_index,
@@ -541,6 +553,10 @@ struct KeyedCall<'a> {
     /// The test binding the owner is called on and the getter read from.
     binding: &'a str,
     method: &'a str,
+    /// The verified keyed getter the assertion reads through.
+    getter: &'a str,
+    /// The literal the assertion expects the entry to hold.
+    expected: &'a str,
     /// The owner's impl type, which `binding` must be built as.
     impl_type: &'a str,
     /// Whether the owner declares a return type.
@@ -584,6 +600,15 @@ fn owner_call_passes_key(
             };
             shape
                 && key_holds_between(&masked, end, read_at, &key)
+                && only_getter_reads_between(&masked, end, read_at, call.binding, call.getter)
+                && !earlier_statement_stores_expected(
+                    body,
+                    &masked,
+                    statement_start,
+                    call.binding,
+                    &key,
+                    call.expected,
+                )
                 && binding_built_as(&masked[..statement_start], call.binding, call.impl_type)
                 && body
                     .get(at..)
@@ -595,6 +620,86 @@ fn owner_call_passes_key(
                     })
                     .is_some_and(|argument| argument == key)
         })
+}
+
+/// RIPR-SPEC-0228 rule 3 for keyed reads: between the owner call (ending
+/// at `from`) and the read (at `to`) in masked `code`, `binding` may appear
+/// only as `binding.getter(..)` through the verified read-only getter. Any
+/// other mention (`s.set("K", 5)`, `s.m.clear()`, `&mut s`) may rewrite the
+/// entry the read sees.
+fn only_getter_reads_between(
+    code: &str,
+    from: usize,
+    to: usize,
+    binding: &str,
+    getter: &str,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(window) = code.get(from..to) else {
+        return false;
+    };
+    let read = format!(".{getter}(");
+    window.match_indices(binding).all(|(at, name)| {
+        let after = &window[at + name.len()..];
+        window[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ident(ch) || ch == '.')
+            || after.starts_with(ident)
+            || after.starts_with(read.as_str())
+    })
+}
+
+/// Whether a statement before the owner call (ending at `call_start`)
+/// names `binding` and spells both `key` and the `expected` literal, as
+/// `s.set("K", 5)` or a constructor seeding `("K", 5)` does before
+/// `s.put("K", 5)`: the entry may already hold the expected value, so the
+/// read passes whether or not the owner's insert runs. Literal tokens are
+/// matched in the unmasked `body`; the binding in `masked`.
+fn earlier_statement_stores_expected(
+    body: &str,
+    masked: &str,
+    call_start: usize,
+    binding: &str,
+    key: &str,
+    expected: &str,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let token = |text: &str, token: &str| {
+        !token.is_empty()
+            && text.match_indices(token).any(|(at, found)| {
+                !text[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ident(ch) || ch == '.')
+                    && !text[at + found.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ident(ch) || ch == '.')
+            })
+    };
+    let mut start = 0;
+    for (end, _) in masked
+        .get(..call_start)
+        .unwrap_or_default()
+        .match_indices(';')
+        .chain(std::iter::once((call_start, "")))
+    {
+        let statement_masked = masked.get(start..end).unwrap_or_default();
+        let statement = body.get(start..end).unwrap_or_default();
+        start = end + 1;
+        let names_binding = statement_masked.match_indices(binding).any(|(at, found)| {
+            !statement_masked[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+                && !statement_masked[at + found.len()..].starts_with(ident)
+        });
+        if names_binding && token(statement, key) && token(statement, expected) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether `key` names the same value from offset `from` (just past the
@@ -909,6 +1014,45 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
 /// is a top-level statement of that body: not inside a nested block, branch,
 /// loop or closure, any of which may never run it. Fails closed.
+/// RIPR-SPEC-0228 keyed reads: whether file line `line` of the owner whose
+/// source text `owner_body` starts at file line `owner_start_line` begins
+/// with a `self.<path>.insert(` statement at the top level of the owner
+/// body, outside any branch, loop, block or closure. An insert under
+/// `if qty > 100 { .. }` runs only for some inputs, so a test reading the
+/// key back says nothing about it unless its inputs reach the branch.
+pub(in crate::analysis) fn owner_line_runs_unconditionally(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(owner_body);
+    let Some(lines_before) = line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    let Some(text) = masked.get(line_at..) else {
+        return false;
+    };
+    let at = line_at + (text.len() - text.trim_start().len());
+    // The statement must be the insert itself (`self.a.b.insert(`), not a
+    // call that hands it to a closure (`self.items.iter().for_each(|k| ..)`).
+    let is_insert = text
+        .trim_start()
+        .split_once('(')
+        .and_then(|(target, _)| target.strip_prefix("self."))
+        .and_then(|target| target.strip_suffix(".insert"))
+        .is_some_and(|path| {
+            path.split('.').all(|segment| {
+                !segment.is_empty() && segment.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+            })
+        });
+    is_insert && runs_unconditionally(&masked, at)
+}
+
 fn runs_unconditionally(masked: &str, at: usize) -> bool {
     let before = &masked[..at];
     let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
@@ -4174,6 +4318,21 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0228 keyed reads: only an insert at the owner's top level
+    /// runs on every call.
+    #[test]
+    fn owner_line_runs_unconditionally_only_at_the_top_level() {
+        let owner = "pub fn put(&mut self, sku: &str, qty: u32) {\n    if qty > 100 {\n        self.m.insert(sku.to_string(), 100);\n    } else {\n        self.m.insert(sku.to_string(), qty);\n    }\n    self.m.insert(sku.to_string(), qty);\n    self.items.iter().for_each(|k| self.m.insert(k.clone(), 1));\n    // self.m.insert(sku.to_string(), 0);\n}";
+        let runs = |line: usize| owner_line_runs_unconditionally(owner, 20, line);
+        assert!(!runs(22));
+        assert!(!runs(24));
+        assert!(runs(26));
+        assert!(!runs(27));
+        assert!(!runs(28));
+        assert!(!runs(19));
+        assert!(!runs(99));
+    }
+
     /// RIPR-SPEC-0228 keyed reads: the owner call must pass the read key in
     /// the insert key's argument position and must not end on an error path.
     #[test]
@@ -4188,6 +4347,8 @@ mod tests {
                 &KeyedCall {
                     binding: "inv",
                     method: "ship",
+                    getter: "on_hand",
+                    expected: "7",
                     impl_type: "Inventory",
                     returns_value,
                     index,
@@ -4262,6 +4423,69 @@ mod tests {
         ] {
             assert!(!passes(&keyed(between), 0, "sku"), "{between}");
         }
+        // Rule 3: between the call and the read the binding may only be
+        // read through the getter.
+        let rewritten = |between: &str| {
+            format!(
+                "    let mut inv = Inventory::new(2);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n{between}    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"
+            )
+        };
+        assert!(passes(
+            &rewritten("    let before = inv.on_hand(\"BOLT-M8\");\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &rewritten("    let invoice = 3;\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        // A second owner call is itself the accepted call before the read.
+        assert!(passes(
+            &rewritten("    inv.ship(\"BOLT-M8\", 1).unwrap();\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        for between in [
+            "    inv.set(\"BOLT-M8\", 7);\n",
+            "    inv.stock.clear();\n",
+            "    reset(&mut inv);\n",
+        ] {
+            assert!(!passes(&rewritten(between), 0, "\"BOLT-M8\""), "{between}");
+        }
+        // An earlier statement that already stores the expected value under
+        // the key: the read passes whether or not the insert runs.
+        let seeded = |before: &str| {
+            format!(
+                "    let mut inv = Inventory::new(2);\n{before}    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);"
+            )
+        };
+        assert!(passes(
+            &seeded("    inv.receive(\"BOLT-M8\", 10);\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &seeded("    inv.receive(\"NUT-M8\", 7);\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        assert!(passes(
+            &seeded("    other.set(\"BOLT-M8\", 7);\n"),
+            0,
+            "\"BOLT-M8\""
+        ));
+        for before in [
+            "    inv.set(\"BOLT-M8\", 7);\n",
+            "    inv.receive(\"BOLT-M8\", 7).unwrap();\n",
+        ] {
+            assert!(!passes(&seeded(before), 0, "\"BOLT-M8\""), "{before}");
+        }
+        assert!(!passes(
+            "    let mut inv = Inventory::seeded(&[(\"BOLT-M8\", 7)]);\n    inv.ship(\"BOLT-M8\", 3).unwrap();\n    assert_eq!(inv.on_hand(\"BOLT-M8\"), 7);",
+            0,
+            "\"BOLT-M8\""
+        ));
         // A computed key is never matched by spelling alone.
         assert!(!passes(
             "    let mut inv = Inventory::new(2);\n    inv.ship(next(), 3).unwrap();\n    assert_eq!(inv.on_hand(next()), 7);",

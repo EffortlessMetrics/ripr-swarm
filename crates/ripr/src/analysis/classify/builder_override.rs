@@ -775,6 +775,30 @@ pub(in crate::analysis) fn is_literal_key(key: &str) -> bool {
     literal_value(key).is_some()
 }
 
+/// Whether `function` (its source text) binds or assigns `name` anywhere in
+/// its body (`let sku = ..`, `sku = ..`, `if let Some(sku)`, `|sku|`), so a
+/// use of `name` there may not be the parameter. Fails closed: a body that
+/// does not parse counts as rebinding it.
+pub(in crate::analysis) fn parameter_rebound(function: &str, name: &str) -> bool {
+    let Some(body) = parse_clean_source_file(function)
+        .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+        .and_then(|method| method.body())
+    else {
+        return true;
+    };
+    body.syntax().descendants().any(|node| {
+        ast::IdentPat::cast(node.clone())
+            .and_then(|pat| pat.name())
+            .is_some_and(|bound| bound.text() == name)
+            || ast::BinExpr::cast(node).is_some_and(|expr| {
+                matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                    && expr
+                        .lhs()
+                        .is_some_and(|lhs| lhs.syntax().text().to_string().trim() == name)
+            })
+    })
+}
+
 /// Whether `function` (its source text) declares a return type. Fails
 /// closed: a body that does not parse counts as returning a value.
 pub(in crate::analysis) fn function_returns_value(function: &str) -> bool {
@@ -843,10 +867,21 @@ fn keyed_getter_fallback(
     if rest == ".unwrap_or_default()" {
         return Some(KeyedFallback::TypeDefault);
     }
-    rest.strip_prefix(".unwrap_or(")
-        .and_then(|default| default.strip_suffix(')'))
-        .filter(|default| is_plain_literal(default))
-        .map(|default| KeyedFallback::Literal(default.to_string()))
+    if !rest.starts_with(".unwrap_or(") {
+        return None;
+    }
+    // The whitespace-free `text` only matches the shape; the default comes
+    // from the syntax tree so a string default keeps its inner spaces.
+    let call = ast::MethodCallExpr::cast(tail.syntax().clone())?;
+    if call.name_ref()?.text() != "unwrap_or" {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let default = match (arguments.next(), arguments.next()) {
+        (Some(default), None) => default.syntax().text().to_string(),
+        _ => return None,
+    };
+    is_plain_literal(&default).then_some(KeyedFallback::Literal(default))
 }
 
 /// A number, `true`/`false`, or a string or char literal without escapes:
@@ -1155,6 +1190,10 @@ mod tests {
                 "pub fn entry(&self, k @ _: &str) -> Option<&u32> { self.attempts.get(k) }",
                 KeyedFallback::Absent,
             ),
+            (
+                "pub fn entry(&self, k: &str) -> &str { self.attempts.get(k).copied().unwrap_or(\"n/a x\") }",
+                KeyedFallback::Literal("\"n/a x\"".to_string()),
+            ),
         ] {
             let index = settings_index(getter);
             assert_eq!(
@@ -1220,6 +1259,33 @@ mod tests {
         for same_or_unknown in ["0", "0usize", "\"\"", "false", "count", "-0"] {
             assert!(!default.differs_from(same_or_unknown), "{same_or_unknown}");
         }
+    }
+
+    #[test]
+    fn parameter_rebound_finds_shadows_and_assignments() {
+        let rebound = |body: &str| {
+            parameter_rebound(
+                &format!("pub fn put(&mut self, sku: &str, qty: u32) {{ {body} }}"),
+                "sku",
+            )
+        };
+        assert!(!rebound("self.m.insert(sku.to_string(), qty);"));
+        assert!(!rebound(
+            "let other = sku; self.m.insert(sku.to_string(), qty);"
+        ));
+        for shadowing in [
+            "let sku = \"LAST\"; self.m.insert(sku.to_string(), qty);",
+            "if let Some(sku) = self.alias.get(sku) { self.m.insert(sku.to_string(), qty); }",
+            "self.items.iter().for_each(|sku| { self.m.insert(sku.to_string(), qty); });",
+            "let mut s = sku; s = \"x\"; let sku = s; self.m.insert(sku.to_string(), qty);",
+        ] {
+            assert!(rebound(shadowing), "{shadowing}");
+        }
+        assert!(parameter_rebound(
+            "pub fn put(&mut self, mut sku: &str) { sku = \"x\"; self.m.insert(sku.to_string(), 1); }",
+            "sku"
+        ));
+        assert!(parameter_rebound("not rust {", "sku"));
     }
 
     #[test]

@@ -42,7 +42,7 @@
       "limited"
     ]
   },
-  "reasoning": "place_refuses_an_empty_delivery calls place(\"BOLT\", 0), which returns Err before the insert, then asserts count(\"BOLT\") == 0, so a changed or deleted insert passes. Spec cell: RIPR-SPEC-0228 example 18, a refused owner call never reaches the insert.",
+  "reasoning": "place_refuses_an_empty_delivery restocks \"BOLT\" to 5, calls place(\"BOLT\", 0), which returns Err before the insert, then asserts count(\"BOLT\") == 5, so a changed or deleted place insert passes. The expected 5 is not the getter fallback and no earlier statement spells it, so only the refused call keeps credit away. Spec cell: RIPR-SPEC-0228 example 18, a refused owner call never reaches the insert.",
   "labeling_observation": {
     "ripr_commit": "cec8c3a28",
     "full_checkout_verdict": "gap",

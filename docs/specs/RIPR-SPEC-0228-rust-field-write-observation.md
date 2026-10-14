@@ -267,15 +267,19 @@ changes `self.count += 2` to `self.count += 1`.
     `fn held(&self, sku: &str) -> u32 { self.held.get(sku).copied().unwrap_or(0) }`:
     not `exposed`. The same key looked up in another field map is not a read
     of the written entry.
+20. `self.stock.insert(sku.to_string(), qty)` in `fill`, test
+    `b.fill("BOLT", 3); b.set("BOLT", 5); assert_eq!(b.count("BOLT"), 5)`:
+    not `exposed`. `set` rewrites the entry between the owner call and the
+    read (rule 3), so the read never sees what `fill` stored.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 18 cases `spec0228-*` in
+- Verdict corpus: 19 cases `spec0228-*` in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
-  12-19,
+  12-20,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -318,7 +322,7 @@ changes `self.count += 2` to `self.count += 1`.
   (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
   is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
   `self.f.as_slice()`.
-- Keyed reads of a field-map insert are implemented (examples 16-19):
+- Keyed reads of a field-map insert are implemented (examples 16-20):
   `field_collection_insert_key` and `assertion_keyed_getter_reads` in
   `propagation_witness.rs`, `keyed_field_read_confirms` and
   `owner_call_passes_key` in `reveal.rs`, `getter_plainly_reads_key` in
@@ -341,10 +345,19 @@ changes `self.count += 2` to `self.count += 1`.
   name again between the call and the read. The call must run to
   completion: a bare statement when the owner returns nothing, otherwise
   ending in `.unwrap()`, `.expect(..)` or `?`, then optionally bound to one
-  name.
-- Not yet implemented for these writes, all failing closed: rule 3 (no
-  intervening write between the owner call and the read), as before for
-  bare-receiver pushes; the `static_unknown` fallback with
+  name. Rule 3 holds for keyed reads: between that call and the read the
+  test may name the binding only as `binding.getter(..)` through the
+  verified getter. No earlier statement on the binding may spell both the
+  key and the expected literal (`s.set("K", 5)` before `s.put("K", 5)`), since
+  the entry may already hold it. The insert must be a top-level statement of
+  the owner (`self.<path>.insert(..)` outside any branch, loop, block or
+  closure), its key parameter must not be rebound in the owner body, and a
+  `#[should_panic]` test never confirms.
+- Not yet implemented for argument-free field reads: rule 3 (no
+  intervening write between the owner call and the read). This one does not
+  fail closed: a later write through the binding can still read `exposed`
+  (#7976). Keyed reads enforce it. Also not yet implemented, all failing
+  closed: the `static_unknown` fallback with
   `rust_state_read_path_unresolved` for a strong oracle on an unresolved
   getter, which reads `weakly_exposed` instead (example 13); reads that are
   not a compared side (`let items = &c.items;` then an assertion on

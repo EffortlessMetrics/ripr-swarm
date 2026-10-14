@@ -1,7 +1,7 @@
 {
   "subject_id": "authored-keyed-getter",
   "origin": "authored",
-  "version_label": "authored 2026-10-14 for keyed getter reads of field-map inserts (RIPR-SPEC-0228 examples 16-19)",
+  "version_label": "authored 2026-10-14 for keyed getter reads of field-map inserts (RIPR-SPEC-0228 examples 16-20)",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [
@@ -11,7 +11,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "749dc03193aecc17e84190dc9f1dc387614925ee02e6013f2f9c46646b45580b"
+      "sha256": "d3474d112ec42d126e572a7d777f245602e0147a506980bfe51b3087156fcc0a"
     }
   ]
 }

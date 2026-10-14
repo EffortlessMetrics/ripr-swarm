@@ -35,7 +35,8 @@ pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use builder_override::{
-    function_returns_value, getter_plainly_reads, getter_plainly_reads_key, setter_plainly_writes,
+    function_returns_value, getter_plainly_reads, getter_plainly_reads_key, parameter_rebound,
+    setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
 pub(in crate::analysis) use context::ProbeContext;
@@ -82,6 +83,7 @@ pub(in crate::analysis) use related_tests::{
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
     owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
+pub(in crate::analysis) use reveal::owner_line_runs_unconditionally;
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{

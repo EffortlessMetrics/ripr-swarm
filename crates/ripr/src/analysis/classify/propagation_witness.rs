@@ -2826,9 +2826,6 @@ mod tests {
         }
     }
 
-    /// RIPR-SPEC-0228: a compared side reads the field collection directly
-    /// or through one argument-free method; another field, another root, or a
-    /// computed value is not such a read.
     /// RIPR-SPEC-0228 keyed reads: a compared side that is exactly
     /// `binding.getter(key)` names its binding, getter and key.
     #[test]
@@ -2903,6 +2900,9 @@ mod tests {
         }
     }
 
+    /// RIPR-SPEC-0228: a compared side reads the field collection directly
+    /// or through one argument-free method; another field, another root, or a
+    /// computed value is not such a read.
     #[test]
     fn assertion_field_collection_reads_name_binding_and_getter() {
         let direct = |binding: &str| {

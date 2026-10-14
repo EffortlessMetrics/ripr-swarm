@@ -8,7 +8,8 @@ use crate::analysis::classify::{
     fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    operand_only_pin, oracle_crediting_relations, owner_line_runs_unconditionally,
+    owner_may_be_reached_unseen, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
@@ -453,9 +454,32 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_parameter_names)
             .unwrap_or_default();
-        let owner_argument_names = context
+        // RIPR-SPEC-0228 keyed reads: only a map insert reads these names,
+        // and only one at the owner's top level, which runs on every call. A
+        // parameter the owner rebinds in its body (`let sku = "LAST"`) may
+        // not be what a later use of its name holds, so it keys nothing.
+        let owner_argument_names: Vec<String> = context
             .owner_fn
-            .map(call_parameter_names)
+            .filter(|function| {
+                function.body.as_str().contains(".insert(")
+                    && owner_line_runs_unconditionally(
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                    )
+            })
+            .map(|function| {
+                call_parameter_names(function)
+                    .into_iter()
+                    .map(|name| {
+                        if name.is_empty() || parameter_rebound(function.body.as_str(), &name) {
+                            String::new()
+                        } else {
+                            name
+                        }
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
         // computed once per owner per run through the attached memo and only

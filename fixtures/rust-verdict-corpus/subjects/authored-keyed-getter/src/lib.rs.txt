@@ -56,9 +56,9 @@ mod tests {
 
     #[test]
     fn place_refuses_an_empty_delivery() {
-        let mut shelf = Shelf::new();
+        let mut shelf = Shelf::new(); shelf.restock("BOLT", 2 + 3);
         shelf.place("BOLT", 0).unwrap_err();
-        assert_eq!(shelf.count("BOLT"), 0);
+        assert_eq!(shelf.count("BOLT"), 5);
     }
 }
 
@@ -89,5 +89,39 @@ mod ledger_tests {
         let mut ledger = Ledger::default();
         ledger.receive("BOLT", 5);
         assert_eq!(ledger.held("BOLT"), 0);
+    }
+}
+
+/// A bin whose entry the test overwrites before reading it back.
+#[derive(Debug, Default)]
+pub struct Bin {
+    stock: BTreeMap<String, u32>,
+}
+
+impl Bin {
+    /// Fills `sku`; the test sets the entry again before reading it.
+    pub fn fill(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn set(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_string(), qty);
+    }
+
+    pub fn count(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod bin_tests {
+    use super::*;
+
+    #[test]
+    fn set_replaces_the_fill() {
+        let mut bin = Bin::default();
+        bin.fill("BOLT", 3);
+        bin.set("BOLT", 5);
+        assert_eq!(bin.count("BOLT"), 5);
     }
 }
