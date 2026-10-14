@@ -6162,6 +6162,20 @@ fn an_expected_helper_or_default_base_reads_as_its_literal() {
         &format!("fn r#expected() -> Config {{\n    {literal}\n}}\n"),
         "assert_eq!(build(3), r#expected());"
     ));
+    // The one `impl Default` is another type's, and an `==` assertion or a
+    // borrowed check helper is not decision 7's `assert_eq!` shape.
+    assert!(!admits(
+        &format!(
+            "{CONFIG_LIB}pub struct Other {{\n    pub retries: u32,\n}}\nimpl Default for Other {{\n    fn default() -> Self {{\n        Self {{ retries: 4 }}\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert!(build(3) == expected());"
+    ));
     let derived = CONFIG_LIB.replace(
         "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
         "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
@@ -6212,8 +6226,9 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
     ));
 }
 
-/// RIPR-SPEC-0225 "No credit" and acceptance examples 6-8, 10, 12, 13 and
-/// 15: a dependent binding or helper, a functional update, another call,
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 8, 10, 12, 13 and
+/// 15: a dependent binding, an unresolvable helper or functional-update base
+/// (`CONFIG_LIB` declares neither `expected` nor a `Default`), another call,
 /// `assert_ne!`, a value copied from the result, a `let mut` or a second use
 /// of the binding, a mismatched wrapper, and a dependent expected value give
 /// no credit.

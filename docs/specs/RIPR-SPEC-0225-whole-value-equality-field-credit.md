@@ -249,9 +249,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    the workspace's only `fn default` in an impl of `T`, a manual
    `impl Default for T` whose body is exactly a bare `T { .. }`/`Self { .. }`
    literal without its own base, when the workspace does not rebind
-   `Default`. A derived `Default`, a second `default` for `T`, a helper or
-   `default()` with statements, or a name a macro may declare gives no
-   credit. The substituted literal then passes every rule 2 gate, so the
+   `Default`. A derived `Default`, a second `default` for `T`, an attributed
+   or generic impl, a helper or `default()` with statements, a field with an
+   attribute (`#[cfg(..)]`) in either literal, an `r#` helper name, or a name
+   a macro may declare gives no credit. Both forms apply to the test's own
+   `assert_eq!` operands, not to `==` conditions or borrowed
+   check-helper assertions. The substituted literal then passes every rule 2 gate, so the
    changed field still needs an independent value, whether written in the
    test or in the helper or `default()`. Rejected: keeping examples 6 and 7
    `weakly_exposed`, which reported a missing discriminator for tests that
@@ -263,7 +266,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - The reproduction above reads `exposed`.
 - The manual-`PartialEq` control (equality ignores `retries`) does not read
   `exposed`.
-- A derived or computed `..Default::default()` base, dependent/overwritten
+- A derived or computed `Default` base, dependent/overwritten
   expected bindings, a computing helper and the non-owner control do not
   read `exposed`.
 - The adjacent independent expected literal binding reads `exposed`; unchanged
