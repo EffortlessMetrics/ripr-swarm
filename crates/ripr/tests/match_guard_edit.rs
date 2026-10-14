@@ -355,3 +355,59 @@ fn a_rebinding_line_that_mentions_fn_is_not_the_signature() -> Result<(), String
     }
     Ok(())
 }
+
+const ONE_LINE_HEAD: &str = "pub fn tier(points: i64) -> Tier {\n    match points {";
+
+#[test]
+fn a_rebinding_on_the_signature_line_is_not_the_scrutinee() -> Result<(), String> {
+    // Control (review on #7811): the signature ends at its `{`, so a
+    // statement after it on the same line is body code that rebinds the
+    // parameter before the `match`.
+    let lib = tier("").replace(
+        ONE_LINE_HEAD,
+        "pub fn tier(points: i64) -> Tier { let points = points - 50; match points {",
+    );
+    assert_ne!(lib, tier(""));
+    let lib = lib.replace("p if 100 <= p", "p if 100 < p");
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_guard_pattern_naming_a_constant_is_not_the_parameter() -> Result<(), String> {
+    // Control (review on #7811): a bare pattern name that resolves to a
+    // constant compares the constant, not the scrutinee, so the test
+    // arguments say nothing about the guard's boundary.
+    let lib = format!(
+        "#[allow(non_upper_case_globals)]\nconst p: i64 = 0;\n\n{}",
+        tier("").replace("p if 100 <= p", "p if 100 < p")
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "        p if 100 < p => Tier::Gold,",
+        "        p if 100 <= p => Tier::Gold,",
+        BOUNDARY_TESTS,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(missing_values(&findings).is_empty(), "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}

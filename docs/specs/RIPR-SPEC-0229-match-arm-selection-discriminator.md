@@ -231,9 +231,14 @@ inputs and can name `p == 100` as missing. The operand stays unread when:
 - the body has a second `match` (the arm could belong to either);
 - the binding's name appears off the guard lines (a `let`, a loop
   variable, a closure parameter);
-- the parameter appears anywhere but the signature and its `match` line
-  (`let points = points - 50;`, a closure `|points|`), since it may be
-  rebound or shadowed before the `match`;
+- the parameter appears anywhere but the signature (which ends at its
+  first `{`) and its `match` line (`let points = points - 50;`, a closure
+  `|points|`, a statement after the `{` on the signature line), since it
+  may be rebound or shadowed before the `match`;
+- the binding's name may resolve to a constant (a `const` or `static` of
+  that name in the owner file, or an import of it), since the pattern then
+  compares the constant instead of binding the scrutinee, or the owner
+  file is unavailable;
 - the binding is not a bare identifier.
 
 The old line such an edit replaced (its positional counterpart, not any

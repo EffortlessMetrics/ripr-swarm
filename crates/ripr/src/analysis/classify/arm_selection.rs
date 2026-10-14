@@ -1257,7 +1257,7 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// binds it, or a glob import of a module (`use consts::*`), which may
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
-fn may_name_constant(source: &str, name: &str) -> bool {
+pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();

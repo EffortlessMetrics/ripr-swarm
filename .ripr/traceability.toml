@@ -14264,6 +14264,8 @@ tests = [
   "crates/ripr/tests/match_guard_edit.rs::a_rebound_parameter_is_not_the_scrutinee",
   "crates/ripr/tests/match_guard_edit.rs::the_unrebound_parameter_control_reads_exposed",
   "crates/ripr/tests/match_guard_edit.rs::a_rebinding_line_that_mentions_fn_is_not_the_signature",
+  "crates/ripr/tests/match_guard_edit.rs::a_rebinding_on_the_signature_line_is_not_the_scrutinee",
+  "crates/ripr/tests/match_guard_edit.rs::a_guard_pattern_naming_a_constant_is_not_the_parameter",
 ]
 fixtures = [
   "fixtures/match_arm_blind",

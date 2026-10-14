@@ -1,4 +1,5 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
+use super::arm_selection::may_name_constant;
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -337,14 +338,24 @@ fn observed_discriminator_values(
         return Vec::new();
     };
     let parameters = function_parameters(owner);
-    let Some((left, right)) =
-        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)
-    else {
+    let owner_source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| facts.source.clone());
+    let Some((left, right)) = oriented_comparison_operands(
+        owner,
+        owner_source.as_deref(),
+        &parameters,
+        &probe.expression,
+        probe.location.line,
+    ) else {
         return Vec::new();
     };
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
-    let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left);
+    let right_parameter =
+        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
     let left_resolved = resolve_boundary_operand(
@@ -854,8 +865,17 @@ fn missing_boundary_discriminator(
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
-    let (left, right) =
-        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
+    let owner_source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| facts.source.clone());
+    let (left, right) = oriented_comparison_operands(
+        owner,
+        owner_source.as_deref(),
+        &parameters,
+        &probe.expression,
+        probe.location.line,
+    )?;
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
@@ -864,8 +884,8 @@ fn missing_boundary_discriminator(
         // Only a compared parameter is in scope; an unrelated computed
         // argument (an output buffer `&mut [0; 4]`) says nothing here.
         let compared = [
-            boundary_operand_parameter(owner, &parameters, &left),
-            boundary_operand_parameter(owner, &parameters, &right),
+            boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left),
+            boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right),
         ];
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
@@ -880,7 +900,13 @@ fn missing_boundary_discriminator(
                 let unknown_operands = [&left, &right]
                     .into_iter()
                     .filter(|operand| {
-                        boundary_operand_parameter(owner, &parameters, operand).is_none()
+                        boundary_operand_parameter(
+                            owner,
+                            owner_source.as_deref(),
+                            &parameters,
+                            operand,
+                        )
+                        .is_none()
                             && literal_operand_value(operand).is_none()
                             && crate::analysis::value_resolution::constant_operand_name(operand)
                                 .is_none()
@@ -909,8 +935,10 @@ fn missing_boundary_discriminator(
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
-    let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    let left_parameter =
+        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &left);
+    let right_parameter =
+        boundary_operand_parameter(owner, owner_source.as_deref(), &parameters, &right);
 
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
@@ -2694,6 +2722,7 @@ fn parameters_in_signature(signature: &str) -> Vec<String> {
 
 fn boundary_operand_parameter(
     function: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
 ) -> Option<String> {
@@ -2701,11 +2730,12 @@ fn boundary_operand_parameter(
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
-        .or_else(|| boundary_local_operand_parameter(function, parameters, operand))
+        .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
 }
 
 fn boundary_local_operand_parameter(
     function: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
 ) -> Option<String> {
@@ -2716,7 +2746,11 @@ fn boundary_local_operand_parameter(
         if body_contains_wrapped_local_alias(&function.body, "Some", operand, parameter)
             || body_contains_wrapped_local_alias(&function.body, "Ok", operand, parameter)
             || body_contains_direct_local_alias(&function.body, operand, parameter)
-            || body_contains_guard_binding_alias(&function.body, operand, parameter)
+            // A bare pattern name may resolve to a constant in scope
+            // (`const p: i64 = 0;`), which the guard then compares instead
+            // of the scrutinee; without the owner file that stays unread.
+            || (owner_source.is_some_and(|source| !may_name_constant(source, operand))
+                && body_contains_guard_binding_alias(&function.body, operand, parameter))
         {
             return Some(parameter.clone());
         }
@@ -2819,10 +2853,17 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         // The parameter itself must reach the `match` unchanged: any other
         // mention (`let points = points - 50;`, a closure `|points|`) may
         // rebind or shadow it, so the test argument is not the scrutinee.
-        // The body opens with the signature, the parameter's one binding.
-        && code
-            .iter()
-            .skip(1)
+        // The body opens with the signature, the parameter's one binding,
+        // which ends at its first `{`: a multiline signature declares the
+        // parameter on later lines, and a statement after the `{` on the
+        // signature line (`{ let points = points - 50; match points {`)
+        // is body code.
+        && body
+            .split_once('{')
+            .map_or("", |(_signature, rest)| rest)
+            .lines()
+            .map(code_line_before_comment)
+            .filter(|line| !is_comment_line(line))
             .filter(|line| mentions_identifier(line, parameter))
             .all(|line| {
                 line.strip_prefix("match ").is_some_and(|rest| {
@@ -2872,13 +2913,14 @@ pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(Stri
 /// so the swap changes which side is looked up, not what is compared.
 fn oriented_comparison_operands(
     owner: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     expression: &str,
     predicate_line: usize,
 ) -> Option<(String, String)> {
     let (left, right) = comparison_operands(expression)?;
     let owner_bound = |operand: &str| {
-        boundary_operand_parameter(owner, parameters, operand).is_some()
+        boundary_operand_parameter(owner, owner_source, parameters, operand).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
@@ -4100,6 +4142,27 @@ mod tests {
     }
 
     #[test]
+    fn guard_binding_alias_reads_the_signature_to_its_first_brace() {
+        // Review on #7811: the signature ends at its first `{`, so a
+        // parameter declared on a later signature line is no rebinding,
+        // while a statement after the `{` on the signature line is.
+        let arms = "\n    match points {\n        p if 100 <= p => 1,\n        _ => 0,\n    }\n}";
+        let multiline = format!("fn tier(\n    points: i64,\n) -> u8 {{{arms}");
+        let one_line = format!("fn tier(points: i64) -> u8 {{{arms}");
+        let same_line_rebind = format!(
+            "fn tier(points: i64) -> u8 {{ let points = points - 50; match points {{{}",
+            &arms["\n    match points {".len()..]
+        );
+        assert!(body_contains_guard_binding_alias(&multiline, "p", "points"));
+        assert!(body_contains_guard_binding_alias(&one_line, "p", "points"));
+        assert!(!body_contains_guard_binding_alias(
+            &same_line_rebind,
+            "p",
+            "points"
+        ));
+    }
+
+    #[test]
     fn same_file_method_chain_owner_call_tracing_covers_activation_alias_helpers() {
         let owner = function(
             "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(amount) = raw_amount { amount >= threshold } else { false }\n}",
@@ -4107,11 +4170,11 @@ mod tests {
         let parameters = function_parameters(&owner);
 
         assert_eq!(
-            boundary_local_operand_parameter(&owner, &parameters, "amount"),
+            boundary_local_operand_parameter(&owner, None, &parameters, "amount"),
             Some("raw_amount".to_string())
         );
         assert_eq!(
-            boundary_local_operand_parameter(&owner, &parameters, ""),
+            boundary_local_operand_parameter(&owner, None, &parameters, ""),
             None
         );
         assert!(body_contains_wrapped_local_alias(
