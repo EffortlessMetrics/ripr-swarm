@@ -1588,6 +1588,10 @@ mod tests {
     #[test]
     fn baseline_update_preserves_renamed_build_crossing_debt_without_adopting_current()
     -> Result<(), String> {
+        // Distinct path/line so the pair is `MatchResult::None` rather than a
+        // fallback join. Same-location canonical divergence is already
+        // preserved by the stale-join refusal; this control is the
+        // unmatched renamed identity across a build boundary (#7941).
         let baseline = format!(
             r#"{{
           "schema_version": "0.1",
@@ -1617,7 +1621,7 @@ mod tests {
               "canonical_gap_id": "gap:renamed",
               "seam_id": "new-seam",
               "static_class": "activation_unknown",
-              "placement": {{ "path": "src/old.rs", "line": 10 }},
+              "placement": {{ "path": "src/new.rs", "line": 11 }},
               "evidence": {{}}
             }}
           ]
@@ -1641,6 +1645,10 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("gap:renamed"), "{rendered}");
+        assert!(
+            rendered.contains("stale identity discontinuity, not resolved debt"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("\"owner\": \"test-platform\""),
             "{rendered}"
