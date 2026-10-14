@@ -183,19 +183,21 @@ fn names_version(text: &str, version: &str) -> bool {
 }
 
 fn documents_cascade_start(readme: &str) -> bool {
-    readme.lines().any(line_documents_cascade_start)
+    readme
+        .lines()
+        .any(|line| line.split(';').any(clause_documents_cascade_start))
 }
 
-fn line_documents_cascade_start(line: &str) -> bool {
-    if !line.contains(CASCADE_HEAD) || negated_origin_head(line) {
+fn clause_documents_cascade_start(clause: &str) -> bool {
+    if !clause.contains(CASCADE_HEAD) || negated_origin_head(clause) {
         return false;
     }
-    let lower = line.to_ascii_lowercase();
+    let lower = clause.to_ascii_lowercase();
     lower.contains("default") || lower.contains("cascade") || lower.contains("trying")
 }
 
-fn negated_origin_head(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
+fn negated_origin_head(clause: &str) -> bool {
+    let lower = clause.to_ascii_lowercase();
     let Some(idx) = lower.find("origin/head") else {
         return false;
     };
@@ -208,7 +210,10 @@ fn negated_origin_head(line: &str) -> bool {
 
 fn claimed_current_x_line(line: &str) -> Option<String> {
     for clause in line.split(';') {
-        if !clause.contains("current") || historical_line_marker(clause) {
+        if !clause.contains("current")
+            || historical_line_marker(clause)
+            || negated_current_claim(clause)
+        {
             continue;
         }
         for chunk in clause.split('`').skip(1).step_by(2) {
@@ -224,6 +229,14 @@ fn claimed_current_x_line(line: &str) -> Option<String> {
     None
 }
 
+fn negated_current_claim(clause: &str) -> bool {
+    let lower = clause.to_ascii_lowercase();
+    lower.contains("not current")
+        || lower.contains("isn't current")
+        || lower.contains("is not current")
+        || lower.contains("no longer current")
+}
+
 fn historical_line_marker(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     ["historical", "previous", "older", "prior", "former"]
@@ -234,13 +247,33 @@ fn historical_line_marker(line: &str) -> bool {
 fn teaches_origin_main_default(readme: &str) -> bool {
     readme.lines().any(|line| {
         let trimmed = line.trim().trim_start_matches('$').trim();
-        ripr_check_teaches_origin_main(command_text(trimmed))
-            || backtick_commands(trimmed).any(ripr_check_teaches_origin_main)
+        let whole = command_text(trimmed);
+        (!negated_instruction(trimmed) && ripr_check_teaches_origin_main(whole))
+            || taught_inline_origin_main(trimmed)
     })
 }
 
-fn backtick_commands(line: &str) -> impl Iterator<Item = &str> {
-    line.split('`').skip(1).step_by(2).map(str::trim)
+fn taught_inline_origin_main(line: &str) -> bool {
+    let mut preceding = "";
+    for (idx, chunk) in line.split('`').enumerate() {
+        if idx % 2 == 1 {
+            if !negated_instruction(preceding) && ripr_check_teaches_origin_main(chunk.trim()) {
+                return true;
+            }
+        } else {
+            preceding = chunk;
+        }
+    }
+    false
+}
+
+fn negated_instruction(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("do not")
+        || lower.contains("don't")
+        || lower.contains("never ")
+        || lower.contains("not run")
+        || lower.contains("obsolete")
 }
 
 fn ripr_check_teaches_origin_main(command: &str) -> bool {
@@ -710,6 +743,22 @@ ripr check --base origin/main
     }
 
     #[test]
+    fn not_current_x_line_is_not_a_current_claim() {
+        let readme = CURRENT_LIKE.replace(
+            "This source package is **0.11.0 development, pending publication**.",
+            "The `0.8.x` line is not current.",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("`0.8.x` line as current")),
+            "negated current .x mention must not fail the cut; got {violations:?}"
+        );
+    }
+
+    #[test]
     fn longer_version_token_does_not_satisfy_workspace_version() {
         let readme = CURRENT_LIKE.replace("0.11.0", "10.11.0");
         let violations =
@@ -768,6 +817,22 @@ ripr check --base origin/main
     }
 
     #[test]
+    fn earlier_clause_negation_does_not_hide_cascade_start() {
+        let readme = CURRENT_LIKE.replace(
+            "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
+            "`origin/main` is not the default; the cascade starts at `origin/HEAD`",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("missing the default-base cascade start `origin/HEAD`")),
+            "later cascade-start clause must still count; got {violations:?}"
+        );
+    }
+
+    #[test]
     fn unrelated_origin_head_mention_is_not_the_cascade_start() {
         let readme = CURRENT_LIKE.replace(
             "The 0.10 release resolves its default base by trying `origin/HEAD`, then `origin/main`,",
@@ -796,6 +861,22 @@ ripr check --base origin/main
                 .iter()
                 .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
             "expected inline taught command to count; got {violations:?}"
+        );
+    }
+
+    #[test]
+    fn warning_against_obsolete_command_is_not_a_taught_default() {
+        let readme = CURRENT_LIKE.replace(
+            "ripr check\n",
+            "Do not run `ripr check --base origin/main`; use `ripr check`.\n",
+        );
+        let violations =
+            packaged_readme_violations(&inputs("0.11.0", "README.md\n", "README.md", &readme));
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.contains("teaches `ripr check --base origin/main` as the default")),
+            "negated obsolete-command warning must not fail the cut; got {violations:?}"
         );
     }
 
