@@ -1414,7 +1414,17 @@ fn ripr_plus_badge_with_test_efficiency_suppressions_moves_into_suppressed_bucke
     assert_eq!(summary.counts.unsuppressed_test_efficiency_findings, 1);
     assert_eq!(summary.counts.suppressed_test_efficiency_findings, 1);
     assert_eq!(summary.message, "1");
-    assert!(summary.warnings.is_empty());
+    // #7760: the shared check matcher discloses that TE rows are not
+    // exposure-gap selectors. Plus still applies the same entry to TE
+    // counts above; this is not an unmatched-selector warning.
+    assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+    assert!(
+        summary.warnings[0].contains("`alpha`")
+            && summary.warnings[0].contains("does not apply to check findings")
+            && !summary.warnings[0].contains("did not match"),
+        "{:?}",
+        summary.warnings
+    );
 }
 
 #[test]
