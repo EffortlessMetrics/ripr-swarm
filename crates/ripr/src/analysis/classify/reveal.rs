@@ -1221,7 +1221,12 @@ fn analyze_related_assertions(
                 });
             } else if matched {
                 let observation_confirmed = !self_computed
+                    // Refusal withholds kind-only credit, not an independently
+                    // confirmed token. Retain the token path's existing identity gates.
                     && (implicit_observer != Some(false)
+                        || (has_token_match
+                            && field_write.is_none()
+                            && direct_collection_mutation_receiver(&probe.expression).is_none())
                         || field_collection_read
                         || collection_observer_confirms(&probe.expression, assertion))
                     && (!confirm_required
@@ -6988,6 +6993,54 @@ return Err(\"typed pin\".into());
             "a whole-object effect observer must clear observation_unverified even without a token: got `{}`",
             discriminate.summary
         );
+    }
+
+    #[test]
+    fn refused_implicit_kind_preserves_independent_token_confirmation() {
+        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+            let probe = probe(family, "persist_audit(record)");
+            let reaching = test_with_assertions("calls_owner", vec![]);
+            for (text, expected) in [
+                (
+                    "assert_eq!(persist_audit(record), expected);",
+                    StageState::Yes,
+                ),
+                ("assert_eq!(parsed, expected);", StageState::Weak),
+            ] {
+                let observer = test_with_assertions(
+                    "refused_implicit",
+                    vec![oracle(
+                        text,
+                        OracleKind::WholeObjectEquality,
+                        OracleStrength::Strong,
+                    )],
+                );
+                let (_, discriminate, _, _) = reveal_evidence_with_expression(
+                    &probe,
+                    &probe.expression,
+                    &[
+                        (&reaching, RelationReason::DirectOwnerCall),
+                        (&observer, RelationReason::SameTestFile),
+                    ],
+                    &[],
+                    &|_, _| false,
+                    &|_, _| false,
+                    &ReturnOracleAdmission {
+                        assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        owner_return_pin: &|_, _| false,
+                        assertion_admitted: &|_, _| true,
+                        proximity_may_reach_owner: &|_| false,
+                        owner_parameters: &[],
+                        expected_reaches_owner: &|_, _| false,
+                        effect_state_carried: &|_, _| true,
+                        setter_writes_field: &|_, _, _| false,
+                        getter_reads_field: &|_, _, _| false,
+                    },
+                    None,
+                );
+                assert_eq!(discriminate.state, expected, "{}", discriminate.summary);
+            }
+        }
     }
 
     #[test]

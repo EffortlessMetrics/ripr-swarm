@@ -610,7 +610,16 @@ are supported only with a single written-field use in dispatch and a single
 owner-parameter use, excluding shadowing and whole-self transfers. Competing
 production writes cannot stand in for the changed effect. Unknown aliases, intervening handle uses, shadowing, custom
 equality, inequality, deferred code, production macro calls/definitions, any
-same-file Drop implementation, receiver-type attributes and longer reverse transfers refuse this
+indexed workspace Drop implementation, receiver-type attributes and longer reverse transfers refuse this
 exception. Reach, token/collection identity, opaque-macro authority and
 direct/helper recorder admission remain separate. A refused assertion keeps
 its own visible miss; an admitted assertion cannot lend it confirmation.
+
+Receiver-independent expansion safety is scanned lazily once per immutable
+classification run, borrowing indexed source bytes. The run memo stores the
+workspace veto and receiver exclusion names; probes and candidate assertions
+reuse those facts. Parse failures, unknown macros/attributes and Drop across
+indexed files conservatively withhold the bounded exception, including when
+they occur outside the receiver file. This is a workspace-wide unknown, not
+general expansion or alias support. Token confirmation retains its independent
+identity gates even when this kind-only exception refuses an assertion.

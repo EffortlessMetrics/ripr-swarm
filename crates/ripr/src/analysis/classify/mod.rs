@@ -10,6 +10,7 @@ mod flow;
 mod gap_admission;
 mod helper_transfer;
 mod implicit_effect;
+pub(in crate::analysis) use implicit_effect::ImplicitExpansionMemo;
 mod infection;
 mod match_transfer;
 mod operand_pin;

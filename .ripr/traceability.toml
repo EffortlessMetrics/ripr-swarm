@@ -7250,6 +7250,10 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "crates/ripr/tests/sibling_effect_oracle.rs::independent_token_observer_survives_implicit_refusal",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::refused_implicit_kind_preserves_independent_token_confirmation",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::workspace_expansion_scan_is_once_per_immutable_run",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::tests::cached_receiver_exclusions_remain_receiver_specific",
   "crates/ripr/tests/sibling_effect_oracle.rs::competing_production_writes_cannot_supply_implicit_discrimination",
   "crates/ripr/tests/sibling_effect_oracle.rs::receiver_construction_cannot_seed_the_observed_effect",
   "crates/ripr/tests/sibling_effect_oracle.rs::same_test_dispatch_cannot_credit_disconnected_assertions",

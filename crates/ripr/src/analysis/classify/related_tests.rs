@@ -91,6 +91,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Source-expansion facts for this immutable classification run.
+    implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
     owner_caller_names: super::super::classifier::OwnerCallerNames,
     /// The analysis root that probe paths are joined onto, while index and
@@ -171,6 +173,10 @@ impl RelatedTestCandidateIndex {
     /// against this index.
     pub(in crate::analysis) fn file_use_statements(&self) -> &super::FileUseStatements {
         &self.file_use_statements
+    }
+
+    pub(in crate::analysis) fn implicit_expansion(&self) -> &super::ImplicitExpansionMemo {
+        &self.implicit_expansion
     }
 
     pub(in crate::analysis) fn owner_pin_syntax(&self) -> &super::OwnerPinSyntax {

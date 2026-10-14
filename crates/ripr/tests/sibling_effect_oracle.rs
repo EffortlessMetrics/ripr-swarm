@@ -738,3 +738,35 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
     assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
     Ok(())
 }
+
+#[test]
+fn independent_token_observer_survives_implicit_refusal() -> Result<(), String> {
+    for original in [ITERATOR_OBSERVER, ADD_OBSERVER] {
+        let source = original.replace("state", "sink").replace(
+            "assert_eq!(Observation { cell: sink }, Observation { cell: Rc::new(Cell::new(1)) });",
+            "assert_eq!(sink.get(), 1);",
+        );
+        assert_ne!(source, original);
+        assert!(source.contains("assert_eq!(sink.get(), 1);"));
+        {
+            let family = "call_deletion";
+            let expression = "self.sink.set(1)";
+            let row = finding(
+                &source,
+                &changed_effect(&source, expression),
+                expression,
+                family,
+            )?;
+            assert_eq!(row["ripr"]["discriminate"]["state"], "yes", "{row}");
+            assert!(
+                row["related_tests"]
+                    .as_array()
+                    .ok_or("missing rows")?
+                    .iter()
+                    .any(|r| r["name"] == "implicit_observer" && r["miss"].is_null()),
+                "{row}"
+            );
+        }
+    }
+    Ok(())
+}

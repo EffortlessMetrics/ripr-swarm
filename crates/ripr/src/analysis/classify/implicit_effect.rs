@@ -10,6 +10,8 @@ use ra_ap_syntax::{
     AstNode, SyntaxKind,
     ast::{self, HasArgList, HasAttrs, HasName},
 };
+use std::collections::HashSet;
+use std::sync::OnceLock;
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -69,59 +71,139 @@ fn known_builtin_attribute(attr: &ast::Attr) -> bool {
             | "target_feature"
     )
 }
-fn bounded_expansion_surface(sources: &[String], receiver: &str) -> bool {
-    const BUILTIN_MACROS: &[&str] = &[
-        "assert",
-        "assert_eq",
-        "assert_ne",
-        "debug_assert",
-        "debug_assert_eq",
-        "debug_assert_ne",
-        "format",
-        "format_args",
-        "vec",
-        "matches",
-        "panic",
-        "unreachable",
-        "todo",
-        "unimplemented",
-        "stringify",
-        "concat",
-        "env",
-        "option_env",
-        "include_str",
-        "include_bytes",
-        "file",
-        "line",
-        "column",
-        "module_path",
-    ];
-    const BUILTIN_DERIVES: &[&str] = &[
-        "Clone",
-        "Copy",
-        "Debug",
-        "Default",
-        "Eq",
-        "Hash",
-        "Ord",
-        "PartialEq",
-        "PartialOrd",
-    ];
-    const DISPATCH_TRAITS: &[&str] = &[
-        "Iterator",
-        "std::iter::Iterator",
-        "core::iter::Iterator",
-        "Add",
-        "std::ops::Add",
-        "core::ops::Add",
-    ];
-    sources.iter().all(|source| {
-        let Some(parse) = parse_clean_source_file(source) else {
-            return false;
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct ImplicitExpansionMemo {
+    surface: OnceLock<ExpansionSurface>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ExpansionSurface {
+    bounded: bool,
+    excluded_receivers: HashSet<String>,
+    scanned_sources: usize,
+}
+
+impl ImplicitExpansionMemo {
+    pub(in crate::analysis) fn admits(
+        &self,
+        index: &super::super::rust_index::RustIndex,
+        receiver: &str,
+    ) -> bool {
+        let surface = self.surface.get_or_init(|| {
+            ExpansionSurface::scan(
+                index
+                    .files()
+                    .values()
+                    .map(|facts| std::sync::Arc::clone(&facts.source)),
+            )
+        });
+        surface.bounded
+            && !surface
+                .excluded_receivers
+                .contains(receiver.rsplit("::").next().unwrap_or(receiver))
+    }
+}
+
+impl ExpansionSurface {
+    fn scan<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Self {
+        const BUILTIN_MACROS: &[&str] = &[
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "format",
+            "format_args",
+            "vec",
+            "matches",
+            "panic",
+            "unreachable",
+            "todo",
+            "unimplemented",
+            "stringify",
+            "concat",
+            "env",
+            "option_env",
+            "include_str",
+            "include_bytes",
+            "file",
+            "line",
+            "column",
+            "module_path",
+        ];
+        const BUILTIN_DERIVES: &[&str] = &[
+            "Clone",
+            "Copy",
+            "Debug",
+            "Default",
+            "Eq",
+            "Hash",
+            "Ord",
+            "PartialEq",
+            "PartialOrd",
+        ];
+        const DISPATCH_TRAITS: &[&str] = &[
+            "Iterator",
+            "std::iter::Iterator",
+            "core::iter::Iterator",
+            "Add",
+            "std::ops::Add",
+            "core::ops::Add",
+        ];
+        let mut surface = Self {
+            bounded: true,
+            ..Self::default()
         };
-        let tree = parse.tree();
-        let receiver_tail = receiver.rsplit("::").next().unwrap_or(receiver);
-        !tree.syntax().descendants().any(|node| {
+        for source in sources {
+            let source = source.as_ref();
+            surface.scanned_sources += 1;
+            let Some(parse) = parse_clean_source_file(source) else {
+                surface.bounded = false;
+                continue;
+            };
+            let tree = parse.tree();
+            // Store only receiver-independent names, never source copies or syntax trees.
+            for node in tree.syntax().descendants() {
+                if let Some(alias) = ast::TypeAlias::cast(node.clone())
+                    && let Some(ty) = alias.ty()
+                {
+                    surface.excluded_receivers.extend(
+                        compact(&ty.syntax().text().to_string())
+                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned),
+                    );
+                }
+                if let Some(use_tree) = ast::UseTree::cast(node.clone()) {
+                    surface.excluded_receivers.extend(
+                        compact(&use_tree.syntax().text().to_string())
+                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned),
+                    );
+                }
+                if let Some(item) = ast::Impl::cast(node) {
+                    let trait_text = item
+                        .trait_()
+                        .map(|t| compact(&t.syntax().text().to_string()))
+                        .map(|path| path.split('<').next().unwrap_or(&path).to_string());
+                    if trait_text
+                        .as_deref()
+                        .is_some_and(|name| !DISPATCH_TRAITS.contains(&name))
+                        && let Some(ty) = item.self_ty()
+                    {
+                        surface.excluded_receivers.insert(
+                            compact(&ty.syntax().text().to_string())
+                                .rsplit("::")
+                                .next()
+                                .unwrap_or("")
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+            let bounded = !tree.syntax().descendants().any(|node| {
             ast::Module::cast(node.clone())
                 .and_then(|module| module.name())
                 .is_some_and(|name| matches!(name.text(), "std" | "core"))
@@ -152,26 +234,6 @@ fn bounded_expansion_surface(sources: &[String], receiver: &str) -> bool {
             .descendants()
             .any(|node| ast::MacroRules::can_cast(node.kind()))
             && !tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::TypeAlias::cast)
-                .any(|alias| {
-                    alias.ty().is_some_and(|ty| {
-                        compact(&ty.syntax().text().to_string())
-                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                            .any(|name| name == receiver_tail)
-                    })
-                })
-            && !tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::UseTree::cast)
-                .any(|use_tree| {
-                    compact(&use_tree.syntax().text().to_string())
-                        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                        .any(|name| name == receiver_tail)
-                })
-            && !tree
             .syntax()
             .descendants()
             .filter_map(ast::Impl::cast)
@@ -180,18 +242,10 @@ fn bounded_expansion_surface(sources: &[String], receiver: &str) -> bool {
                     .trait_()
                         .map(|t| compact(&t.syntax().text().to_string()))
                         .map(|path| path.split('<').next().unwrap_or(&path).to_string());
-                let self_text = item.self_ty().map(|ty| compact(&ty.syntax().text().to_string()));
                 let is_drop = trait_text.as_deref().is_some_and(|name| {
                     name == "Drop" || name.ends_with("::Drop")
                 });
-                let receiver_impl = self_text.as_deref().is_some_and(|name| {
-                    name.rsplit("::").next() == Some(receiver_tail)
-                });
                 is_drop
-                    || (receiver_impl
-                        && trait_text
-                            .as_deref()
-                            .is_some_and(|name| !DISPATCH_TRAITS.contains(&name)))
             })
             && tree
                 .syntax()
@@ -230,15 +284,17 @@ fn bounded_expansion_surface(sources: &[String], receiver: &str) -> bool {
                                     && name != "Drop"
                                     && (name != "Iterator" || canonical_iterator_import)
                                     && (name != "Add" || canonical_add_import)
-                                    && name != receiver_tail
                             })
                 })
             && tree
                 .syntax()
                 .descendants()
                 .filter_map(ast::Attr::cast)
-                .all(|attr| known_builtin_attribute(&attr))
-    })
+                .all(|attr| known_builtin_attribute(&attr));
+            surface.bounded &= bounded;
+        }
+        surface
+    }
 }
 fn name(expr: &ast::Expr) -> Option<String> {
     let ast::Expr::PathExpr(path) = expr else {
@@ -271,7 +327,7 @@ fn single_self_field_use(function: &FunctionSummary, field: &str) -> bool {
         .syntax()
         .descendants()
         .filter_map(ast::PathExpr::cast)
-        .filter(|p| p.syntax().text().to_string() == "self")
+        .filter(|p| p.syntax().text() == "self")
         .collect();
     let mut target_uses = 0;
     for receiver in uses {
@@ -300,7 +356,7 @@ fn single_parameter_use(function: &FunctionSummary, parameter: &str) -> bool {
     tree.syntax()
         .descendants()
         .filter_map(ast::PathExpr::cast)
-        .filter(|p| p.syntax().text().to_string() == parameter)
+        .filter(|p| p.syntax().text() == parameter)
         .count()
         == 1
         && !tree
@@ -422,7 +478,7 @@ fn standard_handles(tree: &ra_ap_syntax::SourceFile) -> bool {
 }
 
 fn observer_local(assertion: &ast::MacroCall, source: &str) -> Option<(String, String)> {
-    if assertion.path()?.syntax().text().to_string() != "assert_eq" {
+    if assertion.path()?.syntax().text() != "assert_eq" {
         return None;
     }
     let args_source = format!(
@@ -493,8 +549,7 @@ fn observer_local(assertion: &ast::MacroCall, source: &str) -> Option<(String, S
         return None;
     };
     if !definition.attrs().any(|a| {
-        a.path()
-            .is_some_and(|p| p.syntax().text().to_string() == "derive")
+        a.path().is_some_and(|p| p.syntax().text() == "derive")
             && a.syntax()
                 .descendants_with_tokens()
                 .filter_map(|e| e.into_token())
@@ -532,7 +587,12 @@ fn dispatch_statement(statement: &ast::Stmt, receiver: &str, method: &str) -> bo
     }
 }
 
-fn local_dispatch_type(source: &str, self_ty: &str, sources: &[String]) -> bool {
+fn local_dispatch_type(
+    source: &str,
+    self_ty: &str,
+    expansion: &ImplicitExpansionMemo,
+    index: &super::super::rust_index::RustIndex,
+) -> bool {
     if self_ty.is_empty()
         || !self_ty
             .bytes()
@@ -542,7 +602,7 @@ fn local_dispatch_type(source: &str, self_ty: &str, sources: &[String]) -> bool 
     }
     // Keep the bounded observer proof inside source forms whose expansions
     // cannot add hidden Drop implementations.
-    if !bounded_expansion_surface(sources, self_ty) {
+    if !expansion.admits(index, self_ty) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(source) else {
@@ -594,12 +654,13 @@ pub(super) fn assertion_observes_dispatch(
     test: &TestSummary,
     assertion: &OracleFact,
     source: &str,
-    sources: &[String],
+    expansion: &ImplicitExpansionMemo,
+    index: &super::super::rust_index::RustIndex,
 ) -> bool {
     let FunctionContainer::TraitImpl { self_ty, .. } = &dispatch.item.container else {
         return false;
     };
-    if !local_dispatch_type(source, self_ty, sources) {
+    if !local_dispatch_type(source, self_ty, expansion, index) {
         return false;
     }
     let Some(field) = shared_field(dispatch, owner, expression) else {
@@ -791,4 +852,58 @@ pub(super) fn assertion_observes_dispatch(
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::rust_index::{RustIndex, summarize_file};
+    use std::path::PathBuf;
+
+    #[test]
+    fn workspace_expansion_scan_is_once_per_immutable_run() {
+        let mut index = RustIndex::default();
+        for slot in 0..64 {
+            let path = PathBuf::from(format!("src/file_{slot}.rs"));
+            index.insert_file_only(
+                path.clone(),
+                summarize_file(path, "struct Counter;".to_owned()),
+            );
+        }
+        let memo = ImplicitExpansionMemo::default();
+        for _probe in 0..32 {
+            for receiver in ["Counter", "Other", "module::Counter"] {
+                for _assertion in 0..8 {
+                    assert!(memo.admits(&index, receiver));
+                }
+            }
+        }
+        assert_eq!(memo.surface.get().map(|s| s.scanned_sources), Some(64));
+        // A successor source index receives a fresh run memo. Cross-file Drop,
+        // aliases and unknown expansion remain workspace-wide vetoes.
+        for source in [
+            "impl Drop for Elsewhere { fn drop(&mut self) {} }",
+            "use std::ops::Drop as Destructor; impl Destructor for Elsewhere { fn drop(&mut self) {} }",
+            "macro_rules! hidden { () => {} }",
+            "fn broken( {",
+        ] {
+            let path = PathBuf::from("src/unknown.rs");
+            let mut successor = index.clone();
+            successor.insert_file_only(path.clone(), summarize_file(path, source.to_owned()));
+            let successor_memo = ImplicitExpansionMemo::default();
+            assert!(!successor_memo.admits(&successor, "Counter"), "{source}");
+            assert!(memo.admits(&index, "Counter"));
+        }
+    }
+
+    #[test]
+    fn cached_receiver_exclusions_remain_receiver_specific() {
+        let surface = ExpansionSurface::scan([
+            "struct Counter; struct Other; type Alias = Counter; impl Custom for Other {}",
+        ]);
+        assert!(surface.bounded);
+        assert!(surface.excluded_receivers.contains("Counter"));
+        assert!(surface.excluded_receivers.contains("Other"));
+        assert!(!surface.excluded_receivers.contains("Unrelated"));
+    }
 }

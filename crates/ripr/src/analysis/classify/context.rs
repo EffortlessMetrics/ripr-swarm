@@ -32,6 +32,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped per-(test, owner) value facts, attached by the
     /// classifier; `None` (unit-test contexts) computes them per probe.
     pub test_value_facts: Option<&'a TestValueFacts>,
+    /// Workspace expansion facts shared across probes against this immutable index.
+    pub implicit_expansion: Option<&'a super::ImplicitExpansionMemo>,
     /// Run-scoped private assertion context, shared across all probes.
     pub owner_pin_syntax: Option<&'a super::OwnerPinSyntax>,
     /// Run-scoped #5830 caller-walk memo, shared across all probes;
@@ -60,6 +62,7 @@ impl<'a> ProbeContext<'a> {
             file_use_statements: None,
             test_value_facts: None,
             owner_pin_syntax: None,
+            implicit_expansion: None,
             owner_caller_names: None,
         }
     }
@@ -70,6 +73,14 @@ impl<'a> ProbeContext<'a> {
         file_use_statements: &'a FileUseStatements,
     ) -> Self {
         self.file_use_statements = Some(file_use_statements);
+        self
+    }
+
+    pub(in crate::analysis) fn with_implicit_expansion(
+        mut self,
+        memo: &'a super::ImplicitExpansionMemo,
+    ) -> Self {
+        self.implicit_expansion = Some(memo);
         self
     }
 
