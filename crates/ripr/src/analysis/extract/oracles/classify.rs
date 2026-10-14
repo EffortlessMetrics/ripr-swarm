@@ -1661,6 +1661,18 @@ fn ok_literal() {
                 "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
                 vec![],
             ),
+            // A fallback inside the group is not hidden by an Ok-preserving
+            // adapter on either side of the closing paren.
+            (
+                "grouped_fallback_then_mapped",
+                "(check(300).and(Err(E::Other)).map_err(Wrap)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_fallback_mapped_outside",
+                "(check(300).and(Err(E::Other))).map_err(Wrap).unwrap_err();",
+                vec![],
+            ),
             // A group around a comparison, jump, range or tuple is not a
             // call.
             (
