@@ -647,7 +647,7 @@ fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool
     })
 }
 
-fn has_path_attribute(source: &str) -> bool {
+pub(super) fn has_path_attribute(source: &str) -> bool {
     let bytes = source.as_bytes();
     let skip_space = |mut at: usize| {
         while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {

@@ -261,6 +261,10 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         // credit; joined by `&&` it keeps its medium reading.
         ("assert!(ready || events_sent.contains(&id));", &weak),
         ("assert!(ready || !events.is_empty());", &weak),
+        (
+            "assert!(ready || { insta::assert_snapshot!(value); true });",
+            &weak,
+        ),
         ("assert!(ready && (done || mock.was_called()));", &weak),
         ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
         // A deciding `||`, top-level or in a parenthesized conjunct, gates
@@ -379,4 +383,85 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         return Err("the ensure! line must produce an oracle fact".to_string());
     };
     require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)
+}
+
+#[test]
+fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String> {
+    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    let broad = (OracleKind::BroadError, OracleStrength::Weak);
+    for (text, expected) in [
+        // #7695: a side-only pattern in an `&&` chain keeps its reading; a
+        // bare conjunct beside it reads weak (step 13), never strong.
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(matches!(r, Ok(_)) && ready);", &weak),
+        ("debug_assert!(ready && matches!(r, Some(_)));", &weak),
+        ("assert!(ready && (matches!(r, Ok(_))));", &weak),
+        ("assert!(ready && /* side */ matches!(r, Ok(_)));", &weak),
+        (
+            "assert!(matches!(r, Ok(_)) && matches!(s, Some(_)));",
+            &smoke,
+        ),
+        ("assert!(total > 1 && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(_) | Err(_)));", &weak),
+        ("assert!(ready && matches!(r, Some(1..=5)));", &weak),
+        ("assert!(ready && matches!(r, Err(_)));", &broad),
+        // Controls: a conjunct that pins keeps the chain's reading.
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(matches!(r, Ok(_)) && matches!(r, Ok(3)));", &exact),
+        // A pinning `==` conjunct (rule 1) fixes a value, so the chain keeps
+        // its reading rather than risk an actionable gap.
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(matches!(value, _) && value == 2);", &exact),
+        ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
+        ("assert!(matches!(r, Ok(_)));", &smoke),
+        // `prop_assert!` reads its pattern like `assert!` does.
+        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
+        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
+        // A self-comparison pins nothing, so it does not exempt the chain.
+        ("assert!(value == value && matches!(r, Ok(_)));", &weak),
+        ("ensure!(value == value && ready);", &weak),
+    ] {
+        require_classification(text, expected)?;
+    }
+    // The extracted fact agrees, including when a trailing line comment on a
+    // conjunct could swallow the rewritten `);` and leave the chain unread.
+    for (text, expected) in [
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        (
+            "assert!(\n    ready // set above\n    && matches!(r, Ok(_))\n);",
+            &weak,
+        ),
+        (
+            "assert!(\n    ready &&\n    matches!(r, Ok(_)) // side only\n);",
+            &weak,
+        ),
+    ] {
+        let facts = extract_assertions(text, 7695);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        require_kind(fact, expected.0.clone(), expected.1.clone())?;
+    }
+    Ok(())
+}
+
+fn require_classification(
+    text: &str,
+    expected: &(OracleKind, OracleStrength),
+) -> Result<(), String> {
+    let classification = classify_assertion(text);
+    if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+        return Err(format!(
+            "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+            expected.0, expected.1, classification.kind, classification.strength
+        ));
+    }
+    Ok(())
 }

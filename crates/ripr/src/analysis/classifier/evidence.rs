@@ -129,6 +129,15 @@ impl ClassifiedProbeEvidence {
                 })
             })
             .or_else(|| {
+                context.owner_fn.and_then(|owner| {
+                    crate::analysis::classify::constant_tail_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                    )
+                })
+            })
+            .or_else(|| {
                 returned_ledger.as_ref().and_then(|_| {
                     crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
                 })

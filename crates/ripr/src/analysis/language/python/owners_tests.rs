@@ -127,6 +127,12 @@ fn owner_from_function(
     is_async: bool,
 ) -> PythonOwner {
     let decorator_names = decorator_names(decorators);
+    // A decorator whose name cannot be read still wraps the call.
+    let binding_only = !is_async
+        && decorator_names.len() == decorators.len()
+        && decorator_names
+            .iter()
+            .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
     let owner_kind = if context.class_context.is_some()
         && decorator_names.iter().any(|decorator| {
             decorator.ends_with("classmethod") || decorator.ends_with("staticmethod")
@@ -154,6 +160,7 @@ fn owner_from_function(
         &parameters,
         &text_for_range(context.source, range),
         !decorators.is_empty() || is_async,
+        binding_only,
     );
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,

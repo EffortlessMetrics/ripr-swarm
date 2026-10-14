@@ -1090,8 +1090,8 @@ fn analyze_related_assertions(
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins. #6692: a field of a hand-written
-            // `Clone::clone`'s returned literal is pinned by
+            // for return-value and error-path exact pins. #6692: a field of a
+            // hand-written `Clone::clone`'s returned literal is pinned by
             // `assert_eq!(recv.clone(), recv)` under the same gates
             // (`OwnerReturnPin::establish_clone_field`).
             //
@@ -1104,9 +1104,13 @@ fn analyze_related_assertions(
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
                     OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
                 ),
+                // A changed `return Err(..);` is an `error_path` probe; its
+                // pin compares the owner's whole `Err(..)` result.
+                ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,

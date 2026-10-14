@@ -1,0 +1,61 @@
+{
+  "case_id": "jest-spec0249-ex08-test-local-class",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0249-ex08-test-local-class.diff",
+  "anchor": {
+    "file": "src/errorsLocalClass.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_test_local_class_binding",
+  "hard_case": "the test binds `const NotFound = Error`, so its pin accepts any error the owner returns",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; the StrykerJS mutant set listed for the same `if` line in jest-mined-tobeinstanceof, hand-applied, and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "local class status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForLocalClass(403)` returns a `NotFound`, which is not a `Forbidden`"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `errorForLocalClass(404)` returns a `Forbidden` instead of a `NotFound`, but the test's `NotFound` is `Error`, which a `Forbidden` is, and 403 still returns a `Forbidden`"
+      },
+      {
+        "replacement": "if (404 !== status) {",
+        "mutated_line": "if (404 !== status) {",
+        "outcome": "tests_failed",
+        "failing_test": "local class status codes map to error classes",
+        "equivalence_review": "not equivalent: `errorForLocalClass(403)` returns a `NotFound`, which is not a `Forbidden`; the 404 pin alone would pass, since the test's `NotFound` is `Error`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`if (status === 404)` becomes `if (404 === status)`. The test imports `Forbidden` but binds `const NotFound = Error` in its body, then pins `expect(errorForLocalClass(404)).toBeInstanceOf(NotFound)` and `expect(errorForLocalClass(403)).toBeInstanceOf(Forbidden)`. `if (true)` and `if (404 !== status)` fail the 403 pin, but `if (false)` passes both, since a `Forbidden` is an `Error`. RIPR-SPEC-0249 example 8: a test-local `const NotFound = Error` is not `exposed`. ripr credits only the 403 pin, which is not at the changed boundary 404, and reports `weakly_exposed`, matching the spec and the partial truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0249#8"
+  ]
+}

@@ -12,8 +12,8 @@
 
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
-    is_python_identifier_char, owner_method_bound_locals, owner_module_callees,
-    python_text_hides_code,
+    is_python_identifier_char, owner_class_locals, owner_method_bound_locals, owner_module_callees,
+    owner_result_locals, python_text_hides_code,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -27,15 +27,27 @@ pub(super) enum ChangedEffect {
     Stderr,
     /// `param.write_text(...)` / `param.write_bytes(...)` on an owner parameter.
     FileWrite { receiver: String },
-    /// `param.method(...)` on an owner parameter, observable through a mock.
-    CallOnParameter { receiver: String, method: String },
+    /// `param.method(...)`, or `param(...)` with an empty `method`, on an
+    /// owner parameter, observable through a mock. `pinnable_rewrite`
+    /// records whether the argument rewrite is one a pinned expectation
+    /// reads as a different call (`arguments_rewritten_visibly`).
+    CallOnParameter {
+        receiver: String,
+        method: String,
+        pinnable_rewrite: bool,
+    },
     /// `self.attr = ...` (or an augmented assignment) in a method owner.
     SelfField { attr: String },
 }
 
 impl ChangedEffect {
     /// The changed line's effect, when it is one of the observable shapes.
-    pub(super) fn of(line_text: &str, owner: &PythonOwner) -> Option<Self> {
+    /// `old_line_text` is the line it replaced, when there is one.
+    pub(super) fn of(
+        line_text: &str,
+        old_line_text: Option<&str>,
+        owner: &PythonOwner,
+    ) -> Option<Self> {
         let line = line_text.trim();
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
@@ -60,7 +72,9 @@ impl ChangedEffect {
             "sys.stdout.write" => Some(Self::Stdout),
             "sys.stderr.write" => Some(Self::Stderr),
             _ => {
-                let (receiver, method) = callee.split_once('.')?;
+                // `param(...)` calls the parameter itself (RIPR-SPEC-0238
+                // rule 17, #7586): a mock passed for it records the call.
+                let (receiver, method) = callee.split_once('.').unwrap_or((callee, ""));
                 if method.contains('.')
                     || !owner
                         .parameters
@@ -76,6 +90,19 @@ impl ChangedEffect {
                     _ => Self::CallOnParameter {
                         receiver,
                         method: method.to_string(),
+                        // No old line: the call is new. An old line that is
+                        // not a call statement (a comment, an assignment)
+                        // cannot be compared, so it fails closed. A call to
+                        // another callee never made the pinned call.
+                        pinnable_rewrite: match old_line_text {
+                            None => true,
+                            Some(old) => {
+                                statement_call(old.trim()).is_some_and(|(old_callee, old_args)| {
+                                    old_callee != callee
+                                        || arguments_rewritten_visibly(old_args, args)
+                                })
+                            }
+                        },
                     },
                 })
             }
@@ -83,9 +110,17 @@ impl ChangedEffect {
     }
 
     /// Whether a mock assertion can be the observer: only a call made on a
-    /// parameter the test may substitute.
+    /// parameter the test may substitute, whose arguments the change alters
+    /// for every input. A rewrite such as `abs(n)` may hand the mock the old
+    /// value at the test's input, so the pinned expectation still passes.
     pub(super) fn admits_mock_assertion(&self) -> bool {
-        matches!(self, Self::CallOnParameter { .. })
+        matches!(
+            self,
+            Self::CallOnParameter {
+                pinnable_rewrite: true,
+                ..
+            }
+        )
     }
 }
 
@@ -119,12 +154,29 @@ impl EffectReads {
                     reads.operands.push(format!("{local}.read_bytes()"));
                 }
             }
-            ChangedEffect::CallOnParameter { receiver, method } => {
-                reads.mocked_calls = owner_call_argument_locals(test, owner, receiver)
+            ChangedEffect::CallOnParameter {
+                receiver,
+                method,
+                pinnable_rewrite: true,
+            } => {
+                let mut mocks = owner_call_argument_locals(test, owner, receiver);
+                // An owner that hands the parameter back makes its result the
+                // very object the test passed: `m = on_parse('1', Mock())`.
+                if owner.term_facts.returned_parameter() == Some(receiver.as_str()) {
+                    mocks.extend(owner_result_locals(test, &owner_call_names(test, owner)));
+                }
+                reads.mocked_calls = mocks
                     .into_iter()
-                    .map(|local| format!("{local}.{method}"))
+                    .map(|local| {
+                        if method.is_empty() {
+                            local
+                        } else {
+                            format!("{local}.{method}")
+                        }
+                    })
                     .collect();
             }
+            ChangedEffect::CallOnParameter { .. } => {}
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
                     reads.operands = owner_method_bound_locals(test, owner, class, &owner.name)
@@ -212,6 +264,20 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
 fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+    let names = owner_call_names(test, owner);
+    let mut calls: Vec<(usize, &str)> = names
+        .iter()
+        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, false))
+        .collect();
+    calls.sort_unstable();
+    calls
+}
+
+/// The spellings a test calls the owner by: its own name, an import alias, or
+/// a module-qualified name for a function; a local bound to its class for a
+/// method, and the imported class itself for a classmethod or staticmethod
+/// (rule 9, #7634).
+fn owner_call_names(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     let mut names = Vec::new();
     if is_method_owner(owner) {
         if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
@@ -220,6 +286,17 @@ fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a
                     .into_iter()
                     .map(|local| format!("{local}.{}", owner.name)),
             );
+            if owner
+                .decorators
+                .iter()
+                .any(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"))
+            {
+                names.extend(
+                    owner_class_locals(test, owner, class)
+                        .into_iter()
+                        .map(|local| format!("{local}.{}", owner.name)),
+                );
+            }
         }
     } else {
         names.push(owner.name.clone());
@@ -233,12 +310,7 @@ fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a
     }
     names.sort();
     names.dedup();
-    let mut calls: Vec<(usize, &str)> = names
-        .iter()
-        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, false))
-        .collect();
-    calls.sort_unstable();
-    calls
+    names
 }
 
 /// Whether the test calls a free-function owner through a module-identified
@@ -266,12 +338,14 @@ fn owner_call_argument_locals(
     owner: &PythonOwner,
     parameter: &str,
 ) -> Vec<String> {
+    // The implicit receiver is bound by the owner's kind, not its name: a
+    // classmethod's `klass` is skipped, a staticmethod's `cls` is not (#7634).
     let skip = usize::from(
         is_method_owner(owner)
-            && owner
-                .parameters
-                .first()
-                .is_some_and(|first| matches!(first.name.as_str(), "self" | "cls")),
+            && !owner
+                .decorators
+                .iter()
+                .any(|decorator| decorator.ends_with("staticmethod")),
     );
     let position = owner
         .parameters
@@ -423,6 +497,202 @@ fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     }
     parts.push(&text[start..]);
     parts
+}
+
+/// Whether a pinned expectation reads the new argument list as a different
+/// call (#7586). A changed argument count or keyword set does. So does a
+/// rewritten argument that does not keep the old one inside it (`'hi'` to
+/// `'welcome'`), or keeps it only under literal arithmetic (`n + 1`,
+/// `n * 100`). Any other rewrite that keeps the old argument inside it, such
+/// as `abs(n)`, `max(n, 0)`, `n or 0` or `(n)`, can return `n` unchanged
+/// at the input the test passes, so the pinned expectation may still hold.
+/// Literal arithmetic is credited as RIPR-SPEC-0238 Decision 15 records:
+/// `n * 100` equals `n` only at 0.
+fn arguments_rewritten_visibly(old: &str, new: &str) -> bool {
+    let (old, new) = (split_top_level_args(old), split_top_level_args(new));
+    if old
+        .iter()
+        .chain(new.iter())
+        .any(|argument| argument.trim().starts_with('*'))
+    {
+        return false;
+    }
+    let keyword = |argument: &str| {
+        argument
+            .split_once('=')
+            .filter(|(name, value)| {
+                super::static_limits::is_simple_python_identifier(name.trim())
+                    && !value.starts_with('=')
+            })
+            .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+    };
+    // Positional values in order, then keyword values sorted by name.
+    let values = |arguments: &[&str]| -> (Vec<String>, Vec<(String, String)>) {
+        let mut keywords: Vec<(String, String)> = arguments
+            .iter()
+            .filter_map(|argument| keyword(argument))
+            .collect();
+        keywords.sort();
+        let positional = arguments
+            .iter()
+            .filter(|argument| keyword(argument).is_none())
+            .map(|argument| argument.trim().to_string())
+            .collect();
+        (positional, keywords)
+    };
+    let ((old_positional, old_keywords), (new_positional, new_keywords)) =
+        (values(&old), values(&new));
+    let names = |keywords: &[(String, String)]| -> Vec<String> {
+        keywords.iter().map(|(name, _)| name.clone()).collect()
+    };
+    if old_positional.len() != new_positional.len() || names(&old_keywords) != names(&new_keywords)
+    {
+        return true;
+    }
+    old_positional
+        .iter()
+        .zip(&new_positional)
+        .chain(
+            old_keywords
+                .iter()
+                .map(|(_, value)| value)
+                .zip(new_keywords.iter().map(|(_, value)| value)),
+        )
+        .any(|(old, new)| old.trim() != new.trim() && visible_rewrite(old, new))
+}
+
+/// Whether one rewritten argument reads as a different value: neither side
+/// keeps the other inside it, or one side is the other under literal
+/// arithmetic.
+fn visible_rewrite(old: &str, new: &str) -> bool {
+    let (old, new) = (old.trim(), new.trim());
+    if is_literal(old) && is_literal(new) {
+        // Compare values, not spellings: `2` is `2.0` and `'hi'` is `"hi"`.
+        // A literal whose value is not read fails closed.
+        match (literal_value(old), literal_value(new)) {
+            (Some(Literal::Number(old)), Some(Literal::Number(new))) => {
+                old.partial_cmp(&new) != Some(std::cmp::Ordering::Equal)
+            }
+            (Some(Literal::Text(old)), Some(Literal::Text(new))) => old != new,
+            (Some(_), Some(_)) => true,
+            _ => false,
+        }
+    } else if contains_expression(new, old) {
+        literal_arithmetic(old, new)
+    } else if contains_expression(old, new) {
+        literal_arithmetic(new, old)
+    } else {
+        true
+    }
+}
+
+/// A plain numeric or string literal: `2`, `2.5`, `'hi'`.
+fn is_literal(text: &str) -> bool {
+    let text = text.trim();
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    (digits.starts_with(|ch: char| ch.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '_')))
+        || text.chars().next().is_some_and(|quote| {
+            matches!(quote, '\'' | '"')
+                && text.len() >= 2
+                && text.ends_with(quote)
+                && !text[1..text.len() - 1].contains([quote, '\\'])
+        })
+}
+
+enum Literal<'a> {
+    Number(f64),
+    Text(&'a str),
+}
+
+/// The value of a plain literal (`is_literal`).
+fn literal_value(text: &str) -> Option<Literal<'_>> {
+    let text = text.trim();
+    match text.chars().next() {
+        Some(quote @ ('\'' | '"')) => text
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+            .map(Literal::Text),
+        _ => text
+            .replace('_', "")
+            .parse::<f64>()
+            .ok()
+            .map(Literal::Number),
+    }
+}
+
+/// Whether `operator` with `literal` leaves its operand unchanged: `+ 0`,
+/// `- 0`, `* 1`, `/ 1`, `// 1`, `** 1`, or `+ ''`. `literal_first` reads
+/// `literal operator operand`, where only `0 +`, `1 *` and `'' +` are.
+fn is_identity(operator: &str, literal: &str, literal_first: bool) -> bool {
+    let equals = |value: f64| {
+        matches!(literal_value(literal), Some(Literal::Number(number))
+            if number.partial_cmp(&value) == Some(std::cmp::Ordering::Equal))
+    };
+    let empty_text = matches!(literal_value(literal), Some(Literal::Text("")));
+    match operator {
+        "+" => equals(0.0) || empty_text,
+        "-" => !literal_first && equals(0.0),
+        "*" => equals(1.0),
+        "/" | "//" | "**" => !literal_first && equals(1.0),
+        _ => false,
+    }
+}
+
+/// Whether `outer` holds `inner` as an identifier-bounded piece of code.
+fn contains_expression(outer: &str, inner: &str) -> bool {
+    !inner.is_empty()
+        && outer.match_indices(inner).any(|(start, _)| {
+            let end = start + inner.len();
+            !outer[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch == '.' || is_python_identifier_char(ch))
+                && !outer[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_python_identifier_char)
+                && !python_text_hides_code(outer, start)
+        })
+}
+
+/// Whether `outer` is `base <op> literal` or `literal <op> base` for an
+/// arithmetic operator and a numeric or string literal that is not an
+/// identity for it (`+ 0`, `* 1`), with `base` one
+/// operand that binds tighter than any operator: `int(text) + 1`.
+fn literal_arithmetic(base: &str, outer: &str) -> bool {
+    const OPERATORS: [&str; 7] = ["**", "//", "+", "-", "*", "/", "%"];
+    let atomic = !base.is_empty()
+        && [
+            " ", "+", "-", "*", "/", "%", "<", ">", "=", "|", "&", "^", ",", "~",
+        ]
+        .iter()
+        .all(|operator| split_top_level(base, operator).len() == 1);
+    let operator_then_literal = |rest: &str| {
+        let rest = rest.trim();
+        OPERATORS.iter().any(|operator| {
+            rest.strip_prefix(operator).is_some_and(|literal| {
+                !literal.trim_start().starts_with(['*', '/'])
+                    && is_literal(literal)
+                    && !is_identity(operator, literal, false)
+            })
+        })
+    };
+    let literal_then_operator = |rest: &str| {
+        let rest = rest.trim();
+        OPERATORS.iter().any(|operator| {
+            rest.strip_suffix(operator).is_some_and(|literal| {
+                !literal.trim_end().ends_with(['*', '/'])
+                    && is_literal(literal)
+                    && !is_identity(operator, literal, true)
+            })
+        })
+    };
+    atomic
+        && (outer.strip_prefix(base).is_some_and(operator_then_literal)
+            || outer.strip_suffix(base).is_some_and(literal_then_operator))
 }
 
 /// Live, identifier-bounded occurrences of `needle`, as (before, after) text.

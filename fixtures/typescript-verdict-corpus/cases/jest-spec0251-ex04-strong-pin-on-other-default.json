@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0251-ex04-strong-pin-on-other-default",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0251-ex04-strong-pin-on-other-default.diff",
+  "anchor": {
+    "file": "src/priceWeakPin.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "jest_strong_pin_on_other_default_import",
+  "hard_case": "the only exact pin observes `other(150)`, the default import of another module; the owner's call has only a relational check",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `cost(150)` returns 130 instead of 140, which still passes `toBeGreaterThan(100)`; the exact pin is on another module"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The default-exported owner changes `amount - 10` to `amount - 20`. The test imports it as `cost` and another module's default as `other`; it asserts `expect(cost(150)).toBeGreaterThan(100)`, which 130 still passes, and pins `expect(other(150)).toBe(300)`, which does not call the owner. RIPR-SPEC-0251 example 4: the strong assertion is on `other(150)`, so not `exposed`. ripr reports `weakly_exposed` with `propagation_unknown` (the strong assertion observes an unrelated expression), matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "3480fb2",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0251#4"
+  ]
+}

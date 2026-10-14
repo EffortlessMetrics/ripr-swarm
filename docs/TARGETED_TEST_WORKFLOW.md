@@ -378,13 +378,24 @@ confirmation.
 
 ### Runtime Calibration
 
-When cargo-mutants output exists, join it to the after static snapshot:
+ripr does not run cargo-mutants. Install it, produce a `mutants.out`
+directory, then join that output to the after static snapshot. The importer
+was validated against cargo-mutants 27.1.0 `outcomes.json` / `mutants.json`
+layouts ([RIPR-SPEC-0006](specs/RIPR-SPEC-0006-mutation-calibration.md)):
 
 ```bash
+cargo install cargo-mutants --locked
+cargo mutants
 ripr calibrate cargo-mutants \
-  --mutants-json target/ripr/workflow/cargo-mutants.json \
+  --mutants-json mutants.out \
   --repo-exposure-json target/ripr/workflow/after.repo-exposure.json
 ```
+
+`cargo mutants` writes `mutants.out/` in the crate root by default. Pass that
+directory, `mutants.out/outcomes.json`, or `mutants.out/mutants.json`. A
+mutants.json-only path counts unexecuted candidates in `matched_total`;
+those rows have no runtime observation. Use cargo-mutants selection flags to
+narrow a long run.
 
 The boundary-gap case study has a checked-in sample for trying this without
 running mutation tests:

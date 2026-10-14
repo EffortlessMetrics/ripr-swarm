@@ -120,6 +120,7 @@ static_limit_kind|opaque_custom_assertion_helper|Typed static limitation value.
 static_limit_kind|property_based_test|Typed static limitation value.
 static_limit_kind|python_transitive_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_assertion_context_unresolved|Typed static limitation value.
+static_limit_kind|rust_log_capture_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.

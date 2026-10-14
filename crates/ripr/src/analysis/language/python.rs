@@ -155,9 +155,9 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-#[cfg(test)]
-use workspace::visit_workspace;
-use workspace::{collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line};
+use workspace::{
+    collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
+};
 
 /// Python preview adapter.
 ///
@@ -619,7 +619,38 @@ impl PythonAdapter {
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
     ) -> Result<LanguageDiffResult, String> {
-        let discovered = collect_workspace_python_files(&options.root);
+        Self::analyze_diff_with_handwritten(options, changed_files, walk_limits, &[])
+    }
+
+    /// [`analyze_diff_with_handwritten`] with the environment-resolved walk
+    /// bounds, for callers outside the Python module (the pipeline) that
+    /// cannot name the crate-private [`PythonDiffWalkLimits`] type.
+    pub(crate) fn analyze_diff_with_handwritten_env(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_handwritten(
+            options,
+            changed_files,
+            PythonDiffWalkLimits::from_env(),
+            handwritten,
+        )
+    }
+
+    /// [`analyze_diff_with_limits`] plus the `[languages.python]
+    /// handwritten_files` declarations (#7386): exact repository-relative
+    /// paths admitted past the built-in excluded-directory conventions, so a
+    /// hand-written source under a `build/`, `dist/` or `env/` directory is
+    /// walked, read and counted instead of silently dropped.
+    pub(in crate::analysis::language::python) fn analyze_diff_with_handwritten(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        walk_limits: PythonDiffWalkLimits,
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        let discovered =
+            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
         let (workspace_files, refused_files) =
             truncate_workspace_files(discovered, walk_limits.max_workspace_files);
         let workspace_read = read_workspace_sources_capped(
@@ -757,7 +788,11 @@ impl PythonAdapter {
             .filter(|changed| {
                 matches!(route(&changed.path), Some(LanguageId::Python))
                     && !is_detectable_generated_python_path(&changed.path)
-                    && !is_detectable_excluded_python_path(&changed.path)
+                    && (!is_detectable_excluded_python_path(&changed.path)
+                        || crate::config::is_declared_handwritten_python_path(
+                            handwritten,
+                            &changed.path,
+                        ))
             })
             .collect::<Vec<_>>();
         // The workspace walk cannot discover a missing NEW-side path. Reuse
@@ -794,12 +829,14 @@ impl PythonAdapter {
             // bounds above; a capped-out file degrades to empty ranges,
             // exactly the pre-existing unreadable-file path, and the file
             // itself is already named in the limitation set.
-            let (old_docstring_ranges, old_import_ranges) = workspace_read
+            let old_source = workspace_read
                 .sources
                 .get(&changed.path)
-                .and_then(|source| reconstruct_old_source(source, changed))
+                .and_then(|source| reconstruct_old_source(source, changed));
+            let (old_docstring_ranges, old_import_ranges) = old_source
+                .as_deref()
                 .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, &source);
+                    let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
@@ -922,6 +959,7 @@ impl PythonAdapter {
                 &deleted_lines::OldSideRanges {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
+                    source: old_source.as_deref(),
                 },
                 workspace_read
                     .sources

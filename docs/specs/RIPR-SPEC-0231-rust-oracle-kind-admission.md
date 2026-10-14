@@ -236,7 +236,8 @@ Two pattern terms are used below.
    would otherwise earn `broad_error` or an observer such as
    `events_sent.contains(&id)` that would otherwise earn step 9's
    `mock_expectation` (`assert!(ready || events_sent.contains(&id))` passes
-   without observing the event). A parenthesized `&&` conjunct that
+   without observing the event), or a snapshot in a block arm that would
+   otherwise earn step 6's `snapshot`. A parenthesized `&&` conjunct that
    such a `||` decides pins nothing, so, as beside a negated pattern, the
    other conjuncts decide with their own reading, or `relational_check` /
    weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads
@@ -302,7 +303,16 @@ Two pattern terms are used below.
    `relational_check` / weak: a slice that only fixes a length (`[_, ..]`,
    `[_]`), or the sole variant of a single-variant enum (`Only::Value`,
    `Only::Value(_)`). A variant whose enum cannot be resolved counts as
-   pinning, which keeps today's reading.
+   pinning, which keeps today's reading. In a top-level `&&` chain with
+   at least one whole `matches!` conjunct and no pinning `==` conjunct
+   (rule 1), the chain reads no stronger than its strongest conjunct read
+   alone, and keeps its kind only when such a conjunct earns that kind at
+   that strength; otherwise it takes the first such conjunct's reading.
+   So a `matches!` keeps its pattern's reading inside the chain (#7695).
+   A pinning `==` keeps the chain's reading, because the test does fix
+   that value; a self-comparison (`value == value`) pins nothing and
+   neither exempts the chain nor earns rule 1's exact credit.
+   `prop_assert!` reads a whole `matches!` condition as `assert!` does.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -373,8 +383,11 @@ Two pattern terms are used below.
    - The grade is classification input, not confirmation: reveal's token
      and effect-observer rules still decide whether a strong oracle
      observes the changed sink, so an admitted assertion on an
-     unconfirmed probe keeps its gap (as `cell-0096-log-info-captured`
-     does until a confirmation rule covers captured-sink membership).
+     unconfirmed probe keeps its gap. `cell-0096-log-info-captured` no
+     longer does: since #7133 a captured-log assertion withholds the gap as
+     `static_unknown` under `rust_log_capture_unresolved` (see
+     `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
+     the log format.
 
 ### Reveal admission of an excluded sibling
 
@@ -490,8 +503,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
   `cargo xtask check-evidence-promotion-honesty` passes. In particular
-  `cell-0096-log-info-captured` keeps its gap verdict while the
-  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  `cell-0096-log-info-captured` kept its gap verdict (it abstains as
+  `limited` since #7133) while the golden fixture `exact_any_membership_oracle` pins the fixed grade
   (`exact_value` / strong in `related_tests[]`): the grade is fixed,
   and the remaining gap is reveal observation confirmation, owned
   outside this spec.
@@ -517,6 +530,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 5. `assert_eq!(check(20), Err(e))`: `exact_error_variant` / strong (unchanged).
 6. `assert!(matches!(check(5), Ok(5)))`: `exact_value` / strong (unchanged).
 7. `assert!(matches!(check(5), Ok(_)))`: `smoke_only` / smoke.
+   `assert!(ready && matches!(check(5), Ok(_)))`: `relational_check` /
+   weak, as `assert!(ready)` reads (today `exact_value` / strong; #7695).
+   `assert!(total == 4 && matches!(check(5), Ok(_)))`: unchanged, because
+   `total == 4` pins a value.
 8. `assert!(is_present())`: not `mock_expectation`.
 9. `assert_eq!(events_sent.len(), 1)`: `exact_value` / strong (unchanged;
    step 5 wins before step 9).
@@ -636,6 +653,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact`
   and the corpus case `spec0231-ensure-disjunction-not-exact` (the
   disjunction forms of example 13, #7558).
+- Existing: `relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern`
+  and the corpus case `spec0231-matches-wildcard-conjunct` (the `&&` chain
+  forms of example 7, #7695).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).

@@ -16,7 +16,7 @@ use super::patterns::{
     is_inequality_named_assertion_macro, is_inequality_only_comparison, is_mock_expectation_line,
     is_negated_pattern_assertion, is_observer_named_assertion_helper, is_smoke_check,
     is_snapshot_assertion, is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
-    pattern_comparison_polarity, tests_both_sides,
+    pattern_comparison_polarity, pattern_conjunct_assertions, tests_both_sides,
 };
 
 /// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
@@ -162,6 +162,45 @@ fn classify_non_negated_assertion(
     line: &str,
     scalar_integer_relation: bool,
 ) -> OracleClassification {
+    let whole = classify_whole_condition(line, scalar_integer_relation);
+    // RIPR-SPEC-0231 rule 3 (#7695): without a pinning `==` conjunct (rule
+    // 1), a `&&` chain is no stronger than its strongest conjunct read alone,
+    // so a `matches!` in the chain keeps its pattern's reading instead of
+    // earning `exact_value` / strong whatever the pattern
+    // (`assert!(ready && matches!(r, Ok(_)))`). A pinning `==` keeps the
+    // chain's reading: the test does fix that value, and lowering it could
+    // turn a real discriminator into an actionable gap. It only lowers.
+    let pins_by_equality = boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition));
+    let Some(conjuncts) = pattern_conjunct_assertions(line).filter(|_| !pins_by_equality) else {
+        return whole;
+    };
+    let readings = conjuncts
+        .iter()
+        .map(|conjunct| classify_assertion(conjunct))
+        .collect::<Vec<_>>();
+    let Some(rank) = readings.iter().map(|reading| reading.strength.rank()).max() else {
+        return whole;
+    };
+    if rank > whole.strength.rank() {
+        return whole;
+    }
+    // The chain keeps its kind only when a conjunct earns that kind at the
+    // same strength alone, so an irrefutable `Ok(_) | Err(_)` conjunct
+    // cannot lend the chain `broad_error` from its `Err` text.
+    let strongest = readings
+        .iter()
+        .filter(|reading| reading.strength.rank() == rank)
+        .collect::<Vec<_>>();
+    if strongest.iter().any(|reading| **reading == whole) {
+        return whole;
+    }
+    strongest
+        .first()
+        .map_or(whole.clone(), |reading| (*reading).clone())
+}
+
+fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
     // strong as its pattern, ahead of every step that reads `matches!`.
     if let Some(classification) = pattern_assertion_classification(line) {
@@ -229,9 +268,15 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Strong,
         }
     } else if is_snapshot_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::Snapshot,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || { assert_snapshot!(v); true })` may never run
+        // the snapshot, so a deciding `||` earns no snapshot credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::Snapshot,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_smoke_check(line) {
         OracleClassification {
