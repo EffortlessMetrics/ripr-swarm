@@ -43,23 +43,23 @@ fn install_panic_hook() {
         }
         // A panic message can quote repository text (a path, a parsed value),
         // so it gets the same terminal escape as every other stderr line.
-        eprintln!(
+        write_stderr_report(format_args!(
             "{}",
             terminal_safe_report(format_panic_report(
                 message,
                 info.location().map(|loc| (loc.file(), loc.line())),
             ))
-        );
+        ));
         let backtrace = std::backtrace::Backtrace::capture();
         if matches!(
             backtrace.status(),
             std::backtrace::BacktraceStatus::Captured
         ) {
-            eprintln!("stack backtrace:\n{backtrace}");
+            write_stderr_report(format_args!("stack backtrace:\n{backtrace}"));
         } else {
-            eprintln!(
+            write_stderr_report(format_args!(
                 "note: set RUST_BACKTRACE=1 for a backtrace; report at https://github.com/EffortlessMetrics/ripr-swarm/issues"
-            );
+            ));
         }
     }));
 }
@@ -93,7 +93,14 @@ fn report_failure(err: &CommandError) {
     if is_closed_stdout_error(err.message()) {
         return;
     }
-    eprintln!("ripr: {err}");
+    write_stderr_report(format_args!("ripr: {err}"));
+}
+
+/// Diagnostics are best effort: a failed stderr sink must not replace the
+/// command's 2/3 exit or recursively panic inside the panic hook (#7854).
+fn write_stderr_report(report: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{report}");
 }
 
 /// A typed stdout write error whose cause is a closed pipe, as produced by
@@ -144,15 +151,22 @@ mod tests {
         }
 
         let executable = std::env::current_exe().map_err(|err| err.to_string())?;
-        for backtrace in ["0", "1"] {
-            let output = std::process::Command::new(&executable)
+        for (backtrace, closed_stderr) in [("0", false), ("1", false), ("0", true), ("1", true)] {
+            let mut command = std::process::Command::new(&executable);
+            command
                 .args([
                     "--exact",
                     "tests::panic_boundary_reports_and_exits_with_code_two",
                     "--nocapture",
                 ])
                 .env("RIPR_PANIC_HOOK_CHILD", "1")
-                .env("RUST_BACKTRACE", backtrace)
+                .env("RUST_BACKTRACE", backtrace);
+            if closed_stderr {
+                let (reader, writer) = std::io::pipe().map_err(|err| err.to_string())?;
+                drop(reader);
+                command.stderr(writer);
+            }
+            let output = command
                 .output()
                 .map_err(|err| format!("failed to run panic-hook child: {err}"))?;
             if output.status.code() != Some(2) {
@@ -161,6 +175,9 @@ mod tests {
                     output.status.code(),
                     String::from_utf8_lossy(&output.stderr)
                 ));
+            }
+            if closed_stderr {
+                continue;
             }
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.contains("ripr: internal error (this is a bug):")
