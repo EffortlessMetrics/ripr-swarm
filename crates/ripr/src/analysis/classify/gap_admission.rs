@@ -27,8 +27,6 @@ pub(in crate::analysis) const REFUSALS_ARE_ANALYZER_LIMITS: &str =
     "gap_admission: every refused related assertion rests on an analyzer limit";
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustAssertionContextUnresolved;
-const FIRST_UNRESOLVED_EDGE: &str =
-    "whether the refused related assertions run as the standard `assert_eq!`";
 const JUDGED_TEST_LIMIT: usize = 3;
 
 /// Withhold a Rust gap whose evidence rests on an analyzer limit. Returns
@@ -63,9 +61,16 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     {
         finding.stop_reasons.push(StopReason::GapEvidenceUnresolved);
     }
+    let macro_name = if finding.probe.family == ProbeFamily::MatchArm {
+        "assert"
+    } else {
+        "assert_eq"
+    };
+    let first_unresolved_edge =
+        format!("whether the refused related assertions run as the standard `{macro_name}!`");
     let judged = judged_tests(finding);
     finding.evidence.push(format!(
-        "gap_withheld: {withheld_class} is not claimed; {FIRST_UNRESOLVED_EDGE} ({})",
+        "gap_withheld: {withheld_class} is not claimed; {first_unresolved_edge} ({})",
         LIMIT.as_str()
     ));
     finding.evidence.extend([
@@ -73,7 +78,7 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
             "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}{}",
             last_established_edge(finding, &judged)
         ),
-        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{FIRST_UNRESOLVED_EDGE}"),
+        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{first_unresolved_edge}"),
         format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classify/gap-admission"),
         format!(
             "{LIMITATION_NON_CLAIM_PREFIX}no missing test, no weak oracle, and no test adequacy is established"
@@ -82,9 +87,13 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     // The absence lines ("no assertion observes ...") and the missing
     // discriminators are the unestablished claim itself. Keeping them would
     // feed repair placement and agent packets a gap this policy withheld.
-    finding.missing = vec![LIMIT.describe().to_string()];
+    finding.missing = vec![
+        LIMIT
+            .describe_for_family(&finding.probe.family)
+            .into_owned(),
+    ];
     finding.activation.missing_discriminators.clear();
-    finding.recommended_next_step = Some(next_step(&judged));
+    finding.recommended_next_step = Some(next_step(&judged, macro_name));
     true
 }
 
@@ -130,14 +139,14 @@ fn last_established_edge(finding: &Finding, judged: &[String]) -> String {
     }
 }
 
-fn next_step(judged: &[String]) -> String {
+fn next_step(judged: &[String], macro_name: &str) -> String {
     let tests = if judged.is_empty() {
         "the tests that call this code".to_string()
     } else {
         judged.join(", ")
     };
     format!(
-        "ripr could not read whether the assertions in {tests} run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+        "ripr could not read whether the assertions in {tests} run as the standard `{macro_name}!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
     )
 }
 

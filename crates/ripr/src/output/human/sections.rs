@@ -479,7 +479,7 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!(
             "  {} \u{2014} {}\n",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
 

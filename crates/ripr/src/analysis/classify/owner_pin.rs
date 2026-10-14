@@ -422,7 +422,7 @@ impl OwnerPinSyntax {
         self
     }
 
-    /// Shared equality-oracle admission for the bounded supported families.
+    /// Shared assertion admission for the bounded supported families.
     /// Execution provenance is independent of the error/boundary/value matcher.
     /// Applicability is the invocation
     /// identity, not the more restrictive owner-pin operand shape, so token
@@ -434,11 +434,14 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        !matches!(
+        let gated = (matches!(
             probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
-        ) || !is_admission_gated_assert_eq(&assertion.text)
-            || self.admits(test, assertion, index)
+        ) && is_admission_gated_assert_eq(&assertion.text))
+            || (probe.family == ProbeFamily::MatchArm
+                && outer_macro_path(&assertion.text)
+                    .is_some_and(|path| path.strip_prefix("r#").unwrap_or(&path) == "assert"));
+        !gated || self.admits(test, assertion, index)
     }
 
     /// Why [`Self::admits_equality_assertion`] refused this assertion, for
@@ -1851,7 +1854,7 @@ impl OwnerReturnPin {
         if !syntax.admits(test, assertion, index) {
             return false;
         }
-        // The assertion must be the test's own, or an `assert_eq!` the
+        // The assertion must be the test's own, or an assertion the
         // shared admission borrows from a test-local check helper the test
         // calls eagerly (#6482). A harness trial's body is only its
         // registration, and an assertion attributed to it from anywhere else
@@ -4680,6 +4683,15 @@ const CONDITIONAL_COMBINATORS: &[&str] = &[
 /// assertion, so letting it skip this gate would credit an `assert_eq!` that
 /// the bare spelling refuses (for example one under `if false`).
 fn is_admission_gated_assert_eq(text: &str) -> bool {
+    let Some(path) = outer_macro_path(text) else {
+        return false;
+    };
+    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
+    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
+}
+
+/// The outer invocation's path, without interpreting nested operand macros.
+fn outer_macro_path(text: &str) -> Option<String> {
     let masked = mask_comments_and_strings(text);
     let mut invocation = masked.trim_start();
     // The parser includes a macro statement's attributes in its fact text.
@@ -4687,17 +4699,11 @@ fn is_admission_gated_assert_eq(text: &str) -> bool {
     // another oracle's token tree for that oracle's own identity.
     while let Some(attribute) = invocation.strip_prefix('#') {
         let attribute = attribute.trim_start();
-        let Some(close) = matching_close(attribute, 0, b'[', b']') else {
-            return false;
-        };
+        let close = matching_close(attribute, 0, b'[', b']')?;
         invocation = attribute[close + 1..].trim_start();
     }
-    let Some((path, _)) = invocation.split_once('!') else {
-        return false;
-    };
-    let path: String = path.chars().filter(|c| !c.is_whitespace()).collect();
-    let leaf = drop_in_assertion_leaf(&path).unwrap_or(&path);
-    leaf.strip_prefix("r#").unwrap_or(leaf) == "assert_eq"
+    let (path, _) = invocation.split_once('!')?;
+    Some(path.chars().filter(|c| !c.is_whitespace()).collect())
 }
 
 /// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`

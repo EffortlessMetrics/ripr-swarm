@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -58,7 +58,7 @@
+             }
+             _ if arg.starts_with("--bin=") || arg.starts_with("--example=") => mixed = true,
+             "--offline" => {}
+-            _ if arg.starts_with('-') => unknown_option = false,
++            _ if arg.starts_with('-') => unknown_option = true,
+             _ => {}
+         }
+         index += 1;
