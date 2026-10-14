@@ -14,28 +14,12 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
-      "path": "src/__pycache__/__init__.cpython-311.pyc",
-      "sha256": "64321ad09fa945f71848fb34e5d505e66f07d15f76f2c627be08c2eae73da57f"
-    },
-    {
-      "path": "src/__pycache__/arrays.cpython-311.pyc",
-      "sha256": "fd7e531748cf45ed44ca4b6dc5e5220e6b93fca5e7b204248cc93b6fb4103597"
-    },
-    {
       "path": "src/arrays.py",
       "sha256": "54f4b82eddcbe3c593ab832cecd66f90c4995936259b45fd115de17f1b064868"
     },
     {
       "path": "tests/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "tests/__pycache__/__init__.cpython-311.pyc",
-      "sha256": "ca4de88730fc62ebfadf70b24484c72f8dfd8159ee00f6826cba205890fbc819"
-    },
-    {
-      "path": "tests/__pycache__/test_arrays.cpython-311-pytest-9.1.1.pyc",
-      "sha256": "b59b61af977810803e9e556632312660cc763ae3538924a7a5e3fbcec65b5c54"
     },
     {
       "path": "tests/test_arrays.py",

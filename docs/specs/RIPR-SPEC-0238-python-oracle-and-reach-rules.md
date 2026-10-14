@@ -566,11 +566,11 @@ mutant calibrates the rule; ripr reports only the static shape.
       `L.assert_called_once_with(`. When the owner's only `return` is its
       last statement, `return p`, the owner is synchronous, not a
       generator, and has no decorator but `@classmethod` or
-      `@staticmethod` (#7634), which only bind the call (a decorator
-      whose name cannot be read, or any other name, fails closed), `p` is never rebound, and the body has no
+      `@staticmethod` (#7634), which only bind the call, `p` is never rebound, and the body has no
       `lambda`, `for` or `:=` that could rebind it, a local the test binds
       once to the owner's result is the mock it passed as well, for both
-      `p(...)` and `p.m(...)` (#7586).
+      `p(...)` and `p.m(...)` (#7586). Any other decorator, or one whose
+      name cannot be read, leaves the result uncredited.
       Either form credits only when the pinned expectation reads the new
       arguments as a different call. A changed argument count or keyword
       set does. So does a rewritten argument when neither side keeps the
