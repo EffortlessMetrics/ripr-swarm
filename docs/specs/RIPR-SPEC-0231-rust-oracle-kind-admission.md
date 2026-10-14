@@ -247,7 +247,25 @@ Two pattern terms are used below.
    reads `exact_value` / strong). A `||` inside a call argument, closure or pattern
    does not decide the condition
    (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
-   `exact_value`). At
+   `exact_value`). A boolean-valued operand compared with a boolean
+   literal is read as what it asserts (#7598): in an equality macro with
+   one boolean-literal operand (`assert_eq!(X, true)`, `assert_ne!(false,
+   X)` and the `debug_` and `prop_` spellings), or a boolean assertion
+   whose whole condition is such a comparison (`ensure!((a == b) ==
+   false)`), when `X` has a top-level `==`, `!=`, spaced `<`, `>`, `<=` or
+   `>=`, `||` or `&&` (through any `!` or `.not()`), an `X` asserted false,
+   an `X` with a deciding `||`, and an `X` whose comparison is `!=` or
+   relational all cap the reading at `relational_check` / weak. An `&&`
+   chain asserted true with a `matches!` conjunct and no pinning `==`
+   conjunct reads like the same chain in `assert!` (rule 3). A comparison
+   asserted true (`assert_eq!(r == Err(E::Bad), true)`), a bare value or
+   call (`assert_eq!(!is_valid(x), true)` pins a bool result) and a whole
+   `matches!` (the polarity rule above) keep their readings. A `matches!`
+   that is an operand of `^`, `<`, `>`, `<=` or `>=`, a call argument
+   (`std::ops::Not::not(matches!(..))`, `check(matches!(..))`) or an
+   `if`, `while` or `match` operand may be inverted or discarded, so it
+   caps the reading like a negated pattern; one in a closure body keeps
+   rule 3's reading. At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns
@@ -632,6 +650,15 @@ rejected alternative. Any can be reversed later without touching the rest.
     check helper, a harness trial) whose oracles are read from the function
     text alone. A binding in another file reached through a glob import, and
     a Cargo package rename, are not detected.
+
+31. `assert_eq!(score(2) != 0, true)`, `assert_eq!(check(20) == Err(E::Bad),
+    false)`, `ensure!((score(2) == 4) == false)`,
+    `assert!((matches!(check(5), Ok(5)) || ready) == true)`,
+    `assert_eq!(ready && matches!(check(5), Ok(_)), true)` and
+    `assert!(std::ops::Not::not(matches!(check(20), Err(E::Bad))))`:
+    `relational_check` / weak (all `exact_value` or `exact_error_variant` /
+    strong before #7598). `assert_eq!(check(20) == Err(E::Bad), true)` and
+    `assert_eq!(!is_valid(5), true)` keep their exact readings.
 
 ## Test Mapping
 

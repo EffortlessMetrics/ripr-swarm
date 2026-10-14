@@ -1,4 +1,5 @@
 mod arguments;
+mod bool_operands;
 mod classify;
 mod pattern_admission;
 mod patterns;

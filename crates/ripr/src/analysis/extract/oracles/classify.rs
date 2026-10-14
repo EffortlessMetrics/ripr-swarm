@@ -4,6 +4,9 @@ use super::arguments::{
     assertion_oracle_text, boolean_assertion_macro_condition, ensure_assertion_arguments,
     is_unguarded_wildcard_assertion, outer_assertion_condition,
 };
+use super::bool_operands::{
+    BoolOperandReading, bool_literal_comparison_reading, contains_unread_pattern_operand,
+};
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
@@ -54,6 +57,28 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Weak,
         };
     }
+    // RIPR-SPEC-0231 rule 1 (#7598): a comparison, disjunction or chain
+    // compared with a boolean literal reads as what it asserts, so
+    // `assert_eq!(r == Err(E::Bad), false)` is the inequality it states.
+    match bool_literal_comparison_reading(line) {
+        Some(BoolOperandReading::Capped) => {
+            return capped_at_inequality(classify_non_negated_assertion(
+                line,
+                scalar_integer_relation,
+            ));
+        }
+        Some(BoolOperandReading::Chain(chain)) => {
+            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
+            let chain = classify_assertion(&chain);
+            // Rule 3 only lowers a reading, never raises it.
+            return if chain.strength.rank() < whole.strength.rank() {
+                chain
+            } else {
+                whole
+            };
+        }
+        None => {}
+    }
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {
@@ -86,7 +111,10 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     // pattern or cannot be resolved, so it caps the reading like a negated
     // condition (`!matches!(..)` anywhere, or `matches!(..).not()`).
     let polarity = pattern_comparison_polarity(line);
-    if contains_negated_pattern(line) || polarity == Some(PatternPolarity::NotPositive) {
+    if contains_negated_pattern(line)
+        || contains_unread_pattern_operand(line)
+        || polarity == Some(PatternPolarity::NotPositive)
+    {
         return capped_at_inequality(classify_non_negated_assertion(
             line,
             scalar_integer_relation,
@@ -127,14 +155,18 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// `!matches!(..)` condition, a `matches!` comparison that is not positive
 /// polarity, a negated pattern that caps a compound condition, an
 /// inequality-named `assert_*` helper or macro that is not a mock or
-/// side-effect observer, or a boolean condition whose only comparison is
-/// `!=` and is not a positive pattern comparison). Reveal reads this so a probe-family override can never lift an
+/// side-effect observer, a boolean-valued operand that a boolean literal
+/// caps (#7598), a `matches!` under an unread operator, call or `if`, or a
+/// boolean condition whose only comparison is `!=` and is not a positive
+/// pattern comparison). Reveal reads this so a probe-family override can never lift an
 /// inequality above its classified strength.
 pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     let oracle_text = assertion_oracle_text(line);
     let line = oracle_text.as_deref().unwrap_or(line);
     let polarity = pattern_comparison_polarity(line);
     is_inequality_macro_assertion(line)
+        || bool_literal_comparison_reading(line) == Some(BoolOperandReading::Capped)
+        || contains_unread_pattern_operand(line)
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
         || (contains_negated_pattern(line)

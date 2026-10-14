@@ -602,6 +602,95 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
     Ok(())
 }
 
+/// #7598, RIPR-SPEC-0231 rule 1: a boolean-valued operand read through a
+/// boolean literal, a negation or an operator the classifier does not read
+/// states only a relation, so it never earns an exact kind.
+#[test]
+fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    for (text, expected) in [
+        // A comparison asserted false is the inequality it states.
+        ("assert_eq!(r == Err(E::Bad), false);", &weak),
+        ("assert_eq!(false, r == Err(E::Bad));", &weak),
+        ("debug_assert_eq!(r == Err(E::Bad), false);", &weak),
+        ("prop_assert_eq!(r == Err(E::Bad), false);", &weak),
+        ("assert_ne!(r == Err(E::Bad), true);", &weak),
+        ("assert_eq!(!(r == Err(E::Bad)), true);", &weak),
+        ("assert_eq!((r == Err(E::Bad)).not(), true);", &weak),
+        ("ensure!((a == b) == false);", &weak),
+        ("ensure!(false == (a == b));", &weak),
+        ("ensure!((a == b) != true);", &weak),
+        // `!=` and spaced `<`, `>`, `<=`, `>=` asserted true are relations.
+        ("assert_eq!(true, check(20) != Err(E::Bad));", &weak),
+        ("assert_eq!(score(2) != 0, true);", &weak),
+        ("assert_eq!(score(2) > 0, true);", &weak),
+        ("assert_eq!(score(2) <= 9, true);", &weak),
+        // A deciding `||` passes whenever one arm does.
+        ("assert!((matches!(r, Ok(3)) || f) == true);", &weak),
+        ("assert!((matches!(r, Err(E::A)) || f) == true);", &weak),
+        ("ensure!((matches!(r, Ok(3)) || f) == true);", &weak),
+        ("ensure!((a == b || c) == true);", &weak),
+        ("assert_eq!(matches!(r, Ok(3)) || f, true);", &weak),
+        ("assert_eq!(r == Ok(3) || f, true);", &weak),
+        // A compared chain reads like the same chain in `assert!` (rule 3).
+        ("assert_eq!(ready && matches!(r, Ok(_)), true);", &weak),
+        ("assert_eq!(ready && matches!(r, Ok(3)), true);", &exact),
+        // A pattern under an unread operator, call or `if` may be inverted.
+        ("assert!(matches!(r, Err(E::Bad)) ^ true);", &weak),
+        ("assert!(matches!(r, Err(E::Bad)) < true);", &weak),
+        ("assert!(true > matches!(r, Err(E::Bad)));", &weak),
+        (
+            "assert!(std::ops::Not::not(matches!(r, Err(E::Bad))));",
+            &weak,
+        ),
+        ("assert!(check((matches!(r, Err(E::Bad)))));", &weak),
+        (
+            "assert!(if matches!(r, Err(E::Bad)) { false } else { true });",
+            &weak,
+        ),
+        // Controls: a comparison asserted true, a bare value or call, a
+        // pinning chain and a pattern in a closure keep today's reading.
+        ("assert_eq!(r == Err(E::Bad), true);", &err),
+        ("assert_eq!(true, score(2) == 6);", &exact),
+        ("assert_eq!(!is_valid(x), true);", &exact),
+        ("assert_eq!(is_valid(x), false);", &exact),
+        ("assert_eq!(is_a(x) && is_b(x), true);", &exact),
+        ("assert_eq!(a == b && c == d, true);", &exact),
+        ("assert_eq!(Vec::<u8>::new() == v, true);", &exact),
+        ("assert_eq!(score(2), 6);", &exact),
+        ("assert!(matches!(r, Ok(3)) == true);", &exact),
+        ("assert!((matches!(r, Ok(3))) == true);", &exact),
+        ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
+        (
+            "assert!(xs.iter().any(|x| (matches!(x, Some(3)))));",
+            &exact,
+        ),
+        ("assert!(ready && (matches!(r, Ok(3))));", &exact),
+        ("ensure!(a == b);", &exact),
+    ] {
+        require_classification(text, expected)?;
+    }
+    for text in [
+        "assert_eq!(r == Err(E::Bad), false);",
+        "assert!(std::ops::Not::not(matches!(r, Err(E::Bad))));",
+    ] {
+        if !is_inequality_assertion(text) {
+            return Err(format!("{text}: must read as an inequality"));
+        }
+        let facts = extract_assertions(text, 7598);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+    }
+    if is_inequality_assertion("assert_eq!(r == Err(E::Bad), true);") {
+        return Err("a comparison asserted true is not an inequality".to_string());
+    }
+    Ok(())
+}
+
 fn require_classification(
     text: &str,
     expected: &(OracleKind, OracleStrength),
