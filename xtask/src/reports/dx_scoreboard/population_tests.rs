@@ -702,7 +702,7 @@ fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), Strin
         "control needs unlabeled source cases"
     );
     let records = population::Records::load(&dir)?;
-    for (rate, numerator) in [("oracle_accuracy", 38), ("oracle_overclaim_rate", 0)] {
+    for (rate, numerator) in [("oracle_accuracy", 41), ("oracle_overclaim_rate", 0)] {
         let population = records.population(&format!("oracle_accuracy.{rate}"))?;
         assert_eq!(population.totals()?, (numerator, 41));
         assert_eq!(

@@ -3234,6 +3234,14 @@ fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Res
                 AssertionContextRefusal::ConditionalPath("an `if` branch"),
             )),
         ),
+        // `#![no_std]` without `extern crate std` leaves no `std` root.
+        (
+            format!(
+                "#![no_std]\nuse demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("std::assert_eq"),
+        ),
         // Other drop-in roots need their own manifest check, which this
         // gate does not make.
         (
