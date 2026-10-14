@@ -8313,6 +8313,32 @@ fn a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand() {
 }
 
 #[test]
+fn a_short_circuit_tail_refuses_a_body_with_earlier_statements() {
+    // `let x = x + 1;` rebinds the parameter the chain reads, so the call's
+    // `0` is not the value `x == 0` compares. The same pin without the
+    // statement is the control.
+    for (statement, admitted) in [("", true), ("    let x = x + 1;\n", false)] {
+        let lib = format!(
+            "pub fn both_zero(x: i32, y: i32) -> bool {{\n{statement}    x == 0 && y == 1\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins() {{\n        assert_eq!(both_zero(0, 1), true);\n    }}\n}}\n"
+        );
+        let index = index(&[(LIB, lib.as_str())]);
+        let owner = owner(&index, "both_zero");
+        // The probe sits on the chain's line, after any statement.
+        let mut probe = return_probe(owner, "x == 0 && y == 1");
+        probe.location = SourceLocation::new(
+            owner.file.clone(),
+            owner.start_line + 1 + usize::from(!statement.is_empty()),
+            1,
+        );
+        assert_eq!(
+            OwnerReturnPin::establish(&probe, owner, &index).is_some(),
+            admitted,
+            "{statement:?}"
+        );
+    }
+}
+
+#[test]
 fn a_short_circuit_tail_refuses_impure_or_mixed_chains() {
     for tail in [
         "x == 0 && check_y(y)",

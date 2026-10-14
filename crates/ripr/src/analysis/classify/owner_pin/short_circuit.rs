@@ -1,5 +1,5 @@
 //! RIPR-SPEC-0197 rule 3 short-circuit tails (#7969 grid cell): a bool
-//! owner whose whole tail is one `&&` chain or one `||` chain of
+//! owner whose whole body is one `&&` chain or one `||` chain of
 //! comparisons over its parameters.
 //!
 //! Rule 3 refuses `&&`/`||` because a pin may never evaluate the changed
@@ -72,6 +72,12 @@ impl ShortCircuitTail {
     /// parameters with no receiver.
     pub(in crate::analysis::classify) fn parse(function: &str, changed: &str) -> Option<Self> {
         let parameters = parameter_names(function)?;
+        // The chain must be the whole body: an earlier statement could
+        // rebind a parameter (`let x = x + 1;`), and then the call's
+        // arguments are not the values the chain reads.
+        if !is_whole_body(function, changed) {
+            return None;
+        }
         // Split where the masked text holds the operator, so a `&&` inside
         // a string or comment is never one; read operands from the original
         // text, which masking keeps aligned byte for byte.
@@ -299,6 +305,21 @@ fn parse_atom(text: &str, parameters: &[String]) -> Option<Atom> {
     Value::read(&literal).map(|_| Atom::Literal(literal))
 }
 
+/// Whether `changed` is all the owner's body holds between its braces,
+/// ignoring comments and whitespace.
+fn is_whole_body(function: &str, changed: &str) -> bool {
+    let masked = mask_comments_and_strings(function);
+    let Some(close) = masked.rfind('}') else {
+        return false;
+    };
+    let Some(open) = super::body_block_open(&masked) else {
+        return false;
+    };
+    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    open < close
+        && compact(&masked[open + 1..close]) == compact(&mask_comments_and_strings(changed))
+}
+
 /// The owner's parameter names, when each is a plain identifier pattern
 /// and there is no `self` receiver.
 fn parameter_names(function: &str) -> Option<Vec<String>> {
@@ -424,8 +445,8 @@ fn helper_column(test: &TestSummary, loan: &HelperLoan, parameter: &str) -> Opti
 mod tests {
     use super::*;
 
-    fn tail(function: &str, changed: &str) -> Option<ShortCircuitTail> {
-        ShortCircuitTail::parse(function, changed)
+    fn tail(signature: &str, changed: &str) -> Option<ShortCircuitTail> {
+        ShortCircuitTail::parse(&format!("{signature}\n    {changed}\n}}"), changed)
     }
 
     #[test]
@@ -473,6 +494,11 @@ mod tests {
             ("fn f((a, b): (u8, u8)) -> bool {", "a > 1 && b < 3"),
             // Generic signatures are not read.
             ("fn f<T: Into<u8>>(a: u8) -> bool {", "a > 1 && a < 3"),
+            // A statement before the chain could rebind a parameter.
+            (
+                "fn f(x: i32, y: i32) -> bool {\n    let x = x + 1;",
+                "x == 0 && y == 1",
+            ),
         ] {
             assert!(tail(function, changed).is_none(), "{changed}");
         }

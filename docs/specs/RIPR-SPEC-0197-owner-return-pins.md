@@ -1352,7 +1352,9 @@ from `x == 0`, and the changed `0 == y` never runs. One shape is admitted,
 and only per pinned call:
 
 1. The owner has plain identifier parameters (no receiver, no pattern, no
-   generics), no `?` and no other `return`, and its whole tail is one
+   generics), no `?`, no other `return` and no statement before the
+   tail (`let x = x + 1;` would make the call's arguments differ from the
+   values the chain reads), and its whole body is one
    chain joined only by `&&` or only by `||` (a mix needs precedence and
    refuses). Each operand is a `bool` parameter after any number of `!`,
    or one comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of two atoms, not
@@ -1986,7 +1988,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `refuses_anything_that_can_call_panic_or_mix_operators`,
   `evaluates_operands_on_literal_values`; `owner_pin/tests.rs`
   `a_short_circuit_tail_pins_only_on_a_call_that_runs_every_operand`,
-  `a_short_circuit_tail_refuses_impure_or_mixed_chains`.
+  `a_short_circuit_tail_refuses_impure_or_mixed_chains`,
+  `a_short_circuit_tail_refuses_a_body_with_earlier_statements`.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
