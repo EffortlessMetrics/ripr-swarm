@@ -912,6 +912,18 @@ export class RiprClientController {
     // ownership of a client that may have started successfully. (#2822)
     this.startGeneration++;
 
+    // Config is already the new value when onDidChangeConfiguration restarts.
+    // Hide the opt-out immediately so a stalled waitForLifecycle or
+    // client.stop() cannot keep the previous item visible. Reuse this
+    // snapshot for the final status so a disable transition never renders
+    // visible `stopped`.
+    const config = this.runtime.getConfig(
+      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+    );
+    if (!config.enabled) {
+      this.updateStatus(disabledStatus());
+    }
+
     if (starting) {
       const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
       await waitForLifecycle(
@@ -941,12 +953,6 @@ export class RiprClientController {
     this.dirtyRiprDocuments.clear();
     this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
-    // Config is already the new value when onDidChangeConfiguration restarts.
-    // Prefer `disabled` over visible `stopped` so a disable transition does
-    // not occupy the status bar for the rest of stop()/startOnce().
-    const config = this.runtime.getConfig(
-      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
-    );
     this.updateStatus(config.enabled
       ? {
           kind: 'stopped',

@@ -3753,6 +3753,45 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('disable restart hides the status item before server stop finishes', async () => {
+    let releaseStop: (() => void) | undefined;
+    let sawStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStarted = new Promise<void>((resolve) => {
+      sawStop = resolve;
+    });
+    const context = createControllerTestContext({
+      beforeClientStop: async () => {
+        sawStop?.();
+        await stopGate;
+      }
+    });
+    let restarting: Promise<void> | undefined;
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true);
+
+      context.setEnabled(false);
+      restarting = context.controller.restart();
+      await stopStarted;
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disable must hide the main item before client.stop() finishes'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      releaseStop?.();
+      await restarting;
+      assert.strictEqual(context.statusVisible(), false);
+    } finally {
+      releaseStop?.();
+      await restarting?.catch(() => undefined);
+      await context.dispose();
+    }
+  });
+
   test('disable restart hides the status item before setup-file reads finish', async () => {
     let releaseRead: (() => void) | undefined;
     let sawDisabledRead: (() => void) | undefined;
@@ -5185,6 +5224,7 @@ interface ControllerTestOptions {
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;
+  beforeClientStop?: () => Promise<void>;
 }
 
 // Mirror of the server's `shell_arg` (crates/ripr/src/agent/loop_commands.rs).
@@ -5531,7 +5571,11 @@ class FakeLanguageClient {
     this.startCalls += 1;
   }
 
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    if (this.options.beforeClientStop) {
+      await this.options.beforeClientStop();
+    }
+  }
 
   captureClientOptions(options: unknown): void {
     this.receivedInitializationOptions = (options as {
