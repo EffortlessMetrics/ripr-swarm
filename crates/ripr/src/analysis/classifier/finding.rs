@@ -37,7 +37,7 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    // RIPR-SPEC-0260: no related test call enters the guard around the
+    // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
     let unentered_guard = (class == ExposureClass::WeaklyExposed)
         .then(|| {

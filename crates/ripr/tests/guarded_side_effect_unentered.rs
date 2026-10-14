@@ -1,4 +1,4 @@
-//! End-to-end witness for RIPR-SPEC-0260 (#7132).
+//! End-to-end witness for RIPR-SPEC-0263 (#7132).
 //!
 //! A changed `v.push(x)` inside `if x > 10` runs only for inputs above 10.
 //! When every related test calls the owner with a literal that leaves the

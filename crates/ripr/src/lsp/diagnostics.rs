@@ -3050,7 +3050,7 @@ fn lsp_message(finding: &Finding) -> String {
                 None => "the exact fix site is unavailable".to_string(),
             };
             // A guard no test enters is a missing input, not a missing
-            // assertion (RIPR-SPEC-0260): the fix is an input that enters it.
+            // assertion (RIPR-SPEC-0263): the fix is an input that enters it.
             if first
                 .reason
                 .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)

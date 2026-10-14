@@ -192,7 +192,7 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .and_then(|owner| package_prefix(&owner.file));
         // RIPR-SPEC-0229: an unselected-arm discriminator (and a
-        // RIPR-SPEC-0260 unentered guard) reads each related test's owner
+        // RIPR-SPEC-0263 unentered guard) reads each related test's owner
         // calls as inputs to the changed owner. A test whose
         // file imports a foreign same-named function, or whose own package
         // defines one, may be calling that function instead, so the same

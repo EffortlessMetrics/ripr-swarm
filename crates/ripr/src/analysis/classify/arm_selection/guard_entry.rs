@@ -1,5 +1,5 @@
 //! Whether a related test's owner call enters the `if` that encloses a
-//! changed side effect (RIPR-SPEC-0260, #7132).
+//! changed side effect (RIPR-SPEC-0263, #7132).
 //!
 //! A guarded `v.push(x)` runs only for inputs that make its `if` condition
 //! true. When every related test calls the owner with a literal that makes

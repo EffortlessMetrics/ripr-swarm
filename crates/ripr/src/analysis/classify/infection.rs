@@ -178,7 +178,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                 .find(|fact| is_unselected_input_reason(&fact.reason))
             {
                 // RIPR-SPEC-0229: every related test's owner input selects a
-                // different arm, so none activates this one. RIPR-SPEC-0260:
+                // different arm, so none activates this one. RIPR-SPEC-0263:
                 // every input leaves the enclosing guard false, so none runs
                 // the changed side effect.
                 StageEvidence::new(

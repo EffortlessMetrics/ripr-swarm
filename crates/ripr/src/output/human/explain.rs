@@ -198,13 +198,13 @@ fn verdict_changers(finding: &Finding) -> Vec<String> {
     // A missing discriminator is a need whether or not any listed test got
     // far enough to be judged on it. A predicate boundary is an input a test
     // must use, as is an unselected match arm (RIPR-SPEC-0229) or an
-    // unentered guard (RIPR-SPEC-0260); an error
+    // unentered guard (RIPR-SPEC-0263); an error
     // variant or field value is an assertion it must make.
     let facts = &finding.activation.missing_discriminators;
     if let Some(fact) = input_boundary_fact(facts, &finding.probe.family) {
         push(match finding.probe.family {
             ProbeFamily::MatchArm => format!("use an input that selects arm `{} =>`", fact.value),
-            // RIPR-SPEC-0260: the value is the guard, `if x > 10`.
+            // RIPR-SPEC-0263: the value is the guard, `if x > 10`.
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
                 format!("use an input that enters `{}`", fact.value)
             }

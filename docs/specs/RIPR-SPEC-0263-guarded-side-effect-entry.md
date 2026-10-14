@@ -1,4 +1,4 @@
-# RIPR-SPEC-0260: Guarded side effect no test input enters
+# RIPR-SPEC-0263: Guarded side effect no test input enters
 
 Status: proposed
 

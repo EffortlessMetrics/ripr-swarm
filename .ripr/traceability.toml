@@ -15130,9 +15130,9 @@ outputs = [
 metrics = ["unit_test_pass_rate"]
 
 [[behavior]]
-id = "RIPR-SPEC-0260"
+id = "RIPR-SPEC-0263"
 name = "Guarded side effect no test input enters"
-spec = "docs/specs/RIPR-SPEC-0260-guarded-side-effect-entry.md"
+spec = "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md"
 tests = [
   "crates/ripr/tests/guarded_side_effect_unentered.rs::a_literal_that_misses_the_guard_names_it_and_is_not_exposed",
   "crates/ripr/tests/guarded_side_effect_unentered.rs::an_input_that_enters_the_guard_keeps_the_exposed_reading",
@@ -15156,7 +15156,7 @@ code = [
   "crates/ripr/src/output/related_test_miss.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0260-guarded-side-effect-entry.md",
+  "docs/specs/RIPR-SPEC-0263-guarded-side-effect-entry.md",
   "fixtures/rust-verdict-corpus/expected/rows/rust-guarded-push-unentered-branch.json",
 ]
 metrics = ["unit_test_pass_rate"]

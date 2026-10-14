@@ -1417,7 +1417,7 @@ fn missing_match_arm_discriminator(
 
 pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 
-/// RIPR-SPEC-0260 (#7132): name the `if` around a changed side effect or
+/// RIPR-SPEC-0263 (#7132): name the `if` around a changed side effect or
 /// call as the missing discriminator when every related test calls the
 /// owner directly and every call's literal input provably leaves the guard
 /// false (`add(&mut v, 4)` against `if x > 10`). The probe then never runs
