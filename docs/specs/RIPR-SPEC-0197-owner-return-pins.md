@@ -153,7 +153,9 @@ rule only for an assertion whose context was admitted.
    `let`, closure, `for` or match binding, which may hold a fixture value
    through an assignment or mutation, a rebound `#[case]` parameter
    included), refuses; unrebound `#[case]` parameters and names bound
-   outside the test pass. A generic test (type parameters or a `where`
+   outside the test pass. A test with a fixture lends no check-helper
+   assertion: the helper's expected value is its own parameter, which the
+   test may fill from a fixture. A generic test (type parameters or a `where`
    clause) refuses, since rstest may infer an annotated type parameter from
    the fixture (cluster 12a, #6578). `rstest` must be the crate in
    the test's module under the `serial_test` rule, jointly with the other

@@ -1863,6 +1863,17 @@ impl OwnerReturnPin {
         if in_body == helper.is_some() {
             return false;
         }
+        // #6578 review: a borrowed helper assertion compares the helper's
+        // parameters, which the test may fill from a fixture that calls the
+        // owner (`check(want)` with `#[fixture] fn want() { weight(4) }`).
+        // The expected-operand scan below reads the test's names, not the
+        // helper's, so a test with a fixture lends no helper assertion.
+        if helper.is_some()
+            && fixture_parameters(test, &mask_comments_and_strings(&test.body))
+                .is_none_or(|fixtures| !fixtures.is_empty())
+        {
+            return false;
+        }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
             || (owner_named_outside(test, &assertion.text, &self.name)
@@ -5899,8 +5910,7 @@ fn parameter_annotation(test: &TestSummary, receiver: &str) -> Option<String> {
     let [fn_at] = fns.as_slice() else {
         return None;
     };
-    let open = fn_at + masked[*fn_at..].find('(')?;
-    let close = matching_close(&masked, open, b'(', b')')?;
+    let (open, close) = fn_param_range(&masked, *fn_at)?;
     let mut blanked = masked.clone();
     blanked.replace_range(open + 1..close, &" ".repeat(close - open - 1));
     if binds_outside_let(&blanked, receiver) || let_patterns_bind(&blanked, receiver) {
@@ -6145,50 +6155,19 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 /// (rows the syntax gate holds to literals) and names bound outside the
 /// test (constants) pass.
 fn expected_reaches_fixture(test: &TestSummary, expected: &str) -> bool {
-    // Most tests take no parameters: skip the parse.
     let masked = mask_comments_and_strings(&test.body);
-    let parameters = whole_word_offsets(&masked, "fn")
-        .first()
-        .and_then(|offset| {
-            let open = offset + masked[*offset..].find('(')?;
-            let close = matching_close(&masked, open, b'(', b')')?;
-            Some((open, close))
-        });
-    // No readable `fn` signature holds no fixture parameter; the owner-pin
-    // syntax gate admits rstest only on a parsed `fn`.
-    let Some((open, close)) = parameters else {
-        return false;
-    };
-    if masked[open + 1..close].trim().is_empty() {
-        return false;
-    }
-    let Some(parse) = parse_clean_source_file(&test.body) else {
+    let Some(fixtures) = fixture_parameters(test, &masked) else {
         return true;
     };
-    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
-        return true;
-    };
-    let Some(list) = function.param_list() else {
-        return false;
-    };
-    let mut fixtures = BTreeSet::new();
-    for param in list.params() {
-        let Some(ast::Pat::IdentPat(pat)) = param.pat() else {
-            return true;
-        };
-        let Some(name) = pat.name() else {
-            return true;
-        };
-        if !param
-            .attrs()
-            .any(|attr| attr.simple_name().as_deref() == Some("case"))
-        {
-            fixtures.insert(name.text().to_string());
-        }
-    }
     if fixtures.is_empty() {
         return false;
     }
+    let Some((open, close)) = whole_word_offsets(&masked, "fn")
+        .first()
+        .and_then(|offset| fn_param_range(&masked, *offset))
+    else {
+        return true;
+    };
     let mut body = masked.clone();
     body.replace_range(open + 1..close, &" ".repeat(close - open - 1));
     mask_comments_and_strings(expected)
@@ -6199,6 +6178,56 @@ fn expected_reaches_fixture(test: &TestSummary, expected: &str) -> bool {
                 || binds_outside_let(&body, word)
                 || let_patterns_bind(&body, word)
         })
+}
+
+/// #6578: the names of the test's rstest fixture parameters (those not
+/// marked `#[case]`), empty when the test takes none, or `None` when it
+/// takes parameters ripr cannot read. `masked` is the test body with
+/// comments and strings masked.
+fn fixture_parameters(test: &TestSummary, masked: &str) -> Option<BTreeSet<String>> {
+    // Most tests take no parameters: skip the parse. No readable `fn`
+    // signature holds no fixture parameter; the owner-pin syntax gate
+    // admits rstest only on a parsed `fn`.
+    let Some((open, close)) = whole_word_offsets(masked, "fn")
+        .first()
+        .and_then(|offset| fn_param_range(masked, *offset))
+    else {
+        return Some(BTreeSet::new());
+    };
+    if masked[open + 1..close].trim().is_empty() {
+        return Some(BTreeSet::new());
+    }
+    let parse = parse_clean_source_file(&test.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let mut fixtures = BTreeSet::new();
+    let Some(list) = function.param_list() else {
+        return Some(fixtures);
+    };
+    for param in list.params() {
+        let Some(ast::Pat::IdentPat(pat)) = param.pat() else {
+            return None;
+        };
+        let name = pat.name()?;
+        if !param
+            .attrs()
+            .any(|attr| attr.simple_name().as_deref() == Some("case"))
+        {
+            fixtures.insert(name.text().to_string());
+        }
+    }
+    Some(fixtures)
+}
+
+/// The offsets of the parentheses around the parameter list of the `fn`
+/// keyword at `fn_at` in `masked`.
+fn fn_param_range(masked: &str, fn_at: usize) -> Option<(usize, usize)> {
+    let open = fn_at + masked[fn_at..].find('(')?;
+    let close = matching_close(masked, open, b'(', b')')?;
+    Some((open, close))
 }
 
 /// #6974 review: whether any `let` pattern in `masked` may bind `word`:
