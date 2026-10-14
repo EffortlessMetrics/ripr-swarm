@@ -162,16 +162,17 @@ official SDK transport:
   sent over the cap: when even the compact-text envelope cannot fit, the
   call fails closed with `result_too_large` naming both sizes.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
-  over the selected items in snapshot order. When the whole selection
+  over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
   response bound, the worst-case escaping budget), the default call
   returns the first wire-fitting page and discloses the window through
   `page` (`offset` echoing the request, `limit` when the caller set it,
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
-  selection exactly once. Pages are sized so the complete double-carry
+  narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
   carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. The generated `next_page` route pins the snapshot identity, so
+  requires. The generated `next_page` route pins the snapshot identity,
+  filters, and explicit limit, so
   a refresh between pages fails closed with `stale_snapshot` instead of
   mixing snapshots. Only a listing that cannot fit even one page — for
   example an omission disclosure alone over the ceiling — fails closed
