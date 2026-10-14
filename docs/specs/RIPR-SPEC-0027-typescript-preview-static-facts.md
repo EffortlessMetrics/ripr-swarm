@@ -324,6 +324,12 @@ a same-module entry reaching the owner, is not related: when no test references 
 with reach `no` and the missing reference named (`No test references
 \`owner(\``).
 
+Extraction-gap disclosures keep the selected file and source line. Their
+single-line snippets normalize whitespace across the complete half-open source
+span before applying an 80-Unicode-scalar display bound. Snippets that fit are
+complete; overflow retains 77 scalars followed by `...`. Raw indentation and
+CRLF line endings must not consume the display bound or hide truncation.
+
 ## Probe Facts
 
 Probes the adapter must generate (syntax-first):
