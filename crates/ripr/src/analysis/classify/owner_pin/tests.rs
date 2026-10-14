@@ -5844,6 +5844,117 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
+/// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
+/// tail, an early `return Err(..)` exits as `?` does, and the test may
+/// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
+/// Any other early return, an unwrapped bare-tail owner, `unwrap_or_default`
+/// or a computed `expect` message does not pin.
+#[test]
+fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
+    let question = "    let n: u32 = s.parse().map_err(|_| String::from(\"bad\"))?;\n";
+    let with_exit = |exit: &str| {
+        CONFIG_LIB.replace(
+            question,
+            &format!("{question}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let guarded = with_exit("return Err(String::from(\"zero\"));");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for (body, pins) in [
+        (format!("assert_eq!(parse(\"3\"), Ok({literal}));"), true),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!({literal}, parse(\"3\").unwrap());"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(\"parses\"), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), Ok({literal}));"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap_or_default(), {literal});"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(&msg), {literal});"),
+            false,
+        ),
+        (format!("assert_eq!(parse(\"3\"), {literal});"), false),
+        (
+            format!("let mut c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+    ] {
+        assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
+    }
+    // A bare-tail owner has no wrapped value to unwrap.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3).unwrap(), {literal});")
+    ));
+    // An early exit that may hand back another `Ok` refuses the pin.
+    let tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(parse(\"3\"), Ok({literal}));\n}}\n"
+    );
+    for exit in [
+        "return Ok(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return parse(\"1\");",
+        "return Err(String::new()).or(parse(\"1\"));",
+    ] {
+        let lib = with_exit(exit);
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // A `Some(..)` tail admits an early `return None` and nothing else.
+    let maybe_tail = "pub fn maybe(n: u32) -> Option<Config> {\n";
+    let maybe_with = |exit: &str| {
+        format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}").replace(
+            maybe_tail,
+            &format!("{maybe_tail}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let unwrap_maybe = format!("assert_eq!(maybe(3).unwrap(), {literal});");
+    assert!(whole_value_admits(
+        &maybe_with("return None;"),
+        "maybe",
+        &unwrap_maybe
+    ));
+    let maybe_tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{unwrap_maybe}\n}}\n");
+    for exit in [
+        "return Some(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return maybe(1);",
+        "return FALLBACK;",
+    ] {
+        let lib = maybe_with(exit);
+        let (_, pin) = whole_value_pin(&lib, "maybe", &maybe_tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Review: an `Err` the workspace rebinds may build an `Ok`, so the early
+    // exit is not the other variant.
+    let early_literal =
+        with_exit("return Err(Config { retries: 4, name: \"x\".into(), count: Count(n) });");
+    for rebinding in [
+        "#[allow(non_snake_case)]\npub fn Err(c: Config) -> Result<Config, String> {\n    Ok(c)\n}\n",
+        "use std::result::Result::Ok as Err;\n",
+    ] {
+        let lib = format!("{rebinding}{early_literal}");
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+}
+
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
 /// that names the changed field with an independent value pins it,
 /// directly, through `Ok(..)` and through a once-used `let` of the owner
