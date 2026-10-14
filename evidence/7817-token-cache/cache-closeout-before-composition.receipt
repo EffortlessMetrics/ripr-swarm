@@ -1,0 +1,7 @@
+2026-10-14T08:54:50Z
+9.8G	/workspace/7817-target/debug/incremental
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G   15G   16G  50% /workspace
+Removed only completed task incremental compiler cache; binary/source/raw evidence retained.
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G  5.2G   25G  18% /workspace

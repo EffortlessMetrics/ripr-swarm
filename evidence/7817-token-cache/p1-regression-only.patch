@@ -1,0 +1,72 @@
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 7f813e5cb..ecdfef1d7 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -6990,6 +6990,39 @@ return Err(\"typed pin\".into());
+         );
+     }
+ 
++    #[test]
++    fn refused_implicit_kind_preserves_independent_token_confirmation() {
++        for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
++            let probe = probe(family, "persist_audit(record)");
++            let reaching = test_with_assertions("calls_owner", vec![]);
++            for (text, expected) in [
++                ("assert_eq!(persist_audit(record), expected);", StageState::Yes),
++                ("assert_eq!(parsed, expected);", StageState::Weak),
++            ] {
++                let observer = test_with_assertions("refused_implicit", vec![oracle(
++                    text, OracleKind::WholeObjectEquality, OracleStrength::Strong,
++                )]);
++                let (_, discriminate, _, _) = reveal_evidence_with_expression(
++                    &probe, &probe.expression,
++                    &[(&reaching, RelationReason::DirectOwnerCall), (&observer, RelationReason::SameTestFile)],
++                    &[], &|_, _| false, &|_, _| false,
++                    &ReturnOracleAdmission {
++                        assertion_has_known_implicit_observer: &|_, _| Some(false),
++                        owner_return_pin: &|_, _| false,
++                        assertion_admitted: &|_, _| true,
++                        proximity_may_reach_owner: &|_| false,
++                        owner_parameters: &[],
++                        expected_reaches_owner: &|_, _| false,
++                        effect_state_carried: &|_, _| true,
++                        setter_writes_field: &|_, _, _| false,
++                        getter_reads_field: &|_, _, _| false,
++                    }, None,
++                );
++                assert_eq!(discriminate.state, expected, "{}", discriminate.summary);
++            }
++        }
++    }
++
+     #[test]
+     fn sibling_effect_kind_cannot_confirm_beside_owner_caller() {
+         for family in [ProbeFamily::SideEffect, ProbeFamily::CallDeletion] {
+diff --git a/crates/ripr/tests/sibling_effect_oracle.rs b/crates/ripr/tests/sibling_effect_oracle.rs
+index 0ef87c5d9..17f9bcbc8 100644
+--- a/crates/ripr/tests/sibling_effect_oracle.rs
++++ b/crates/ripr/tests/sibling_effect_oracle.rs
+@@ -738,3 +738,23 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
+     assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
+     Ok(())
+ }
++
++#[test]
++fn independent_token_observer_survives_implicit_refusal() -> Result<(), String> {
++    for original in [ITERATOR_OBSERVER, ADD_OBSERVER] {
++        let source = original.replace("state", "sink").replace(
++            "assert_eq!(Observation { cell: sink }, Observation { cell: Rc::new(Cell::new(1)) });",
++            "assert_eq!(sink.get(), 1);",
++        );
++        assert_ne!(source, original);
++        assert!(source.contains("assert_eq!(sink.get(), 1);"));
++        for family in ["call_deletion"] {
++            let expression = "self.sink.set(1)";
++            let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
++            assert_eq!(row["ripr"]["discriminate"]["state"], "yes", "{row}");
++            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r|
++                r["name"] == "implicit_observer" && r["miss"].is_null()), "{row}");
++        }
++    }
++    Ok(())
++}

@@ -1,0 +1,73 @@
+ Downloading crates ...
+  Downloaded toml_datetime v1.1.2+spec-1.1.0
+  Downloaded toml_writer v1.1.3+spec-1.1.0
+  Downloaded toml_parser v1.1.5+spec-1.1.0
+  Downloaded toml v1.1.8+spec-1.1.0
+  Downloaded tokio-util v0.7.20
+  Downloaded serde_spanned v1.1.2
+  Downloaded rmcp v3.5.1
+  Downloaded libc v0.2.190
+  Downloaded tokio v1.53.2
+   Compiling libc v0.2.190
+   Compiling rmcp v3.5.1
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling serde_spanned v1.1.2
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling toml v1.1.8+spec-1.1.0
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+   Compiling errno v0.3.14
+   Compiling mio v1.2.3
+   Compiling getrandom v0.2.17
+   Compiling signal-hook-registry v1.4.8
+   Compiling rand_core v0.6.4
+   Compiling getrandom v0.4.3
+   Compiling rand_chacha v0.3.1
+   Compiling tokio v1.53.2
+   Compiling parking_lot_core v0.9.12
+   Compiling rand v0.8.8
+   Compiling getrandom v0.3.4
+   Compiling rand_core v0.9.5
+   Compiling dashmap v6.2.1
+   Compiling uuid v1.26.0
+   Compiling phf_generator v0.11.3
+   Compiling ra_ap_stdx v0.0.349
+   Compiling tempfile v3.27.0
+   Compiling phf_codegen v0.11.3
+   Compiling unicode_names2_generator v1.3.0
+   Compiling rustpython-parser v0.4.0
+   Compiling ra_ap_syntax v0.0.349
+   Compiling wait-timeout v0.2.1
+   Compiling unicode_names2 v1.3.0
+   Compiling fs2 v0.4.3
+   Compiling rusty-fork v0.3.1
+   Compiling rand v0.9.5
+   Compiling rand_chacha v0.9.0
+   Compiling rand_xorshift v0.4.0
+   Compiling parking_lot v0.12.5
+   Compiling tokio-util v0.7.20
+   Compiling tokio-stream v0.1.19
+   Compiling tower-lsp-server v0.23.0
+   Compiling serial_test v4.0.1
+   Compiling proptest v1.11.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 43s
+     Running tests/sibling_effect_oracle.rs (/workspace/7817-target/debug/deps/sibling_effect_oracle-767cd588af4df5aa)
+
+running 14 tests
+test free_and_inherent_trait_method_names_do_not_admit_decoys ... ok
+test direct_effect_observer_retains_strong_credit ... ok
+test free_inherent_and_wrong_receiver_push_matrix_stays_weak ... ok
+test implicit_trait_effect_observers_retain_strong_credit ... ok
+test independent_token_observer_survives_implicit_refusal ... ok
+test lone_proximity_retains_discrimination_with_weak_reach ... ok
+test implicit_binding_refuses_self_comparison_and_opaque_observers ... ok
+test competing_production_writes_cannot_supply_implicit_discrimination ... ok
+test receiver_construction_cannot_seed_the_observed_effect ... ok
+test implicit_credit_belongs_to_the_ordered_shared_sink_assertion ... ok
+test parser_only_decoys_cannot_supply_aggregation_discrimination ... ok
+test unused_reverse_trait_does_not_authorize_parser_oracle ... ok
+test same_test_dispatch_cannot_credit_disconnected_assertions ... ok
+test paired_implicit_dispatch_matrix_binds_both_effect_families ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.81s
+

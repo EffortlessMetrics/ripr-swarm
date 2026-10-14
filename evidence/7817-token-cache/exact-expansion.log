@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (/workspace/7817-target/debug/deps/ripr-28724141baf21c78)
+
+running 2 tests
+test analysis::classify::implicit_effect::tests::cached_receiver_exclusions_remain_receiver_specific ... ok
+test analysis::classify::implicit_effect::tests::workspace_expansion_scan_is_once_per_immutable_run ... FAILED
+
+failures:
+
+---- analysis::classify::implicit_effect::tests::workspace_expansion_scan_is_once_per_immutable_run stdout ----
+
+thread 'analysis::classify::implicit_effect::tests::workspace_expansion_scan_is_once_per_immutable_run' (12572) panicked at crates/ripr/src/analysis/classify/implicit_effect.rs:894:13:
+use std::ops::Drop as Destructor; impl Destructor for Elsewhere { fn drop(&mut self) {} }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    analysis::classify::implicit_effect::tests::workspace_expansion_scan_is_once_per_immutable_run
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 10583 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ripr --lib`

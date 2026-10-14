@@ -1,0 +1,12 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0062]: field `assertion_has_known_implicit_observer` specified more than once
+    --> crates/ripr/src/analysis/classify/reveal.rs:7277:25
+     |
+7274 |                         assertion_has_known_implicit_observer: &|_, _| Some(false),
+     |                         ---------------------------------------------------------- first use of `assertion_has_known_implicit_observer`
+...
+7277 |                         assertion_has_known_implicit_observer: &|_, _| None,
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ used more than once
+
+For more information about this error, try `rustc --explain E0062`.
+error: could not compile `ripr` (lib test) due to 1 previous error

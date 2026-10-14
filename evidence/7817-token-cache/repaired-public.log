@@ -1,0 +1,12 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+error[E0515]: cannot return value referencing function parameter `facts`
+  --> crates/ripr/src/analysis/classify/implicit_effect.rs:93:71
+   |
+93 |             ExpansionSurface::scan(index.files().values().map(|facts| facts.source.as_ref()))
+   |                                                                       -----^^^^^^^^^^^^^^^^
+   |                                                                       |
+   |                                                                       returns a value referencing data owned by the current function
+   |                                                                       `facts` is borrowed here
+
+For more information about this error, try `rustc --explain E0515`.
+error: could not compile `ripr` (lib) due to 1 previous error

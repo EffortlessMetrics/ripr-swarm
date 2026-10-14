@@ -1,0 +1,8 @@
+2026-10-14T09:24:39Z
+Completed-command boundary before v5-check-fast; sequential Cargo owner only.
+13G	/workspace/7817-target/debug/incremental
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G   21G  9.2G  70% /workspace
+Only reusable task incremental cache removed; source, executables and raw receipts retained.
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G  8.3G   22G  28% /workspace

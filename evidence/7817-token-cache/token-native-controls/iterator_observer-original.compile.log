@@ -1,0 +1,10 @@
+warning: struct `Observation` is never constructed
+  --> /workspace/7817-repair-evidence/token-native-controls/iterator_observer-original.rs:12:36
+   |
+12 | #[derive(Debug, PartialEq)] struct Observation { cell: Rc<Cell<usize>> }
+   |                                    ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

@@ -1,0 +1,8 @@
+   Compiling repo-policy v0.1.0 (/workspace/7817-composition/tools/repo-policy)
+   Compiling ripr v0.11.0 (/workspace/7817-composition/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/7817-composition/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 13s
+     Running `/workspace/7817-target/debug/xtask goldens check`
+$ cargo build -p ripr
+   Compiling ripr v0.11.0 (/workspace/7817-composition/crates/ripr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 25s

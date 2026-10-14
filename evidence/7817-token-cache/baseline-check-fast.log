@@ -1,0 +1,419 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `/workspace/7817-target/debug/xtask check-fast`
+$ cargo fmt --check
+check-static-language: pass (target/ripr/reports/static-language.md)
+check-command-catalog: pass (target/ripr/reports/command-catalog.md)
+check-support-tiers: pass (target/ripr/reports/support-tiers.md)
+Status: pass
+
+Allowed findings:
+- crates/ripr/src/analysis/mod.rs:1375:21 allowed by panic-0018 crates/ripr/src/analysis/mod.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=SystemTime::now() .duration_since(UNIX_EPOCH) text= snippet=
+- crates/ripr/src/analysis/mod.rs:1380:9 allowed by panic-0019 crates/ripr/src/analysis/mod.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=fs::create_dir_all(&dir) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:20511:5 allowed by panic-0036 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=run_ripr_with_env callee=unwrap receiver= text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21087:5 allowed by panic-0075 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21091:5 allowed by panic-0076 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["init", "-b", "main"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21092:5 allowed by panic-0077 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21093:5 allowed by panic-0078 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21094:5 allowed by panic-0079 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21099:5 allowed by panic-0080 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"mode-fast-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21104:5 allowed by panic-0081 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21105:5 allowed by panic-0082 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21140:5 allowed by panic-0083 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21143:5 allowed by panic-0084 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["init", "-b", "main"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21144:5 allowed by panic-0085 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21145:5 allowed by panic-0086 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21146:5 allowed by panic-0087 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n") text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21147:5 allowed by panic-0088 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"analyzed-empty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21152:5 allowed by panic-0089 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21153:5 allowed by panic-0090 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "base"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21154:5 allowed by panic-0091 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["checkout", "-b", "work"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21155:5 allowed by panic-0092 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n") text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21156:5 allowed by panic-0093 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "src/lib.rs"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21157:5 allowed by panic-0094 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "edit"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21368:5 allowed by panic-0042 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21369:5 allowed by panic-0043 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21370:5 allowed by panic-0044 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21371:5 allowed by panic-0045 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21372:5 allowed by panic-0046 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21377:5 allowed by panic-0047 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"no-scope-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21382:5 allowed by panic-0048 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21383:5 allowed by panic-0049 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21386:18 allowed by panic-0050 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::process::Command::new(bin) .args(["check", "--root", &root_str, "--base", "HEAD"]) .output() text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21410:5 allowed by panic-0071 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21411:5 allowed by panic-0072 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21412:5 allowed by panic-0073 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21413:5 allowed by panic-0074 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21414:5 allowed by panic-0055 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21419:5 allowed by panic-0056 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"spec-0112-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21424:5 allowed by panic-0057 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21425:5 allowed by panic-0058 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:21428:5 allowed by panic-0059 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22069:5 allowed by panic-0062 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22070:5 allowed by panic-0063 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22071:5 allowed by panic-0064 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22072:5 allowed by panic-0065 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22073:5 allowed by panic-0066 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22078:5 allowed by panic-0067 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"spec-0112-clean-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22083:5 allowed by panic-0068 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22084:5 allowed by panic-0069 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:22088:18 allowed by panic-0070 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::process::Command::new(bin) .args(["check", "--root", &root_str, "--base", "HEAD", "--json"]) .output() text= snippet=
+- crates/ripr/tests/cli_smoke.rs:596:5 allowed by panic-0029 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=workspace_root callee=unwrap receiver=Path::new(env!("CARGO_MANIFEST_DIR")) .parent() .and_then(Path::parent) text= snippet=
+- crates/ripr/tests/cli_smoke.rs:93:5 allowed by panic-0028 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=run_ripr callee=unwrap receiver=Command::new(bin).args(args).output() text= snippet=
+- xtask/src/no_panic/tests.rs:1531:46 allowed by panic-0016 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=v0_1_entries_still_match_by_line_and_column callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:1561:46 allowed by panic-0017 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=v0_2_missing_selector_and_missing_coordinates_fails_clearly callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:192:52 allowed by panic-0005 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_parses_valid_entries callee=unwrap receiver=root.join("allowlist.toml").to_str() text= snippet=
+- xtask/src/no_panic/tests.rs:194:23 allowed by panic-0035 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_parses_valid_entries callee=unwrap receiver=result text= snippet=
+- xtask/src/no_panic/tests.rs:217:52 allowed by panic-0006 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_requires_path callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:235:52 allowed by panic-0007 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_requires_line callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:253:52 allowed by panic-0008 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_requires_family callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:275:52 allowed by panic-0009 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_requires_explanation callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:299:52 allowed by panic-0010 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_rejects_unknown_fields callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:330:52 allowed by panic-0011 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=parse_no_panic_allowlist_toml_rejects_duplicate_locations callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:356:24 allowed by panic-0012 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=collect_panic_findings_finds_exact_locations callee=unwrap receiver= text= snippet=
+- xtask/src/no_panic/tests.rs:806:46 allowed by panic-0015 xtask/src/no_panic/tests.rs (unwrap) selector=method_call container=v0_2_last_seen_drift_is_advisory_not_failure callee=unwrap receiver= text= snippet=
+- xtask/src/tests.rs:248:17 allowed by panic-0001 xtask/src/tests.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=SystemTime::now() .duration_since(UNIX_EPOCH) text= snippet=
+- xtask/src/tests.rs:253:5 allowed by panic-0030 xtask/src/tests.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=fs::create_dir_all(&dir) text= snippet=
+- xtask/src/tests.rs:259:9 allowed by panic-0002 xtask/src/tests.rs (unwrap) selector=method_call container=write callee=unwrap receiver=fs::create_dir_all(parent) text= snippet=
+- xtask/src/tests.rs:261:5 allowed by panic-0031 xtask/src/tests.rs (unwrap) selector=method_call container=write callee=unwrap receiver=fs::write(path, text) text= snippet=
+- xtask/src/tests.rs:8252:15 allowed by panic-0032 xtask/src/tests.rs (unwrap) selector=method_call container=with_temp_cwd callee=unwrap receiver=std::env::current_dir() text= snippet=
+- xtask/src/tests.rs:8254:5 allowed by panic-0033 xtask/src/tests.rs (unwrap) selector=method_call container=with_temp_cwd callee=unwrap receiver=std::env::set_current_dir(&root) text= snippet=
+- xtask/src/tests.rs:8266:5 allowed by panic-0034 xtask/src/tests.rs (unwrap) selector=method_call container=with_temp_cwd callee=unwrap receiver=std::env::set_current_dir(old) text= snippet=
+- xtask/src/tests.rs:8456:22 allowed by panic-0004 xtask/src/tests.rs (expect) selector=method_call container=test_intent_kind_round_trips_supported_values callee=expect receiver= text= snippet=
+
+Advisory drift:
+- allowed by semantic selector; last_seen changed from 11396:5 to crates/ripr/tests/cli_smoke.rs:20511:5 (panic-0036 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=run_ripr_with_env callee=unwrap receiver= text= snippet=)
+- allowed by semantic selector; last_seen changed from 11972:5 to crates/ripr/tests/cli_smoke.rs:21087:5 (panic-0075 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11976:5 to crates/ripr/tests/cli_smoke.rs:21091:5 (panic-0076 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["init", "-b", "main"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11977:5 to crates/ripr/tests/cli_smoke.rs:21092:5 (panic-0077 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11978:5 to crates/ripr/tests/cli_smoke.rs:21093:5 (panic-0078 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11979:5 to crates/ripr/tests/cli_smoke.rs:21094:5 (panic-0079 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11984:5 to crates/ripr/tests/cli_smoke.rs:21099:5 (panic-0080 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"mode-fast-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11989:5 to crates/ripr/tests/cli_smoke.rs:21104:5 (panic-0081 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 11990:5 to crates/ripr/tests/cli_smoke.rs:21105:5 (panic-0082 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_mode_fast_alone_on_empty_range_names_compared_base_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12025:5 to crates/ripr/tests/cli_smoke.rs:21140:5 (panic-0083 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12028:5 to crates/ripr/tests/cli_smoke.rs:21143:5 (panic-0084 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["init", "-b", "main"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12029:5 to crates/ripr/tests/cli_smoke.rs:21144:5 (panic-0085 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12030:5 to crates/ripr/tests/cli_smoke.rs:21145:5 (panic-0086 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12031:5 to crates/ripr/tests/cli_smoke.rs:21146:5 (panic-0087 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 1;\n") text= snippet=)
+- allowed by semantic selector; last_seen changed from 12032:5 to crates/ripr/tests/cli_smoke.rs:21147:5 (panic-0088 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"analyzed-empty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12037:5 to crates/ripr/tests/cli_smoke.rs:21152:5 (panic-0089 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12038:5 to crates/ripr/tests/cli_smoke.rs:21153:5 (panic-0090 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "base"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12039:5 to crates/ripr/tests/cli_smoke.rs:21154:5 (panic-0091 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["checkout", "-b", "work"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12040:5 to crates/ripr/tests/cli_smoke.rs:21155:5 (panic-0092 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write(root.join("src/lib.rs"), "pub const VALUE: u32 = 2;\n") text= snippet=)
+- allowed by semantic selector; last_seen changed from 12041:5 to crates/ripr/tests/cli_smoke.rs:21156:5 (panic-0093 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "src/lib.rs"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12042:5 to crates/ripr/tests/cli_smoke.rs:21157:5 (panic-0094 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "edit"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12253:5 to crates/ripr/tests/cli_smoke.rs:21368:5 (panic-0042 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12254:5 to crates/ripr/tests/cli_smoke.rs:21369:5 (panic-0043 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12255:5 to crates/ripr/tests/cli_smoke.rs:21370:5 (panic-0044 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12256:5 to crates/ripr/tests/cli_smoke.rs:21371:5 (panic-0045 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12257:5 to crates/ripr/tests/cli_smoke.rs:21372:5 (panic-0046 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12262:5 to crates/ripr/tests/cli_smoke.rs:21377:5 (panic-0047 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"no-scope-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12267:5 to crates/ripr/tests/cli_smoke.rs:21382:5 (panic-0048 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12268:5 to crates/ripr/tests/cli_smoke.rs:21383:5 (panic-0049 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12271:18 to crates/ripr/tests/cli_smoke.rs:21386:18 (panic-0050 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_with_base_scope_does_not_show_no_scope_disclosure_smoke callee=unwrap receiver=std::process::Command::new(bin) .args(["check", "--root", &root_str, "--base", "HEAD"]) .output() text= snippet=)
+- allowed by semantic selector; last_seen changed from 12293:5 to crates/ripr/tests/cli_smoke.rs:21410:5 (panic-0071 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12294:5 to crates/ripr/tests/cli_smoke.rs:21411:5 (panic-0072 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12295:5 to crates/ripr/tests/cli_smoke.rs:21412:5 (panic-0073 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12296:5 to crates/ripr/tests/cli_smoke.rs:21413:5 (panic-0074 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12297:5 to crates/ripr/tests/cli_smoke.rs:21414:5 (panic-0055 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12302:5 to crates/ripr/tests/cli_smoke.rs:21419:5 (panic-0056 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"spec-0112-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12307:5 to crates/ripr/tests/cli_smoke.rs:21424:5 (panic-0057 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12308:5 to crates/ripr/tests/cli_smoke.rs:21425:5 (panic-0058 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12311:5 to crates/ripr/tests/cli_smoke.rs:21428:5 (panic-0059 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12487:5 to crates/ripr/tests/cli_smoke.rs:22069:5 (panic-0062 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::create_dir_all(root.join("src")) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12488:5 to crates/ripr/tests/cli_smoke.rs:22070:5 (panic-0063 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["init"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12489:5 to crates/ripr/tests/cli_smoke.rs:22071:5 (panic-0064 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.email", "test@test.com"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12490:5 to crates/ripr/tests/cli_smoke.rs:22072:5 (panic-0065 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["config", "user.name", "Test"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12491:5 to crates/ripr/tests/cli_smoke.rs:22073:5 (panic-0066 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12496:5 to crates/ripr/tests/cli_smoke.rs:22078:5 (panic-0067 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::fs::write( root.join("Cargo.toml"), "[package]\nname = \"spec-0112-clean-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n", ) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12501:5 to crates/ripr/tests/cli_smoke.rs:22083:5 (panic-0068 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["add", "."]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12502:5 to crates/ripr/tests/cli_smoke.rs:22084:5 (panic-0069 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=run_git(&root, &["commit", "-m", "initial"]) text= snippet=)
+- allowed by semantic selector; last_seen changed from 12506:18 to crates/ripr/tests/cli_smoke.rs:22088:18 (panic-0070 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure callee=unwrap receiver=std::process::Command::new(bin) .args(["check", "--root", &root_str, "--base", "HEAD", "--json"]) .output() text= snippet=)
+- allowed by semantic selector; last_seen changed from 227:5 to crates/ripr/tests/cli_smoke.rs:596:5 (panic-0029 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=workspace_root callee=unwrap receiver=Path::new(env!("CARGO_MANIFEST_DIR")) .parent() .and_then(Path::parent) text= snippet=)
+- allowed by semantic selector; last_seen changed from 24:5 to crates/ripr/tests/cli_smoke.rs:93:5 (panic-0028 crates/ripr/tests/cli_smoke.rs (unwrap) selector=method_call container=run_ripr callee=unwrap receiver=Command::new(bin).args(args).output() text= snippet=)
+- allowed by semantic selector; last_seen changed from 966:21 to crates/ripr/src/analysis/mod.rs:1375:21 (panic-0018 crates/ripr/src/analysis/mod.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=SystemTime::now() .duration_since(UNIX_EPOCH) text= snippet=)
+- allowed by semantic selector; last_seen changed from 971:9 to crates/ripr/src/analysis/mod.rs:1380:9 (panic-0019 crates/ripr/src/analysis/mod.rs (unwrap) selector=method_call container=temp_dir callee=unwrap receiver=fs::create_dir_all(&dir) text= snippet=)
+
+Stale entries:
+- none
+
+Unallowed findings:
+- none
+
+Warnings:
+- none
+
+check-no-panic-family: pass (target/ripr/reports/no-panic-family.md)
+check-allow-attributes: pass (target/ripr/reports/allow-attributes.md)
+check-file-policy: pass (target/ripr/reports/file-policy.md)
+$ cargo clippy --workspace --all-targets -- -D warnings
+   Compiling unicode-ident v1.0.24
+    Checking cfg-if v1.0.5
+    Checking memchr v2.8.3
+    Checking libc v0.2.189
+    Checking serde_core v1.0.229
+   Compiling proc-macro2 v1.0.107
+    Checking itoa v1.0.18
+   Compiling quote v1.0.47
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling siphasher v1.0.3
+    Checking stable_deref_trait v1.2.1
+    Checking once_cell v1.21.4
+    Checking smallvec v1.16.1
+    Checking zmij v1.0.23
+    Checking typenum v1.20.1
+    Checking writeable v0.6.4
+    Checking serde_json v1.0.151
+    Checking generic-array v0.14.7
+    Checking pin-project-lite v0.2.17
+    Checking bitflags v2.13.2
+    Checking litemap v0.8.3
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.7
+   Compiling getrandom v0.2.17
+   Compiling zerocopy v0.8.57
+    Checking allocator-api2 v0.2.21
+    Checking hashbrown v0.17.1
+   Compiling rand_core v0.6.4
+    Checking digest v0.10.7
+    Checking icu_locale_fallback_data v2.3.0
+   Compiling phf_shared v0.13.1
+   Compiling synstructure v0.14.0
+    Checking utf8_iter v1.0.4
+    Checking cpufeatures v0.2.17
+    Checking sha2 v0.10.9
+    Checking num-traits v0.2.19
+    Checking icu_segmenter_data v2.3.0
+    Checking static_assertions v1.1.0
+    Checking futures-core v0.3.34
+    Checking crossbeam-utils v0.8.23
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+    Checking zerofrom v0.1.8
+   Compiling ppv-lite86 v0.2.21
+    Checking yoke v0.8.3
+   Compiling serde_derive v1.0.229
+    Checking zerovec v0.11.8
+   Compiling rand_chacha v0.3.1
+    Checking zerotrie v0.2.5
+   Compiling thiserror-impl v2.0.20
+   Compiling rand v0.8.8
+    Checking tinystr v0.8.4
+    Checking icu_locale_core v2.3.0
+    Checking potential_utf v0.1.6
+    Checking icu_collections v2.3.0
+    Checking icu_provider v2.3.1
+    Checking thiserror v2.0.20
+   Compiling phf_shared v0.11.3
+    Checking unicode-width v0.2.2
+    Checking futures-sink v0.3.34
+    Checking rustc-hash v2.1.3
+    Checking icu_locale_fallback v2.3.0
+    Checking smawk v0.3.3
+   Compiling phf_generator v0.11.3
+    Checking castaway v0.2.4
+    Checking icu_segmenter v2.3.0
+   Compiling oxc-miette-derive v2.7.1
+    Checking owo-colors v4.4.0
+    Checking textwrap v0.16.4
+    Checking ryu v1.0.23
+    Checking unicode-segmentation v1.13.3
+    Checking oxc_data_structures v0.130.0
+    Checking oxc_allocator v0.130.0
+    Checking compact_str v0.9.1
+    Checking serde v1.0.229
+    Checking oxc-miette v2.7.1
+   Compiling phf_generator v0.13.1
+   Compiling phf_codegen v0.11.3
+    Checking futures-channel v0.3.34
+   Compiling futures-macro v0.3.34
+   Compiling phf v0.13.1
+    Checking slab v0.4.12
+    Checking percent-encoding v2.3.2
+    Checking futures-task v0.3.34
+    Checking futures-io v0.3.34
+    Checking oxc_estree v0.130.0
+    Checking oxc_str v0.130.0
+   Compiling oxc_ast_macros v0.130.0
+   Compiling phf_macros v0.13.1
+   Compiling ref-cast-impl v1.0.27
+    Checking futures-util v0.3.34
+   Compiling tracing-attributes v0.1.31
+    Checking tracing-core v0.1.36
+    Checking errno v0.3.14
+    Checking either v1.18.0
+    Checking cow-utils v0.1.3
+    Checking signal-hook-registry v1.4.8
+   Compiling getopts v0.2.24
+    Checking ref-cast v1.0.27
+    Checking oxc_span v0.130.0
+    Checking getrandom v0.4.3
+    Checking num-integer v0.1.47
+    Checking tracing v0.1.44
+   Compiling tokio-macros v2.7.2
+    Checking mio v1.2.3
+    Checking scopeguard v1.2.0
+    Checking unicode-id-start v1.5.0
+   Compiling log v0.4.34
+    Checking bytes v1.12.1
+    Checking nonmax v0.5.5
+   Compiling unicode_names2_generator v1.3.0
+    Checking oxc_index v4.1.0
+    Checking tokio v1.53.1
+    Checking lock_api v0.4.14
+    Checking futures-executor v0.3.34
+    Checking num-bigint v0.4.8
+    Checking parking_lot_core v0.9.12
+    Checking dragonbox_ecma v0.1.12
+    Checking oxc_diagnostics v0.130.0
+    Checking linux-raw-sys v0.12.1
+    Checking unic-common v0.9.0
+    Checking unic-char-range v0.9.0
+    Checking hashbrown v0.14.5
+    Checking rustix v1.1.5
+   Compiling is-macro v0.3.8
+    Checking unic-char-property v0.9.0
+    Checking unic-ucd-version v0.9.0
+    Checking oxc_regular_expression v0.130.0
+    Checking oxc_syntax v0.130.0
+   Compiling unicode_names2 v1.3.0
+    Checking crossbeam-epoch v0.9.21
+   Compiling serde_derive_internals v0.29.1
+    Checking rustpython-parser-vendored v0.4.0
+    Checking unicode-properties v0.1.4
+    Checking rustc-hash v1.1.0
+    Checking equivalent v1.0.2
+    Checking borrow-or-share v0.2.4
+    Checking indexmap v2.14.2
+    Checking fluent-uri v0.4.1
+    Checking ra-ap-rustc_lexer v0.166.0
+    Checking rustpython-parser-core v0.4.0
+    Checking crossbeam-deque v0.8.8
+    Checking tokio-util v0.7.19
+   Compiling schemars_derive v1.2.1
+    Checking phf v0.11.3
+    Checking oxc_ast v0.130.0
+   Compiling rustpython-parser v0.4.0
+    Checking memoffset v0.9.1
+    Checking futures v0.3.34
+    Checking itertools v0.15.0
+    Checking chrono v0.4.45
+    Checking crossbeam-channel v0.5.17
+    Checking sync_wrapper v1.0.2
+    Checking winnow v0.7.15
+    Checking jod-thread v1.0.0
+    Checking text-size v1.1.1
+    Checking dyn-clone v1.0.20
+    Checking rustc-literal-escaper v0.0.7
+    Checking tower-layer v0.3.3
+    Checking ra_ap_edition v0.0.349
+    Checking tower-service v0.3.3
+    Checking winnow v1.0.4
+    Checking drop_bomb v0.1.5
+    Checking countme v3.0.1
+    Checking rowan v0.17.0
+    Checking toml_parser v1.1.3+spec-1.1.0
+    Checking tower v0.5.3
+    Checking schemars v1.2.1
+    Checking ra_ap_parser v0.0.349
+    Checking ra_ap_stdx v0.0.349
+    Checking rayon-core v1.13.0
+    Checking rustpython-ast v0.4.0
+    Checking tokio-stream v0.1.19
+    Checking httparse v1.10.1
+    Checking ls-types v0.0.6
+    Checking unic-emoji-char v0.9.0
+    Checking unic-ucd-ident v0.9.0
+    Checking dashmap v6.2.1
+    Checking uuid v1.26.0
+    Checking oxc_ecmascript v0.130.0
+    Checking itertools v0.11.0
+    Checking serde_spanned v1.1.1
+    Checking toml_datetime v1.1.1+spec-1.1.0
+    Checking lalrpop-util v0.20.2
+    Checking triomphe v0.1.16
+    Checking toml_writer v1.1.2+spec-1.1.0
+    Checking smol_str v0.3.6
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Checking rmcp v3.5.0
+    Checking ra_ap_syntax v0.0.349
+    Checking toml v1.1.6+spec-1.1.0
+    Checking oxc_parser v0.130.0
+    Checking rayon v1.12.0
+    Checking fs2 v0.4.3
+    Checking home v0.5.12
+    Checking getrandom v0.3.4
+    Checking rand_core v0.9.5
+    Checking fastrand v2.5.0
+    Checking tempfile v3.27.0
+    Checking wait-timeout v0.2.1
+    Checking bit-vec v0.8.0
+    Checking quick-error v1.2.3
+    Checking fnv v1.0.7
+    Checking rusty-fork v0.3.1
+    Checking bit-set v0.8.0
+    Checking rand v0.9.5
+    Checking rand_xorshift v0.4.0
+    Checking parking_lot v0.12.5
+   Compiling serial_test_derive v4.0.1
+    Checking tower-lsp-server v0.23.0
+    Checking regex-syntax v0.8.11
+    Checking unarray v0.1.4
+    Checking serial_test v4.0.1
+    Checking rand_chacha v0.9.0
+    Checking simd-adler32 v0.3.10
+    Checking proptest v1.11.0
+    Checking crc32fast v1.5.2
+    Checking adler2 v2.0.1
+    Checking miniz_oxide v0.9.1
+    Checking bumpalo v3.20.3
+    Checking zlib-rs v0.6.8
+   Compiling repo-policy v0.1.0 (/workspace/ripr-swarm/tools/repo-policy)
+    Checking flate2 v1.1.10
+    Checking zopfli v0.8.3
+    Checking xattr v1.6.1
+    Checking filetime v0.2.29
+    Checking typed-path v0.12.3
+    Checking tar v0.4.46
+    Checking zip v8.6.0
+error: this creates an owned instance just for comparison
+   --> crates/ripr/src/analysis/classify/implicit_effect.rs:274:21
+    |
+274 |         .filter(|p| p.syntax().text().to_string() == "self")
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `p.syntax().text()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cmp_owned
+    = note: `-D clippy::cmp-owned` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cmp_owned)]`
+
+error: this creates an owned instance just for comparison
+   --> crates/ripr/src/analysis/classify/implicit_effect.rs:303:21
+    |
+303 |         .filter(|p| p.syntax().text().to_string() == parameter)
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `p.syntax().text()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cmp_owned
+
+error: this creates an owned instance just for comparison
+   --> crates/ripr/src/analysis/classify/implicit_effect.rs:425:8
+    |
+425 |     if assertion.path()?.syntax().text().to_string() != "assert_eq" {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `assertion.path()?.syntax().text()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cmp_owned
+
+error: this creates an owned instance just for comparison
+   --> crates/ripr/src/analysis/classify/implicit_effect.rs:497:30
+    |
+497 |             .is_some_and(|p| p.syntax().text().to_string() == "derive")
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `p.syntax().text()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cmp_owned
+
+error: could not compile `ripr` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ripr` (lib test) due to 4 previous errors
+xtask: check-fast gate failed after selector establishment: cargo clippy --workspace --all-targets -- -D warnings failed with exit status: 101

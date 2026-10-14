@@ -1,0 +1,14 @@
+{
+  ".ripr/traceability.toml": "5be6cb1249e7c492bcffab612071cb378ff3ffe02b5b87d515f20fac9f2ac4a2",
+  "changelog.d/7794-sibling-effect-oracle.md": "c5232f90a23176f2af3c35deb9edc6ebc2cdccf0a3045fd717c3edcbabe134a3",
+  "crates/ripr/src/analysis/classifier.rs": "6889bc8d01e8e2fce6fd1b01119f63208d87197aeed91d49af539c2980e3eb4d",
+  "crates/ripr/src/analysis/classifier/evidence.rs": "13f7c88271936a5e5b26225fd6bd111089a85110f056891ea076d5b204b17579",
+  "crates/ripr/src/analysis/classify/context.rs": "b0630c4c7e1e89ef7d25c11e5bb1ff1f16d4fec566252777862116f1d9916aa5",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs": "c4602b39914eeee2d3221ccf7905570ed7420bc1833edd652329b07b5bc9390c",
+  "crates/ripr/src/analysis/classify/mod.rs": "2821f53ba7544a89476e3bd897859a0c8c27fa4f18c2915503f781ce51b277be",
+  "crates/ripr/src/analysis/classify/related_tests.rs": "9292d5895c6781bf973a5f83087ae8ddf11ce0bce3b7653e2af6c6312ef85e56",
+  "crates/ripr/src/analysis/classify/reveal.rs": "f5647aa7fce2774fff89019b6a6f9a5a137a9d8f357a6533aa79221fa1b1a682",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs": "b0079201c41b83fcb492893cf584543f458e02cc03530962b3b2adc5fc8c75c3",
+  "crates/ripr/tests/sibling_effect_oracle.rs": "0d9222341c27d5f6a702c3d01fdc54055275a6a7cba1a542788de2cdd69379ef",
+  "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md": "14f7526c96887aaca831698b34b6d589ebc1e14b842eae3a851be5908596861a"
+}

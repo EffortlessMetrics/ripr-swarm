@@ -1,0 +1,7 @@
+2026-10-14T08:31:37Z
+13G	/workspace/7817-target/debug/incremental
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G   18G   13G  58% /workspace
+Removed only task-owned reusable incremental cache after all active Cargo commands completed. Executables, deps, source and raw receipts retained.
+Filesystem      Size  Used Avail Use% Mounted on
+overlay          32G  4.8G   26G  17% /workspace

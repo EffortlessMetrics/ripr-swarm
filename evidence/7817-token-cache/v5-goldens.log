@@ -1,0 +1,22 @@
+   Compiling rand_chacha v0.3.1
+   Compiling tokio v1.53.2
+   Compiling rmcp v3.5.1
+   Compiling repo-policy v0.1.0 (/workspace/ripr-swarm/tools/repo-policy)
+   Compiling filetime v0.2.29
+   Compiling tar v0.4.46
+   Compiling rand v0.8.8
+   Compiling phf_generator v0.11.3
+   Compiling phf_codegen v0.11.3
+   Compiling unicode_names2_generator v1.3.0
+   Compiling rustpython-parser v0.4.0
+   Compiling unicode_names2 v1.3.0
+   Compiling tokio-util v0.7.20
+   Compiling tower-lsp-server v0.23.0
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/ripr-swarm/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 30s
+     Running `/workspace/7817-target/debug/xtask goldens check`
+$ cargo build -p ripr
+   Compiling tower-lsp-server v0.23.0
+   Compiling ripr v0.11.0 (/workspace/ripr-swarm/crates/ripr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 28s
