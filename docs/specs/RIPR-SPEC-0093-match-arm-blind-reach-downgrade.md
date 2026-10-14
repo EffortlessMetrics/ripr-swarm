@@ -188,6 +188,9 @@ parser-backed binding scan for `format`; every indexed file must remain
 parser-owned, and a possible formatter replacement anywhere in the index
 withholds the witness. A native public-API regression puts the retained owner
 in an out-of-line module and rejects a formatter inherited from its crate root.
+The same indexed value-name authority refuses declarations or named imports
+that shadow `Some`, `Ok` or `None`; a compiling counterfeit `Some` can
+otherwise erase the relation while preserving all four asserted fields.
 The indirect serialized oracle remains separate retained acceptance under #1728.
 No consumer rewrite, pin, suppression, threshold, release or
 adoption follows. Roll back the terminal grammar while retaining its public

@@ -7,9 +7,11 @@
 //! evidence. The real terminal projection has a separate exact parsed grammar.
 
 use crate::analysis::classify::ProbeContext;
+use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
 use crate::analysis::rust_index::find_file_facts;
 use crate::analysis::syntax::macro_binding_scan;
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::source_declares_value_name;
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
@@ -19,21 +21,32 @@ mod terminal_flow;
 /// Reuse the index's parser-owned macro candidates and binding scan. A crate
 /// wildcard may inherit the standard formatter only when no indexed source
 /// can replace it; opaque imports/expansions and incomplete source refuse.
-pub(super) fn terminal_formatter_unambiguous(context: &ProbeContext<'_>) -> bool {
+pub(super) fn terminal_namespace_unambiguous(context: &ProbeContext<'_>) -> bool {
     context.workspace_complete
         && context.index.files().values().all(|facts| {
+            let mut owned = context.index.macro_scope_crates().clone();
+            for declaration in &facts.module_declarations {
+                if context.index.files().values().any(|child| {
+                    child.role_provenance.edges.iter().any(|edge| {
+                        edge.kind == SourceRoleProvenanceEdgeKind::Module
+                            && edge.parent == facts.path
+                            && edge.line == declaration.line
+                            && edge.declaration == format!("mod {};", declaration.name)
+                    })
+                }) {
+                    owned.insert(declaration.name.clone());
+                }
+            }
             !facts.used_lexical_fallback
                 && (facts
                     .macro_candidates
                     .as_deref()
                     .is_some_and(|candidates| !candidates.may_bind("format"))
-                    || macro_binding_scan(
-                        &facts.source,
-                        context.index.macro_scope_crates(),
-                        &["format"],
-                        &|_| false,
-                    )
-                    .is_empty())
+                    || macro_binding_scan(&facts.source, &owned, &["format"], &|_| false)
+                        .is_empty())
+                && ["Some", "Ok", "None"].iter().all(|name| {
+                    !facts.source.contains(name) || !source_declares_value_name(&facts.source, name)
+                })
         })
 }
 
@@ -70,7 +83,7 @@ fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
     let terminal =
-        terminal_owner_match(&function).is_some() && terminal_formatter_unambiguous(context);
+        terminal_owner_match(&function).is_some() && terminal_namespace_unambiguous(context);
     if !terminal && !canonical_owner_roles(&function)? {
         return Some(false);
     }

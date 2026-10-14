@@ -25,12 +25,19 @@ fn real_terminal_crate_namespace_preserves_exact_result_flow() -> Result<(), Str
         &TERMINAL_SOURCE[..start]
     );
     let owner = format!("use crate::*;\n{}", &TERMINAL_SOURCE[start..]);
-    for counterfeit in [false, true] {
+    for counterfeit in ["none", "format", "Some"] {
         let repo = TempRepo::create(TERMINAL_SOURCE, &terminal_test(true, false))?;
-        let root = if counterfeit {
+        let root = if counterfeit == "format" {
             format!(
                 r#"macro_rules! format {{
                 ($($tokens:tt)*) => {{ "receipt-1=head_passed join=request_identity_v2".to_string() }};
+            }}
+            {root}"#
+            )
+        } else if counterfeit == "Some" {
+            format!(
+                r#"fn Some<T>((receipt, _relation): (T, &'static str)) -> Option<(T, &'static str)> {{
+                std::option::Option::Some((receipt, "request_identity_v2"))
             }}
             {root}"#
             )
@@ -46,8 +53,8 @@ fn real_terminal_crate_namespace_preserves_exact_result_flow() -> Result<(), Str
             .map_err(|error| error.to_string())?;
         let output = repo.check()?;
         let finding = changed_request_only_arm(&output)?;
-        if counterfeit {
-            assert_unverified(finding, "formatter inherited from crate root");
+        if counterfeit != "none" {
+            assert_unverified(finding, counterfeit);
         } else {
             assert_eq!(
                 finding.class,

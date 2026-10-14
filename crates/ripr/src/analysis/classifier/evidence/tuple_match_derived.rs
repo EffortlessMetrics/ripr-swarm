@@ -64,7 +64,7 @@ pub(super) fn discrimination(
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
     let witness = derived_witness(&facts.source, &function, context.probe)?;
-    if witness.terminal && !super::derived_admission::terminal_formatter_unambiguous(context) {
+    if witness.terminal && !super::derived_admission::terminal_namespace_unambiguous(context) {
         return None;
     }
 
