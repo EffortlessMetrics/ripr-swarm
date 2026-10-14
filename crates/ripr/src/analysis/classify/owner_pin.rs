@@ -1521,7 +1521,12 @@ impl OwnerReturnPin {
         }
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
-        let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
+        let path = return_path_gate_from(
+            &owner.body,
+            &probe.expression,
+            probe.before.as_deref(),
+            changed_line,
+        )?;
         // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
         // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
         // `fn Ok` in the owner's file can build a second source of the
@@ -3422,7 +3427,20 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
 /// `changed_line` is the changed line's offset from the body's first line;
 /// the tail must span it, so an identical expression elsewhere in the body
 /// is not mistaken for the changed one.
+#[cfg(test)]
 fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option<ReturnPathGate> {
+    return_path_gate_from(body, expression, None, changed_line)
+}
+
+/// [`return_path_gate`] with the changed line's old text, when the diff
+/// pairs one: only the part that differs must be evaluated on every input
+/// (see [`changed_part_evaluates_conditionally`]).
+fn return_path_gate_from(
+    body: &str,
+    expression: &str,
+    before: Option<&str>,
+    changed_line: usize,
+) -> Option<ReturnPathGate> {
     let masked = mask_comments_and_strings(body);
     let open = body_block_open(&masked)?;
     let close = matching_close(&masked, open, b'{', b'}')?;
@@ -3470,7 +3488,7 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
-    if has_unbounded_macro(inner) || evaluates_conditionally(&mask_comments_and_strings(changed)) {
+    if has_unbounded_macro(inner) || changed_part_evaluates_conditionally(&changed, before) {
         return None;
     }
     let returns = whole_word_offsets(inner, "return");
@@ -3677,6 +3695,63 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
 const NEGATING_KEYWORDS: &[&str] = &[
     "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as",
 ];
+
+/// #6578: whether the part of the changed tail that differs from its old
+/// text (`before`) is evaluated only on some inputs. In
+/// `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` the
+/// closure is unchanged and the changed operand of the outer `+` runs on
+/// every input, so the closure does not make the change conditional. The
+/// changed span is the text between the longest common prefix and suffix;
+/// it is conditional when its own text is, or when any enclosing
+/// expression up to the tail is a closure, branch, loop, `&&`/`||`, or the
+/// argument of a combinator that may skip it (`map_or(0, ..)`).
+/// Without a paired old text, or when the tail does not parse as one
+/// expression, the whole tail is read as before.
+pub(super) fn changed_part_evaluates_conditionally(changed: &str, before: Option<&str>) -> bool {
+    let Some(span) = super::changed_span::ChangedSpan::of(changed, before) else {
+        return evaluates_conditionally(&mask_comments_and_strings(changed));
+    };
+    if evaluates_conditionally(&mask_comments_and_strings(
+        &span.covering.text().to_string(),
+    )) {
+        return true;
+    }
+    span.enclosing().iter().any(|(ancestor, child)| {
+        ast::ClosureExpr::can_cast(ancestor.kind())
+            || ast::IfExpr::can_cast(ancestor.kind())
+            || ast::MatchExpr::can_cast(ancestor.kind())
+            || ast::LoopExpr::can_cast(ancestor.kind())
+            || ast::WhileExpr::can_cast(ancestor.kind())
+            || ast::ForExpr::can_cast(ancestor.kind())
+            || ast::BinExpr::cast(ancestor.clone()).is_some_and(|binary| {
+                binary
+                    .op_token()
+                    .is_some_and(|op| matches!(op.text(), "&&" | "||"))
+            })
+            || skipping_combinator_argument(ancestor, child)
+    })
+}
+
+/// Whether `child` is the argument list of a call to one of
+/// [`CONDITIONAL_COMBINATORS`] (`x.map_or(0, ..)`, `Option::map(x, ..)`).
+fn skipping_combinator_argument(call: &SyntaxNode, child: &SyntaxNode) -> bool {
+    if !ast::ArgList::can_cast(child.kind()) {
+        return false;
+    }
+    let name = if let Some(method) = ast::MethodCallExpr::cast(call.clone()) {
+        method.name_ref().map(|name| name.text().to_string())
+    } else if let Some(ast::Expr::PathExpr(path)) =
+        ast::CallExpr::cast(call.clone()).and_then(|call| call.expr())
+    {
+        path.path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string())
+    } else {
+        return false;
+    };
+    name.is_none_or(|name| CONDITIONAL_COMBINATORS.contains(&name.as_str()))
+}
 
 /// Whether the changed tail evaluates some of its parts only on some
 /// inputs: a closure or `|`/`||`/`&&` operator, a branch or loop, or a

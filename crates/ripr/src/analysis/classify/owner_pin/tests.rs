@@ -999,6 +999,52 @@ fn gate(body: &str, changed: &str) -> Option<ReturnPathGate> {
     return_path_gate(body, changed, body[..at].matches('\n').count())
 }
 
+/// #6578: with the changed line's old text, only the part that differs
+/// must run on every input. An unchanged closure elsewhere in the tail does
+/// not make the change conditional.
+#[test]
+fn an_unchanged_closure_leaves_the_changed_operand_unconditional() {
+    let body = |tail: &str| format!("fn total(lines: &[Line]) -> u64 {{\n    {tail}\n}}");
+    let gate_from =
+        |after: &str, before: Option<&str>| return_path_gate_from(&body(after), after, before, 1);
+    let tail = |fee: &str| format!("lines.iter().map(|l| l.cents).sum::<u64>() + {fee}");
+    assert!(matches!(
+        gate_from(&tail("25 * 2"), Some(&tail("50"))),
+        Some(ReturnPathGate::Any)
+    ));
+    // Without the old text the whole tail is read, closure included.
+    assert!(gate_from(&tail("25 * 2"), None).is_none());
+    for (after, before) in [
+        // The change is inside the closure.
+        (
+            "lines.iter().map(|l| l.cents + 1).sum::<u64>()",
+            "lines.iter().map(|l| l.cents + 2).sum::<u64>()",
+        ),
+        // The changed part is an argument a combinator may skip, sits in a
+        // branch, or behind `&&`/`||`.
+        ("x.map_or(51, |v| v)", "x.map_or(50, |v| v)"),
+        (
+            "if ready() { 51 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+            "if ready() { 50 } else { lines.iter().map(|l| l.cents).sum::<u64>() }",
+        ),
+        (
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(51))",
+            "u64::from(lines.iter().any(|l| l.cents > 0) && f(50))",
+        ),
+        (
+            "Option::map(x, |v| v).unwrap_or(51)",
+            "Option::map(x, |v| v).unwrap_or(50)",
+        ),
+        // A name bound outside the closure carries the change into it.
+        (
+            "{ let k = 3; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+            "{ let k = 2; lines.iter().map(|l| l.cents * k).sum::<u64>() }",
+        ),
+    ] {
+        assert!(gate_from(after, Some(before)).is_none(), "{after}");
+    }
+}
+
 #[test]
 fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
     // bytesize's `as_whole_units`: the one `return None` is the only `None`.

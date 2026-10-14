@@ -438,7 +438,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// keeps its return paths open (#6578). Old entries keep those verdicts.
 /// `1.68` is allocated to #7828's JSON admission, so neither change can
 /// read a cache the other produced.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.69";
+/// `1.71`: a changed operand beside an unchanged closure in a returned tail
+/// is neither conditional for the owner-return pin nor opaque for the
+/// propagation witness (#6578). Old entries keep those seams unrevealed.
+/// `1.70` is allocated to #7828.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.71";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -551,7 +555,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.69";
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
+/// `0.77`: same unchanged-closure tail evidence as full `1.71` (`0.76` is
+/// #7828's).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -666,7 +672,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
 /// `0.73`: same `#[rstest]` fixture admission as full `1.67`.
 /// `0.75`: same expect-test and `format!` tail evidence as full `1.69`
 /// (`0.74` is #7828's).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.75";
+/// `0.77`: same unchanged-closure tail evidence as full `1.71` (`0.76` is
+/// #7828's).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.77";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4378,7 +4386,9 @@ mod tests {
         // 1.66 -> 1.67: #[rstest] fixture owner-return pins (#6578).
         // 1.67 -> 1.69: expect-test inline pins and format! tails (#6578);
         // 1.68 is allocated to #7828.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.69");
+        // 1.69 -> 1.71: unchanged closures in returned tails (#6578); 1.70
+        // is allocated to #7828.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.71");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4440,8 +4450,9 @@ mod tests {
         // 0.71 -> 0.72: same #[rstest] case-table admission as full 1.66.
         // 0.72 -> 0.73: same #[rstest] fixture admission as full 1.67.
         // 0.73 -> 0.75: same evidence as full 1.69 (0.74 is #7828's).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.75");
+        // 0.75 -> 0.77: same evidence as full 1.71 (0.76 is #7828's).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.77");
     }
 
     #[test]

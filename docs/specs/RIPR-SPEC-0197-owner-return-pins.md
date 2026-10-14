@@ -516,7 +516,9 @@ rule only for an assertion whose context was admitted.
    `Foo { f: |x| x }`, `[|x| x]`), so every closure still fails closed. A
    `|` inside a macro invocation's arguments
    (`matches!(k, A | B)`) or in a tail holding a `let` may separate pattern
-   alternatives, which short-circuit, so it is never binary. When the owner has no `?` and no other
+   alternatives, which short-circuit, so it is never binary. With a paired
+   old text, only the changed part of the tail is held to this rule
+   (Unchanged closures in a returned tail, below). When the owner has no `?` and no other
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
@@ -1115,6 +1117,33 @@ integer division is not for an arithmetic tail. Without this witness
 read as a false `weakly_exposed` gap, because the current-path witness
 refuses any macro in the path.
 
+### Unchanged closures in a returned tail (#6578)
+
+In `lines.iter().map(|l| l.cents).sum::<u64>() + 50` → `.. + 25 * 2` only
+`25 * 2` changed. The closure is the same in both versions and runs the same
+way on every input, so it neither decides whether the changed operand runs
+nor stands between it and the return. `ChangedSpan` in
+`classify/changed_span.rs` takes the probe's paired old line, strips the
+longest common prefix and suffix, parses the new line as one tail
+expression and finds the smallest node covering the differing text.
+
+1. The return-path gate (rule 3) then reads only that node and the nodes
+   enclosing it up to and including the tail: the change is conditional
+   when its own text is, or when an enclosing node is a closure, `if`,
+   `match`, loop, `&&`/`||`, or the argument list of a skipping combinator
+   (or of a method call it cannot name). `x.map_or(51, |v| v)` still
+   refuses: the changed `51` is a `map_or` argument.
+2. The current-path propagation witness, which refuses any closure text in
+   the path, completes a direct return witness for a `return_value` probe
+   whose whole changed expression is the owner's return-value sink on the
+   probe's line when no closure encloses or sits inside the changed node,
+   the changed part passes rule 1, and the expression holds no macro,
+   `dyn`, `extern` or FFI name.
+3. Without a paired old text, when the new line does not parse as one tail
+   expression, or when the tail binds a name outside every closure (a
+   `let`, `if let`, `match` arm or `for`, which can carry the change into a
+   closure that may not run), both read the whole expression as before.
+
 ### Same-named module-level functions (#6544)
 
 A bare call used to refuse the pin whenever any other module-level `fn` of
@@ -1440,6 +1469,11 @@ qualified `expect_test::expect!`, and every `insta` macro stay
 - `use expect_test::expect;` under its own name makes a bare `expect!`
   expect-test's on the same manifest terms as `pretty_assertions`
   (inline expect-test pins, #6578).
+- Unchanged closures in a returned tail (#6578): in the RIPR-SPEC-0219
+  verdict corpus, `lib-pretty-total-path-qualified` is `credited`; a change
+  inside the closure, a value a closure captures through a `let`, and a
+  changed `map_or` default stay unrevealed
+  (`crates/ripr/tests/unchanged_closure_tail.rs`).
 
 ### Matched before/after observations
 

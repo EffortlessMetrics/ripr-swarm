@@ -12392,6 +12392,13 @@ tests = [
   "crates/ripr/tests/expect_test_owner_pins.rs::every_parsed_inline_expect_spelling_pins_the_owner",
   "crates/ripr/tests/expect_test_owner_pins.rs::other_expect_test_and_snapshot_shapes_keep_their_medium_grade",
   "crates/ripr/tests/expect_test_owner_pins.rs::a_captured_identifier_format_tail_propagates",
+  "crates/ripr/src/analysis/classify/changed_span.rs::the_span_is_the_smallest_node_around_the_differing_text",
+  "crates/ripr/src/analysis/classify/changed_span.rs::a_closure_is_seen_only_around_or_inside_the_change",
+  "crates/ripr/src/analysis/classify/changed_span.rs::no_span_without_an_old_text_or_one_tail_expression",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unchanged_closure_leaves_the_changed_operand_unconditional",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::an_unchanged_closure_in_a_returned_tail_completes_the_witness",
+  "crates/ripr/tests/unchanged_closure_tail.rs::a_changed_operand_beside_an_unchanged_closure_is_exposed",
+  "crates/ripr/tests/unchanged_closure_tail.rs::a_change_the_closure_decides_or_carries_stays_unrevealed",
   "crates/ripr/tests/constant_tail_propagation.rs::exact_pin_on_a_constant_owner_tail_is_exposed",
   "crates/ripr/tests/constant_tail_propagation.rs::weak_oracle_on_a_constant_owner_tail_keeps_its_gap",
   "crates/ripr/tests/fallible_owner_return.rs::frozen_fallible_literal_helper_exposes_exact_owner_return",
@@ -12647,6 +12654,7 @@ fixtures = [
   "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/changed_span.rs",
   "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/output/observed_values.rs",
   "crates/ripr/src/output/human/evidence_lines.rs",
