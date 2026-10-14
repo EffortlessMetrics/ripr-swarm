@@ -16,7 +16,7 @@ use super::patterns::{
     is_inequality_named_assertion_macro, is_inequality_only_comparison, is_mock_expectation_line,
     is_negated_pattern_assertion, is_observer_named_assertion_helper, is_smoke_check,
     is_snapshot_assertion, is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
-    pattern_comparison_polarity, tests_both_sides,
+    pattern_comparison_polarity, pattern_conjunct_assertions, tests_both_sides,
 };
 
 /// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
@@ -162,6 +162,45 @@ fn classify_non_negated_assertion(
     line: &str,
     scalar_integer_relation: bool,
 ) -> OracleClassification {
+    let whole = classify_whole_condition(line, scalar_integer_relation);
+    // RIPR-SPEC-0231 rule 3 (#7695): without a pinning `==` conjunct (rule
+    // 1), a `&&` chain is no stronger than its strongest conjunct read alone,
+    // so a `matches!` in the chain keeps its pattern's reading instead of
+    // earning `exact_value` / strong whatever the pattern
+    // (`assert!(ready && matches!(r, Ok(_)))`). A pinning `==` keeps the
+    // chain's reading: the test does fix that value, and lowering it could
+    // turn a real discriminator into an actionable gap. It only lowers.
+    let pins_by_equality = boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition));
+    let Some(conjuncts) = pattern_conjunct_assertions(line).filter(|_| !pins_by_equality) else {
+        return whole;
+    };
+    let readings = conjuncts
+        .iter()
+        .map(|conjunct| classify_assertion(conjunct))
+        .collect::<Vec<_>>();
+    let Some(rank) = readings.iter().map(|reading| reading.strength.rank()).max() else {
+        return whole;
+    };
+    if rank > whole.strength.rank() {
+        return whole;
+    }
+    // The chain keeps its kind only when a conjunct earns that kind at the
+    // same strength alone, so an irrefutable `Ok(_) | Err(_)` conjunct
+    // cannot lend the chain `broad_error` from its `Err` text.
+    let strongest = readings
+        .iter()
+        .filter(|reading| reading.strength.rank() == rank)
+        .collect::<Vec<_>>();
+    if strongest.iter().any(|reading| **reading == whole) {
+        return whole;
+    }
+    strongest
+        .first()
+        .map_or(whole.clone(), |reading| (*reading).clone())
+}
+
+fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> OracleClassification {
     // RIPR-SPEC-0231 rules 2 and 3: a whole-pattern assertion is only as
     // strong as its pattern, ahead of every step that reads `matches!`.
     if let Some(classification) = pattern_assertion_classification(line) {
@@ -229,9 +268,15 @@ fn classify_non_negated_assertion(
             strength: OracleStrength::Strong,
         }
     } else if is_snapshot_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::Snapshot,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || { assert_snapshot!(v); true })` may never run
+        // the snapshot, so a deciding `||` earns no snapshot credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::Snapshot,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_smoke_check(line) {
         OracleClassification {
@@ -1501,6 +1546,307 @@ fn ok_literal() {
         ];
         if readings != expected {
             return Err(format!("parser readings {readings:?}"));
+        }
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0227 decision 2: an `unwrap_err()` whose value is never
+    /// compared reads `broad_error` / weak on the line scanner and the
+    /// parser path; a binding a later assertion compares adds nothing.
+    #[test]
+    fn spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant};
+        use OracleStrength::{Strong, Weak};
+        let cases = [
+            (
+                "underscore_binding",
+                "let _e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "discarded",
+                "check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "unused_binding",
+                "let e = check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "compared_binding",
+                "let e = check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "method_on_the_error",
+                "let k = check(300).unwrap_err().kind();",
+                vec![],
+            ),
+            (
+                "compared_chain_tail",
+                "let e = check(300)\n        .unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "compared_split_let",
+                "let e =\n        check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "compared_argument_tail",
+                "let e = check(\n        300,\n    ).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            // An `Ok` the adapter turns into `Err` passes whatever the call
+            // returned; only adapters that keep an `Ok` an `Ok` may sit
+            // between the call and `unwrap_err()`.
+            (
+                "fallback_error",
+                "check(300).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "option_converted",
+                "let _e = find(3).ok_or(E::Missing).unwrap_err();",
+                vec![],
+            ),
+            // A grouping is not the call: the adapter inside it still
+            // replaces the call's result (#7872).
+            (
+                "grouped_fallback_error",
+                "(check(300).and(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "nested_grouped_fallback_error",
+                "let _e = ((check(300).and(Err(E::Other)))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_or_else",
+                "(check(300).or(Err(E::Other))).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_option_converted",
+                "(find(3).ok_or(E::Missing)).unwrap_err();",
+                vec![],
+            ),
+            // A grouping is looked through: around the call itself, or
+            // around Ok-preserving adapters, it still reads the call.
+            (
+                "grouped_call",
+                "(check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_error_mapped",
+                "let _e = (check(300).map_err(Wrap)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_then_mapped",
+                "((check(300))).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "raw_identifier_call",
+                "r#check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_mapped_then_fallback",
+                "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            // A fallback inside the group is not hidden by an Ok-preserving
+            // adapter on either side of the closing paren.
+            (
+                "grouped_fallback_then_mapped",
+                "(check(300).and(Err(E::Other)).map_err(Wrap)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_fallback_mapped_outside",
+                "(check(300).and(Err(E::Other))).map_err(Wrap).unwrap_err();",
+                vec![],
+            ),
+            // A group around a comparison, jump, range or tuple is not a
+            // call.
+            (
+                "grouped_comparison",
+                "(a < check(300)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_return",
+                "(return check(300)).unwrap_err();",
+                vec![],
+            ),
+            ("grouped_range", "(a..check(300)).unwrap_err();", vec![]),
+            ("grouped_tuple", "(x < y, check(300)).unwrap_err();", vec![]),
+            (
+                "turbofish_path",
+                "(Api::<A, B>::check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
+            (
+                "turbofish_call",
+                "check::<u8>(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "error_mapped",
+                "check(300).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "method_receiver",
+                "svc.check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+        ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// RIPR-SPEC-0227 decision 2 lists `r.expect_err(..)` beside
+    /// `r.unwrap_err()`: whose value is never compared, it observes the `Err`
+    /// side and reads `broad_error` / weak, not a medium mock expectation
+    /// (#7604). A mock's own `expect_*` call still reads as one.
+    #[test]
+    fn spec_0227_uncompared_expect_err_reads_like_unwrap_err() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation};
+        use OracleStrength::{Medium, Strong, Weak};
+        let cases = [
+            (
+                "expect_err_underscore_binding",
+                "let _e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_discarded",
+                "check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_unused_binding",
+                "let e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_formatted_message",
+                "check(300).expect_err(&format!(\"len {}\", 300));",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_grouped_call",
+                "(check(300)).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_compared_binding",
+                "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "expect_err_method_on_the_error",
+                "let k = check(300).expect_err(\"too long\").kind();",
+                vec![],
+            ),
+            (
+                "expect_err_fallback_error",
+                "check(300).and(Err(E::Other)).expect_err(\"too long\");",
+                vec![],
+            ),
+            (
+                "mock_expectation_still_reads_medium",
+                "mock.expect_publish().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expect_err_prefixed_name",
+                "mock.expect_err_report().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+            // mockall's `expect_<method>` for a method named `err` takes no
+            // message: it stays a mock expectation.
+            (
+                "mock_expectation_for_err_method",
+                "mock.expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_configured",
+                "mock.expect_err().returning(|| ());",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` text in the message is not a mock expectation name.
+            (
+                "expect_err_expect_word_message",
+                "check(300).expect_err(\"expect_error\");",
+                vec![(BroadError, Weak)],
+            ),
+            // An effect word in the message is not an effect observer.
+            (
+                "expect_err_effect_word_message",
+                "check(300).expect_err(\"state not sent\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_observer_and_expect_words_message",
+                "check(300).expect_err(\"state expect\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_mock_verification_message",
+                "check(300).expect_err(\"mock.verify() state\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_nested_in_message",
+                "check(300).expect_err(&check(400).expect_err(\"x\").to_string());",
+                vec![(BroadError, Weak)],
+            ),
+        ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// A named test body and the oracle kinds both adapters must read.
+    type ParityCase<'a> = (&'a str, &'a str, Vec<(OracleKind, OracleStrength)>);
+
+    /// Each body read by the line scanner and, as its own test, by the
+    /// parser path, must yield exactly the expected oracle kinds.
+    fn assert_both_adapters_read(cases: &[ParityCase<'_>]) -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let mut source = String::new();
+        for (name, body, expected) in cases {
+            let lexical = crate::analysis::extract::extract_assertions(body, 1)
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &lexical != expected {
+                return Err(format!("{name}: line scanner read {lexical:?}"));
+            }
+            source.push_str(&format!("#[test]\nfn {name}() {{\n    {body}\n}}\n\n"));
+        }
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
+        for (name, _, expected) in cases {
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == *name)
+                .ok_or_else(|| format!("parser lost test {name}"))?;
+            let parsed = test
+                .assertions
+                .iter()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+                .collect::<Vec<_>>();
+            if &parsed != expected {
+                return Err(format!("{name}: parser read {parsed:?}"));
+            }
         }
         Ok(())
     }

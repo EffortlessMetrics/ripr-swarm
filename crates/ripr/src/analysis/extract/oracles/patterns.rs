@@ -3,6 +3,8 @@ use super::arguments::{
     boolean_assertion_macro_condition, comparable_expression, custom_assertion_arguments,
     equality_assertion_arguments, is_complete_macro_invocation,
 };
+use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
+use super::scan::balanced_group_end;
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -564,6 +566,37 @@ pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     Some(format!("{macro_name}({}\n);", rest.join("\n && ")))
 }
 
+/// RIPR-SPEC-0231 rule 3 (#7695): for a boolean assertion whose condition is
+/// a top-level `&&` chain with at least one whole `matches!(..)` conjunct,
+/// the same assertion over each conjunct alone (`None` otherwise). A
+/// conjunction is no stronger than its strongest conjunct, so the caller
+/// reads each one and a `matches!` keeps its pattern's reading inside the
+/// chain (`assert!(ready && matches!(r, Ok(_)))` reads as `Ok(_)` does).
+pub(super) fn pattern_conjunct_assertions(line: &str) -> Option<Vec<String>> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
+    let is_pattern = |conjunct: &str| {
+        // Masked, so a leading comment cannot hide the pattern.
+        let masked = mask_comments_and_strings(conjunct.trim());
+        is_complete_macro_invocation(unwrap_parentheses(masked.trim()), "matches!")
+    };
+    if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| is_pattern(conjunct)) {
+        return None;
+    }
+    // Each conjunct ends its own line, so a trailing `//` comment cannot
+    // swallow the closing `);`.
+    Some(
+        conjuncts
+            .iter()
+            .map(|conjunct| format!("{macro_name}({}\n);", conjunct.trim()))
+            .collect(),
+    )
+}
+
 /// RIPR-SPEC-0231 rule 1 (#7558): the boolean assertion with every
 /// parenthesized `&&` conjunct that a `||` decides removed, so the other
 /// conjuncts decide the reading, as they do beside a negated pattern
@@ -1033,7 +1066,15 @@ pub(super) fn is_duplicative_comparison(condition: &str) -> bool {
 
 pub(super) fn is_exact_value_assertion(line: &str) -> bool {
     // `assert_ne!` is owned by RIPR-SPEC-0231 rule 1 and never exact.
-    line.contains("assert_eq!") || line.contains("assert_matches!") || line.contains("matches!")
+    line.contains("assert_eq!")
+        || line.contains("assert_matches!")
+        || (line.contains("matches!")
+            && (some_matches_pins_a_value(line)
+                // A pinning `==` conjunct keeps the chain exact (RIPR-SPEC-0231
+                // rule 3's decision), including the runtime controls'
+                // `matches!(value, _) && value == 2`.
+                || boolean_assertion_macro_condition(line)
+                    .is_some_and(|(_, condition)| has_top_level_exact_equality(&condition))))
 }
 
 /// RIPR-SPEC-0231 rule 1 (#7558): whether an `||` decides the condition:
@@ -1070,10 +1111,37 @@ pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
                 if let Some(inner) = super::arguments::parenthesized_contents(masked) {
                     return has_top_level_exact_equality(inner);
                 }
-                top_level_comparison_operator(masked).is_some_and(|(at, _)| {
-                    masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
-                })
+                is_pinning_equality(conjunct, masked)
             })
+}
+
+/// Whether one conjunct is a top-level `==` that pins a value. `masked` is
+/// the conjunct trimmed and masked. `value == value` compares a value with
+/// itself, and `matches!(r, Ok(_)) == true` restates an unpinned pattern, so
+/// neither pins anything.
+fn is_pinning_equality(conjunct: &str, masked: &str) -> bool {
+    top_level_comparison_operator(masked).is_some_and(|(at, _)| {
+        masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
+            && !compares_unpinned_pattern_with_bool(conjunct, at)
+    }) && !is_duplicative_comparison(conjunct.trim())
+}
+
+/// RIPR-SPEC-0231 rule 3 (#7715): `matches!(r, Ok(_)) == true` states the
+/// pattern and nothing more, so it pins no value when the pattern does not.
+/// `at` is the `==` offset in the trimmed, masked conjunct.
+fn compares_unpinned_pattern_with_bool(conjunct: &str, at: usize) -> bool {
+    let conjunct = conjunct.trim();
+    let masked = mask_comments_and_strings(conjunct);
+    let offset = masked.len() - masked.trim_start().len();
+    let at = offset + at;
+    let (Some(left), Some(right)) = (conjunct.get(..at), conjunct.get(at + 2..)) else {
+        return false;
+    };
+    // Redundant parentheses (`(true)`, `(matches!(r, Ok(_)))`) change nothing.
+    let is_bool =
+        |side: &str| boolean_literal_value(mask_comments_and_strings(side).trim()).is_some();
+    let is_pattern = |side: &str| is_unpinned_pattern(unwrap_parentheses(side.trim()));
+    (is_bool(left) && is_pattern(right)) || (is_bool(right) && is_pattern(left))
 }
 
 /// Which of `==` and `!=` appear outside string literals and comments.
@@ -1099,25 +1167,17 @@ fn comparison_operators(condition: &str) -> (bool, bool) {
 }
 
 fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
+    // Comments and literals are not delimiters. Mask them before counting
+    // brackets so an unmatched `}` inside a nested comment cannot hide a
+    // real `==` (`matches!(r, /* } */ Ok(3)) == true`, #7822). Offsets stay
+    // valid on the original because masking preserves byte length.
+    let masked = mask_comments_and_strings(condition);
     let mut paren_depth = 0i32;
     let mut bracket_depth = 0i32;
     let mut brace_depth = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut chars = condition.char_indices().peekable();
+    let mut chars = masked.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
         match ch {
-            '"' => in_string = true,
             '(' => paren_depth += 1,
             ')' => paren_depth = paren_depth.saturating_sub(1),
             '[' => bracket_depth += 1,
@@ -1138,9 +1198,51 @@ fn top_level_comparison_operator(condition: &str) -> Option<(usize, usize)> {
     None
 }
 
+/// `line` with every `Result::expect_err(<message>)` call reduced to `.()`,
+/// so no later sniff sees the call name or anything in its message (a
+/// message such as `"mock.verify() state"` names nothing). A zero-argument
+/// `expect_err()` is a mock's expectation for a method named `err`
+/// (mockall's `expect_<method>`), so it stays. A message left open at the
+/// end of the line is dropped with the rest of the line.
+pub(super) fn without_expect_err(line: &str) -> String {
+    const CALL: &str = ".expect_err(";
+    // Masking keeps byte length, so offsets found on it index `line`.
+    let masked = mask_comments_and_strings(line);
+    let mut out = String::with_capacity(line.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(found) = masked[search..].find(CALL) {
+        let start = search + found;
+        let open = start + CALL.len() - 1;
+        match balanced_group_end(&masked, open) {
+            Some(close) if line[open + 1..close].trim().is_empty() => search = open + 1,
+            Some(close) => {
+                out.push_str(&line[copied..start]);
+                out.push_str(".()");
+                // Resume after the dropped message, so a nested
+                // `.expect_err(` inside it is never visited.
+                copied = close + 1;
+                search = close + 1;
+            }
+            None => {
+                out.push_str(&line[copied..start]);
+                out.push_str(".()");
+                copied = line.len();
+                break;
+            }
+        }
+    }
+    out.push_str(&line[copied..]);
+    out
+}
+
 pub(super) fn is_mock_expectation_line(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    let has_expectation_call = lower.contains("expect_") && lower.contains('(');
+    // `r.expect_err(..)` is a `Result` read, not a mock expectation
+    // (RIPR-SPEC-0227 decision 2, #7604), and `expect_` or mock text in its
+    // message or a comment names nothing.
+    let lower = without_expect_err(&line.to_ascii_lowercase());
+    let code = mask_comments_and_strings(&lower);
+    let has_expectation_call = code.contains("expect_") && lower.contains('(');
     let has_mock_verification_call = lower.contains("mock")
         && [
             ".assert_",
@@ -1155,7 +1257,8 @@ pub(super) fn is_mock_expectation_line(line: &str) -> bool {
 }
 
 pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
+    // `r.expect_err("state")` reads the `Result`, not an effect (#7604).
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     let has_observer_token = [
         "event",
         "emitted",
@@ -1193,7 +1296,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
         "counter",
         "recorded",
     ];
-    let lower = line.to_ascii_lowercase();
+    let lower = without_expect_err(&line.to_ascii_lowercase());
     if !(lower.contains("assert") || lower.contains("expect")) {
         return false;
     }
@@ -1201,7 +1304,7 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
     // and a word inside their comments or strings is not one. Other text
     // keeps the line-level reading.
     let masked = assertion_oracle_text(line).map_or_else(
-        || line.to_string(),
+        || without_expect_err(line),
         |operands| mask_comments_and_strings(&operands),
     );
     identifiers_with_position(&masked).any(|(start, identifier)| {
@@ -1963,11 +2066,51 @@ mod spec_0106_tests {
             ("(a == b || c) && ready", false),
             ("total(&cart) == 42 // a || b", true),
             ("/* pinned */ (a == b) && ready", true),
+            // #7822: comment brackets are not delimiters of the `==`.
+            ("matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true", true),
+            ("matches!(r, // , ( [ ) ] }\n Ok(3)) == true", true),
+            // An unpinned pattern compared with a bool still pins nothing.
+            (
+                "matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true",
+                false,
+            ),
         ] {
             let actual = has_top_level_exact_equality(condition);
             if actual != expected {
                 return Err(format!(
                     "comparison classification mismatch for {condition}: {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bool_compared_matches_polarity_ignores_comment_brackets() -> Result<(), String> {
+        // #7822: an unmatched `}` in a nested comment must not turn a
+        // positive `== true` comparison into NotPositive.
+        for (line, expected) in [
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true);",
+                Some(PatternPolarity::Positive),
+            ),
+            (
+                "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == false);",
+                Some(PatternPolarity::NotPositive),
+            ),
+            (
+                "assert!(true == matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)));",
+                Some(PatternPolarity::Positive),
+            ),
+        ] {
+            let actual = pattern_comparison_polarity(line);
+            if actual != expected {
+                return Err(format!(
+                    "polarity mismatch for {line}: {actual:?}, expected {expected:?}"
                 ));
             }
         }

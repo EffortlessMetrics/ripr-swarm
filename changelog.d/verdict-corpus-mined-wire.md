@@ -1,4 +1,4 @@
-<!-- section: Added -->
+<!-- section: Internal / CI -->
 - Verdict corpus: two authored subjects add 14 runtime-labeled cases for test
   shapes mined from real crates (bytes, httparse, byteorder, rust-base64,
   uuid, toml_writer, rust-url) and written as our own code.

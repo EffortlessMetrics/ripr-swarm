@@ -24,8 +24,9 @@
 
 use crate::analysis::extract::equality_assertion_arguments;
 use crate::analysis::facts::FunctionSummary;
+use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::syntax::parse_clean_source_file;
-use ra_ap_syntax::{AstNode, ast, ast::HasName};
+use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
 use std::collections::BTreeMap;
 
 /// The fixed disclosure a contradicted oracle carries in every evidence
@@ -67,6 +68,107 @@ pub(super) fn exact_value_assertion_verdict(
         // assertion never called.
         return ExactValueVerdict::NotEvaluable;
     }
+    verdict_in(owner, oracle_text, &BTreeMap::new())
+}
+
+/// [`exact_value_assertion_verdict`] for an assertion of `test`. An rstest
+/// case table runs its body once per `#[case(..)]` row, so each row's
+/// literals are bound to the `#[case]` parameters and folded on their own:
+/// one contradicted row fails at baseline and contradicts the whole test,
+/// as a wrong literal does in a plain `#[test]`. Every row consistent is
+/// consistent; anything else is not evaluable.
+pub(super) fn exact_value_assertion_verdict_for_test(
+    owner: Option<&FunctionSummary>,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> ExactValueVerdict {
+    let shadowed = owner.is_some_and(|owner| bare_owner_call_is_shadowed(test, &owner.name));
+    let Some(rows) = case_row_bindings(test) else {
+        return exact_value_assertion_verdict(owner, oracle_text, shadowed);
+    };
+    if shadowed {
+        return ExactValueVerdict::NotEvaluable;
+    }
+    let mut verdict = ExactValueVerdict::Consistent;
+    for row in &rows {
+        match verdict_in(owner, oracle_text, row) {
+            contradicted @ ExactValueVerdict::Contradicted { .. } => return contradicted,
+            ExactValueVerdict::NotEvaluable => verdict = ExactValueVerdict::NotEvaluable,
+            ExactValueVerdict::Consistent => {}
+        }
+    }
+    verdict
+}
+
+/// The `#[case]` parameter bindings of each `#[case(..)]` row of an rstest
+/// test, each row value folded to an integer (a value that does not fold
+/// binds nothing, so an operand naming it stays not evaluable). `None` when
+/// the test has no case rows.
+fn case_row_bindings(test: &TestSummary) -> Option<Vec<BTreeMap<String, i128>>> {
+    if !test
+        .attrs
+        .iter()
+        .any(|attr| attr.trim_start().starts_with("#[case"))
+    {
+        return None;
+    }
+    let source = format!("{}\n{}", test.attrs.join("\n"), test.body.as_str());
+    let parse = parse_clean_source_file(&source)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let parameters: Vec<Option<String>> = function
+        .param_list()?
+        .params()
+        .filter(|param| {
+            param
+                .attrs()
+                .any(|attr| attr.simple_name().as_deref() == Some("case"))
+        })
+        .map(|param| match param.pat() {
+            Some(ast::Pat::IdentPat(pat)) => pat.name().map(|name| name.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    let empty = BTreeMap::new();
+    let mut rows = Vec::new();
+    for attr in function.attrs() {
+        let Some(path) = attr.path() else {
+            continue;
+        };
+        let path = path.syntax().text().to_string().replace(' ', "");
+        if path != "case" && !path.starts_with("case::") {
+            continue;
+        }
+        let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+            continue;
+        };
+        let tree = meta.token_tree()?.syntax().text().to_string();
+        let inside = tree.strip_prefix('(')?.strip_suffix(')')?;
+        let values = super::split_top_level_commas(inside);
+        if values.len() != parameters.len() {
+            return None;
+        }
+        let mut row = BTreeMap::new();
+        for (parameter, value) in parameters.iter().zip(&values) {
+            if let (Some(parameter), Some(value)) = (parameter, fold_expression(value, &empty)) {
+                row.insert(parameter.clone(), value);
+            }
+        }
+        rows.push(row);
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+
+/// The fold of one equality assertion with `environment` binding names the
+/// operands may use (an rstest row's parameters).
+fn verdict_in(
+    owner: Option<&FunctionSummary>,
+    oracle_text: &str,
+    environment: &BTreeMap<String, i128>,
+) -> ExactValueVerdict {
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
     };
@@ -79,15 +181,14 @@ pub(super) fn exact_value_assertion_verdict(
     let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
         return ExactValueVerdict::NotEvaluable;
     };
-    let empty = BTreeMap::new();
     let mut values = Vec::with_capacity(call_arguments.len());
     for argument in &call_arguments {
-        let Some(value) = fold_expression(argument, &empty) else {
+        let Some(value) = fold_expression(argument, environment) else {
             return ExactValueVerdict::NotEvaluable;
         };
         values.push(value);
     }
-    let Some(expected_value) = fold_expression(expected, &empty) else {
+    let Some(expected_value) = fold_expression(expected, environment) else {
         return ExactValueVerdict::NotEvaluable;
     };
     let Some(actual_value) = fold_owner_call(owner, &values) else {
@@ -102,7 +203,11 @@ pub(super) fn exact_value_assertion_verdict(
     };
     if contradicted {
         ExactValueVerdict::Contradicted {
-            expected: expected.trim().to_string(),
+            expected: if environment.is_empty() {
+                expected.trim().to_string()
+            } else {
+                expected_value.to_string()
+            },
             evaluated: actual_value,
         }
     } else {
@@ -1283,6 +1388,56 @@ mod tests {
                 "{assertion}"
             );
         }
+        Ok(())
+    }
+
+    /// Each `#[case(..)]` row of an rstest table is folded on its own: one
+    /// wrong row fails at baseline, so it contradicts the whole test.
+    #[test]
+    fn an_rstest_case_row_is_folded_with_its_own_literals() -> Result<(), String> {
+        let verdict = |rows: &str| -> Result<ExactValueVerdict, String> {
+            let source = format!(
+                "pub fn weight(x: u32) -> u32 {{\n    x * 3\n}}\n#[cfg(test)]\nmod tests {{\n    use super::weight;\n    use rstest::rstest;\n    #[rstest]\n{rows}\n    fn weighs(#[case] x: u32, #[case] expected: u32) {{\n        assert_eq!(weight(x), expected);\n    }}\n}}\n"
+            );
+            let facts = RaRustSyntaxAdapter
+                .summarize_file(std::path::Path::new("src/lib.rs"), &source)
+                .map_err(|error| format!("source summarizes: {error}"))?;
+            let owner = facts
+                .functions
+                .iter()
+                .find(|function| function.name == "weight")
+                .ok_or("owner function is indexed")?;
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == "weighs")
+                .ok_or("rstest test is indexed")?;
+            let assertion = test
+                .assertions
+                .first()
+                .ok_or("the rstest test carries its assertion")?;
+            Ok(exact_value_assertion_verdict_for_test(
+                Some(owner),
+                &assertion.text,
+                test,
+            ))
+        };
+        assert_eq!(
+            verdict("    #[case(4, 12)]\n    #[case::five(5, 15)]")?,
+            ExactValueVerdict::Consistent
+        );
+        assert_eq!(
+            verdict("    #[case(4, 12)]\n    #[case::five(5, 14)]")?,
+            ExactValueVerdict::Contradicted {
+                expected: "14".to_string(),
+                evaluated: 15,
+            }
+        );
+        // A row value the fold cannot read leaves the table not evaluable.
+        assert_eq!(
+            verdict("    #[case(4, 12)]\n    #[case(5, LIMIT)]")?,
+            ExactValueVerdict::NotEvaluable
+        );
         Ok(())
     }
 }

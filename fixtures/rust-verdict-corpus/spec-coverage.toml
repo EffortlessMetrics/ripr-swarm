@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 105
+floor = 118
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -21,7 +21,7 @@ floor = 105
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 32
+match_floor = 41
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
@@ -433,6 +433,11 @@ scope = "in"
 example = 9
 reason = "both arms return 2 (`1 + 1` and `2`), so the widened pattern `0..=3` to `0..=4` and every other mutant of the edited pattern leave f unchanged for every input; the edit is equivalent and no runtime truth exists"
 
+# Guarded side effect no test input enters
+[[spec]]
+id = "RIPR-SPEC-0263"
+scope = "in"
+
 # Rust oracle kind and strength admission
 [[spec]]
 id = "RIPR-SPEC-0231"
@@ -468,7 +473,8 @@ reason = "non-Rust language or packaging surface"
 # Seam grip classification order
 [[spec]]
 id = "RIPR-SPEC-0236"
-scope = "in"
+scope = "out"
+reason = "seam grip class, evidence-record category and pilot claims; corpus rows score diff verdicts and carry no seam fields, so no case can pin them (as RIPR-SPEC-0233 example 2). The probes stay as uncited `spec0236-*` verdict cases"
 
 # Pilot seam ranking
 [[spec]]
@@ -551,6 +557,23 @@ reason = "non-Rust language or packaging surface"
 # TypeScript mock passed in an object argument
 [[spec]]
 id = "RIPR-SPEC-0256"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript committed snapshot entry
+[[spec]]
+id = "RIPR-SPEC-0258"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# Rust closures in iterator adaptors
+[[spec]]
+id = "RIPR-SPEC-0265"
+scope = "in"
+
+# TypeScript strict custom matcher
+[[spec]]
+id = "RIPR-SPEC-0262"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 

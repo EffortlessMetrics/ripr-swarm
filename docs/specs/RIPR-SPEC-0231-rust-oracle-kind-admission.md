@@ -236,7 +236,8 @@ Two pattern terms are used below.
    would otherwise earn `broad_error` or an observer such as
    `events_sent.contains(&id)` that would otherwise earn step 9's
    `mock_expectation` (`assert!(ready || events_sent.contains(&id))` passes
-   without observing the event). A parenthesized `&&` conjunct that
+   without observing the event), or a snapshot in a block arm that would
+   otherwise earn step 6's `snapshot`. A parenthesized `&&` conjunct that
    such a `||` decides pins nothing, so, as beside a negated pattern, the
    other conjuncts decide with their own reading, or `relational_check` /
    weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads
@@ -302,7 +303,28 @@ Two pattern terms are used below.
    `relational_check` / weak: a slice that only fixes a length (`[_, ..]`,
    `[_]`), or the sole variant of a single-variant enum (`Only::Value`,
    `Only::Value(_)`). A variant whose enum cannot be resolved counts as
-   pinning, which keeps today's reading.
+   pinning, which keeps today's reading. In a top-level `&&` chain with
+   at least one whole `matches!` conjunct and no pinning `==` conjunct
+   (rule 1), the chain reads no stronger than its strongest conjunct read
+   alone, and keeps its kind only when such a conjunct earns that kind at
+   that strength; otherwise it takes the first such conjunct's reading.
+   So a `matches!` keeps its pattern's reading inside the chain (#7695).
+   A pinning `==` keeps the chain's reading, because the test does fix
+   that value; a self-comparison (`value == value`) pins nothing and
+   neither exempts the chain nor earns rule 1's exact credit.
+   `prop_assert!` reads a whole `matches!` condition as `assert!` does.
+   Outside those whole forms, a `matches!` invocation earns no exact credit
+   from its text alone. One nested in a call or closure
+   (`xs.iter().any(|x| matches!(x, Some(_)))`) or compared with a bool
+   (`matches!(r, Ok(_)) == true`, with or without redundant parentheses,
+   which is no pinning `==` either) is credited only when its own pattern
+   pins a value or a pinning `==` conjunct keeps the chain (#7715). A
+   `matches!` named only in a comment or string is no invocation and earns
+   nothing, and a comment around the pattern's constructor
+   (`matches!(x, /* , */ Some(_))`) does not hide it (#7772). A user macro, by path (`custom::matches!`,
+   `helpers::std::matches!`) or by name (`expect_matches!`), keeps today's
+   reading; only `matches!`, `std::matches!` and `core::matches!` (with an
+   optional leading `::`) are the std pattern test.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -373,8 +395,42 @@ Two pattern terms are used below.
    - The grade is classification input, not confirmation: reveal's token
      and effect-observer rules still decide whether a strong oracle
      observes the changed sink, so an admitted assertion on an
-     unconfirmed probe keeps its gap (as `cell-0096-log-info-captured`
-     does until a confirmation rule covers captured-sink membership).
+     unconfirmed probe keeps its gap. `cell-0096-log-info-captured` no
+     longer does: since #7133 a captured-log assertion withholds the gap as
+     `static_unknown` under `rust_log_capture_unresolved` (see
+     `docs/STATIC_LIMITS.md`), because ripr does not resolve the logger or
+     the log format.
+
+### Reveal admission of an excluded sibling
+
+Rule 1 sets the kind and strength of an inequality; reveal still decides
+whether it observes the change. When the changed line constructs an error
+variant (`return Err(E::Big)`), RIPR-SPEC-0106 Part B refuses an assertion
+that names the enum only through sibling variants, because the shared
+qualifier is not the changed error's identity. An inequality is the
+exception (examples 19 and 20): `assert_ne!(check(20), Err(E::Bad))` or
+`assert!(!matches!(check(20), Err(E::Bad)))` excludes the sibling from the
+owner's own result, so a change that returned `E::Bad` would fail it.
+Reveal admits it as `relational_check` / weak for every family, whatever
+the classifier read, when all of these hold:
+
+- the assertion is `assert_ne!` with one of its two operands exactly a
+  bare call to the changed owner, or `assert!` whose whole condition is one negated `matches!` with
+  that call as the whole scrutinee and an unguarded pattern (message
+  arguments never count, and nothing such as `||` or `^` may sit beside
+  the `matches!`);
+- no foreign import, same-named function in the test's package, nested
+  `fn` or local binding of the owner's name makes the call ambiguous;
+- no binding visible to the test (a `macro_rules!`, an import or a
+  `macro_use`) may rebind `assert!`, `assert_ne!` or `matches!`, and the
+  test's file and module chain pass the shared assertion-context gates;
+- the other operand, or the pattern, names the changed error's enum only
+  through sibling variants.
+
+Any other sibling-only assertion stays refused, so an inequality on a value
+that is not the owner's result shares only the enum qualifier and observes
+nothing. The admitted oracle is weak, so the finding reads
+`weakly_exposed`, never `exposed`.
 
 ### Decisions
 
@@ -413,7 +469,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    its probe-relative strength, because the assert fixes the owner's whole
    two-valued result. `owner_pin` is the authority for that shape and its
    runtime controls (`bool_owner_assert_pin_matched_static_and_runtime_controls`)
-   back it. Rejected: requiring the classifier to read that shape as
+   back it. The same holds for RIPR-SPEC-0197's inline expect-test pin
+   (`expect![["text"]].assert_eq(&owner(..))`, #6578): the oracle keeps
+   step 6's `snapshot` / medium kind, and only an owner pin that admits that
+   exact spelling raises its probe-relative strength; `insta`,
+   `expect_file!` and `assert_debug_eq` snapshots never pin
+   (`pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`).
+   Rejected: requiring the classifier to read that shape as
    `exact_value` / strong, which would duplicate the owner-identity gates
    in the oracle extractor. Rejected: a new kind for weak whole-object
    inequality (decision 1).
@@ -459,8 +521,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
   `cargo xtask check-evidence-promotion-honesty` passes. In particular
-  `cell-0096-log-info-captured` keeps its gap verdict while the
-  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  `cell-0096-log-info-captured` kept its gap verdict (it abstains as
+  `limited` since #7133) while the golden fixture `exact_any_membership_oracle` pins the fixed grade
   (`exact_value` / strong in `related_tests[]`): the grade is fixed,
   and the remaining gap is reveal observation confirmation, owned
   outside this spec.
@@ -471,7 +533,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No resolution of custom helper bodies (RIPR-SPEC-0120 owns macro-wrapped
   assertions).
 - No change to reveal's token or owner-pin confirmation, except that an
-  exact owner pin needs a strong oracle (decision 4).
+  exact owner pin needs a strong oracle, apart from the bool-owner and
+  inline expect-test pins (decision 4).
 - No change to TypeScript or Python oracle classification.
 
 ## Acceptance Examples
@@ -486,6 +549,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 5. `assert_eq!(check(20), Err(e))`: `exact_error_variant` / strong (unchanged).
 6. `assert!(matches!(check(5), Ok(5)))`: `exact_value` / strong (unchanged).
 7. `assert!(matches!(check(5), Ok(_)))`: `smoke_only` / smoke.
+   `assert!(ready && matches!(check(5), Ok(_)))`: `relational_check` /
+   weak, as `assert!(ready)` reads (today `exact_value` / strong; #7695).
+   `assert!(total == 4 && matches!(check(5), Ok(_)))`: unchanged, because
+   `total == 4` pins a value.
 8. `assert!(is_present())`: not `mock_expectation`.
 9. `assert_eq!(events_sent.len(), 1)`: `exact_value` / strong (unchanged;
    step 5 wins before step 9).
@@ -605,6 +672,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact`
   and the corpus case `spec0231-ensure-disjunction-not-exact` (the
   disjunction forms of example 13, #7558).
+- Existing: `relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern`
+  and the corpus case `spec0231-matches-wildcard-conjunct` (the `&&` chain
+  forms of example 7, #7695).
+- Existing: `relational_tests.rs::compound_matches_forms_read_no_stronger_than_their_pattern`
+  and the corpus case `spec0231-matches-nested-wildcard` (the nested,
+  commented and bool-compared forms of example 7, #7715).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).
@@ -656,6 +729,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   the polarity rule in every operand order and macro form, the
   `prop_assert*`, `assert_not_matches!` and `.not()` spellings, and the
   name-and-receiver-only observer exemption.
+- Reveal admission of an excluded sibling (examples 19 and 20):
+  `crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_inequality_excluding_a_sibling_reads_relational_weak`
+  and its control `spec_0231_sibling_inequality_off_the_owner_call_stays_refused`.
+  Corpus: `spec0231-oracle-assert-ne-err-variant` and
+  `spec0231-oracle-negated-matches-err-variant` read `relational_check` /
+  weak in their `oracle` rows.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
@@ -678,6 +757,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/classify/reveal.rs`: the per-family strength
   override is a cap that never raises a classifier-weakened strength, and an
   exact owner pin needs a strong oracle (decision 4; `pin_strength_admits`).
+  `excludes_only_sibling_variant` admits an excluded sibling as
+  `relational_check` / weak.
 
 ## Metrics
 

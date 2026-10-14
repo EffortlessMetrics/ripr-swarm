@@ -410,6 +410,8 @@ impl TypescriptConfig {
 pub struct LanguagesConfig {
     pub enabled: Vec<LanguageId>,
     pub rust: RustLanguageConfig,
+    pub python: PythonLanguageConfig,
+    pub typescript: TypescriptLanguageConfig,
 }
 
 impl Default for LanguagesConfig {
@@ -417,6 +419,8 @@ impl Default for LanguagesConfig {
         Self {
             enabled: vec![LanguageId::Rust],
             rust: RustLanguageConfig::default(),
+            python: PythonLanguageConfig::default(),
+            typescript: TypescriptLanguageConfig::default(),
         }
     }
 }
@@ -437,6 +441,22 @@ impl LanguagesConfig {
 pub struct RustLanguageConfig {
     pub generated_file_patterns: Vec<String>,
     /// Exact normalized repository-relative Rust paths exempt from naming conventions.
+    pub handwritten_files: Vec<String>,
+}
+
+/// `[languages.python]` repository configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PythonLanguageConfig {
+    /// Exact normalized repository-relative Python paths admitted past the
+    /// built-in excluded-directory conventions (#7386).
+    pub handwritten_files: Vec<String>,
+}
+
+/// `[languages.typescript]` repository configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TypescriptLanguageConfig {
+    /// Exact normalized repository-relative TypeScript/JavaScript paths
+    /// admitted past the built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
 }
 
@@ -849,6 +869,14 @@ impl RiprConfig {
                     generated_file_patterns,
                     handwritten_files,
                 },
+            python:
+                PythonLanguageConfig {
+                    handwritten_files: python_handwritten_files,
+                },
+            typescript:
+                TypescriptLanguageConfig {
+                    handwritten_files: typescript_handwritten_files,
+                },
         } = languages;
         let ProfilesConfig { bun_ub } = profiles;
         let TypescriptConfig {
@@ -867,6 +895,16 @@ impl RiprConfig {
         };
         let handwritten_files_identity = if enabled.contains(&LanguageId::Rust) {
             canonical_sorted_strings(handwritten_files)
+        } else {
+            String::new()
+        };
+        let python_handwritten_files_identity = if enabled.contains(&LanguageId::Python) {
+            canonical_sorted_strings(python_handwritten_files)
+        } else {
+            String::new()
+        };
+        let typescript_handwritten_files_identity = if enabled.contains(&LanguageId::TypeScript) {
+            canonical_sorted_strings(typescript_handwritten_files)
         } else {
             String::new()
         };
@@ -996,6 +1034,18 @@ impl RiprConfig {
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(handwritten_files_identity),
                 note: "explicit handwritten Rust files change the analyzed source corpus",
+            },
+            ConfigIdentityField {
+                name: "languages.python.handwritten_files",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(python_handwritten_files_identity),
+                note: "explicit handwritten Python files change the analyzed source corpus (#7386)",
+            },
+            ConfigIdentityField {
+                name: "languages.typescript.handwritten_files",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(typescript_handwritten_files_identity),
+                note: "explicit handwritten TypeScript files change the analyzed source corpus (#7386)",
             },
         ]);
         match bun_ub {

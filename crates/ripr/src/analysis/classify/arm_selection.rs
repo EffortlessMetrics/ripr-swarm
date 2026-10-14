@@ -36,6 +36,9 @@ use super::reveal::{
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::Probe;
 
+mod guard_entry;
+pub(in crate::analysis) use guard_entry::GuardEntry;
+
 /// Where the owner's `match` reads its scrutinee from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ScrutineeBinding {
@@ -513,6 +516,14 @@ impl ArmSelector {
             resolve(original, self);
         }
         self.changed_from = changed_from;
+        // Later arms decide where a moved input lands (#7670).
+        let mut later = self.later.take();
+        later
+            .iter_mut()
+            .flatten()
+            .filter_map(|arm| arm.alternatives.as_mut())
+            .for_each(|arm| resolve(arm, self));
+        self.later = later;
     }
 
     /// An uncased pattern name becomes a `Variant` when its qualifier names
@@ -1249,7 +1260,7 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// binds it, or a glob import of a module (`use consts::*`), which may
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
-fn may_name_constant(source: &str, name: &str) -> bool {
+pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
@@ -1337,6 +1348,28 @@ fn declared_enum_variants(
         }
     }
     found
+}
+
+/// Whether a macro's unread expansion may declare an item the function
+/// `owner` sees, such as a `const p` that a bare guard binding `p` then
+/// names (#7922 review): a `macro_rules!` or `include!` anywhere in the
+/// file, any node [`may_shadow_in_owner_scope`] flags (an item-level macro
+/// call in any module, a statement macro inside `owner`), or a file that
+/// does not parse cleanly.
+pub(in crate::analysis) fn may_declare_items_in_owner_scope(source: &str, owner: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    let masked = mask_comments_and_strings(source);
+    if masked.contains("macro_rules!") || masked.contains("include!") {
+        return true;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| may_shadow_in_owner_scope(&node, owner))
 }
 
 /// Whether `node` may bring an unread local item into the owner's scope:
@@ -2902,6 +2935,26 @@ mod tests {
     }
 
     const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+
+    /// #7670: an input that moved from the changed arm to a later uncased
+    /// arm earns moved-input credit once that later arm reads as the
+    /// declared variant, and none while `Kind` is undeclared.
+    #[test]
+    fn a_later_uncased_arm_resolves_for_moved_input_credit() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        Kind::B => 2,\n        _ => 0,\n    }\n}\n";
+        let mut narrowed = arm_probe("Kind::A => 1,", 3);
+        narrowed.before = Some("Kind::A | Kind::B =>".to_string());
+        let selector = ArmSelector::establish(&narrowed, &owner(body, "f"))
+            .ok_or_else(|| "premise: the narrowed arm is readable".to_string())?;
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n    C,\n}}\n{body}");
+        let resolved = resolve_with(&selector, Some(&declared));
+        assert!(resolved.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        // An input that stayed in this arm earns nothing from moving.
+        assert!(!resolved.assertion_selects("assert_eq!(f(Kind::C), 0);"));
+        let undeclared = resolve_with(&selector, Some(body));
+        assert!(!undeclared.assertion_selects("assert_eq!(f(Kind::B), 2);"));
+        Ok(())
+    }
 
     #[test]
     fn uncased_variants_read_only_when_the_owner_file_declares_the_enum() -> Result<(), String> {

@@ -4682,6 +4682,64 @@ fn changed_file_syntax_error_is_a_named_producer_failure_not_a_zero() -> Result<
     Ok(())
 }
 
+/// #7386: a changed file under a built-in excluded directory (`build/`) is
+/// dropped from diff analysis unless its exact repository-relative path is
+/// declared in `[languages.python] handwritten_files`; the declaration
+/// admits it past the excluded-directory conventions and it is counted.
+#[test]
+fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String> {
+    let root = unique_test_root("diff-handwritten-build-dir");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("build/lib/pipeline.py"),
+        "def normalize(value):
+    return value.strip().lower()
+",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("build/lib/pipeline.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    return value.strip().lower()".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 2,
+            text: "    return value.lower()".to_string(),
+            new_side_line: 2,
+        }],
+    }];
+
+    let undeclared = PythonAdapter::analyze_diff_with_handwritten(
+        &repo_options(&root),
+        &changed_files,
+        generous_walk_limits(),
+        &[],
+    )?;
+    if undeclared.changed_files != 0 {
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        return Err(format!(
+            "excluded-dir file must stay dropped without a declaration, got {} changed file(s)",
+            undeclared.changed_files
+        ));
+    }
+
+    let declared = PythonAdapter::analyze_diff_with_handwritten(
+        &repo_options(&root),
+        &changed_files,
+        generous_walk_limits(),
+        &["build/lib/pipeline.py".to_string()],
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    if declared.changed_files != 1 {
+        return Err(format!(
+            "declared hand-written file must be counted, got {} changed file(s)",
+            declared.changed_files
+        ));
+    }
+    Ok(())
+}
+
 /// Control for #6824: a nesting-budget refusal keeps its single typed
 /// `language_scope_unsupported` promotion and must not gain a second
 /// `producer_failure` row from the same failed parse.
@@ -5780,7 +5838,7 @@ fn diff_mode_emits_no_probe_for_structural_def_header_lines() -> Result<(), Stri
         ..PythonNoBehaviorContext::default()
     };
     let classify = |line: usize, text: &str, old: Option<&str>| {
-        classify_change_with_context(file, line, text, old, &owners, &[], context(line))
+        classify_change_with_context(file, line, text, old, &owners, &[], context(line), None)
     };
     assert!(classify(3, "        self,", None).is_none());
     assert!(classify(6, "    ):", None).is_none());
@@ -5884,7 +5942,7 @@ fn classify_multi_line_header_line(
         multi_line_def_header_line: true,
         ..PythonNoBehaviorContext::default()
     };
-    classify_change_with_context(file, line, text, None, &owners, tests, context)
+    classify_change_with_context(file, line, text, None, &owners, tests, context, None)
         .ok_or_else(|| format!("line {line} should classify"))
 }
 

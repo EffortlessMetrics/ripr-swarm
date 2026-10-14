@@ -24,6 +24,9 @@ classify findings or seams itself.
 
 The SARIF layer should:
 
+- declare `columnKind: "unicodeCodePoints"` on finding and repo-seam runs,
+  matching the producers' 1-based Unicode scalar-value columns (SARIF 2.1.0
+  section 3.14.27); the declaration is also valid when the result array is empty;
 - use stable rule IDs for every Finding exposure class and seam grip class;
 - map `ripr.toml` configured severity into SARIF result levels;
 - omit results whose configured severity is `off`;

@@ -48,7 +48,8 @@ pub(crate) use python::{PythonAdapter, detect_python_test_framework};
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
     JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_script_language,
-    is_ts_js_source_extension, route, ts_js_source_kind, unanalyzed_source_language,
+    is_ts_js_source_extension, route, snapshot_input, ts_js_source_kind,
+    unanalyzed_source_language,
 };
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,

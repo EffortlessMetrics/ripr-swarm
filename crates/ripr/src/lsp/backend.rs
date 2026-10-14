@@ -8,7 +8,8 @@ use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache, WorkspaceDiagnostics,
-    diagnostic_refresh_plan, take_all_uris,
+    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
+    take_all_uris,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -3136,13 +3137,12 @@ impl Backend {
             .ok()
             .and_then(|value| value.clone())
             .map(|snapshot| {
-                let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
-                if let Some(selection) = &snapshot.delivery_selection
-                    && let Some(omission) = selection.document_omissions().get(uri.as_str())
-                {
-                    diagnostics.push(delivery_omission_diagnostic(omission));
-                }
-                diagnostics
+                let omissions = snapshot
+                    .delivery_selection
+                    .as_ref()
+                    .map(|selection| selection.document_omissions())
+                    .unwrap_or_default();
+                delivered_diagnostics_for_uri(&snapshot, uri, &omissions)
             })
             .unwrap_or_default()
     }
@@ -5794,7 +5794,7 @@ impl Backend {
                 .log_message(MessageType::WARNING, disclosure)
                 .await;
         }
-        let diagnostics = snapshot.served_diagnostics_for_uri(&uri);
+        let diagnostics = result_ids.delivered_diagnostics_for_uri(&snapshot, &uri);
         Ok(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                 related_documents: None,
@@ -5907,7 +5907,7 @@ impl Backend {
                 }
                 Vec::new()
             } else {
-                snapshot.served_diagnostics_for_uri(&uri)
+                result_ids.delivered_diagnostics_for_uri(&snapshot, &uri)
             };
             items.push(WorkspaceDocumentDiagnosticReport::Full(
                 WorkspaceFullDocumentDiagnosticReport {
@@ -6834,37 +6834,6 @@ fn push_budget_omission_disclosure(
     Some(format!(
         "ripr push diagnostic delivery budget overflowed; publication is partial: {payload}"
     ))
-}
-
-/// One visible summary of the same budget omission the selection and log
-/// retain. This is a delivery limitation, never a source finding or action.
-fn delivery_omission_diagnostic(
-    omission: &crate::lsp::diagnostic_budget::DocumentDeliveryOmission,
-) -> Diagnostic {
-    Diagnostic {
-        severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::INFORMATION),
-        code: Some(tower_lsp_server::ls_types::NumberOrString::String(
-            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
-        )),
-        source: Some("ripr".to_string()),
-        message: format!(
-            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
-            omission.omitted_count, omission.total_count, omission.retrieval_route
-        ),
-        data: Some(serde_json::json!({
-            "kind": "delivery_limitation",
-            "scope": omission.scope,
-            "selected_count": omission.selected_count,
-            "omitted_count": omission.omitted_count,
-            "total_count": omission.total_count,
-            "count_budget": omission.count_budget,
-            "byte_budget": omission.byte_budget,
-            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
-            "complete_evidence_identity": omission.complete_evidence_identity,
-            "retrieval_route": omission.retrieval_route,
-        })),
-        ..Default::default()
-    }
 }
 
 /// Restore the prior *served* publication during transaction rollback. The
@@ -10743,6 +10712,7 @@ mod delivery_selection_parity_tests {
 
     /// Pull one document through the real async `textDocument/diagnostic`
     /// handler and return the served canonical ids plus the result id.
+    /// Typed delivery limitations are transport items, not canonical evidence.
     fn pulled_document(
         backend: &Backend,
         runtime: &tokio::runtime::Runtime,
@@ -10773,6 +10743,9 @@ mod delivery_selection_parity_tests {
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| format!("full document report had no items array: {json}"))?
             .iter()
+            .filter(|item| {
+                item["code"] != super::super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+            })
             .map(|item| {
                 item.get("data")
                     .and_then(|data| data.get("diagnostic_id"))
@@ -10805,6 +10778,9 @@ mod delivery_selection_parity_tests {
         sorted.sort();
         sorted
     }
+
+    // Keep the payload oracles separate from the selected-ID-only tests.
+    mod omission_tests;
 
     #[test]
     fn input_change_reset_clears_component_degradation_dedup() -> Result<(), String> {

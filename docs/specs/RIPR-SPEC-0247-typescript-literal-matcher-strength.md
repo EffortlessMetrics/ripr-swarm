@@ -127,6 +127,51 @@ another spelling can equal, the assertion reads `exact_value` / strong:
 computed key, a spread, and an object literal under `equal` (a reference
 comparison) keep `relational_check` / weak.
 
+Amended 2026-10-14 (#6654): an expected identifier reads as the literal
+it is bound to when it names a `const` declared with a plain identifier
+at the top level of the test body (or of an awaited `t.test` subtest
+body), before the assertion, by the only top-level declaration of that
+name, and the assertion itself is a top-level statement of that body.
+The literal must be a string, template or number literal the rule above
+accepts, optionally parenthesized or under `as`. Object and array
+literals do not qualify even under `deepEqual`: `const` stops
+reassignment, not mutation, so `want.push(...)` or `want.total = ...`
+changes what the assertion compares. Any other variable keeps the weak
+reading: a `let` or `var`, a destructured, call-bound, object or array
+`const`, a `const` declared after the assertion or in an enclosing
+scope, and an assertion nested in a block, branch, loop, `try` or
+callback, where a nested declaration could shadow the name. A
+callback with a parameter that the reader takes as its own body (a
+returned or awaited `.then((value) => ...)`, or an inline
+`[...].forEach((value) => ...)`) reads its own top-level `const`s the
+same way, and never its parent's. A zero-parameter `.then(() => ...)`
+callback is walked as a nested block and reads no `const`, even its own;
+that is a known under-credit, not false credit.
+
+Amended 2026-10-14 (#6654, typed owner): `==` between two numbers
+answers as `===` does, so a finite number literal the list above refuses (`0`, `1`,
+`-0`, `1.0`), optionally negated, parenthesized or under `as`, also
+reads `exact_value` / strong when the owner's own source declares its
+return type as exactly `number` (`function f(...): number` or an arrow
+`(...): number =>`) and the assertion observes the whole result of one
+owner call through a binding the test file imports from the owner's
+module: `ns.f(...)` on a namespace import, `g(...)` on a renamed import
+`{ f as g }`, or, when the file imports `f` by name from that module,
+`f(...)` or a local bound once to it. A bare `f(...)` the file imports
+from another module never qualifies, even when a namespace call relates
+the test.
+A method owner, a generic, `async` or generator owner, any other
+annotation (`number | boolean`, `Promise<number>`, `number[]`) or none,
+a wrapped, compared or member-read result (`Math.min(f(x), 5)`,
+`f(x) > 0`, `f(x).toFixed(0)`), a test that declares its own `f`, a
+variable expected value (even a test-local `const one = 1`, which
+example 10 does not resolve because `1` is coercible), and chai's
+negated `.not.to.equal(1)` keep `relational_check` / weak. chai's TDD
+`assert.equal` is loose `==` too and qualifies. The declared type is
+trusted: an owner whose body returns a non-number despite it (an `any`
+cast, an implicitly `any` value such as `JSON.parse(s).count`) is out
+of scope, as it is for every other TypeScript type ripr reads.
+
 Known limit: `==` still equals a value of another type that converts to
 the literal: a number's own numeric string (`20 == "20"`), a BigInt
 (`20n == 20`), a one-element array (`["bronze"] == "bronze"`) or a
@@ -148,7 +193,8 @@ but the inline text sits in the test diff a reviewer reads, while a
 committed file's content is not in the test. `toMatchSnapshot`, an inline
 snapshot with no argument, with an
 interpolation, or with a property-matcher object keeps `snapshot` /
-medium.
+medium. Amended by RIPR-SPEC-0258: a `toMatchSnapshot()`
+whose committed entry the test file names reads `snapshot` / strong.
 
 ### Decisions
 
@@ -181,7 +227,10 @@ and the rejected alternative. Recorded on #6654.
    file (`jest-spec0234-ex03` and `vitest-orders-label-snapshot` show the
    committed form can be either way, and `--ci` behaviour decides it, not
    the test text). Rejected: keep medium, which reads text the reviewer
-   can see as unreviewed.
+   can see as unreviewed. Superseded for committed files by
+   RIPR-SPEC-0258 decision 1: a committed entry the test file names reads
+   strong, because whether a reviewer reads the expected text does not
+   change whether the test fails.
 4. **Where the reading lives.** Adopted: rules 2 and 3 read at assertion
    extraction, because they depend only on the assertion; rule 1 reads in
    the classifier, because it needs the changed line and owner body.
@@ -189,7 +238,41 @@ and the rejected alternative. Recorded on #6654.
    for no new class.
 5. **`t.assert.*`, committed snapshots and custom matchers.** Not changed
    here. `nodetest-latefee-t-assert`, `jest-spec0234-ex03` and the other
-   remaining false verdicts stay listed on #6654.
+   remaining false verdicts stay listed on #6654. Superseded for
+   committed snapshots by RIPR-SPEC-0258, which credits
+   `jest-spec0234-ex03`; for `t.assert.*` by RIPR-SPEC-0252, which
+   credits `nodetest-latefee-t-assert`; and for a same-file
+   strict-equality custom matcher by RIPR-SPEC-0262, which credits
+   `jest-cents-custom-matcher`.
+6. **Test-local literal `const` (rule 2, amended 2026-10-14).** Adopted:
+   a `const` bound once to a primitive literal at the top level of the
+   test body reads as that literal, because a primitive `const` can be
+   neither reassigned nor mutated, so the runtime comparison is the
+   inline literal's. Rejected after review: object and array `const`s,
+   which a test can fill in before the assertion (`want.push(...)`).
+   Rejected: keep every variable weak, which leaves
+   `nodetest-t-assert-equal-variable` (a discriminated test) a false gap.
+   Rejected: resolve any reachable binding (enclosing `describe`, module
+   scope, nested blocks), which needs scope analysis ripr does not do and
+   could read a shadowing declaration's value.
+7. **Typed number owner (rule 2, amended 2026-10-14).** Adopted: credit
+   `0` and `1` (and any other finite number literal) when the owner
+   declares `number` as its return type and the assertion observes the
+   whole owner result. The reading lives in the classifier
+   (`ts_typed_loose_number_facts`), which has the owner; extraction only
+   marks the candidate assertion (`loose_number_expected`), so chai's
+   negated `equal`, which shares the matcher name, is never a candidate.
+   Rejected: read every legacy `equal(x, 1)` strong, which credits
+   `assert.equal(isEmpty(x), 1)` against a boolean. Rejected: infer the
+   result type from the returned expression, which needs type inference
+   ripr does not do. Rejected: method owners, because the whole-result
+   check reads only `f(...)` and `ns.f(...)`, so a same-named free
+   function the test calls could borrow a method's annotation. Pins are
+   keyed by test file, line, observed expression, matcher and expected
+   value, so a second assertion on the same line with another expected
+   value does not share the credit. Rejected: keep `0` and `1` weak,
+   which leaves `nodetest-legacy-equal-literal-one` (a discriminated
+   test) a false gap.
 
 ## Required Evidence
 
@@ -198,6 +281,11 @@ and the rejected alternative. Recorded on #6654.
 - On the TypeScript verdict corpus, false verdicts fall from 17/101 to
   10/101, seven Problem rows move to `credited` (all but
   `ts-vitest-checkout-notify`), and no other row moves.
+- Amended 2026-10-14: `nodetest-t-assert-equal-variable` moves from `gap`
+  to `credited` (false verdicts 7/127 to 5/127 together with the
+  RIPR-SPEC-0252 amendment), and no other row moves.
+- Amended 2026-10-14 (typed owner): `nodetest-legacy-equal-literal-one`
+  moves from `gap` to `credited`, and no other row moves.
 
 ## Non-Goals
 
@@ -207,8 +295,11 @@ and the rejected alternative. Recorded on #6654.
   could reach.
 - No change to `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` or
   `toHaveBeenCalledTimes`.
-- No change to committed snapshot strength.
-- No change to `t.assert.*`, which still yields no assertion.
+- No change to committed snapshot strength, except the named committed
+  entry RIPR-SPEC-0258 reads as strong; every other committed snapshot
+  stays medium.
+- No change to `t.assert.*` here (superseded by RIPR-SPEC-0252, which
+  reads it as legacy `node:assert`).
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples
@@ -246,22 +337,58 @@ and the rejected alternative. Recorded on #6654.
    `"1e3"`, `"\uFEFF20"`, `"Infinity"`, `1.0`, `-0`, `true`, `null`,
    `undefined`, `{ a: "x" }` or `` `n=${n}` ``, and
    `assert.deepEqual(x, { count: 0, label: "x" })`, with a spread, with a
-   computed key, with a `__proto__` key, or against a variable:
-   `relational_check` / weak. chai `assert.equal(x, "silver")` reads
-   strong and `assert.equal(x, 1)` weak, as legacy `node:assert` does.
+   computed key, with a `__proto__` key, or against a variable other than
+   the test-local `const` of example 10: `relational_check` / weak.
+   chai `assert.equal(x, "silver")` reads strong and
+   `assert.equal(x, 1)` weak, as legacy `node:assert` does. Example 11
+   reads `0` and `1` (from either library) strong on the whole result
+   of an owner declared to return `number`.
 8. ``expect(summary(2)).toMatchInlineSnapshot(`"2 items"`)``, or a
    multi-line template holding an object's text: `snapshot` / strong,
    no `typescript_snapshot_discriminator_unresolved`.
 9. `toMatchInlineSnapshot()`, an inline snapshot with `${n}`, an inline
    snapshot with a property-matcher object, or `toMatchSnapshot()`:
-   `snapshot` / medium.
+   `snapshot` / medium. Amended by RIPR-SPEC-0258: `toMatchSnapshot()`
+   whose committed entry the test file names reads `snapshot` / strong.
+10. `const want = 30;` (or `"silver"`, or `(30 as number)`) at the top
+    level of the test body, then `assert.equal(graceFee(10), want)`,
+    `assert.deepEqual(graceFee(10), want)` or
+    `t.assert.equal(graceFee(10), want)`: `exact_value` / strong,
+    expected value `30`. The same with `const want = 1`, `let want = 30`,
+    `const want = price(30)`, `const want = { total: 30 }` or `[]` (even
+    under `deepEqual`), `const want` declared after the assertion or
+    inside a block, or the assertion inside an `if`, a `try`, a returned
+    `.then` callback or a subtest that does not declare `want` itself:
+    `relational_check` / weak. A `.then((result) => { const want = 30;
+    assert.equal(result, want); })` or `[10].forEach((input) => { const
+    want = 30; assert.equal(tier(input), want); })` callback declares
+    `want` itself: `exact_value` / strong. The same own `const` in a
+    zero-parameter `.then(() => ...)` callback: `relational_check` / weak
+    (known under-credit).
+11. `export function lineCount(items: string[]): number` and
+    `assert.equal(lineCount(["a"]), 1)`, `assert.equal(lineCount([]), 0)`,
+    `assert.deepEqual(lineCount(["a"]), 1)` or
+    `const n = lineCount(["a"]); assert.equal(n, 1)`: `exact_value` /
+    strong, `exposed`. The same with no return annotation,
+    `: number | boolean`, `Math.min(lineCount(["a"]), 5)`,
+    `lineCount(["a"]) > 0` or `lineCount(["a"]).toFixed(0)` against `1`,
+    a test-local `lineCount`, or a class method owner
+    `lineCount(): number` (the whole-result check reads only a free call,
+    which a method's annotation does not cover): `relational_check` / weak.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
   pins examples 1 to 9 at the rule level.
 - `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
-  keeps the loose-equality grading with coercion-reachable literals.
+  keeps the loose-equality grading with coercion-reachable literals, and
+  `loose_equality_reads_a_test_local_literal_const` pins example 10.
+- `crates/ripr/src/analysis/language/typescript/tests/typed_loose_equality_tests.rs`
+  pins example 11.
+- `fixtures/typescript-verdict-corpus` pins example 11:
+  `nodetest-legacy-equal-literal-one` reads `credited`.
+- `fixtures/typescript-verdict-corpus` pins example 10:
+  `nodetest-t-assert-equal-variable` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
 
@@ -274,8 +401,13 @@ and the rejected alternative. Recorded on #6654.
   read the credited payload as strong, and `project_credited_mock_rows`
   shows it as strong on the related-test row (rule 1).
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
-  `loose_equality_pins_literal` (rule 2), `inline_snapshot_is_literal`
-  (rule 3).
+  `loose_equality_pins_literal` (rule 2), `loose_literal_consts` and
+  `resolve_loose_literal_const` (rule 2's test-local `const`),
+  `inline_snapshot_is_literal` (rule 3), `finite_number_literal_text`
+  (rule 2's typed owner).
+- `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
+  `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
+  (rule 2's typed owner), read by the classifier's pin facts.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

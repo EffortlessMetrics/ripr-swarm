@@ -3169,6 +3169,18 @@ fn assertion_guidance_for(
         None
     };
 
+    // #7391: a payload identity that cannot be spelled as a `matches!`
+    // pattern (`format!(...)` and other call payloads) blocks example
+    // derivation at a named static limitation. State that limitation
+    // instead of letting the template-less seam fall through to a generic
+    // "no discriminator" absence that misdescribes the evidence.
+    if matches!(kind, SeamKind::ErrorVariant) && !error_variant_example_spellable(required) {
+        return AssertionGuidance::Unresolved {
+            reason: GuidanceReason::StaticLimitationBlocksDerivation,
+            recovery: GuidanceRecovery::InspectFixSite,
+        };
+    }
+
     match AssertionGuidance::from_seam_facts(SeamAssertionFacts {
         derived_example: derived_example.as_deref(),
         kind: assertion_kind,
@@ -3186,6 +3198,19 @@ fn assertion_guidance_for(
     }
 }
 
+/// Whether the seam's error-variant identity yields an example spellable
+/// as a `matches!` pattern. An empty variant keeps the historical generic
+/// template; a non-empty identity that `error_variant_payload_pattern`
+/// rejects is the #7391 non-spellable payload case.
+fn error_variant_example_spellable(required: Option<&RequiredDiscriminator>) -> bool {
+    match required {
+        Some(RequiredDiscriminator::ErrorVariant { variant }) if !variant.trim().is_empty() => {
+            error_variant_payload_pattern(variant.trim()).is_some()
+        }
+        _ => true,
+    }
+}
+
 fn assertion_template_uses_required_discriminator(
     kind: SeamKind,
     required: Option<&RequiredDiscriminator>,
@@ -3196,7 +3221,7 @@ fn assertion_template_uses_required_discriminator(
             Some(RequiredDiscriminator::BoundaryValue { description }),
         ) => !description.trim().is_empty(),
         (SeamKind::ErrorVariant, Some(RequiredDiscriminator::ErrorVariant { variant })) => {
-            !variant.trim().is_empty()
+            !variant.trim().is_empty() && error_variant_example_spellable(required)
         }
         _ => false,
     }
@@ -3401,12 +3426,26 @@ fn suggested_assertions_for(
             )]
         }
         SeamKind::ErrorVariant => {
-            let (trigger_hint, expected_label, pattern_hint) =
-                error_variant_assertion_hint(required);
-            vec![format!(
-                "let err = {}.expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));",
-                call(&format!("/* trigger {trigger_hint} */"))
-            )]
+            let hint = error_variant_assertion_hint(required);
+            match hint.pattern_hint {
+                Some(pattern_hint) => {
+                    let expected_label = hint.expected_label;
+                    let trigger_hint = hint.trigger_hint;
+                    vec![format!(
+                        "let err = {}.expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));",
+                        call(&format!("/* trigger {trigger_hint} */"))
+                    )]
+                }
+                // #7391: a payload expression that cannot be spelled as a
+                // `matches!` pattern (`format!(...)`, other call payloads)
+                // must not serialize as a "concrete" paste-ready example.
+                // The comment shape is filtered out of derived guidance, so
+                // the assertion falls back to a non-concrete state.
+                None => vec![format!(
+                    "// the error payload from {} cannot be spelled as a matches! pattern; bind it and assert the payload directly",
+                    call(&format!("/* trigger {} */", hint.trigger_hint))
+                )],
+            }
         }
         SeamKind::ReturnValue => vec![format!(
             "assert_eq!({}, /* expected */)",
@@ -3430,20 +3469,131 @@ fn suggested_assertions_for(
     }
 }
 
+/// Typed parts of an error-variant assertion example, derived from the
+/// producer-owned variant identity so the emitted example is compilable
+/// Rust. `pattern_hint` is `None` when the payload expression (for example
+/// `format!(...)`) cannot appear in `matches!` pattern position; consumers
+/// must then withhold the example instead of printing a template as
+/// "concrete" guidance (#7391).
+struct ErrorVariantAssertionHint {
+    trigger_hint: String,
+    expected_label: String,
+    pattern_hint: Option<String>,
+}
+
 fn error_variant_assertion_hint(
     required: Option<&RequiredDiscriminator>,
-) -> (String, String, String) {
+) -> ErrorVariantAssertionHint {
     if let Some(RequiredDiscriminator::ErrorVariant { variant }) = required
         && !variant.trim().is_empty()
     {
-        let variant = variant.trim().to_string();
-        return (variant.clone(), variant.clone(), variant);
+        let variant = variant.trim();
+        return ErrorVariantAssertionHint {
+            trigger_hint: variant.to_string(),
+            expected_label: escape_assertion_label(variant),
+            pattern_hint: error_variant_payload_pattern(variant),
+        };
     }
-    (
-        "the exact error variant".to_string(),
-        "the exact error variant".to_string(),
-        "/* exact error variant */".to_string(),
-    )
+    ErrorVariantAssertionHint {
+        trigger_hint: "the exact error variant".to_string(),
+        expected_label: "the exact error variant".to_string(),
+        pattern_hint: Some("/* exact error variant */".to_string()),
+    }
+}
+
+/// Escape producer-owned text for placement inside the
+/// `expect_err("...")` message literal, so a payload identity that carries
+/// quotes (`Err("port must be ...".to_string())`) cannot break out of the
+/// surrounding string (#7391).
+fn escape_assertion_label(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Spell the payload of an `Err(...)` identity as a `matches!` pattern
+/// against the value bound by `expect_err`. Returns `None` when the payload
+/// is a runtime expression that cannot appear in pattern position. This is
+/// the same fail-closed gate `analysis::test_stub::variant_pattern` applies
+/// when generating a compilable stub, extended with the string-literal
+/// bind-and-compare shape for owned payloads.
+fn error_variant_payload_pattern(variant: &str) -> Option<String> {
+    let trimmed = variant.trim();
+    let payload = trimmed
+        .strip_prefix("Err(")
+        .map(str::trim)
+        .and_then(|rest| rest.strip_suffix(')').map(str::trim))
+        .unwrap_or(trimmed);
+    if is_nameable_variant_path(payload) {
+        return Some(payload.to_string());
+    }
+    if let Some(literal) = owned_string_literal_payload(payload) {
+        return Some(format!("message if message == {literal}"));
+    }
+    None
+}
+
+/// Whether the whole payload is a nameable variant path
+/// (`AuthError::RevokedToken`): valid in pattern position as written.
+fn is_nameable_variant_path(text: &str) -> bool {
+    !text.is_empty()
+        && text.split("::").all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        && text
+            .rsplit("::")
+            .next()
+            .is_some_and(|last| last.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// A string literal payload, with an owned-conversion suffix stripped
+/// (`"x".to_string()`, `"x".to_owned()`, `"x".into()`), binds by value and
+/// compares against the literal. A bare literal is returned as-is.
+fn owned_string_literal_payload(payload: &str) -> Option<String> {
+    for suffix in [".to_string()", ".to_owned()", ".into()"] {
+        if let Some(rest) = payload.strip_suffix(suffix) {
+            let literal = rest.trim();
+            return wellformed_string_literal(literal).then(|| literal.to_string());
+        }
+    }
+    wellformed_string_literal(payload).then(|| payload.to_string())
+}
+
+/// A conservative literal gate: the payload must be a single delimited
+/// string with no interior unescaped quote and no unescaped newline, so a
+/// compound expression that merely starts and ends with a quote
+/// (`"a".to_owned() + "b"`) is rejected rather than advertised as a
+/// comparable literal.
+fn wellformed_string_literal(text: &str) -> bool {
+    let Some(inner) = text
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    else {
+        return false;
+    };
+    !inner.contains('\n') && !has_unescaped_quote(inner)
+}
+
+/// True when `text` contains a `"` preceded by an even backslash run (an
+/// unescaped quote), which means the text is not one string literal.
+fn has_unescaped_quote(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'"' {
+            continue;
+        }
+        let mut backslashes = 0;
+        let mut prev = index;
+        while prev > 0 && bytes[prev - 1] == b'\\' {
+            backslashes += 1;
+            prev -= 1;
+        }
+        if backslashes % 2 == 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn predicate_boundary_assertion_hint(
@@ -6321,6 +6471,119 @@ mod tests {
                 .example()
                 .unwrap_or_default()
                 .contains("/* trigger /*")
+        );
+    }
+
+    #[test]
+    fn wellformed_string_literal_rejects_compound_expressions() {
+        // First and last character are quotes, but the payload is a runtime
+        // expression, not one literal: it must not be advertised as a
+        // comparable literal in a generated assertion.
+        assert!(!wellformed_string_literal("\"a\".to_owned() + \"b\""));
+        assert!(!wellformed_string_literal("\"a\" + \"b\""));
+        assert!(!wellformed_string_literal("\"\nx\""));
+        // Controls: plain and escaped-quote literals stay well-formed.
+        assert!(wellformed_string_literal("\"a\""));
+        assert!(wellformed_string_literal("\"\""));
+        assert!(wellformed_string_literal("\"a\\\"b\""));
+    }
+
+    #[test]
+    fn error_variant_assertion_shape_with_owned_string_payload_binds_and_compares_literal() {
+        // #7391: `Err("...".to_string())` identities used to be spliced into
+        // the example verbatim, producing unescaped nested quotes, a
+        // `matches!` against the `Result` after `expect_err` had already
+        // unwrapped it, and a method call in pattern position. The example
+        // must now bind the payload and compare it to the literal, with the
+        // `expect_err` label correctly escaped.
+        let seam = seam_with(
+            "net::parse_port",
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Err(\"port must be greater than zero\".to_string())".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for_entry(&classified);
+        let example = shape.example().unwrap_or("expected a concrete example");
+
+        let escaped_label =
+            "expect_err(\"expected Err(\\\"port must be greater than zero\\\".to_string())\")";
+        let bound_payload = "message if message == \"port must be greater than zero\"";
+        assert_eq!(shape.state(), AssertionState::Concrete);
+        assert!(
+            example.contains(escaped_label),
+            "expect_err label must escape the payload quotes: {example}"
+        );
+        assert!(
+            example.contains(bound_payload),
+            "payload must bind by value and compare to the literal: {example}"
+        );
+        assert!(
+            !example.contains("\"expected Err(\""),
+            "unescaped nested quotes must not survive: {example}"
+        );
+        assert!(
+            !example.contains("matches!(err, Err("),
+            "the payload bound by expect_err is not a Result; no Err(..) pattern: {example}"
+        );
+    }
+
+    #[test]
+    fn error_variant_assertion_shape_with_format_payload_stays_non_concrete() {
+        // #7391: `format!(...)` payloads cannot appear in pattern position,
+        // so no compilable example exists. The shape must downgrade to a
+        // named static limitation instead of serializing a broken example
+        // as "concrete".
+        let seam = seam_with(
+            "net::parse_port",
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Err(format!(\"invalid port value: {raw}\"))".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for_entry(&classified);
+
+        assert_eq!(shape.state(), AssertionState::Unresolved);
+        assert!(shape.example().is_none());
+        assert_eq!(
+            shape.guidance().reason(),
+            Some(GuidanceReason::StaticLimitationBlocksDerivation)
+        );
+        let json = assertion_guidance_json(&shape);
+        assert_eq!(json["state"], "unresolved");
+        assert_eq!(json["example"], serde_json::Value::Null);
+        assert_eq!(json["reason"], "static_limitation_blocks_derivation");
+    }
+
+    #[test]
+    fn error_variant_suggested_assertion_template_is_compile_clean_for_plain_paths() {
+        // Control: the historical plain-path variant keeps its exact
+        // template so the #7391 tightening does not regress nameable
+        // variants.
+        let seam = seam_with(
+            "auth::authenticate",
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "AuthError::RevokedToken".to_string(),
+            },
+            ExpectedSink::ErrorChannel,
+        );
+        let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for_entry(&classified);
+        let example = shape.example().unwrap_or("expected a concrete example");
+
+        assert_eq!(shape.state(), AssertionState::Concrete);
+        assert!(
+            example.contains("assert!(matches!(err, AuthError::RevokedToken"),
+            "plain path pattern must be preserved: {example}"
+        );
+        assert!(
+            example.contains("expect_err(\"expected AuthError::RevokedToken\")"),
+            "plain path label needs no escaping: {example}"
         );
     }
 

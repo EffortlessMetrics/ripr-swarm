@@ -86,11 +86,21 @@ retain precedence. Default exclusions remain unchanged.
 Skipped files do not emit seams or supply test-grip evidence. The corpus
 fingerprint covers the analyzed set, so toggling inclusion and editing included
 source invalidate the cache, while edits confined to excluded bytes do not.
+On Unix, the stat shortcut also binds each file's device and inode. Replacing
+a containing directory cannot reuse old facts merely because replacement files
+have the same paths, sizes and timestamps. Old cache entries remain intact.
 Repo-exposure discloses `generated_rust_source_skipped` without changing
 `run_status` to a truncated scan. Both generated patterns and handwritten-file
 inclusions are consumed config for its artifact input identity, including when
 diff adapter selection excludes Rust: the inventory producer remains Rust-only.
 A before/after pair with different inclusion policy is not comparable.
+
+Classified cache reuse binds the effective typed producer-consumed configuration
+through the same canonical identity as repo-exposure artifacts. Changing an oracle
+strength while retaining identical raw configuration text, including absent text,
+invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
+current-input export keys agree on that identity. Raw configuration text remains
+an additional conservative invalidator; parser file facts remain oracle-policy-independent.
 
 ### Stable Seam ID Rules
 

@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_return_pin_json_real_literal/input
+
+Summary: 3 probe(s), 1 exposed, 1 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s).
+
+Start here:
+  State: no gap selected for repair (no_actionable_gap)
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
+  File: ./src/lib.rs:5
+  Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
+  Changed behavior: Ok(())
+  Related test (1 of 2 matched rows): tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
+  ripr context --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
+
+Hidden:
+  All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
+    - fixtures/owner_return_pin_json_real_literal/input/src/lib.rs:5 (reachable_unrevealed)
+    - fixtures/owner_return_pin_json_real_literal/input/src/lib.rs:5 (weakly_exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

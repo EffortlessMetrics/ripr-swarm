@@ -1,0 +1,13 @@
+diff --git a/src/errorsFall.ts b/src/errorsFall.ts
+index 0000000..1111111 100644
+--- a/src/errorsFall.ts
++++ b/src/errorsFall.ts
+@@ -2,7 +2,7 @@
+ export class Forbidden extends Error {}
+ 
+ export function errorForFall(status: number): Error {
+-  if (status === 404) {
++  if (404 === status) {
+     return new NotFound("missing");
+   }
+   if (status >= 400) {

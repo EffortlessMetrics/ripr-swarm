@@ -584,7 +584,27 @@ fn selected_action_parity(
     assert_eq!(document["currentness"]["state"], cli.attempt.currentness);
     if expected_step == Some("repair_attempt_after") {
         assert_eq!(document["command_routes"].as_array().map(Vec::len), Some(2));
-        assert_eq!(document["next_command"], manifest.next_command);
+        // Ordinary after-phase routes share the status renderer (#7879):
+        // MCP/CLI next_command name `ripr continue`. Persisted attempt.json
+        // keeps the advanced spelling for machine drivers and trust-bound
+        // routes the façade cannot run.
+        let rendered = document["next_command"]
+            .as_str()
+            .ok_or_else(|| "missing awaiting next_command".to_string())?;
+        assert!(
+            rendered.starts_with("ripr continue --root "),
+            "ordinary after-phase projection must name `ripr continue`: {rendered}"
+        );
+        assert!(
+            !rendered.contains("--phase after"),
+            "ordinary after-phase projection must not teach `--phase after`: {rendered}"
+        );
+        assert_ne!(document["next_command"], json!(manifest.next_command));
+        assert!(
+            manifest.next_command.contains("--phase after"),
+            "persisted next_command stays advanced: {}",
+            manifest.next_command
+        );
     } else {
         assert_eq!(document["command_routes"], json!([]));
         assert_ne!(document["next_command"], manifest.next_command);

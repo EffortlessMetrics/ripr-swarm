@@ -5,6 +5,215 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_closing_propagation_cannot_borrow_a_sibling_error",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/propagated_error_closing_early_path",
+      "vector": "complete_try_expression_is_not_changed_exit_activation",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_unrelated_equality",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_unrelated_equality",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_unrelated_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_owner",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_shadowed_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_assertion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_assertion",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_shadowed_assertion",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_alternate_return",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_alternate_return",
+      "vector": "json_construction_does_not_supply_owner_or_changed_path_identity_alternate_return",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_shadowed_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_shadowed_constructor",
+      "vector": "literal_constructor_provenance_and_eager_execution_shadowed_constructor",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_uncalled_closure",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_uncalled_closure",
+      "vector": "literal_constructor_provenance_and_eager_execution_uncalled_closure",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_effectful_operand",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_effectful_operand",
+      "vector": "literal_constructor_provenance_and_eager_execution_effectful_operand",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_json_ignored_result",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_json_ignored_result",
+      "vector": "literal_constructor_provenance_and_eager_execution_ignored_result",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "typescript_empty_each_registers_no_test_evidence",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_empty_each",
+      "vector": "empty_parameter_tables_have_no_running_discriminator",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "rust_slice_ordinary_call_cannot_credit_skipped_rows",
       "language": "rust",
       "tier": "pure",
@@ -84,11 +293,25 @@
       "vector": "reexport_relation_does_not_bind_runner_assertion",
       "probe_family": "error_path",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
       ]
     },
     {
@@ -100,10 +323,22 @@
       "control": "must_stay_exposed",
       "probe_family": "error_path",
       "assertions": [
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" },
-        { "type": "expected_oracle", "kind": "exact_error_variant", "strength": "strong" }
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_error_variant",
+          "strength": "strong"
+        }
       ]
     },
     {
@@ -114,11 +349,25 @@
       "vector": "rejected_reason_cannot_observe_resolved_return",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
       ]
     },
     {
@@ -129,10 +378,20 @@
       "vector": "commented_module_mention_cannot_credit_uncompiled_test",
       "probe_family": "predicate",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -143,10 +402,20 @@
       "vector": "parser_owned_type_bound_keeps_static_limitation",
       "probe_family": "static_unknown",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "static_unknown" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
       ]
     },
     {
@@ -1918,11 +2187,24 @@
       "source_fixture": "fixtures/oracle_confirmation_mixed",
       "vector": "unrelated_exact_oracle_borrows_weak_assertion_confirmation",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -1933,11 +2215,24 @@
       "vector": "owner_parameter_or_literal_token_is_not_observation",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -1948,11 +2243,24 @@
       "vector": "self_computed_expected_value_is_not_a_discriminator",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -1963,11 +2271,24 @@
       "vector": "expected_value_computed_through_test_helper",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -1978,10 +2299,20 @@
       "vector": "helper_calling_foreign_same_named_method_is_independent",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2073,10 +2404,20 @@
       "source_fixture": "fixtures/proximity_name_oracle_not_credited",
       "vector": "name_proximity_test_supplies_oracle_for_reach_from_another_test",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2087,11 +2428,24 @@
       "vector": "same_file_variant_token_confirms_arm_for_reach_from_another_test",
       "probe_family": "match_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2102,10 +2456,20 @@
       "vector": "same_file_wrapper_test_keeps_arm_confirmation_beside_reaching_test",
       "probe_family": "match_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2115,13 +2479,29 @@
       "source_fixture": "fixtures/rust_adversarial_same_method_other_type",
       "vector": "method_owner_same_name_different_impl_type_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2132,9 +2512,16 @@
       "vector": "boundary_input_and_discriminating_oracle_from_different_tests",
       "probe_family": "predicate",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2145,9 +2532,16 @@
       "vector": "owner_return_pin_confirms_return_value_through_owner_naming_call",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_promote" },
-        { "type": "maximum_class", "class": "exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2157,11 +2551,144 @@
       "source_fixture": "fixtures/python_noop_multiline_docstring_interior",
       "vector": "multiline_docstring_interior_has_no_behavior_delta",
       "assertions": [
-        { "type": "expected_finding_count", "count": 0 },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" }
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_effectful_argument",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_effectful_argument",
+      "vector": "unittest_list_argument_skips_before_owner_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_equal_values",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_equal_values",
+      "vector": "unittest_list_python_equal_scalar_change",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_derived_result",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_derived_result",
+      "vector": "unittest_list_derived_result_ignores_changed_owner_value",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "py_unittest_list_equal_nested_class",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_nested_class",
+      "vector": "unittest_nested_class_not_default_registered",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        }
       ]
     },
     {
@@ -2171,14 +2698,34 @@
       "source_fixture": "fixtures/python_adversarial_buffer_token",
       "vector": "token_substring_coincidence",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2188,14 +2735,34 @@
       "source_fixture": "fixtures/python_adversarial_mock_call_not_value",
       "vector": "mock_call_not_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "mock_expectation",
+          "strength": "medium"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2205,13 +2772,29 @@
       "source_fixture": "fixtures/python_adversarial_dict_field_sibling_key",
       "vector": "changed_dict_element_sibling_key_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2221,13 +2804,29 @@
       "source_fixture": "fixtures/python_adversarial_list_element_sibling_index",
       "vector": "changed_list_element_sibling_index_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2237,13 +2836,29 @@
       "source_fixture": "fixtures/python_adversarial_operator_delta_input_operand",
       "vector": "operator_only_value_change_input_operand_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2253,13 +2868,29 @@
       "source_fixture": "fixtures/python_adversarial_changed_sink_non_delta_operand",
       "vector": "changed_sink_token_non_delta_operand",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "static_unknown" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2269,13 +2900,29 @@
       "source_fixture": "fixtures/python_adversarial_replaced_block_non_delta_operand",
       "vector": "replaced_block_later_line_non_delta_operand",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2285,13 +2932,29 @@
       "source_fixture": "fixtures/python_adversarial_default_value_overridden",
       "vector": "changed_default_value_explicitly_overridden",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2301,13 +2964,29 @@
       "source_fixture": "fixtures/python_adversarial_error_path_untaken_branch",
       "vector": "changed_exception_type_untaken_branch",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2317,13 +2996,29 @@
       "source_fixture": "fixtures/python_adversarial_fstring_length_invariant_aggregate",
       "vector": "length_invariant_fstring_aggregate_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2333,13 +3028,29 @@
       "source_fixture": "fixtures/python_adversarial_local_assignment_operator_input",
       "vector": "local_assignment_operator_input_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2349,14 +3060,34 @@
       "source_fixture": "fixtures/python_adversarial_attribute_sink_other_receiver",
       "vector": "attribute_sink_other_receiver_value_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2366,14 +3097,34 @@
       "source_fixture": "fixtures/python_adversarial_free_function_module_collision",
       "vector": "free_function_same_name_different_module_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2383,14 +3134,34 @@
       "source_fixture": "fixtures/python_adversarial_method_owner_imported_unbound_receiver",
       "vector": "method_owner_imported_unbound_receiver_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2400,14 +3171,34 @@
       "source_fixture": "fixtures/python_adversarial_same_method_other_class",
       "vector": "method_owner_same_name_different_class_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2417,15 +3208,42 @@
       "source_fixture": "fixtures/typescript_broad_tothrow",
       "vector": "cross_family_oracle_seam",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" },
-        { "type": "expected_related_test", "name": "empty user throws", "file": "tests/parser.test.ts", "line": 3, "kind": "unknown", "strength": "unknown" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "empty user throws",
+          "file": "tests/parser.test.ts",
+          "line": 3,
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2436,12 +3254,27 @@
       "vector": "execution_context_ava_t_is_exact_value",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2452,12 +3285,27 @@
       "vector": "execution_context_tape_equal_exact_value",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2467,12 +3315,25 @@
       "source_fixture": "fixtures/ts_node_expect_failure_no_credit",
       "vector": "node_expect_failure_registration_no_credit",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -2483,12 +3344,27 @@
       "vector": "node_ordinary_registration_exact_value",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -2498,14 +3374,34 @@
       "source_fixture": "fixtures/typescript_t_truthy_oracle",
       "vector": "execution_context_truthy_smoke_only",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "smoke_only", "strength": "smoke" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "smoke_only",
+          "strength": "smoke"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2515,14 +3411,34 @@
       "source_fixture": "fixtures/typescript_t_wrong_receiver_no_oracle",
       "vector": "execution_context_wrong_receiver_not_credited",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2532,14 +3448,34 @@
       "source_fixture": "fixtures/typescript_t_unknown_method_no_oracle",
       "vector": "execution_context_unknown_method_not_credited",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2549,14 +3485,34 @@
       "source_fixture": "fixtures/typescript_negated_t_oracle",
       "vector": "negated_equality_not_exact_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "relational_check", "strength": "weak" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2566,13 +3522,31 @@
       "source_fixture": "fixtures/typescript_dynamic_assertion_unresolved",
       "vector": "dynamic_expected_value_no_packet",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2582,10 +3556,20 @@
       "source_fixture": "fixtures/weak_error_oracle",
       "vector": "non_variant_observing_error_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2595,10 +3579,20 @@
       "source_fixture": "fixtures/error_path_sibling_oracle_fake_clean",
       "vector": "sibling_oracle_does_not_confirm_error_path",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2608,13 +3602,29 @@
       "source_fixture": "fixtures/rust_constructor_field_wrong_field_observer",
       "vector": "constructor_changed_field_sibling_field_oracle",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "propagation_unknown" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2624,10 +3634,20 @@
       "source_fixture": "fixtures/rust_field_construction_token_coincidence",
       "vector": "constructed_field_token_read_on_unrelated_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2637,10 +3657,20 @@
       "source_fixture": "fixtures/match_arm_shared_result_no_promotion",
       "vector": "sibling_call_sharing_result_literal_does_not_select_changed_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2650,10 +3680,20 @@
       "source_fixture": "fixtures/match_arm_diagnostic_literal_no_promotion",
       "vector": "diagnostic_message_literal_does_not_select_changed_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2663,10 +3703,20 @@
       "source_fixture": "fixtures/match_arm_comment_literal_no_promotion",
       "vector": "pattern_comment_quoted_text_does_not_select_changed_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2676,15 +3726,36 @@
       "source_fixture": "fixtures/match_arm_tuple_derived_return_before_assertion",
       "vector": "relation_assertion_after_direct_return_does_not_certify_derived_tuple_arm",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2695,7 +3766,9 @@
       "vector": "variant_observing_error_oracle_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" }
+        {
+          "type": "must_promote"
+        }
       ]
     },
     {
@@ -2706,7 +3779,9 @@
       "vector": "unwrap_err_variant_observation_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" }
+        {
+          "type": "must_promote"
+        }
       ]
     },
     {
@@ -2717,7 +3792,9 @@
       "vector": "guarded_result_match_routing_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" }
+        {
+          "type": "must_promote"
+        }
       ]
     },
     {
@@ -2756,11 +3833,24 @@
       "vector": "conditional_ok_equality_is_not_a_return_oracle",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "reachable_unrevealed" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -2798,10 +3888,20 @@
       "source_fixture": "fixtures/guarded_result_match_sibling_variant",
       "vector": "owner_guard_pins_sibling_variant_of_changed_error",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2811,10 +3911,20 @@
       "source_fixture": "fixtures/guarded_result_match_conditional_failure",
       "vector": "conditional_panic_unrelated_unwrap_nested_closure_marker",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2825,12 +3935,28 @@
       "vector": "strong_exact_value_oracle_with_unanchored_relation_stays_weakly_exposed",
       "reason": "#4103 relation-anchor gate: the fixture test bare-calls applyDiscount with no import/declaration anchor, so the strong exact-value oracle no longer promotes and the finding holds at weakly_exposed with the relation disclosed heuristic-only. Oracle classification stays independent of relation credit (exact_value/strong asserted). The TypeScript must_promote controls remain ts_ava_t_is_exact_value, ts_tape_equal_exact_value, and ts_same_method_owner_identity_positive_control, whose tests are import-anchored.",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2841,13 +3967,27 @@
       "vector": "complete_repair_packet_contract_preserved",
       "control": "complete_packet_must_keep_contract",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_repair_packet" },
-        { "type": "must_have_verify_command" },
-        { "type": "must_have_receipt_command" },
-        { "type": "must_not_emit_limitation" },
-        { "type": "must_disclose_repair_packet_detail" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_repair_packet"
+        },
+        {
+          "type": "must_have_verify_command"
+        },
+        {
+          "type": "must_have_receipt_command"
+        },
+        {
+          "type": "must_not_emit_limitation"
+        },
+        {
+          "type": "must_disclose_repair_packet_detail"
+        },
         {
           "type": "expected_repair_packet_detail",
           "canonical_gap_id": "gap:typescript:typescript_preview:2396aec1",
@@ -2859,12 +3999,23 @@
           "repair_kind": "AddBoundaryAssertion",
           "verify_command": "npx --no-install jest tests/discount.test.ts",
           "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command 'npx --no-install jest tests/discount.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json",
-          "allowed_edit_surface": ["tests/discount.test.ts"],
-          "forbidden_files": ["src/discount.ts"]
+          "allowed_edit_surface": [
+            "tests/discount.test.ts"
+          ],
+          "forbidden_files": [
+            "src/discount.ts"
+          ]
         },
-        { "type": "must_not_have_contradictory_packet_messaging" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_have_contradictory_packet_messaging"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -2874,17 +4025,31 @@
       "source_fixture": "fixtures/rust_transitive_reach_positive",
       "vector": "integration_public_api_path_named_not_silently_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_integration_public_api_path_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `test_outer_returns_difference` (tests/it.rs:4) -> entry `outer`",
@@ -2895,9 +4060,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-public-api-transitive-reach"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -2907,17 +4079,31 @@
       "source_fixture": "fixtures/rust_transitive_reach_test_helper_chain",
       "vector": "test_helper_public_api_path_named_not_silently_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_integration_public_api_path_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `greater_than_patch_examples` (tests/version_req.rs:18) -> entry `assert_public_api_accepts`",
@@ -2928,9 +4114,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-public-api-transitive-reach"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -2940,17 +4133,31 @@
       "source_fixture": "fixtures/rust_macro_reach_limitation",
       "vector": "macro_reach_named_not_silently_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_macro_reach_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `test_outer_returns_difference` (tests/it.rs:4) -> entry `outer` -> macro `call_inner!` at src/lib.rs:10",
@@ -2961,9 +4168,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-macro-aware-reach"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3027,17 +4241,31 @@
       "source_fixture": "fixtures/rust_macro_wrapped_test_call_limitation",
       "vector": "direct_test_macro_call_named_not_silently_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_macro_wrapped_test_call_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `test_macro_returns_difference` (tests/it.rs:2) -> direct macro `call_inner!` at tests/it.rs:3",
@@ -3048,9 +4276,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-macro-aware-reach"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3060,17 +4295,31 @@
       "source_fixture": "fixtures/rust_macro_wrapped_assertion_limitation",
       "vector": "custom_assertion_macro_named_not_silently_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_macro_wrapped_assertion_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `test_inner_with_custom_assertion_macro` (tests/it.rs:8) -> assertion macro `assert_result!` at tests/it.rs:10",
@@ -3081,9 +4330,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-macro-assertion-oracle"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3093,14 +4349,32 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl-preview-advisory-no-packet.json",
       "vector": "perl_preview_card_advisory_only",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3110,15 +4384,36 @@
       "source_fixture": "fixtures/boundary_gap",
       "vector": "committed_diff_changed_file_scope_count",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "expected_changed_rust_files", "count": 1 },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3128,8 +4423,12 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-no-scope-empty-not-clean.json",
       "vector": "empty_result_no_scope_disclosure_not_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_no_scope" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_no_scope"
+        }
       ]
     },
     {
@@ -3139,8 +4438,12 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-unanalyzed-worktree-empty-not-clean.json",
       "vector": "empty_base_head_dirty_worktree_disclosure_not_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_unanalyzed_working_tree" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_unanalyzed_working_tree"
+        }
       ]
     },
     {
@@ -3150,18 +4453,46 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-worktree-dirty-analyzed-not-excluded.json",
       "vector": "dirty_worktree_explicitly_analyzed_not_reported_excluded",
       "assertions": [
-        { "type": "must_see_changed_file", "path": "src/lib.rs" },
-        { "type": "expected_changed_rust_files", "count": 1 },
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_disclose_no_scope" },
-        { "type": "must_not_disclose_unanalyzed_working_tree" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_see_changed_file",
+          "path": "src/lib.rs"
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_disclose_no_scope"
+        },
+        {
+          "type": "must_not_disclose_unanalyzed_working_tree"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3171,10 +4502,20 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
       "vector": "empty_complete_scope_can_report_clean",
       "assertions": [
-        { "type": "must_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "expected_changed_rust_files", "count": 0 },
-        { "type": "expected_completeness", "completeness": "complete" }
+        {
+          "type": "must_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 0
+        },
+        {
+          "type": "expected_completeness",
+          "completeness": "complete"
+        }
       ]
     },
     {
@@ -3184,9 +4525,16 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/scope-limited-empty-not-clean.json",
       "vector": "empty_limited_scope_not_clean",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "expected_completeness", "completeness": "limited" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_completeness",
+          "completeness": "limited"
+        }
       ]
     },
     {
@@ -3201,18 +4549,35 @@
       "runtime_budget_seconds": 120,
       "artifact_budget_bytes": 10485760,
       "assertions": [
-        { "type": "must_see_changed_file", "path": "src/eval.rs" },
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
+        {
+          "type": "must_see_changed_file",
+          "path": "src/eval.rs"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
         {
           "type": "must_emit_limitation",
           "expected_limit_kind": "rust_integration_public_api_path_unresolved"
         },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_disclose_witness" },
-        { "type": "must_disclose_limitation_detail" },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_disclose_witness"
+        },
+        {
+          "type": "must_disclose_limitation_detail"
+        },
         {
           "type": "expected_limitation_detail",
           "last_established_edge": "test `test_basic` (tests/test_version_req.rs:38) -> entry `assert_match_all`",
@@ -3223,9 +4588,16 @@
           "type": "expected_limitation_route",
           "route": "analysis/rust-public-api-transitive-reach"
         },
-        { "type": "must_not_claim_no_tests_found" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_claim_no_tests_found"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3235,14 +4607,32 @@
       "source_fixture": "fixtures/typescript_adversarial_same_method_other_class",
       "vector": "method_owner_same_name_different_class_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3252,13 +4642,28 @@
       "source_fixture": "fixtures/typescript_reexport_no_false_credit",
       "vector": "imported_function_name_collision_barrel_reexport_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3268,14 +4673,32 @@
       "source_fixture": "fixtures/typescript_static_limit_taxonomy",
       "vector": "decorator_indirection_named_limitation_not_promoted",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "decorator_indirection" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "decorator_indirection"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3285,14 +4708,32 @@
       "source_fixture": "fixtures/typescript_static_limit_taxonomy",
       "vector": "dynamic_dispatch_named_limitation_not_promoted",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "dynamic_dispatch" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "dynamic_dispatch"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3302,14 +4743,32 @@
       "source_fixture": "fixtures/typescript_static_limit_taxonomy",
       "vector": "unresolved_import_missing_import_graph_named_limitation",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "missing_import_graph" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "missing_import_graph"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3319,14 +4778,32 @@
       "source_fixture": "fixtures/typescript_adversarial_hoc_wrapped_owner",
       "vector": "higher_order_wrapper_obscures_owner_identity",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3336,14 +4813,32 @@
       "source_fixture": "fixtures/typescript_adversarial_owner_module_mock",
       "vector": "mocked_owner_module_strong_oracle_observes_unrelated_sink",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3353,13 +4848,28 @@
       "source_fixture": "fixtures/typescript_adversarial_mocked_barrel",
       "vector": "mocked_barrel_strong_oracle_observes_unrelated_sink",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3369,14 +4879,32 @@
       "source_fixture": "fixtures/typescript_adversarial_token_substring",
       "vector": "token_substring_coincidence",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3386,14 +4914,32 @@
       "source_fixture": "fixtures/typescript_adversarial_render_unobserved_sink",
       "vector": "render_test_reaches_not_observes_changed_sink",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3403,13 +4949,28 @@
       "source_fixture": "fixtures/typescript_adversarial_owner_identity_after_insertion",
       "vector": "stale_line_owner_identity_after_insertion",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3420,12 +4981,27 @@
       "vector": "same_entity_receiver_identity_relation_still_fires",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -3436,10 +5012,18 @@
       "vector": "same_entity_receiver_identity_relation_still_fires",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        }
       ]
     },
     {
@@ -3449,15 +5033,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_same_sub_other_package.json",
       "vector": "same_sub_name_other_package_package_reference_downgrade",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "reachable_unrevealed" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3467,15 +5073,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_import_alias_defining_package.json",
       "vector": "imported_alias_defining_package_mismatch_package_reference_downgrade",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "reachable_unrevealed" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3485,15 +5113,36 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json",
       "vector": "moose_accessor_generated_symbol_boundary_named_limitation",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "static_unknown" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "metaprogramming"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3503,15 +5152,36 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json",
       "vector": "monkeypatch_or_symbol_patch_boundary_named_limitation",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "static_unknown" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "metaprogramming"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3521,15 +5191,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_mocked_module_unrelated_assertion.json",
       "vector": "mocked_module_strong_oracle_observes_unrelated_sink",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3539,15 +5231,36 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json",
       "vector": "dynamic_require_eval_dispatch_boundary_named_limitation",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "static_unknown" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "metaprogramming"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3557,15 +5270,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_token_substring.json",
       "vector": "token_substring_observed_sink_not_aligned",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3575,15 +5310,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_fixture_setup_no_discrimination.json",
       "vector": "fixture_harness_reaches_not_discriminates_fixture_setup_downgrade",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "reachable_unrevealed" },
-        { "type": "maximum_class", "class": "reachable_unrevealed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -3594,12 +5351,27 @@
       "vector": "same_entity_sink_aligned_observation_still_fires",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -3609,15 +5381,37 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_direct_owner_advisory_positive.json",
       "vector": "direct_owner_call_relation_fires_advisory_only",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3628,11 +5422,22 @@
       "vector": "dependency_edge_linked_cross_crate_owner_call_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_class", "class": "exposed" }
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -3642,14 +5447,32 @@
       "source_fixture": "fixtures/rust_dep_edge_cross_crate_ambiguity",
       "vector": "dependency_edge_unlinked_wrong_crate_oracle_stays_uncredited",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" },
-        { "type": "maximum_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3659,12 +5482,27 @@
       "source_fixture": "fixtures/harness_dead_construction_no_exposed_credit",
       "vector": "harness_dead_construction_oracles_do_not_credit_exposure",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "registration_unreachable" },
-        { "type": "expected_finding_count", "count": 3 },
-        { "type": "maximum_class", "class": "no_static_path" },
-        { "type": "must_not_promote" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "registration_unreachable"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 3
+        },
+        {
+          "type": "maximum_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "must_not_promote"
+        }
       ]
     },
     {
@@ -3674,11 +5512,24 @@
       "source_fixture": "fixtures/error_variant_boxed_wrapper_fail_closed",
       "vector": "boxed_wrapper_witness_pins_sibling_variant_without_callee_binding",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "wrapper_error_binding_unresolved"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3688,11 +5539,24 @@
       "source_fixture": "fixtures/error_variant_boxed_wrapper_fail_closed",
       "vector": "boxed_wrapper_witness_pins_unrelated_enum_variant",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "wrapper_error_binding_unresolved"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3703,7 +5567,9 @@
       "vector": "downcast_witness_binds_wrapper_variant_still_exposed",
       "control": "must_stay_exposed",
       "assertions": [
-        { "type": "must_promote" }
+        {
+          "type": "must_promote"
+        }
       ]
     },
     {
@@ -3713,14 +5579,33 @@
       "source_fixture": "fixtures/error_variant_wrapper_callee_only_pin",
       "vector": "callee_only_exact_variant_pin_does_not_observe_wrapper",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3730,14 +5615,33 @@
       "source_fixture": "fixtures/error_variant_wrapper_wrong_receiver_pin",
       "vector": "receiver_qualified_same_name_call_does_not_invoke_wrapper_owner",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "wrapper_error_binding_unresolved"
+        }
       ]
     },
     {
@@ -3747,14 +5651,33 @@
       "source_fixture": "fixtures/error_variant_wrapper_foreign_pin",
       "vector": "foreign_call_exact_variant_pin_does_not_bind_wrapper",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "maximum_class", "class": "weakly_exposed" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -3764,10 +5687,20 @@
       "source_fixture": "fixtures/wrapper_seam_callee_call_attribution",
       "vector": "generic_callee_call_weak_relation_not_exposed",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3777,14 +5710,33 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-infection-unknown-opaque-builder-input.json",
       "vector": "opaque_fixture_builder_input_infection_not_statically_determinable",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "expected_class", "class": "infection_unknown" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3794,14 +5746,33 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-infection-unknown-assertion-shaped-owner.json",
       "vector": "assertion_shaped_owner_infection_not_statically_determinable",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "expected_class", "class": "infection_unknown" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3811,15 +5782,36 @@
       "source_fixture": "fixtures/error_path_sibling_oracle_fake_clean",
       "vector": "sibling_oracle_error_path_no_repair_start",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3829,15 +5821,36 @@
       "source_fixture": "fixtures/guarded_result_match_sibling_variant",
       "vector": "owner_guard_sibling_variant_no_repair_start",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_verify_command" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_finding_count", "count": 2 },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3847,14 +5860,34 @@
       "source_fixture": "fixtures/ts_predicate_boundary_overcredit",
       "vector": "predicate_boundary_literal_in_dead_argument_position_not_witnessed",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3864,14 +5897,34 @@
       "source_fixture": "fixtures/ts_return_ternary_boundary",
       "vector": "returned_ternary_condition_change_credited_by_one_side_exact_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3881,11 +5934,25 @@
       "source_fixture": "fixtures/ts_return_comparison_boundary",
       "vector": "returned_comparison_operator_change_credited_by_one_side_exact_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3895,11 +5962,25 @@
       "source_fixture": "fixtures/python_return_comparison_boundary",
       "vector": "returned_comparison_operator_change_credited_by_one_side_exact_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3909,13 +5990,29 @@
       "source_fixture": "fixtures/ts_domock_relation_gate",
       "vector": "domock_hoisted_registration_treated_as_owner_module_mock",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "mocked_module" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "mocked_module"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -3925,13 +6022,29 @@
       "source_fixture": "fixtures/ts_mock_forms_owner_module",
       "vector": "renamed_runner_typed_import_mock_treated_as_owner_module_mock",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "mocked_module" },
-        { "type": "must_not_emit_repair_packet" },
-        { "type": "must_not_have_receipt_command" },
-        { "type": "must_not_promote" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "mocked_module"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -4998,11 +7111,24 @@
       "vector": "owner_return_pin_err_return_guard_equality_twin",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" },
-        { "type": "maximum_class", "class": "exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
       ]
     },
     {
@@ -5013,11 +7139,24 @@
       "vector": "owner_return_pin_not_a_lone_equality",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -5028,11 +7167,24 @@
       "vector": "owner_return_pin_err_return_guard_shadowed_err",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" },
-        { "type": "maximum_class", "class": "weakly_exposed" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -5561,6 +7713,46 @@
         {
           "type": "must_not_emit_repair_packet"
         }
+      ]
+    },
+    {
+      "id": "rust_formatted_parser_reason_keeps_activation_unknown",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/parser_formatted_input_provenance",
+      "vector": "unrelated_same_file_reason_assertion_cannot_resolve_formatted_parser_input",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "typescript_owner_alias_return_cannot_observe_effect",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_effect_owner_alias",
+      "vector": "renamed_owner_return_is_not_a_side_channel",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
       ]
     }
   ]

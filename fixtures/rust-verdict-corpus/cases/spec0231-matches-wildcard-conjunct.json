@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0231-matches-wildcard-conjunct",
+  "subject_id": "authored-matches-wildcard-conjunct",
+  "diff": "cases/spec0231-matches-wildcard-conjunct.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_return",
+  "test_shape": "assert_matches_ok_wildcard_conjunct",
+  "hard_case": "Measured defect (#7695): ripr reported the related test's oracle `assert!(ready && matches!(check(5), Ok(_)))` as exact_value / strong, because any `matches!` text in an `&&` chain credited the whole condition whatever its pattern. RIPR-SPEC-0231 rule 3 (example 7 is the same `Ok(_)` pattern as the whole condition): the `Ok(_)` conjunct only checks the side and `ready` pins nothing, so the chain reads no stronger than `assert!(ready)`, relational_check / weak. The line verdict stays gap; the overclaim showed in the related test's reported oracle. Since #7695's fix ripr reports relational_check / weak.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(x + 1)",
+        "mutated_line": "Ok(x + 1)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check(5) returns Ok(6); Ok(_) accepts it"
+      },
+      {
+        "replacement": "Err(E::Bad)",
+        "mutated_line": "Err(E::Bad)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_accepts_five",
+        "equivalence_review": "not equivalent: check(5) errs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert!(ready && matches!(check(5), Ok(_))) with ready = true only checks the Ok side: Ok(x + 1) passes, Err(E::Bad) fails. No conjunct pins the value.",
+  "labeling_observation": {
+    "ripr_commit": "06734440a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#7"
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#7"
+  }
+}

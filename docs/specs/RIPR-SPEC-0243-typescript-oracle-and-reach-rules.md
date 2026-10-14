@@ -248,17 +248,24 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
-| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium |
+| `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
-| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
+| any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
 `.rejects.toStrictEqual` with exactly one concrete literal argument instead
 read `exact_error_variant` / strong: they compare the rejected reason, so
 they match an error path and cannot credit a normal return value (#7315).
+The pinned reason credits a changed throw only when that line throws or
+rejects a primitive (`throw "bad"`, `Promise.reject("bad")`) and the reason
+equals its thrown message; on a message-only change (rule 4) both sides must
+be primitive and the reason must equal exactly one of the old and new
+messages. A substring of a message passes on neither version, and a rejected
+`Error` never equals a string whatever its message, so neither is credit
+(2026-10-14, #7944).
 The existing literal admission also accepts safe all-literal objects.
 Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
 bindings and implicit globals retain the existing table and limitations;
@@ -276,9 +283,11 @@ unexercised second throw — reads `broad_error` / weak for that change.
 `rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
 verdict.
 
-A snapshot never reaches
+A medium snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
-`typescript_snapshot_discriminator_unresolved`. A mock matcher never
+`typescript_snapshot_discriminator_unresolved`. A literal inline snapshot
+(RIPR-SPEC-0247 rule 3) or a committed entry the test names
+(RIPR-SPEC-0258) reads strong and can. A mock matcher never
 reaches `exposed` either, even with a literal payload.
 
 The exact error payload override reads `exact_error_variant` / strong for
@@ -297,10 +306,39 @@ because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
-differs between its old and new text lies inside a string literal in the
-message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
-literal text of a template literal counts; a `${...}` interpolation does
-not, so a changed interpolation is not message-only. On such a change a
+differs between its old and new text lies inside the message argument of
+the thrown or rejected error (a literal in a condition on the same line
+does not count). The message argument is the first argument of
+`new X(...)` or `X(...)`, where `X` is a name or a dotted path with
+optional type arguments (`new errors.ParseError(...)`, `errors.make(...)`,
+`make<T>(...)`). Otherwise it is the whole thrown or rejected operand: a
+literal, a name, a ternary, a sequence (`throw (log(e), e)`) or an
+unclosed line. No message is read from a sequence, since it throws its
+last operand, nor from an operand that continues past the message's
+closing parenthesis (`throw ("a") + "b"`, `new Error("a").stack`). A
+shape the reader cannot split falls back to the whole
+operand rather than refusing, because a refused split leaves the
+ladder's credit in place, and a shape it cannot read may only remove
+credit. A changed string literal, a changed `${...}`
+interpolation and an added or dropped operand inside a present argument
+(`"limit " + max` against `"limit "`) all count; adding the argument
+itself (`new Error()` against `new Error("x")`) does not. A factory's
+first argument is read as its message even when it is another value
+(`make(code, "a")`). A change to the class, factory or type arguments of `new X(...)` or
+`X(...)`, to a later argument, or after the call does not count. A class inside an
+operand that does not open with a call (a ternary choosing between two
+`new` expressions) is part of the operand, so such a change counts, which
+only removes credit. A respelling whose literals join to the same
+message on both sides (`"unsupported currency"` against
+`"unsupported " + "currency"`) does not count either. That exception
+applies only when the changed tokens lie inside the message argument. A
+change whose differing tokens are all literals anywhere in the thrown
+expression (a later argument such as `cause: "x"` against `cause: "y"`)
+is conservatively treated as message-only, so a payload on an unchanged
+message gains no credit. A respelling that
+needs runtime values to compare (two interpolations) is not recognised
+and counts, which only removes credit; it keeps the ladder's reading (amended 2026-10-14;
+before that, only changed string literals counted). On such a change a
 payload credits only if it separates the two versions: it matches
 exactly one of the old and new messages. A test that passes on the new
 side and one that pins the old message and fails on the new side both
@@ -478,8 +516,14 @@ StaticUnknown families always pass it.
   contains a changed token.
 - **Effect families** (SideEffect, CallDeletion) pass when a strong
   assertion's observed expression shares a changed identifier token, or
-  does not contain the owner name as a substring (the side channel rule,
-  which stays a substring test so that it fails closed).
+  does not contain the owner name or an admitted free-function import local
+  as a substring (the side channel rule, which stays a substring test so
+  that it fails closed). For a direct, named-alias or imported free-function
+  relation, the same module/export/call/shadow checks used by rules 5 and 7
+  and RIPR-SPEC-0251 identify both named and default locals. Mixed direct and
+  aliased calls retain every such local even when another call determines
+  the relation kind. A same-named free export cannot stand for a method.
+  Other effect confirmations and value-family rules stay unchanged (#7514).
 
 **Rule 6. Value-family references match whole identifiers.** In the value
 branch, "references the owner" and "contains a changed token" mean a whole
@@ -551,7 +595,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    static-limited" protects. RIPR-SPEC-0027 is amended. Rejected: weak,
    which would split TypeScript from Rust for no class difference.
    Amended by RIPR-SPEC-0247 rule 3: an inline snapshot with literal text
-   reads `snapshot` / strong.
+   reads `snapshot` / strong. Amended by RIPR-SPEC-0258: so does a
+   `toMatchSnapshot()` whose committed entry the test file names.
 2. **Value-family guard.** Adopted: the code's guard on ReturnValue and
    FieldConstruction, because it is the fail-closed reading and existing
    tests pin it (`ts_returnvalue_unrelated_strong_assertion_downgrades`).
@@ -653,7 +698,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
-- No resolution of custom matchers, `expect.extend`, or helper bodies.
+- No resolution of custom matchers, `expect.extend`, or helper bodies,
+  except a same-file strict-equality matcher (RIPR-SPEC-0262).
 - No expected-value liveness check for ReturnValue or ErrorPath.
 - No infection or propagation modeling.
 - No change to the per-test display oracle (filed separately).
@@ -682,6 +728,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
+   Amended by RIPR-SPEC-0258: with a committed
+   `tests/__snapshots__/lib.test.ts.snap` holding the entry `price 1`, it
+   reads `snapshot` / strong and `exposed`.
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,

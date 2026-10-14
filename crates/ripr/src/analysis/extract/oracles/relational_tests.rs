@@ -261,6 +261,10 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         // credit; joined by `&&` it keeps its medium reading.
         ("assert!(ready || events_sent.contains(&id));", &weak),
         ("assert!(ready || !events.is_empty());", &weak),
+        (
+            "assert!(ready || { insta::assert_snapshot!(value); true });",
+            &weak,
+        ),
         ("assert!(ready && (done || mock.was_called()));", &weak),
         ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
         // A deciding `||`, top-level or in a parenthesized conjunct, gates
@@ -379,4 +383,235 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         return Err("the ensure! line must produce an oracle fact".to_string());
     };
     require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)
+}
+
+#[test]
+fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String> {
+    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    let broad = (OracleKind::BroadError, OracleStrength::Weak);
+    for (text, expected) in [
+        // #7695: a side-only pattern in an `&&` chain keeps its reading; a
+        // bare conjunct beside it reads weak (step 13), never strong.
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(matches!(r, Ok(_)) && ready);", &weak),
+        ("debug_assert!(ready && matches!(r, Some(_)));", &weak),
+        ("assert!(ready && (matches!(r, Ok(_))));", &weak),
+        ("assert!(ready && /* side */ matches!(r, Ok(_)));", &weak),
+        (
+            "assert!(matches!(r, Ok(_)) && matches!(s, Some(_)));",
+            &smoke,
+        ),
+        ("assert!(total > 1 && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(_) | Err(_)));", &weak),
+        ("assert!(ready && matches!(r, Some(1..=5)));", &weak),
+        ("assert!(ready && matches!(r, Err(_)));", &broad),
+        // Controls: a conjunct that pins keeps the chain's reading.
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(matches!(r, Ok(_)) && matches!(r, Ok(3)));", &exact),
+        // A pinning `==` conjunct (rule 1) fixes a value, so the chain keeps
+        // its reading rather than risk an actionable gap.
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(matches!(value, _) && value == 2);", &exact),
+        ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
+        ("assert!(matches!(r, Ok(_)));", &smoke),
+        // `prop_assert!` reads its pattern like `assert!` does.
+        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
+        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
+        // A self-comparison pins nothing, so it does not exempt the chain.
+        ("assert!(value == value && matches!(r, Ok(_)));", &weak),
+        ("ensure!(value == value && ready);", &weak),
+    ] {
+        require_classification(text, expected)?;
+    }
+    // The extracted fact agrees, including when a trailing line comment on a
+    // conjunct could swallow the rewritten `);` and leave the chain unread.
+    for (text, expected) in [
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        (
+            "assert!(\n    ready // set above\n    && matches!(r, Ok(_))\n);",
+            &weak,
+        ),
+        (
+            "assert!(\n    ready &&\n    matches!(r, Ok(_)) // side only\n);",
+            &weak,
+        ),
+    ] {
+        let facts = extract_assertions(text, 7695);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        require_kind(fact, expected.0.clone(), expected.1.clone())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    for (text, expected) in [
+        // #7715: a `matches!` nested in a closure earns nothing from its text alone.
+        (
+            "assert!(ready && matches!(r, Ok(_)) && xs.iter().any(|x| matches!(x, Some(_))));",
+            &weak,
+        ),
+        ("assert!(xs.iter().any(|x| matches!(x, Some(_))));", &weak),
+        // A spaced or commented std path is still the std pattern test.
+        (
+            "assert!(xs.iter().any(|x| std :: matches!(x, Some(_))));",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| core /* c */ :: matches!(x, Some(_))));",
+            &weak,
+        ),
+        // `matches!` named only in a comment or string is no pattern.
+        (
+            "assert!(ready /* matches! */ && matches!(r, Ok(_)));",
+            &weak,
+        ),
+        ("assert!(ready, \"matches!(r, Ok(3))\");", &weak),
+        // Comparing an unpinned pattern with a bool pins nothing.
+        ("assert!(matches!(r, Ok(_)) == true);", &weak),
+        ("ensure!(matches!(r, Ok(_)) == true);", &weak),
+        ("assert!(matches!(r, _) == true);", &weak),
+        ("assert!((matches!(r, Ok(_))) == true);", &weak),
+        ("assert!(matches!(r, Ok(_)) == (true));", &weak),
+        ("assert!(false == matches!(r, Ok(_)));", &weak),
+        // A pinned pattern compared with `false` asserts it does not match,
+        // which pins nothing either (rule 1).
+        ("assert!(matches!(r, Ok(3)) == false);", &weak),
+        (
+            "assert!(xs.iter().any(|x| ::core::matches!(x, Some(_))));",
+            &weak,
+        ),
+        // #7772: a comment before the constructor never hides it.
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , */ Some(_))));",
+            &weak,
+        ),
+        ("ensure!(matches!(r, /* , */ Ok(_)) == true);", &weak),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, // ,\n Some(_))));",
+            &weak,
+        ),
+        ("ensure!(matches!(r, // ,\n Ok(_)) == true);", &weak),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , /* , */ */ Some(_))));",
+            &weak,
+        ),
+        (
+            "ensure!(matches!(r, /* , /* , */ */ Ok(_)) == true);",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, Some /* c */ (_))));",
+            &weak,
+        ),
+        // Controls: a pattern that pins keeps exact credit in every form.
+        ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , */ Some(3))));",
+            &exact,
+        ),
+        ("ensure!(matches!(r, /* , */ Ok(3)) == true);", &exact),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, // ,\n Some(3))));",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, /* , /* , */ */ Ok(3)) == true);",
+            &exact,
+        ),
+        // #7822: brackets inside a nested comment must not hide a pinned
+        // pattern compared with a bool. The same comment in a closure
+        // already keeps exact credit; the bool-comparison path must too.
+        // Unpinned patterns with that comment stay weak: the fix only
+        // restores polarity, it does not promote an unpinned match.
+        (
+            "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(_)) == true);",
+            &weak,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , ( [ /* , ) ] */ } */ Some(_))));",
+            &weak,
+        ),
+        (
+            "assert!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == false);",
+            &weak,
+        ),
+        (
+            "ensure!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "assert!(xs.iter().any(|x| matches!(x, /* , ( [ /* , ) ] */ } */ Some(3))));",
+            &exact,
+        ),
+        (
+            "assert!(matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "assert!(true == matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3)));",
+            &exact,
+        ),
+        (
+            "assert!((matches!(r, /* , ( [ /* , ) ] */ } */ Ok(3))) == true);",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, // , ( [ ) ] }\n Ok(3)) == true);",
+            &exact,
+        ),
+        (
+            "ensure!(matches!(r, // , ( [ ) ] }\n Ok(_)) == true);",
+            &weak,
+        ),
+        // Rule 1 already reads a compared pattern nested in a chain as not
+        // positive, whatever its pattern.
+        ("assert!(ready && matches!(r, Ok(3)) == true);", &weak),
+        ("ensure!(matches!(r, Ok(3)) == true);", &exact),
+        ("assert!(matches!(r, Ok(3)) == true);", &exact),
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(flag == true && matches!(r, Ok(_)));", &exact),
+        // A user macro whose name ends in `matches!` keeps today's reading.
+        ("assert!(custom_matches!(r, Ok(_)));", &exact),
+        ("expect_matches!(r, Ok(3));", &exact),
+        (
+            "assert!(xs.iter().any(|x| custom::matches!(x, Some(_))));",
+            &exact,
+        ),
+        (
+            "assert!(xs.iter().any(|x| helpers::std::matches!(x, Some(_))));",
+            &exact,
+        ),
+        ("assert!((matches!(r, Ok(3))) == true);", &exact),
+    ] {
+        require_classification(text, expected)?;
+    }
+    // A non-ASCII token before the macro path is read on a char boundary.
+    let _ = classify_assertion("assert!(ok→std::matches!(r, Ok(_)));");
+    Ok(())
+}
+
+fn require_classification(
+    text: &str,
+    expected: &(OracleKind, OracleStrength),
+) -> Result<(), String> {
+    let classification = classify_assertion(text);
+    if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+        return Err(format!(
+            "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+            expected.0, expected.1, classification.kind, classification.strength
+        ));
+    }
+    Ok(())
 }

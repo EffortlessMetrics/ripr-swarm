@@ -225,9 +225,10 @@ use super::{
     write_repo_exposure_summary_report_with_runner,
 };
 use super::{
-    DeclaredIntent, LocalContextFinding, MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT,
-    PrReadyStep, TestEfficiencyEntry, TestEfficiencyValue, TestIntentDeclaration, TestIntentKind,
-    TestIntentReportSummary, apply_duplicate_discriminator_groups, apply_test_intent_to_entries,
+    DeclaredIntent, LocalContextFinding, MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT,
+    MUTATION_CALIBRATION_STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT, PrReadyStep, TestEfficiencyEntry,
+    TestEfficiencyValue, TestIntentDeclaration, TestIntentKind, TestIntentReportSummary,
+    apply_duplicate_discriminator_groups, apply_test_intent_to_entries,
     build_mutation_calibration_report, parse_test_intent_manifest, test_efficiency_metrics,
 };
 use super::{MutationOutcomeRecord, StaticSeamRecord};
@@ -3082,15 +3083,13 @@ fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
         }
 }
 
-#[test]
-fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
-    let case = semver_external_case_for_test();
-    let check_json = serde_json::json!({
+fn semver_limitation_check_json() -> serde_json::Value {
+    // A `--diff` launch has no revision `base` by construction (#3952, #7880).
+    serde_json::json!({
         "schema_version": "0.2",
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 1},
         "findings": [
             {
@@ -3115,12 +3114,91 @@ fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape()
                 ]
             }
         ]
-    });
+    })
+}
+
+#[test]
+fn pinned_semver_honesty_patch_hunk_counts_match_declared_extents() -> Result<(), String> {
+    let patch_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff");
+    let patch = std::fs::read_to_string(&patch_path).map_err(|err| {
+        format!(
+            "read pinned semver honesty patch {}: {err}",
+            patch_path.display()
+        )
+    })?;
+    if !patch.contains("@@ -69,8 +69,8 @@") {
+        return Err(format!(
+            "pinned semver patch must declare eight old/new lines, got:\n{patch}"
+        ));
+    }
+    if !patch.contains("-            if ver.patch != patch {") {
+        return Err("pinned semver patch must keep the intended != removal".to_string());
+    }
+    if !patch.contains("+            if ver.patch >= patch {") {
+        return Err("pinned semver patch must keep the intended >= insertion".to_string());
+    }
+
+    let mut old = 0usize;
+    let mut new = 0usize;
+    let mut in_hunk = false;
+    for line in patch.lines() {
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'-') => old += 1,
+            Some(b'+') => new += 1,
+            Some(b' ') | None => {
+                old += 1;
+                new += 1;
+            }
+            Some(b'\\') => {}
+            other => {
+                return Err(format!(
+                    "unsupported pinned semver hunk line {other:?}: {line}"
+                ));
+            }
+        }
+    }
+    if old != 8 {
+        return Err(format!("old hunk body must match @@ -69,8, counted {old}"));
+    }
+    if new != 8 {
+        return Err(format!("new hunk body must match @@ +69,8, counted {new}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
+    let case = semver_external_case_for_test();
+    let check_json = semver_limitation_check_json();
 
     let violations = super::evidence_promotion_external_semantic_violations(&case, &check_json);
     assert!(
         violations.is_empty(),
         "expected semver external limitation shape to pass, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_pinned_external_without_diff_still_requires_base() {
+    let mut case = semver_external_case_for_test();
+    case.external_command = "ripr check --root {checkout} --mode fast --json".to_string();
+    case.external_patch = PathBuf::new();
+    let check_json = semver_limitation_check_json();
+
+    let report =
+        super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
+    assert!(
+        report.contains("must_disclose_scope") && report.contains("base"),
+        "a pinned-external launch without --diff provenance must still require base, got {report}"
     );
 }
 
@@ -3217,7 +3295,6 @@ fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() 
         "tool": "ripr",
         "mode": "fast",
         "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
-        "base": "origin/main",
         "summary": {"findings": 0},
         "findings": [
             {
@@ -9933,7 +10010,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             .count()
             != 5
             || candidate
-                .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+                .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()
                 != 3
             || candidate.contains("release-upload-assets")
@@ -29452,7 +29529,135 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let mut behind = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     behind.merge_state_status = "BEHIND".to_string();
     let behind_readiness = gh_pr_status_readiness(&behind, &contexts, true, Vec::new());
-    assert_eq!(gh_pr_safe_next_action(&behind, &behind_readiness), "rebase");
+    assert_eq!(
+        gh_pr_safe_next_action(&behind, &behind_readiness),
+        "inspect integration"
+    );
+}
+
+#[test]
+fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
+    let contexts = vec!["rust".to_string()];
+    for (case, draft, review, status, conclusion, expected) in [
+        (
+            "behind only",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect integration",
+        ),
+        ("draft", true, "APPROVED", "COMPLETED", "SUCCESS", "wait"),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "wait",
+        ),
+        (
+            "running check",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "wait",
+        ),
+        ("queued check", false, "APPROVED", "QUEUED", "", "wait"),
+        (
+            "failed check",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "inspect failure",
+        ),
+        (
+            "changes requested",
+            false,
+            "CHANGES_REQUESTED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect failure",
+        ),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", status, conclusion)]);
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.merge_state_status = "bEhInD".to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert!(readiness.behind_main, "{case}: setup must exercise BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{case}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
+    let contexts = vec!["rust".to_string()];
+    for (state, expected) in [
+        ("CLEAN", "merge"),
+        ("BEHIND", "inspect integration"),
+        ("DIRTY", "inspect failure"),
+        ("UNKNOWN", "wait"),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+        pr.merge_state_status = state.to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert_eq!(readiness.behind_main, state == "BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{state}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_waits_for_a_running_advisory_check() {
+    let mut pr = gh_pr_status_pr(vec![
+        gh_pr_status_check("rust", "COMPLETED", "SUCCESS"),
+        gh_pr_status_check("droid/review", "IN_PROGRESS", ""),
+    ]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert!(readiness.behind_main);
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+}
+
+#[test]
+fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), String> {
+    let pr = parse_gh_pr_status_pull_request(
+        r#"{
+            "number": 42,
+            "title": "behind-only observation",
+            "isDraft": false,
+            "mergeStateStatus": "BEHIND",
+            "headRefName": "candidate",
+            "baseRefName": "main",
+            "reviewDecision": "APPROVED",
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ]
+        }"#,
+    )?;
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "setup must contain the successful check"
+    );
+    let contexts = vec!["rust".to_string()];
+    let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+    let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
+    assert!(markdown.contains("- behind main: `true`"));
+    assert!(markdown.contains("- safe next action: `inspect integration`"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pr, &contexts, &readiness))
+        .map_err(|err| format!("behind PR packet should parse: {err}"))?;
+    assert_eq!(json["schema_version"], "0.1");
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(json["merge_state"], "BEHIND");
+    assert_eq!(json["behind_main"], true);
+    assert_eq!(json["safe_next_action"], "inspect integration");
+    Ok(())
 }
 
 #[test]
@@ -29601,7 +29806,7 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
     );
     assert_eq!(
         dispositions.get(&2).map(String::as_str),
-        Some("needs_rebase")
+        Some("needs_integration_review")
     );
     assert_eq!(
         dispositions.get(&3).map(String::as_str),
@@ -29616,6 +29821,130 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_behind_packets_preserve_observation_without_branch_update() -> Result<(), String> {
+    let mut pr = triage_pr(2, "devex: behind", &["docs/CI.md"]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(prs, today);
+    let behind = findings
+        .iter()
+        .filter(|f| f.category == "behind main")
+        .collect::<Vec<_>>();
+    assert_eq!(behind.len(), 1, "setup must exercise the behind finding");
+    let expected = "Inspect actual conflicts, changed prerequisites, combined-tree proof and applicable freshness policy; preserve unaffected proof. Behind alone does not require a branch update.";
+    assert_eq!(behind[0].recommended_action, expected);
+    let dispositions = pr_triage_queue_dispositions(prs, &findings);
+    assert_eq!(dispositions.len(), 1);
+    assert_eq!(dispositions[0].disposition, "needs_integration_review");
+    assert_eq!(dispositions[0].recommended_action, expected);
+    let markdown = pr_triage_markdown(prs, &findings, today);
+    assert!(markdown.contains("`needs_integration_review`"));
+    assert!(markdown.contains("BEHIND"));
+    let (finding_section, remaining_sections) = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("board must contain the queue section")?;
+    assert!(finding_section.contains(&format!("Recommended action:\n\n```text\n{expected}\n```")));
+    let queue_section = remaining_sections
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("board must contain the open PR section")?
+        .0;
+    let queue_row = queue_section
+        .lines()
+        .find(|row| row.starts_with("| #2 |"))
+        .ok_or("board must contain this PR's disposition row")?;
+    assert!(queue_row.ends_with(&format!(" | {expected} |")));
+    assert!(!markdown.contains("needs_rebase"));
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &findings, today, "fixture"))
+        .map_err(|err| format!("behind board packet should parse: {err}"))?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_integration_review"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    let encoded_findings = json["findings"]
+        .as_array()
+        .ok_or("board findings must be an array")?;
+    let encoded_behind = encoded_findings
+        .iter()
+        .find(|f| f["category"] == "behind main")
+        .ok_or("board must retain the behind observation")?;
+    assert_eq!(encoded_behind["recommended_action"], expected);
+    let recommended_actions = json["recommended_actions"]
+        .as_array()
+        .ok_or("board recommended actions must be an array")?;
+    let behind_action = recommended_actions
+        .iter()
+        .find(|a| a["category"] == "behind main")
+        .ok_or("board must recommend a next step for the behind observation")?;
+    assert_eq!(behind_action["action"], expected);
+    Ok(())
+}
+
+#[test]
+fn pr_triage_behind_keeps_review_validation_and_policy_routes() {
+    for (case, draft, review, status, conclusion, path, expected) in [
+        (
+            "draft",
+            true,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "docs/CI.md",
+            "needs_review",
+        ),
+        (
+            "pending",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "failed",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "docs/CI.md",
+            "needs_fresh_validation",
+        ),
+        (
+            "policy",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            ".github/workflows/ci.yml",
+            "do_not_touch_wrong_lane",
+        ),
+    ] {
+        let mut pr = triage_pr(2, "devex: behind", &[path]);
+        pr.merge_state_status = "BEHIND".to_string();
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.checks = vec![gh_pr_status_check("rust", status, conclusion)];
+        let prs = std::slice::from_ref(&pr);
+        let findings = pr_triage_findings(prs, days_from_civil(2026, 5, 14));
+        let dispositions = pr_triage_queue_dispositions(prs, &findings);
+        assert_eq!(dispositions.len(), 1);
+        assert_eq!(dispositions[0].disposition, expected, "{case}");
+    }
 }
 
 #[test]
@@ -50917,6 +51246,60 @@ fn mutation_calibration_summarizes_static_runtime_agreement() -> Result<(), Stri
     assert!(markdown.contains("Confidence label"));
     assert!(markdown.contains("Runtime signals without static gaps"));
     assert!(markdown.contains("Static gaps without runtime signals"));
+    assert!(
+        !markdown.contains("Sample only; showing"),
+        "tables under the sample limit must not claim sampling:\n{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mutation_calibration_agreement_tables_disclose_sampling_when_truncated() -> Result<(), String> {
+    let over_limit = MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT + 1;
+    let static_seams = (0..over_limit)
+        .map(|i| {
+            let mut seam = targeted_static_seam(&format!("gap-{i}"), "ungripped");
+            seam.file = "src/gap.rs".to_string();
+            seam.line = i + 1;
+            seam
+        })
+        .collect();
+    let runtime_mutants = (0..over_limit)
+        .map(|i| mutation_record_at(&format!("m{i}"), None, "src/other.rs", i + 1, "missed"))
+        .collect();
+
+    let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+    assert_eq!(
+        report.agreement.runtime_signal_without_static_gap,
+        over_limit
+    );
+    assert_eq!(
+        report.agreement.static_gap_without_runtime_signal,
+        over_limit
+    );
+    assert_eq!(
+        report.missed_runtime_signals.len(),
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(
+        report.static_only_findings.len(),
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(report.missed_runtime_signals_total, over_limit);
+    assert_eq!(report.static_only_findings_total, over_limit);
+
+    let markdown = mutation_calibration_report_markdown(&report);
+    assert!(markdown.contains("Runtime signals without static gaps"));
+    assert!(markdown.contains("Static gaps without runtime signals"));
+    let expected = format!(
+        "Sample only; showing {} of {over_limit}.",
+        MUTATION_CALIBRATION_AGREEMENT_SAMPLE_LIMIT
+    );
+    assert_eq!(
+        markdown.matches(&expected).count(),
+        2,
+        "both truncated agreement tables must disclose the pre-truncation count:\n{markdown}"
+    );
     Ok(())
 }
 
@@ -52441,10 +52824,10 @@ fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<()
     let workflow = routed_rust_workflow_text()?;
     let reusable = reusable_rust_workflow_text()?;
     let routed_count = workflow.matches("cargo xtask precommit").count();
-    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask ci-policy").count();
     if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once as ci-policy in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
@@ -53312,4 +53695,64 @@ fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
         return Err(format!("empty inventory must stay empty, got {changes:?}"));
     }
     Ok(())
+}
+
+#[test]
+fn ci_policy_dispatch_and_catalog_expand_the_existing_policy_owner() -> Result<(), String> {
+    assert_eq!(
+        XtaskCommand::parse(["ci-policy".to_string()]),
+        XtaskCommand::CiPolicy
+    );
+    assert!(matches!(
+        XtaskCommand::parse(["ci-policy".to_string(), "--skip".to_string()]),
+        XtaskCommand::Unknown(_)
+    ));
+    let required =
+        "jobs:\n  policy:\n    steps:\n      - name: Policy\n        run: cargo xtask ci-policy\n";
+    let mut enforced = super::ci_enforced_xtask_invocations(required);
+    super::expand_precommit_ci_invocations(&mut enforced);
+    for gate in super::PRECOMMIT_GATE_COMMANDS {
+        assert!(
+            enforced.contains(&(gate.to_string(), String::new())),
+            "missing {gate}"
+        );
+    }
+    for advisory in [
+        required.replace("ci-policy", "ci-policy || true"),
+        required.replace(
+            "- name: Policy",
+            "- name: Policy\n        continue-on-error: true",
+        ),
+    ] {
+        let mut enforced = super::ci_enforced_xtask_invocations(&advisory);
+        super::expand_precommit_ci_invocations(&mut enforced);
+        assert!(enforced.is_empty(), "advisory expansion: {enforced:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ci_policy_publication_preserves_local_report_and_local_io_failures() -> Result<(), String> {
+    with_temp_cwd("ci-policy-local-report", |root| {
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|e| e.to_string())?;
+        let local = reports.join("precommit.md");
+        std::fs::write(&local, "local report witness").map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            "local report witness"
+        );
+        super::publish_precommit_policy_report(false)?;
+        assert_eq!(
+            std::fs::read_to_string(&local).map_err(|e| e.to_string())?,
+            super::precommit_report_body()
+        );
+        std::fs::remove_file(&local).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&local).map_err(|e| e.to_string())?;
+        super::publish_precommit_policy_report(true)?;
+        assert!(local.is_dir());
+        assert!(super::publish_precommit_policy_report(false).is_err());
+        Ok(())
+    })
 }

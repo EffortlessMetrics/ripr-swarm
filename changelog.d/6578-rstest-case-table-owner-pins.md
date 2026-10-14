@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Owner-return pins now credit an `assert_eq!` in an `#[rstest]` case table whose `#[case(..)]` rows hold literals, as if each row were its own `#[test]`. `rstest` must be the real crate in the test's module, every parameter must be a plain `#[case]` binding, and every row value must be a non-string literal; string and computed row values, `#[rstest(..)]` arguments, fixtures, `#[values]` matrices and other attributes still refuse. The static contradiction check folds each row with its own literals, so one wrong row withholds the test's credit (#6578).

@@ -41,6 +41,11 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 object (RIPR-SPEC-0190). Orchestrators that discover commands from that
 document should branch on `exit`, not on free-text `stop_states`.
 
+Error and panic diagnostics on stderr are best effort. If a stderr reader
+closes after a JSON refusal has been written, the command retains that stdout
+document and its original exit `2` or `3`. A failed panic diagnostic still
+terminates with `2`; reporting it must not cause a recursive panic or abort.
+
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable
@@ -51,9 +56,9 @@ document should branch on `exit`, not on free-text `stop_states`.
   (for example malformed input or a truncated declared hunk) exits `2`
   after writing its original report, including retained advisory findings,
   counts, input identity, limitations and recovery routes. JSON stdout remains
-  one ordinary check document, with `analysis_complete: false`; it is not
+  one ordinary check or diff document, with `analysis_complete: false`; it is not
   replaced by a refusal envelope. This changes the earlier unsupported-input
-  exit-`0` contract (#7440). Empty or whitespace-only input stays complete
+  exit-`0` contract (#7440 for check, #7793 for diff). Empty or whitespace-only input stays complete
   `no_scope` with exit `0`; it does not establish analyzed behavior.
   A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
@@ -139,11 +144,13 @@ document should branch on `exit`, not on free-text `stop_states`.
   body or `const` block, an owner behind a cfg in its own file that a plain
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
-  selector names no reported gap. Several inline test modules are not a
+  selector names no reported gap (`seam_not_found`), or the location selector
+  matches several files or tied disjoint seams (`selector_ambiguous`: choose
+  a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` `state: refused` envelope under `--json`; stdout stays
+  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
   empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
@@ -163,6 +170,32 @@ document should branch on `exit`, not on free-text `stop_states`.
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
   exit `2`.
+- **Task-first repair façade refusal**: `ripr repair` refused a start
+  without writing a success document. The named causes are: an explicit
+  item that names no seam, a `ripr check` finding ID, or a gap ID that
+  names several seams; no repair-eligible seam under the selected root
+  (honest setup or limitation prose, including when no seams are
+  visible); several eligible seams, or a start the selector will not
+  bind, so no item is selected (the canonical next-action block and a
+  retry command); and a card render that fails after the before phase
+  already published an attempt (#7032). In every case stdout stays
+  empty and stderr names the cause. The post-publication card path is a
+  deliberate asymmetry with `ripr agent card`: even an operational card
+  failure is remapped to exit `3` because the attempt exists, and
+  recovery inspects or continues that same attempt
+  (`ripr status --attempt` / `ripr continue --attempt`) rather than
+  implying no start happened. A truncated seam inventory still exits
+  `2`, because the command could not select from a complete list.
+- **Task-first continue façade refusal**: `ripr continue` refused to
+  claim completion. The named causes are: an attempt that ended without
+  a receipt (`stale`, `failed`, or `incomparable`); an attempt whose
+  finished state a compliant receipt does not confirm (unissued,
+  unavailable, or compatibility-only); no current attempt under the
+  selected root; and several current attempts, so none is selected (a
+  bounded list and a retry command). Stdout stays empty; stderr carries
+  the cause and, for an ended attempt, the status facts. A continue that
+  has selected a current attempt then follows the same
+  `ripr agent repair --phase after` refusals above.
 
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.

@@ -87,3 +87,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (8)
+
+Reason:
+RIPR-SPEC-0001, issue #7807: exact equal-sized replacement reconciliation removes only represented base_deleted duplicates; independently verified surviving finding IDs/classes and distinct family/constructor obligations.
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

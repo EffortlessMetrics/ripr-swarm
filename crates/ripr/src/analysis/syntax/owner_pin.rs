@@ -7,12 +7,19 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
+mod literal_json;
+use literal_json::{
+    json_namespace_rebound, literal_json_import_visible, literal_json_tokens, literal_json_tree,
+};
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
 
 use super::parse_clean_source_file;
-use super::ra::{LineIndex, slice_macro_call_text, slice_text};
+use super::ra::{
+    LineIndex, expect_test_receiver, is_expect_test_comparison, slice_macro_call_text, slice_text,
+    std_macro_root_is_unrebound,
+};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
@@ -30,7 +37,13 @@ type FunctionKey = (usize, usize, String);
 pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
-    module_declarations: BTreeMap<(usize, String), bool>,
+    module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ModuleDeclarationAdmission {
+    context: bool,
+    source_preserved: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -126,8 +139,17 @@ impl OwnerPinAssertions {
     pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
         self.module_declarations
             .get(&(line, declaration.to_string()))
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|admission| admission.context)
+    }
+
+    pub(crate) fn admits_targeted_module_declaration(
+        &self,
+        line: usize,
+        declaration: &str,
+    ) -> bool {
+        self.module_declarations
+            .get(&(line, declaration.to_string()))
+            .is_some_and(|admission| admission.context && admission.source_preserved)
     }
 
     /// The first gate that refuses this assertion, or `None` when it is
@@ -355,6 +377,9 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
+    // expect-test's `expect!` builds a value and cannot return; only its
+    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    "expect",
     "file",
     "format",
     "format_args",
@@ -419,9 +444,7 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        TRUSTED_MACRO_NAMES
-            .contains(&name)
-            .then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -431,6 +454,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     };
     let mut names = BTreeSet::new();
     for node in source.syntax().descendants() {
+        if json_namespace_rebound(&node) {
+            names.insert("json".to_string());
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -506,10 +532,11 @@ fn macro_binding_ambiguities(
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
-    if !source.contains("macro")
-        && !source.contains("use")
-        && !source.contains("no_implicit_prelude")
-        && !source.contains('!')
+    if !(trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!'))
     {
         return ambiguous;
     }
@@ -569,6 +596,19 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // An extern-crate alias or module in another file can defeat this
+        // import's root even when that file never mentions `json` itself.
+        if trusted.contains(&"json") && json_namespace_rebound(&node) {
+            ambiguous.push((
+                "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(&node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    crate_local: false,
+                },
+            ));
+        }
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()));
@@ -785,10 +825,18 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
+/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
+/// value; importing it under its own name is the one binding that makes a
+/// bare `expect!` expect-test's.
+const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
+
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    if !matches!(name, "assert_eq" | "assert_ne") {
-        return false;
-    }
+    let crates = match name {
+        "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
+        "expect" => EXPECT_TEST_CRATES,
+        "json" => &["serde_json"],
+        _ => return false,
+    };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -810,7 +858,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
-        [root, imported] if DROP_IN_ASSERTION_CRATES.contains(root) && *imported == name
+        [root, imported] if crates.contains(root) && *imported == name
     )
 }
 
@@ -1039,7 +1087,7 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 /// Discarded call-argument spans from the same bounded local resolver used by
 /// execution admission. This only removes evidence; workspace macro ambiguity
 /// still independently refuses positive assertion admission.
-pub(super) fn empty_local_macro_invocation_ranges(
+pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
     let empty = local_empty_macros(root);
@@ -1085,11 +1133,14 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
-        let admitted = supported_item_context(module.syntax());
+        let admitted = ModuleDeclarationAdmission {
+            context: supported_item_context(module.syntax()),
+            source_preserved: supported_targeted_item_context(module.syntax()),
+        };
         result
             .module_declarations
             .entry(key)
-            .and_modify(|previous| *previous = false)
+            .and_modify(|previous| *previous = ModuleDeclarationAdmission::default())
             .or_insert(admitted);
     }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
@@ -1180,11 +1231,38 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             // `assert!` is collected for the bool-owner pin; the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
-                !matches!(
-                    path.syntax().text().to_string().as_str(),
-                    "assert_eq" | "assert"
+                !names_candidate_assertion(
+                    &path.syntax().text().to_string(),
+                    &["assert_eq", "assert"],
                 )
             }) {
+                continue;
+            }
+            let range = call.syntax().text_range();
+            let assertion = (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            );
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // #6578: an inline expect-test comparison
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
+        // a method call on the bare `expect!` value; the classify side
+        // decides which spelling pins.
+        for call in function
+            .syntax()
+            .descendants()
+            .filter_map(ast::MethodCallExpr::cast)
+        {
+            if !is_expect_test_comparison(&call)
+                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || call
+                    .name_ref()
+                    .is_none_or(|name| name.text() != "assert_eq")
+            {
                 continue;
             }
             let range = call.syntax().text_range();
@@ -1282,7 +1360,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
         attr.path()
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
-            .is_some_and(|name| name.text() == "test")
+            .is_some_and(|name| name.text() == "test" || name.text() == "rstest")
     })
 }
 
@@ -1435,10 +1513,9 @@ fn local_helper_assertions(
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
-            if call
-                .path()
-                .is_none_or(|path| path.syntax().text() != "assert_eq")
-            {
+            if call.path().is_none_or(|path| {
+                !names_candidate_assertion(&path.syntax().text().to_string(), &["assert_eq"])
+            }) {
                 continue;
             }
             let range = call.syntax().text_range();
@@ -1596,7 +1673,48 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
 /// name equality keeps the whole-word rule (#7130 review: identity over
 /// token coincidence).
 fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
+    file_binds_value_name_with(root, name, true)
+}
+
+/// [`file_binds_value_name`], with `opaque_globs` deciding whether a glob
+/// the scan cannot see through counts as a binding.
+fn file_binds_value_name_with(root: &SyntaxNode, name: &str, opaque_globs: bool) -> bool {
     let spells = |text: &str| text.trim_start_matches("r#") == name;
+    // A bare `None =>` arm or `if let None = ..` parses as an identifier
+    // pattern, but while the prelude variant is in scope it names that
+    // variant (#7712 review). Only `#![no_implicit_prelude]` takes the
+    // variant out of scope. `let` statements and parameters, where a
+    // binding is the usual reading, still count.
+    let prelude_variant = matches!(name, "None" | "Some" | "Ok" | "Err");
+    // The attribute itself, never a comment or string that mentions it.
+    if prelude_variant
+        && root
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                attribute
+                    .path()
+                    .is_some_and(|path| path.syntax().text() == "no_implicit_prelude")
+            })
+    {
+        return true;
+    }
+    let names_the_variant = |pattern: &ast::IdentPat| {
+        prelude_variant
+            && pattern
+                .syntax()
+                .ancestors()
+                .find(|node| {
+                    ast::MatchArm::can_cast(node.kind())
+                        || ast::LetExpr::can_cast(node.kind())
+                        || ast::LetStmt::can_cast(node.kind())
+                        || ast::Param::can_cast(node.kind())
+                        || ast::ClosureExpr::can_cast(node.kind())
+                })
+                .is_some_and(|node| {
+                    ast::MatchArm::can_cast(node.kind()) || ast::LetExpr::can_cast(node.kind())
+                })
+    };
     root.descendants().any(|node| {
         let named = |item_name: Option<ast::Name>| {
             item_name.is_some_and(|item_name| spells(item_name.text()))
@@ -1605,13 +1723,14 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
             || ast::Const::cast(node.clone()).is_some_and(|item| named(item.name()))
             || ast::Static::cast(node.clone()).is_some_and(|item| named(item.name()))
             || ast::Struct::cast(node.clone()).is_some_and(|item| named(item.name()))
-            || ast::IdentPat::cast(node.clone()).is_some_and(|pattern| named(pattern.name()))
+            || ast::IdentPat::cast(node.clone())
+                .is_some_and(|pattern| named(pattern.name()) && !names_the_variant(&pattern))
             || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
                 if let Some(rename) = tree.rename() {
                     return rename.name().is_some_and(|rename| spells(rename.text()));
                 }
                 if tree.star_token().is_some() {
-                    return !glob_stays_within_the_file(&tree);
+                    return opaque_globs && !glob_stays_within_the_file(&tree);
                 }
                 if tree.use_tree_list().is_some() {
                     // The nested trees are their own `UseTree` nodes; a
@@ -1635,6 +1754,16 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
 pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
     parse_clean_source_file(source)
         .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
+}
+
+/// Whether a source file binds `name` as a value by a declaration, pattern
+/// or named import of its own. Unlike [`source_binds_value_name`], a glob
+/// whose names the scan cannot see does not count: a test module's
+/// `use super::sub::*;` is routine, and refusing on it withdrew real
+/// credits (#7712 review).
+pub(crate) fn source_declares_value_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source)
+        .is_none_or(|parse| file_binds_value_name_with(parse.tree().syntax(), name, false))
 }
 
 /// Whether a glob import can only carry names this file's own scan covers:
@@ -1689,6 +1818,20 @@ pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
 }
 
+/// Targeted call syntax also needs container attributes to preserve source
+/// items. The selected function's own harness attributes are outside this
+/// check; its parent and the resolved module declarations supply the context.
+pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
+    supported_item_context(item)
+        && item.ancestors().all(|node| {
+            node.children().filter_map(ast::Attr::cast).all(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                    &attr.syntax().text().to_string(),
+                )
+            })
+        })
+}
+
 /// Why `item` is not a plain item reachable from the file root under test
 /// builds: nested in an executable body, or under a gating attribute.
 fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
@@ -1737,6 +1880,9 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     };
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
+    }
+    if let Some(kind) = rstest_attribute(&path, &module) {
+        return rstest_runs_body(attr, kind, test, &module);
     }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
@@ -1818,6 +1964,264 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
         })
 }
 
+/// An rstest attribute on a test function.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RstestAttribute {
+    /// `#[rstest]`, which expands the function into one test per case row.
+    Rstest,
+    /// `#[case(..)]` or `#[case::name(..)]`: one case row, inert on its own
+    /// and consumed by an `#[rstest]` above it.
+    Case,
+}
+
+/// Which rstest attribute `path` names in `module`: `rstest::rstest`
+/// (rooted or not), a bare `rstest` bound to it by an explicit unrenamed
+/// `use`, or a case row. A rename (`use rstest::rstest as table`) is not
+/// discovered as a test, so it is not admitted here either. The caller
+/// still checks that `rstest` is the crate.
+fn rstest_attribute(path: &str, module: &SyntaxNode) -> Option<RstestAttribute> {
+    if path.strip_prefix("::").unwrap_or(path) == "rstest::rstest"
+        || (path == "rstest" && rstest_leaf_bound(path, module) == Some("rstest"))
+    {
+        return Some(RstestAttribute::Rstest);
+    }
+    let row = match path.split_once("::") {
+        None => path == "case",
+        Some(("case", name)) => is_identifier(name),
+        _ => false,
+    };
+    // A `use` binding `case` makes the name another attribute macro.
+    let rebound = || {
+        module_use_leaves(module).iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "case"),
+        )
+    };
+    (row && !rebound()).then_some(RstestAttribute::Case)
+}
+
+/// Whether `attr` is an rstest attribute that expands to items named after
+/// the function it decorates and to nothing else: `#[rstest]`,
+/// `#[fixture]`, or a case row on a function whose `#[rstest]` above it
+/// consumes the row. A bare `#[case]` anywhere else is an unknown attribute
+/// macro and may emit anything.
+fn rstest_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    match rstest_attribute(&path, module) {
+        Some(RstestAttribute::Rstest) => true,
+        Some(RstestAttribute::Case) => {
+            attr.syntax()
+                .parent()
+                .and_then(ast::Fn::cast)
+                .is_some_and(|function| {
+                    function.attrs().any(|other| {
+                        other.syntax().text_range().start() < attr.syntax().text_range().start()
+                            && other.path().is_some_and(|other_path| {
+                                rstest_attribute(
+                                    &other_path.syntax().text().to_string().replace(' ', ""),
+                                    module,
+                                ) == Some(RstestAttribute::Rstest)
+                            })
+                    })
+                })
+        }
+        None => {
+            path.strip_prefix("::").unwrap_or(&path) == "rstest::fixture"
+                || (path == "fixture" && rstest_leaf_bound(&path, module) == Some("fixture"))
+        }
+    }
+}
+
+/// The rstest attribute macro (`rstest` or `fixture`) that a bare name is
+/// bound to in `module` by exactly one explicit `use rstest::<macro>`
+/// (renames included); globs and any second binding of the name refuse.
+fn rstest_leaf_bound(name: &str, module: &SyntaxNode) -> Option<&'static str> {
+    let name = unraw(name);
+    let mut bound = None;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != name {
+            continue;
+        }
+        let target = match leaf.path.as_slice() {
+            [krate, target] if krate == "rstest" && target == "rstest" => "rstest",
+            [krate, target] if krate == "rstest" && target == "fixture" => "fixture",
+            _ => return None,
+        };
+        if bound.is_some() {
+            return None;
+        }
+        bound = Some(target);
+    }
+    bound
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_alphanumeric() || ch == '_')
+}
+
+/// Whether an rstest attribute on `test` leaves each generated test running
+/// the body unchanged with literal case values. rstest turns
+/// `#[rstest] #[case(2, 4)] fn t(#[case] input: u32, #[case] expected: u32)`
+/// into one `#[test]` per row that binds the row's values to the parameters
+/// and runs the body. Admitted only when `rstest` is the crate in the test's
+/// module, `#[rstest]` takes no arguments and appears once, every parameter
+/// is a plain binding marked `#[case]` or an unmarked fixture, and every row
+/// follows `#[rstest]` and holds one scalar literal per `#[case]` parameter.
+/// `#[values]` matrices, `#[future]`, other parameter attributes, timeouts
+/// and computed case values (which could call the owner) refuse.
+fn rstest_runs_body(
+    attr: &ast::Attr,
+    kind: RstestAttribute,
+    test: &SyntaxNode,
+    module: &SyntaxNode,
+) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    if !extern_crate_path_holds(module, "rstest") {
+        return false;
+    }
+    let kinds: Vec<(TextSize, RstestAttribute)> = function
+        .attrs()
+        .filter_map(|attr| {
+            let path = attr.path()?.syntax().text().to_string().replace(' ', "");
+            Some((
+                attr.syntax().text_range().start(),
+                rstest_attribute(&path, module)?,
+            ))
+        })
+        .collect();
+    let rstest_at: Vec<TextSize> = kinds
+        .iter()
+        .filter(|(_, kind)| *kind == RstestAttribute::Rstest)
+        .map(|(at, _)| *at)
+        .collect();
+    let [rstest_at] = rstest_at.as_slice() else {
+        return false;
+    };
+    let Some(parameters) = case_parameters(&function) else {
+        return false;
+    };
+    match kind {
+        RstestAttribute::Rstest => {
+            matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
+                && (parameters == 0 || kinds.iter().any(|(_, kind)| *kind == RstestAttribute::Case))
+        }
+        RstestAttribute::Case => {
+            attr.syntax().text_range().start() > *rstest_at
+                && case_row_literals(attr) == Some(parameters)
+        }
+    }
+}
+
+/// The number of `#[case]` parameters when every parameter is a plain
+/// `ident: Type` binding that is either marked by exactly one `#[case]`
+/// attribute or carries no attribute at all; `None` otherwise. #6578: an
+/// unmarked parameter is a fixture, which rstest fills by calling the
+/// same-named `#[fixture]` function once before the body runs (a missing
+/// fixture does not compile). Any other parameter attribute (`#[values]`,
+/// `#[from]`, `#[with]`, `#[future]`, `#[files]`, `#[by_ref]`) changes how
+/// often or with what the body runs, so it refuses, as does a generic test.
+fn case_parameters(function: &ast::Fn) -> Option<usize> {
+    // A generic test lets rstest infer a type parameter from a fixture, so
+    // a parameter annotation may name a type parameter, not a type.
+    if function.generic_param_list().is_some() || function.where_clause().is_some() {
+        return None;
+    }
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut count = 0;
+    for param in list.params() {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            return None;
+        };
+        if pat.ref_token().is_some() || pat.pat().is_some() {
+            return None;
+        }
+        // An `impl Trait` parameter is an anonymous type parameter, which
+        // rstest may infer from a fixture as it does a named one.
+        if matches!(param.ty(), Some(ast::Type::ImplTraitType(_))) {
+            return None;
+        }
+        let attrs: Vec<_> = param.attrs().collect();
+        match attrs.as_slice() {
+            [] => {}
+            // A `mut` case value may be reassigned in the body
+            // (`expected = want;`), which no binding scan sees, so a case
+            // row's literal reaches the assertion only through an immutable
+            // parameter (#6578 review).
+            [case]
+                if case.excl_token().is_none()
+                    && pat.mut_token().is_none()
+                    && matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
+                    && case.simple_name().as_deref() == Some("case") =>
+            {
+                count += 1;
+            }
+            _ => return None,
+        }
+    }
+    Some(count)
+}
+
+/// The number of values in a case row when each is a non-string literal,
+/// `-literal`, `true` or `false`; `None` for anything else.
+fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
+    let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+        return None;
+    };
+    let tokens: Vec<_> = meta
+        .token_tree()?
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let (first, rest) = tokens.split_first()?;
+    let (last, inner) = rest.split_last()?;
+    if first.text() != "(" || last.text() != ")" {
+        return None;
+    }
+    let mut count = 0;
+    for value in inner.split(|token| token.text() == ",") {
+        // A string literal reaches the parameter through `FromStr`, which
+        // runs user code that may call the owner, so only scalar literals.
+        let scalar = |token: &ra_ap_syntax::SyntaxToken| {
+            token.kind().is_literal()
+                && !matches!(
+                    token.kind(),
+                    ra_ap_syntax::SyntaxKind::STRING
+                        | ra_ap_syntax::SyntaxKind::BYTE_STRING
+                        | ra_ap_syntax::SyntaxKind::C_STRING
+                )
+        };
+        let literal = match value {
+            [token] => scalar(token) || matches!(token.text(), "true" | "false"),
+            [minus, token] => minus.text() == "-" && scalar(token),
+            _ => false,
+        };
+        if !literal {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
 const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
 
 /// The lock of a crate-qualified `serial_test::<lock>` attribute path,
@@ -1891,7 +2295,7 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -1910,6 +2314,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                 || (krate == "serial_test"
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
+                || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
         })
 }
 
@@ -1918,6 +2323,18 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
         if item
             .attrs()
             .any(|attr| !attribute_emits_no_items(&attr, module, trusted))
+        {
+            return false;
+        }
+        // `#[rstest]` and `#[fixture]` emit items named after the function
+        // they decorate (a module of cases, a fixture struct).
+        if let ast::Item::Fn(function) = &item
+            && function
+                .name()
+                .is_some_and(|name| unraw(name.text()) == krate)
+            && function
+                .attrs()
+                .any(|attr| rstest_attribute_trusted(&attr, module))
         {
             return false;
         }
@@ -1950,7 +2367,10 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                let real = leaf.path.len() == 1 && leaf.path[0] == krate;
+                // `use rstest::rstest` binds the attribute macro, which
+                // leaves the crate's path in the type namespace untouched.
+                let real = (leaf.path.len() == 1 && leaf.path[0] == krate)
+                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"]);
                 if unraw(binding) == krate && !real {
                     return false;
                 }
@@ -2022,6 +2442,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     }
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
+    }
+    if rstest_attribute_trusted(attr, module) {
+        return trusted.contains(&"rstest");
     }
     if path == "derive" {
         let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
@@ -2217,15 +2640,24 @@ fn has_escape(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
-            if !is_trusted_macro(&path, trusted) {
+            if (!is_trusted_macro(&path, trusted)
+                && !is_standard_qualified_macro(&path, &call, trusted))
+                || path == "json"
+                    && (!literal_json_import_visible(call.syntax())
+                        || !call
+                            .token_tree()
+                            .is_some_and(|tree| literal_json_tree(&tree)))
+            {
                 return Some(AssertionContextRefusal::OpaqueMacro(path));
             }
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
-            if call
-                .token_tree()
-                .is_some_and(|tree| opaque_macro_operand(&tree))
-            {
+            if call.token_tree().is_some_and(|tree| {
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && literal_json_import_visible(call.syntax()),
+                )
+            }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
         }
@@ -2251,19 +2683,31 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
+    opaque_macro_operand_with_json(tree, false)
+}
+
+fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens).any(|(name, plain)| !(plain && name == NESTED_MATCHES))
+    }) || nested_invocations(&tokens).any(|(name, plain)| {
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+    }) || tokens.windows(3).enumerate().any(|(at, window)| {
+        window[0].text() == "json"
+            && window[1].text() == "!"
+            && !literal_json_tokens(&tokens[at + 2..])
+    })
 }
 
-/// A bare `matches!` in a macro operand expands to one `match` over its own
-/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
-/// reads for exits; its binding is checked with the invoking macros'.
-const NESTED_MATCHES: &str = "matches";
+/// A bare `matches!`, `format!` or `vec!` in a macro operand expands to one
+/// `match`, call or vector over its own operands (RIPR-SPEC-0197 literal
+/// `matches!`, rendered scalar pins and single-element indexes), which the
+/// token scan above already reads for exits; its binding is checked with the
+/// invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
@@ -2291,16 +2735,21 @@ fn nested_invocations(
             {
                 return None;
             }
-            let qualified = at
-                .checked_sub(1)
-                .and_then(|before| tokens.get(before))
-                .is_some_and(|token| token.text() == "::");
+            // Inside a token tree `::` lexes as two `:` tokens; a single
+            // `:` is a field or type annotation, not a path.
+            let before = |back: usize| {
+                at.checked_sub(back)
+                    .and_then(|index| tokens.get(index))
+                    .map(|token| token.text())
+            };
+            let qualified =
+                before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
             Some((name.text(), !qualified))
         })
 }
 
-/// The macros `node` invokes: every macro call's path, plus a `matches!`
-/// nested in a macro operand, so the binding check covers it too.
+/// The macros `node` invokes: every macro call's path, plus every name
+/// invoked inside a macro operand, so the binding check covers it too.
 fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
     node.descendants()
         .filter_map(ast::MacroCall::cast)
@@ -2325,6 +2774,32 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     // Qualified roots can themselves be rebound. Without name resolution,
     // only bare names with the workspace binding check are established.
     trusted.contains(&path)
+}
+
+/// A macro path that may be one of the `leaves` assertions: the bare name,
+/// or `assert_eq` under a `std`/`core` root (#7857). A qualified candidate
+/// is admitted only when [`has_escape`] finds its root unrebound, so a
+/// rebinding refuses the whole test with the path named.
+fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
+    let path: String = path.split_whitespace().collect();
+    let unrooted = path.strip_prefix("::").unwrap_or(&path);
+    match unrooted.split_once("::") {
+        Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
+        Some(_) => false,
+        None => leaves.contains(&unrooted),
+    }
+}
+
+/// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
+/// file can rebind runs as the standard macro, so it is no escape (#7857).
+/// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
+/// the classify side adds the workspace root proof for the credited one.
+fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
+    // The parser keeps the spacing of `std :: assert_eq`.
+    let path: String = path.split_whitespace().collect();
+    path.rsplit("::").next() == Some("assert_eq")
+        && trusted.contains(&"assert_eq")
+        && std_macro_root_is_unrebound(&path, call.syntax())
 }
 
 /// `Ok` when the invocation runs on every execution of the test body;

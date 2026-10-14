@@ -1,4 +1,5 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
+use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -337,14 +338,33 @@ fn observed_discriminator_values(
         return Vec::new();
     };
     let parameters = function_parameters(owner);
-    let Some((left, right)) =
-        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)
-    else {
+    let owner_source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| &*facts.data().source);
+    let Some((left, right)) = oriented_comparison_operands(
+        owner,
+        owner_source,
+        &parameters,
+        &probe.expression,
+        probe.location.line,
+    ) else {
         return Vec::new();
     };
+    if let Some(view) = adaptor_element_view(
+        probe,
+        owner,
+        &left,
+        &right,
+        related_tests,
+        helper_chain,
+        index,
+    ) {
+        return element_boundary_observations(owner, &view, index);
+    }
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
-    let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
+    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
     let left_resolved = resolve_boundary_operand(
@@ -828,6 +848,19 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    if matches!(
+        probe.family,
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+    ) && let Some(fact) = missing_guard_entry_discriminator(
+        probe,
+        owner_fn,
+        related_tests,
+        flow_sinks,
+        index,
+        workspace_complete,
+    ) {
+        missing.push(fact);
+    }
     if missing.is_empty()
         && observed_values
             .iter()
@@ -854,8 +887,28 @@ fn missing_boundary_discriminator(
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
-    let (left, right) =
-        oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
+    let owner_source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| &*facts.data().source);
+    let (left, right) = oriented_comparison_operands(
+        owner,
+        owner_source,
+        &parameters,
+        &probe.expression,
+        probe.location.line,
+    )?;
+    if let Some(view) = adaptor_element_view(
+        probe,
+        owner,
+        &left,
+        &right,
+        related_tests,
+        helper_chain,
+        index,
+    ) {
+        return element_boundary_discriminator(owner, &view, flow_sinks, index, unresolved);
+    }
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
@@ -864,8 +917,8 @@ fn missing_boundary_discriminator(
         // Only a compared parameter is in scope; an unrelated computed
         // argument (an output buffer `&mut [0; 4]`) says nothing here.
         let compared = [
-            boundary_operand_parameter(owner, &parameters, &left),
-            boundary_operand_parameter(owner, &parameters, &right),
+            boundary_operand_parameter(owner, owner_source, &parameters, &left),
+            boundary_operand_parameter(owner, owner_source, &parameters, &right),
         ];
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
@@ -880,7 +933,8 @@ fn missing_boundary_discriminator(
                 let unknown_operands = [&left, &right]
                     .into_iter()
                     .filter(|operand| {
-                        boundary_operand_parameter(owner, &parameters, operand).is_none()
+                        boundary_operand_parameter(owner, owner_source, &parameters, operand)
+                            .is_none()
                             && literal_operand_value(operand).is_none()
                             && crate::analysis::value_resolution::constant_operand_name(operand)
                                 .is_none()
@@ -909,8 +963,8 @@ fn missing_boundary_discriminator(
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
-    let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
-    let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
+    let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
 
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
@@ -1171,6 +1225,247 @@ fn missing_boundary_discriminator(
     })
 }
 
+/// RIPR-SPEC-0265 rule 1: a changed comparison that is the whole closure
+/// body of an admitted iterator-adaptor tail, with one operand the closure
+/// binding read as an element of the iterated parameter.
+struct ElementView {
+    tail: super::owner_pin::closure_adaptor::AdaptorTail,
+    /// The closure binding, as the operand names it.
+    element: String,
+    /// The other operand: the boundary.
+    boundary: String,
+    /// The element sequence of every run of every related call; a run whose
+    /// sequence is empty never runs the closure.
+    runs: Vec<ElementRun>,
+}
+
+/// The elements one run of one related call passes the iterated
+/// parameter, in order.
+struct ElementRun {
+    line: usize,
+    text: String,
+    elements: Vec<String>,
+}
+
+/// The element view of `probe`, when every related call of the owner (or,
+/// with no direct call, of the resolved helper chain's entry) passes the
+/// iterated parameter a literal sequence of literal values, directly or
+/// through a constant-row `for` table. Any other argument, or no call at
+/// all, answers `None`, which keeps the pre-0265 unresolved reading.
+fn adaptor_element_view(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    left: &str,
+    right: &str,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<ElementView> {
+    let tail = super::owner_pin::closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+        .filter(|tail| tail.closure_body_is(&probe.expression))?;
+    let (element, boundary) = match (tail.reads_element(left), tail.reads_element(right)) {
+        (true, false) => (left, right),
+        (false, true) => (right, left),
+        _ => return None,
+    };
+    let runs = adaptor_element_runs(owner, &tail, related_tests, helper_chain, index)?;
+    Some(ElementView {
+        tail,
+        element: element.trim().to_string(),
+        boundary: boundary.to_string(),
+        runs,
+    })
+}
+
+/// Every run's elements over the related calls, or `None` when some call's
+/// sequence is unreadable or nothing calls.
+fn adaptor_element_runs(
+    owner: &FunctionSummary,
+    tail: &super::owner_pin::closure_adaptor::AdaptorTail,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<Vec<ElementRun>> {
+    let (direct, called) = sequence_runs(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        tail.position,
+        |_, _| true,
+    )?;
+    if called {
+        return Some(direct);
+    }
+    // No direct call: bind the parameter up the resolved helper chain, each
+    // hop passing exactly its caller's own, never rebound, parameter.
+    let chain = helper_chain?;
+    if chain.hops.is_empty() || chain.hops.iter().any(|hop| hop.through_macro) {
+        return None;
+    }
+    let mut position = tail.position;
+    for hop in &chain.hops {
+        let argument = hop.arguments.get(position)?.trim();
+        if super::helper_transfer::caller_rebinds_parameter(&hop.caller.body, argument) {
+            return None;
+        }
+        position = function_parameters(&hop.caller)
+            .iter()
+            .position(|parameter| parameter == argument)?;
+    }
+    let entry = chain.hops.last()?;
+    let (runs, called) = sequence_runs(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        position,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            )
+        },
+    )?;
+    called.then_some(runs)
+}
+
+/// The runs of every kept call of `name`: one per call whose argument at
+/// `position` is a literal sequence, one per row when it is a constant-row
+/// table column of them. The flag says whether any call was kept. `None`
+/// when a kept call's argument is anything else.
+fn sequence_runs(
+    related_tests: &[&TestSummary],
+    name: &str,
+    free: bool,
+    position: usize,
+    keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
+) -> Option<(Vec<ElementRun>, bool)> {
+    let mut runs = Vec::new();
+    let mut called = false;
+    for test in related_tests {
+        for call in test.body_calls() {
+            if call.name != name || !keep(test, call) {
+                continue;
+            }
+            called = true;
+            // Two owner calls on one line share one call text: a fact
+            // cannot say which call it parsed, so the line is unreadable
+            // (`assert_eq!(score(&[0]), score(&v))` must not read `[0]`
+            // twice and drop `&v`).
+            if super::owner_pin::closure_adaptor::call_count(&call.text, name) != 1 {
+                return None;
+            }
+            let arguments = owner_name_call_text(&call.text, name, free)
+                .and_then(|text| call_arguments(text, &call.name))?;
+            let argument = arguments.get(position)?;
+            for elements in
+                super::owner_pin::closure_adaptor::argument_sequences(test, None, argument)?
+            {
+                runs.push(ElementRun {
+                    line: call.line,
+                    text: call.text.clone(),
+                    elements,
+                });
+            }
+        }
+    }
+    Some((runs, called))
+}
+
+/// The visible value of the element view's boundary operand: a literal or a
+/// same-file constant ripr can read.
+fn element_boundary_value(
+    owner: &FunctionSummary,
+    view: &ElementView,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    if let Some(value) = super::owner_pin::closure_adaptor::literal_boundary(&view.boundary) {
+        return Some(value);
+    }
+    // Otherwise only a same-file constant: a literal that is not one whole
+    // plain decimal (`0x7f`, `1e3`) is never read from its leading digits.
+    let constant = boundary_constant(owner, &view.boundary, index)
+        .filter(|constant| constant.lookup.is_declared_once())?;
+    visible_operand(&view.boundary, Some(&constant)).map(|operand| operand.value)
+}
+
+/// One fact per run that reaches the boundary (see
+/// [`super::owner_pin::closure_adaptor::AdaptorTail::run_reaches_boundary`]).
+fn element_boundary_observations(
+    owner: &FunctionSummary,
+    view: &ElementView,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<ValueFact> {
+    let Some(boundary) = element_boundary_value(owner, view, index) else {
+        return Vec::new();
+    };
+    view.runs
+        .iter()
+        .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
+        .map(|run| ValueFact {
+            line: run.line,
+            text: format!(
+                "{} | element {} = {boundary} of {}",
+                run.text, view.element, view.tail.parameter
+            ),
+            value: format!("{} == {}", view.element, view.boundary),
+            context: ValueContext::FunctionArgument,
+        })
+        .collect()
+}
+
+/// [`missing_boundary_discriminator`] for an element view: the boundary is
+/// observed when some run reaches it, missing otherwise, and unresolved
+/// only when the boundary operand's own value is not visible.
+fn element_boundary_discriminator(
+    owner: &FunctionSummary,
+    view: &ElementView,
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    unresolved: &mut Option<String>,
+) -> Option<MissingDiscriminatorFact> {
+    let (element, boundary, parameter) = (&view.element, &view.boundary, &view.tail.parameter);
+    let Some(target) = element_boundary_value(owner, view, index) else {
+        *unresolved = Some(format!(
+            "boundary operand `{boundary}` is a value ripr cannot read statically, so it cannot tell which side of the boundary an element of `{parameter}` reaches"
+        ));
+        return None;
+    };
+    if !element_boundary_observations(owner, view, index).is_empty() {
+        return None;
+    }
+    let mut values = view
+        .runs
+        .iter()
+        .flat_map(|run| run.elements.iter().cloned())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    let observed = if values.is_empty() {
+        format!(
+            "none (every related call passes `{parameter}` an empty sequence, so the closure never runs)"
+        )
+    } else {
+        values.join(", ")
+    };
+    let short_circuit = if values
+        .iter()
+        .any(|value| super::owner_pin::closure_adaptor::same_value(value, &target))
+    {
+        "; the element equal to it never decides the short-circuiting result"
+    } else {
+        ""
+    };
+    Some(MissingDiscriminatorFact {
+        value: format!("{element} == {boundary}"),
+        reason: format!(
+            "No related test call passes `{parameter}` an element {element} equal to {boundary}{short_circuit}; observed {element} values: {observed}; target {boundary} value: {target}"
+        ),
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    })
+}
+
 /// Why a changed boundary's inputs cannot be read, when they cannot
 /// (#6674, #6693, #6672): an operand that is neither a parameter, a
 /// value the bounded evaluator folds from a row, a literal, nor a named
@@ -1402,32 +1697,134 @@ fn missing_match_arm_discriminator(
     })
 }
 
+pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
+
+/// RIPR-SPEC-0263 (#7132): name the `if` around a changed side effect or
+/// call as the missing discriminator when every related test calls the
+/// owner directly and every call's literal input provably leaves the guard
+/// false (`add(&mut v, 4)` against `if x > 10`). The probe then never runs
+/// under the tests, so no assertion over its effect can reveal it. The same
+/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
+/// use of the owner, one computed input, a partial index, a same-named
+/// function, or a related test that may reach the owner through a helper
+/// or macro leaves the guard unnamed.
+fn missing_guard_entry_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<MissingDiscriminatorFact> {
+    let owner = owner_fn?;
+    if related_tests.is_empty() || !workspace_complete {
+        return None;
+    }
+    // The cheap text read first: most side effects sit under no readable
+    // guard, and those need no workspace lookups.
+    let guard = super::arm_selection::GuardEntry::establish(probe, owner)?;
+    if !super::helper_transfer::callee_is_unique(&owner.name, index) {
+        return None;
+    }
+    let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for function in index.functions() {
+        functions_by_name
+            .entry(function.name.as_str())
+            .or_default()
+            .push(function);
+    }
+    // A helper the owner calls may call the owner back with a value that
+    // enters the guard (mutual recursion), which no test input shows.
+    // A macro the owner invokes may expand to a call back into the owner
+    // (`bump!(v)` → `add(v, 20)`), which neither check above can read.
+    // Every mention of the owner outside its own header and plain `use`
+    // paths must be a call in a related test, whose input is read below.
+    // Any other mention (a production caller, a `Drop` or operator impl, a
+    // closure in a `static`, a renamed import, a stored pointer) may run
+    // the owner with an input no test shows.
+    if owner_may_reenter(owner, &functions_by_name)
+        || invokes_unread_macro(&owner.body)
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
+    {
+        return None;
+    }
+    // The read macros are trusted by name, so a workspace that defines,
+    // imports or may glob in another macro under one of those names
+    // (`macro_rules! println { .. }`) leaves that trust unestablished.
+    if read_macro_name_rebound(index) {
+        return None;
+    }
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
+            return None;
+        }
+        inputs.extend(guard.unentered_inputs(test)?);
+    }
+    inputs.sort();
+    inputs.dedup();
+    let condition = format!("if {}", guard.condition());
+    Some(MissingDiscriminatorFact {
+        reason: format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
+            guard.parameter(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        value: condition,
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    })
+}
+
+/// Whether a function the owner reaches through its calls names the owner
+/// or invokes an unread macro, so the owner may run again with an argument
+/// computed inside the call chain rather than passed by a test.
+fn owner_may_reenter(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+) -> bool {
+    let mut pending = owner
+        .calls
+        .iter()
+        .map(|call| call.name.as_str())
+        .filter(|name| *name != owner.name)
+        .collect::<Vec<_>>();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            if super::reveal::contains_as_whole_word(&function.body, &owner.name)
+                || invokes_unread_macro(&function.body)
+            {
+                return true;
+            }
+            pending.extend(
+                function
+                    .calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .filter(|callee| *callee != owner.name),
+            );
+        }
+    }
+    false
+}
+
 /// Whether the test may run the owner through something its own body does
 /// not show: a call to an indexed function whose body names the owner (a
 /// helper such as `check_none()`), or a macro other than the standard
-/// assertion and formatting macros, whose expansion is not read.
+/// assertion and formatting macros, whose expansion is not read, in the
+/// test or in any helper it reaches.
 fn may_reach_owner_unread(
     test: &TestSummary,
     owner: &str,
     functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
 ) -> bool {
-    const READ_MACROS: &[&str] = &[
-        "assert",
-        "assert_eq",
-        "assert_ne",
-        "debug_assert",
-        "debug_assert_eq",
-        "debug_assert_ne",
-        "vec",
-        "format",
-        "print",
-        "println",
-        "eprint",
-        "eprintln",
-        "dbg",
-        "panic",
-        "matches",
-    ];
     // Follow helpers transitively: `check_none()` may call `inner(None)`,
     // which calls the owner. The test's own `fn name()` header reads as a
     // call to itself; only a different indexed function is a helper.
@@ -1447,7 +1844,9 @@ fn may_reach_owner_unread(
             .flatten()
             .filter(|function| !(function.name == test.name && function.file == test.file))
         {
-            if super::reveal::contains_as_whole_word(&function.body, owner) {
+            if super::reveal::contains_as_whole_word(&function.body, owner)
+                || invokes_unread_macro(&function.body)
+            {
                 return true;
             }
             pending.extend(
@@ -1459,7 +1858,159 @@ fn may_reach_owner_unread(
             );
         }
     }
-    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    invokes_unread_macro(&test.body)
+}
+
+/// Whether any indexed file mentions `owner` more often than the related
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
+/// paths do not count ([`unread_mentions`]); every other mention must be
+/// one a related test's body holds, since only those calls are read.
+fn owner_named_outside_related_tests(
+    index: &crate::analysis::rust_index::RustIndex,
+    owner: &str,
+    related_tests: &[&TestSummary],
+) -> bool {
+    index.files().iter().any(|(path, file)| {
+        let mut seen = std::collections::BTreeSet::new();
+        let read: usize = related_tests
+            .iter()
+            .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
+            .map(|test| unread_mentions(&test.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read
+            || doc_comment_names(&file.source, owner)
+            || crate::analysis::extract::mask_comments_and_strings(&file.source)
+                .contains("include!")
+    })
+}
+
+/// Whether a doc comment in `source` names `owner`, or a doc attribute
+/// includes a file: a doctest there runs under `cargo test` with whatever
+/// input it passes, and the masked scan above cannot see it. An `include!` anywhere likewise pulls in code no
+/// file read here holds.
+fn doc_comment_names(source: &str, owner: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        let doc_attribute = line.starts_with("#[doc") || line.starts_with("#![doc");
+        // `#![doc = include_str!("../README.md")]` makes a markdown file's
+        // code blocks doctests, which no file read here holds.
+        (doc_attribute && line.contains("include_str!"))
+            || ((line.starts_with("///") || line.starts_with("//!") || doc_attribute)
+                && super::reveal::contains_as_whole_word(line, owner))
+    }) || source.split("/**").skip(1).any(|block| {
+        block
+            .split("*/")
+            .next()
+            .is_some_and(|doc| super::reveal::contains_as_whole_word(doc, owner))
+    }) || source.split("/*!").skip(1).any(|block| {
+        block
+            .split("*/")
+            .next()
+            .is_some_and(|doc| super::reveal::contains_as_whole_word(doc, owner))
+    })
+}
+
+/// How many times `source` names `function` other than in a `fn function`
+/// header or a plain `use` path. Calls, renamed imports (`use crate::add as
+/// push_big;`), stored pointers (`static BIG: fn(..) = add;`, `[add]`) and
+/// arguments (`apply(v, add)`) all count. Comments and strings are masked;
+/// a local or field sharing the name also counts, which only withholds the
+/// guard reading.
+fn unread_mentions(source: &str, function: &str) -> usize {
+    if function.is_empty() || !source.contains(function) {
+        return 0;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked
+        .match_indices(function)
+        .filter(|(offset, _)| {
+            let before = &masked[..*offset];
+            let rest = &masked[offset + function.len()..];
+            if before.chars().next_back().is_some_and(is_word)
+                || rest.chars().next().is_some_and(is_word)
+            {
+                return false;
+            }
+            let preceding = before.trim_end();
+            if preceding
+                .strip_suffix("fn")
+                .is_some_and(|head| !head.chars().next_back().is_some_and(is_word))
+            {
+                return false;
+            }
+            let renamed = rest
+                .trim_start()
+                .strip_prefix("as")
+                .is_some_and(|tail| !tail.chars().next().is_some_and(is_word));
+            renamed || !in_use_item(before)
+        })
+        .count()
+}
+
+/// Whether the text ending at `before` is inside a `use` item: the last
+/// whole-word `use` has no `;` after it.
+fn in_use_item(before: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    before
+        .match_indices("use")
+        .filter(|(offset, _)| {
+            !before[..*offset].chars().next_back().is_some_and(is_word)
+                && !before[offset + 3..].chars().next().is_some_and(is_word)
+        })
+        .last()
+        .is_some_and(|(offset, _)| !before[offset..].contains(';'))
+}
+
+/// The standard assertion and formatting macros whose expansion cannot
+/// call the owner.
+const READ_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "vec",
+    "format",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "dbg",
+    "panic",
+    "matches",
+];
+
+/// Whether any indexed file binds a [`READ_MACROS`] name to something other
+/// than the standard macro: a `macro_rules!` definition, an import, or a
+/// glob or `#[macro_use]` that may bring one in. Uses the parser-backed
+/// macro binding scan the trusted-assertion reading uses; an out-of-line
+/// module counts as unresolved, which only withholds the guard reading.
+fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bool {
+    index.files().iter().any(|(path, file)| {
+        if file
+            .macro_candidates
+            .as_deref()
+            .is_some_and(|candidates| READ_MACROS.iter().all(|name| !candidates.may_bind(name)))
+        {
+            return false;
+        }
+        !crate::analysis::syntax::trusted_macro_binding_sites(
+            &file.source,
+            index.macro_scope_crates(),
+            READ_MACROS,
+            &|_, _| false,
+            &|krate| index.drop_in_manifests.verified(path, krate),
+        )
+        .is_empty()
+    })
+}
+
+/// Whether `body` invokes a macro other than [`READ_MACROS`], whose
+/// expansion is not read and may call any function.
+fn invokes_unread_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter
@@ -1479,9 +2030,21 @@ fn may_reach_owner_unread(
             .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
             .map_or(0, |(index, ch)| index + ch.len_utf8());
         let name = &masked[name_start..name_end];
+        // A path-qualified name (`util::println!`) is a read macro only
+        // under the standard crates.
+        let qualifier = masked[..name_start].trim_end();
+        let foreign_path = qualifier.ends_with("::")
+            && !["std::", "core::", "alloc::"].iter().any(|root| {
+                qualifier.strip_suffix(root).is_some_and(|head| {
+                    !head
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                })
+            });
         // `if !(done)` is a negation after a keyword, not a macro.
         !name.is_empty()
-            && !READ_MACROS.contains(&name)
+            && (foreign_path || !READ_MACROS.contains(&name))
             && !matches!(
                 name,
                 "if" | "while" | "match" | "return" | "in" | "else" | "break"
@@ -2694,6 +3257,7 @@ fn parameters_in_signature(signature: &str) -> Vec<String> {
 
 fn boundary_operand_parameter(
     function: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
 ) -> Option<String> {
@@ -2701,11 +3265,12 @@ fn boundary_operand_parameter(
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
-        .or_else(|| boundary_local_operand_parameter(function, parameters, operand))
+        .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
 }
 
 fn boundary_local_operand_parameter(
     function: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
 ) -> Option<String> {
@@ -2716,6 +3281,17 @@ fn boundary_local_operand_parameter(
         if body_contains_wrapped_local_alias(&function.body, "Some", operand, parameter)
             || body_contains_wrapped_local_alias(&function.body, "Ok", operand, parameter)
             || body_contains_direct_local_alias(&function.body, operand, parameter)
+            // A bare pattern name may resolve to a constant in scope
+            // (`const p: i64 = 0;`), which the guard then compares instead
+            // of the scrutinee; without the owner file that stays unread,
+            // and so does a file whose items a macro may declare.
+            // The cheap body read runs first, so only a real guard alias
+            // pays for the owner file's parse.
+            || (body_contains_guard_binding_alias(&function.body, operand, parameter)
+                && owner_source.is_some_and(|source| {
+                    !may_name_constant(source, operand)
+                        && !may_declare_items_in_owner_scope(source, &function.name)
+                }))
         {
             return Some(parameter.clone());
         }
@@ -2778,6 +3354,106 @@ fn starts_with_identifier_token(text: &str, token: &str) -> bool {
     end > 0 && &text[..end] == token
 }
 
+/// A guarded binding arm (`p if 100 <= p =>`) in the body's only `match`,
+/// whose scrutinee is the parameter itself, binds the parameter's value to
+/// `p`, so the guard's boundary reads the parameter's inputs. Any second
+/// `match` (an arm could belong to either), any mention of the name off a
+/// guard line (a `let`, a loop variable, a closure parameter), any mention
+/// of the parameter outside the signature and the `match` line (a rebinding
+/// or shadowing), or a binding that is not a bare identifier leaves the
+/// operand unread.
+fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str) -> bool {
+    // Comments and string contents are masked to spaces rather than cut
+    // per line: a line-level cut at `//` or `/*` (even inside a string)
+    // or a skipped `*`-led continuation line would hide a rebinding
+    // written after it (`/* shift */ let points = points - 50;`).
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let code = masked
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    // The keyword as a token, so `match(other) {` and a `match` ending
+    // its line count too; a raw identifier `r#match` is a name, not one.
+    let matches = code
+        .iter()
+        .map(|line| {
+            line.replace("r#", "r_")
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .filter(|word| *word == "match")
+                .count()
+        })
+        .sum::<usize>();
+    let guard = format!("{operand} if ");
+    matches == 1
+        && body_contains_match_parameter(&masked, parameter)
+        && code.iter().any(|line| {
+            line.find("match ")
+                .map(|index| line[index + "match ".len()..].trim_start())
+                .is_some_and(|rest| {
+                    rest.strip_prefix(parameter)
+                        .is_some_and(|tail| tail.trim_start().starts_with('{'))
+                })
+        })
+        && code.iter().any(|line| line.starts_with(&guard))
+        // Every other mention binds or reads some other `operand` (a loop
+        // variable, a closure parameter, a `let`), so the name is read as
+        // the arm binding only inside a guard, between `if` and `=>`. An
+        // arm body on the same line may rebind it (`=> { let p = 10; ...`),
+        // and a closure in the guard (`|p: i64|`) may shadow it, so either
+        // leaves it unread.
+        && code
+            .iter()
+            .filter(|line| mentions_identifier(line, operand))
+            .all(|line| guard_reads_only_the_binding(line, &guard, operand))
+        // The parameter itself must reach the `match` unchanged: any other
+        // mention (`let points = points - 50;`, a closure `|points|`) may
+        // rebind or shadow it, so the test argument is not the scrutinee.
+        // The body opens with the signature, the parameter's one binding,
+        // which ends at its first `{`: a multiline signature declares the
+        // parameter on later lines, and a statement after the `{` on the
+        // signature line (`{ let points = points - 50; match points {`)
+        // is body code.
+        && masked
+            .split_once('{')
+            .map_or("", |(_signature, rest)| rest)
+            .lines()
+            .map(str::trim)
+            .filter(|line| mentions_identifier(line, parameter))
+            .all(|line| {
+                line.strip_prefix("match ").is_some_and(|rest| {
+                    rest.strip_prefix(parameter)
+                        .is_some_and(|tail| tail.trim() == "{")
+                })
+            })
+}
+
+/// `line` is a one-line guarded arm (`p if 100 <= p => ...`) whose
+/// binding `operand` appears only in the guard, never after the `=>`, and
+/// whose guard is a plain expression: no block, statement or closure
+/// (`{ let p = other; 100 < p }`, `|p: i64|`) that could rebind it.
+fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool {
+    let Some(rest) = line.strip_prefix(guard) else {
+        return false;
+    };
+    let Some((condition, body)) = rest.split_once("=>") else {
+        return false;
+    };
+    // `|` covers `||` too: an or-guard is one predicate shape whose
+    // boundary has no single test value (`p == -1000 || 100 < p`), so the
+    // binding is left unread there as well.
+    let rebinds = condition.contains(['{', '}', ';', '|'])
+        || ["let", "for", "match", "while", "loop"]
+            .iter()
+            .any(|keyword| mentions_identifier(condition, keyword));
+    !mentions_identifier(body, operand) && !rebinds
+}
+
+fn mentions_identifier(line: &str, name: &str) -> bool {
+    line.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|word| word == name)
+}
+
 fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {
     body.lines().any(|line| {
         let line = line.trim().trim_end_matches(';').trim();
@@ -2813,13 +3489,14 @@ pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(Stri
 /// so the swap changes which side is looked up, not what is compared.
 fn oriented_comparison_operands(
     owner: &FunctionSummary,
+    owner_source: Option<&str>,
     parameters: &[String],
     expression: &str,
     predicate_line: usize,
 ) -> Option<(String, String)> {
     let (left, right) = comparison_operands(expression)?;
     let owner_bound = |operand: &str| {
-        boundary_operand_parameter(owner, parameters, operand).is_some()
+        boundary_operand_parameter(owner, owner_source, parameters, operand).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
@@ -4041,6 +4718,27 @@ mod tests {
     }
 
     #[test]
+    fn guard_binding_alias_reads_the_signature_to_its_first_brace() {
+        // Review on #7811: the signature ends at its first `{`, so a
+        // parameter declared on a later signature line is no rebinding,
+        // while a statement after the `{` on the signature line is.
+        let arms = "\n    match points {\n        p if 100 <= p => 1,\n        _ => 0,\n    }\n}";
+        let multiline = format!("fn tier(\n    points: i64,\n) -> u8 {{{arms}");
+        let one_line = format!("fn tier(points: i64) -> u8 {{{arms}");
+        let same_line_rebind = format!(
+            "fn tier(points: i64) -> u8 {{ let points = points - 50; match points {{{}",
+            &arms["\n    match points {".len()..]
+        );
+        assert!(body_contains_guard_binding_alias(&multiline, "p", "points"));
+        assert!(body_contains_guard_binding_alias(&one_line, "p", "points"));
+        assert!(!body_contains_guard_binding_alias(
+            &same_line_rebind,
+            "p",
+            "points"
+        ));
+    }
+
+    #[test]
     fn same_file_method_chain_owner_call_tracing_covers_activation_alias_helpers() {
         let owner = function(
             "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(amount) = raw_amount { amount >= threshold } else { false }\n}",
@@ -4048,11 +4746,11 @@ mod tests {
         let parameters = function_parameters(&owner);
 
         assert_eq!(
-            boundary_local_operand_parameter(&owner, &parameters, "amount"),
+            boundary_local_operand_parameter(&owner, None, &parameters, "amount"),
             Some("raw_amount".to_string())
         );
         assert_eq!(
-            boundary_local_operand_parameter(&owner, &parameters, ""),
+            boundary_local_operand_parameter(&owner, None, &parameters, ""),
             None
         );
         assert!(body_contains_wrapped_local_alias(
@@ -6487,5 +7185,201 @@ assert_eq!(input.amount, 100);"#
             gathered.unresolved_boundary.as_deref(),
         );
         assert_ne!(infection.state, StageState::Yes, "{}", infection.summary);
+    }
+
+    /// RIPR-SPEC-0265 rule 1: the boundary reading of a closure binding
+    /// over the owner's literal-sequence test inputs.
+    fn adaptor_boundary(
+        tail: &str,
+        expression: &str,
+        calls: &[&str],
+    ) -> ActivationWithBoundaryInput {
+        let mut owner = function(&format!(
+            "pub fn score(xs: &[i64]) -> usize {{\n    {tail}\n}}"
+        ));
+        owner.item.has_body = true;
+        let body = calls.join("\n");
+        let lines = calls
+            .iter()
+            .enumerate()
+            .map(|(offset, call)| (10 + offset, *call))
+            .collect::<Vec<_>>();
+        let test = test_with_body_calls(&body, &lines);
+        boundary_input(&owner, &probe(ProbeFamily::Predicate, expression), &[&test])
+    }
+
+    fn missing_values(gathered: &ActivationWithBoundaryInput) -> Vec<(String, String)> {
+        gathered
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| (fact.value.clone(), fact.reason.clone()))
+            .collect()
+    }
+
+    /// A boundary that is not one whole plain decimal literal (`0x10`,
+    /// `1e3`, `10u8`) and not a same-file constant stays unresolved: its
+    /// leading digits (`0`, `1`, `10`) are not its value.
+    #[test]
+    fn adaptor_non_decimal_boundary_stays_unresolved() {
+        for (owner, expression, call) in [
+            (
+                "xs.iter().filter(|&&x| x > 0x10).count()",
+                "x > 0x10",
+                "assert_eq!(score(&[0, 20]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 0x7f).count()",
+                "x > 0x7f",
+                "assert_eq!(score(&[0, 200]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 1e3).count()",
+                "x > 1e3",
+                "assert_eq!(score(&[1, 2000]), 1);",
+            ),
+            (
+                "xs.iter().filter(|&&x| x > 10u8).count()",
+                "x > 10u8",
+                "assert_eq!(score(&[10, 20]), 1);",
+            ),
+        ] {
+            let gathered = adaptor_boundary(owner, expression, &[call]);
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{expression}"
+            );
+            assert!(missing_values(&gathered).is_empty(), "{expression}");
+        }
+        // The decimal control on the same shape is observed.
+        let decimal = adaptor_boundary(
+            "xs.iter().filter(|&&x| x > 16).count()",
+            "x > 16",
+            &["assert_eq!(score(&[16, 20]), 1);"],
+        );
+        assert!(has_observed_boundary_equality(&decimal.activation));
+    }
+
+    #[test]
+    fn adaptor_element_at_the_boundary_is_an_observed_input() {
+        let filter = "xs.iter().filter(|&&x| x > 0).count()";
+        let gathered =
+            adaptor_boundary(filter, "x > 0", &["assert_eq!(score(&[-1, 0, 3, 7]), 2);"]);
+        assert_eq!(gathered.unresolved_boundary, None);
+        assert!(missing_values(&gathered).is_empty());
+        assert!(has_observed_boundary_equality(&gathered.activation));
+        // `**x` under `|x|` is the same element.
+        let deref = adaptor_boundary(
+            "xs.iter().filter(|x| **x > 0).count()",
+            "**x > 0",
+            &["assert_eq!(score(&[0]), 0);"],
+        );
+        assert!(has_observed_boundary_equality(&deref.activation));
+    }
+
+    #[test]
+    fn adaptor_elements_off_the_boundary_keep_the_missing_discriminator() {
+        let filter = "xs.iter().filter(|&&x| x > 0).count()";
+        let off = adaptor_boundary(filter, "x > 0", &["assert_eq!(score(&[3, 7]), 2);"]);
+        assert_eq!(off.unresolved_boundary, None);
+        assert!(!has_observed_boundary_equality(&off.activation));
+        let missing = missing_values(&off);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].0, "x == 0");
+        assert!(
+            missing[0].1.contains("observed x values: 3, 7"),
+            "{}",
+            missing[0].1
+        );
+        // An empty slice never runs the closure: still a missing input.
+        let empty = adaptor_boundary(filter, "x > 0", &["assert_eq!(score(&[]), 0);"]);
+        let missing = missing_values(&empty);
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].1.contains("empty sequence"), "{}", missing[0].1);
+    }
+
+    #[test]
+    fn adaptor_boundary_with_an_unreadable_call_stays_unresolved() {
+        let filter = "xs.iter().filter(|&&x| x > 0).count()";
+        for unreadable in [
+            "assert_eq!(score(&v), 2);",
+            "assert_eq!(score(&vec![0; n]), 0);",
+            "assert_eq!(score(&[0, n]), 1);",
+            // Two owner calls on one line: the `&v` call must not read the
+            // first call's `[0]`.
+            "assert_eq!(score(&[0]), score(&v));",
+        ] {
+            let gathered = adaptor_boundary(
+                filter,
+                "x > 0",
+                &["assert_eq!(score(&[0, 3]), 1);", unreadable],
+            );
+            assert!(
+                gathered.unresolved_boundary.is_some(),
+                "{unreadable}: pre-0265 reading expected"
+            );
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{unreadable}"
+            );
+            assert!(missing_values(&gathered).is_empty(), "{unreadable}");
+        }
+        // The same readable call observes `x == 0` on the admitted shape,
+        // and nothing outside it: a short-circuit `&&` body, and `map` +
+        // `count`, which ignores the closure value.
+        let observed = |owner: &str| {
+            has_observed_boundary_equality(
+                &adaptor_boundary(owner, "x > 0", &["assert_eq!(score(&[0]), 0);"]).activation,
+            )
+        };
+        assert!(observed(filter));
+        assert!(!observed("xs.iter().filter(|&&x| x > 0 && x < 9).count()"));
+        assert!(!observed("xs.iter().map(|&x| x > 0).count()"));
+    }
+
+    #[test]
+    fn adaptor_short_circuit_counts_a_boundary_element_only_when_it_decides() {
+        let any = "xs.iter().any(|&d| d > 30)";
+        // `any` stops at 31: 30 never decides the result.
+        let stopped = adaptor_boundary(any, "d > 30", &["assert!(score(&[31, 30]));"]);
+        assert!(!has_observed_boundary_equality(&stopped.activation));
+        let missing = missing_values(&stopped);
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].1.contains("never decides"), "{}", missing[0].1);
+        // Every other element is false, so 30 decides.
+        let decides = adaptor_boundary(any, "d > 30", &["assert!(!score(&[30, 2]));"]);
+        assert!(has_observed_boundary_equality(&decides.activation));
+        // `all` stops at the first false element.
+        let all = "xs.iter().all(|&d| d > 30)";
+        let after_false = adaptor_boundary(all, "d > 30", &["assert!(!score(&[2, 30]));"]);
+        assert!(!has_observed_boundary_equality(&after_false.activation));
+        let decides = adaptor_boundary(all, "d > 30", &["assert!(!score(&[40, 30]));"]);
+        assert!(has_observed_boundary_equality(&decides.activation));
+    }
+
+    #[test]
+    fn every_mention_but_a_header_or_plain_use_path_is_unread() {
+        for (source, count) in [
+            ("use crate::add as push_big;", 1),
+            ("use crate::{add as push_big, other};", 1),
+            ("pub static BIG: fn(&mut Vec<u32>, u32) = add;", 1),
+            ("pub const OPS: [fn(&mut Vec<u32>, u32); 1] = [add];", 1),
+            ("fn t() { apply(&mut v, add); }", 1),
+            ("fn t() { let f = add; }", 1),
+            ("fn t() { xs.iter().map(Self::add); }", 1),
+            ("fn drop(&mut self) { add(&mut self.0, 20); }", 1),
+            ("fn t() { add(&mut v, 4); crate::add (&mut v, 5); }", 2),
+            ("use crate::add;", 0),
+            ("use crate::{add, other};\nuse std::fmt;", 0),
+            ("pub fn add(v: &mut Vec<u32>, x: u32) {}", 0),
+            (
+                "fn t() { adder(1); add_all(); } // add(v, 1) as push_big",
+                0,
+            ),
+            ("fn t() { let s = \"add(v, 20)\"; }", 0),
+            ("#[test]\nfn add() {}", 0),
+        ] {
+            assert_eq!(unread_mentions(source, "add"), count, "{source}");
+        }
     }
 }

@@ -20,30 +20,32 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+mod targeted_calls;
 mod text;
 mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts, activation_and_boundary_input,
-    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
-    signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
+    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
-pub(in crate::analysis) use call_identity::{CallTarget, OwnerCallIdentity};
+pub(in crate::analysis) use call_identity::{
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
-    recommended_next_step, stop_reasons,
+    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
+    missing_evidence, recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
@@ -66,7 +68,7 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness,
+    constant_tail_witness, fallible_literal_witness, format_tail_witness,
 };
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
@@ -74,10 +76,10 @@ pub(in crate::analysis) use reach::{
     reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, TargetedCallShape, body_contains_owner_call,
+    DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
-    package_prefix, targeted_call_shapes, test_calls_free_function,
+    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
+    owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
@@ -103,3 +105,5 @@ pub(in crate::analysis) use transitive_reach::{
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
     transitive_reach_witness_pointer,
 };
+
+pub(in crate::analysis) use targeted_calls::{TargetedCallShape, TargetedCallSyntax};

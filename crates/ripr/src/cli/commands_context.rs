@@ -2,6 +2,23 @@ use crate::app::CheckInput;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use std::path::Path;
 
+/// Map a producer outcome after its original report has reached stdout.
+/// Only the typed unsupported-input result fails; usable partial evidence
+/// stays advisory. The caller must not append a refusal to the report.
+pub(super) fn analysis_outcome_exit_result(
+    command_name: &str,
+    outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+) -> Result<(), String> {
+    if outcome.is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
+    }) {
+        return Err(format!(
+            "{command_name}: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes"
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);

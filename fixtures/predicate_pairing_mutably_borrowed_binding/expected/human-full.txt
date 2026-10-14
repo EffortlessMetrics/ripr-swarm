@@ -76,7 +76,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  The related test `borrowed` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.
 Drill in:
   ripr explain --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast probe:src_lib.rs:return_value:c71d52af
   ripr context --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:c71d52af

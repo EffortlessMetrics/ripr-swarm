@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0231-log-targeted-other-record",
+  "subject_id": "authored-log-template",
+  "diff": "cases/cell-0231-log-targeted-other-record.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "captured_log_other_record_assert",
+  "hard_case": "Twin of cell-0231-log-targeted-record-captured: the test captures settle's records but asserts only \"settled 9\". The changed record's `target:` text (\"settle\") appears in that literal; only its own template (\"closing {}\") shows the test never checks it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "log::info!(target: \"settle\", \"closing {}\", 1 + amount + 1);",
+        "mutated_line": "log::info!(target: \"settle\", \"closing {}\", 1 + amount + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the logged amount changes"
+      },
+      {
+        "replacement": "(delete the line)",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the closing record is no longer logged"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "settle_logs_the_tripled_amount requires only \"settled 9\", so a changed or deleted closing record passes. Spec cells: RIPR-SPEC-0096 log:: sink; RIPR-SPEC-0231 the log-capture limit binds a record through its own format template, never its target (#7133).",
+  "labeling_observation": {
+    "ripr_commit": "4711c122a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

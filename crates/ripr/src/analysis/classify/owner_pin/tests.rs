@@ -1,3 +1,5 @@
+mod json_construction;
+
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
 use crate::analysis::rust_index::summarize_file;
@@ -916,7 +918,10 @@ fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
 #[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
-    // `Codec::decode` owner never takes a bare call.
+    // `Codec::decode` owner never takes a bare call. #6617 decision: the
+    // associated owner now establishes a `Codec::decode(..)` pin
+    // (RIPR-SPEC-0172), so B2 is asserted directly on the test side: the
+    // pin exists and the bare `decode(8)` assertion is not admitted.
     let lib = "pub struct Codec;\n\nimpl Codec {\n    pub fn decode(input: u32) -> u32 {\n        input.rotate_left(3)\n    }\n}\n\npub fn decode(input: u32) -> u32 {\n    input + 1\n}\n";
     let tests = "use demo::decode;\n\n#[test]\nfn decodes() {\n    assert_eq!(decode(8), 9);\n}\n";
     let index = index(&[(LIB, lib), (TESTS, tests)]);
@@ -927,7 +932,12 @@ fn bare_call_names_only_a_module_level_function() {
     assert!(associated.is_some_and(|function| !function.item.has_self_param));
     let Some(associated) = associated else { return };
     let probe = return_probe(associated, "input.rotate_left(3)");
-    assert!(OwnerReturnPin::establish(&probe, associated, &index).is_none());
+    let associated_pin = OwnerReturnPin::establish(&probe, associated, &index);
+    assert!(associated_pin.is_some());
+    let Some(associated_pin) = associated_pin else {
+        return;
+    };
+    assert!(admitted_texts(&index, &associated_pin).is_empty());
     // The free function does take the bare call, and the associated
     // function of the same name does not compete with it.
     let free = index.functions().iter().find(|function| {
@@ -1113,6 +1123,104 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
         admitted_texts(&err_index, &pin),
         vec!["assert_eq!(checked(-1), Err(E::Negative));".to_string()]
     );
+}
+
+/// An early `return Err(String::from("big"))` beside an `Ok(x)` tail.
+fn lib_twin() -> &'static str {
+    "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"big\")); }\n    Ok(x)\n}\n"
+}
+
+#[test]
+fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
+    // RIPR-SPEC-0231 example 5: ripr files a changed `return Err(..)` as an
+    // `error_path` probe. The early-return gate is the one a `return_value`
+    // probe of the same line gets, so `assert_eq!(f(..), Err(..))` pins it.
+    let lib = "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"b\") + \"ig\"); }\n    Ok(x)\n}\n";
+    let tests = "use demo::check;\n\n#[test]\nfn checks() {\n    assert_eq!(check(20), Err(String::from(\"big\")));\n    assert_eq!(check(2), Ok(2));\n}\n";
+    let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let error_probe = |index: &RustIndex, name: &str, expression: &str| {
+        let owner = owner(index, name);
+        let probe = Probe {
+            family: ProbeFamily::ErrorPath,
+            ..return_probe(owner, expression)
+        };
+        OwnerReturnPin::establish(&probe, owner, index)
+    };
+    let changed = "return Err(String::from(\"b\") + \"ig\");";
+    let pin = error_probe(&err_index, "check", changed);
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&err_index, &pin),
+        vec!["assert_eq!(check(20), Err(String::from(\"big\")));".to_string()]
+    );
+
+    // A `?` is a second `Err` source, so an early `return Err(..)` beside
+    // one pins nothing for an `error_path` probe either.
+    let lib = "pub fn parse(s: &str) -> Result<u32, String> {\n    if s.is_empty() { return Err(String::from(\"empty\")); }\n    let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;\n    Ok(n)\n}\n";
+    let question_index = index(&[(LIB, lib)]);
+    assert!(
+        error_probe(
+            &question_index,
+            "parse",
+            "return Err(String::from(\"empty\"));"
+        )
+        .is_none()
+    );
+
+    // A test-local `fn Err` that returns `Ok` makes the expected value
+    // something else, so the test's own scope refuses the pin; a glob the
+    // scan cannot see through does not (a test module's routine
+    // `use super::sub::*;`).
+    let pinned = |tests: &str| {
+        let test_index = index(&[(LIB, lib_twin()), (TESTS, tests)]);
+        let pin = error_probe(&test_index, "check", "return Err(String::from(\"big\"));");
+        pin.map(|pin| admitted_texts(&test_index, &pin))
+    };
+    let assertion = "    assert_eq!(check(2), Err(String::from(\"big\")));\n";
+    let rebound = format!(
+        "use demo::check;\n\n#[allow(non_snake_case)]\nfn Err(_: String) -> Result<u32, String> {{\n    Ok(2)\n}}\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&rebound), Some(Vec::new()));
+    let globbed = format!(
+        "use demo::check;\nuse demo::retail::*;\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&globbed), Some(vec![assertion.trim().to_string()]));
+
+    // The gate reads the tail `Ok(x)` as the prelude variant: a rebound
+    // `Ok` in the owner's file can be a second `Err` exit.
+    let shadowed = format!(
+        "{}\n#[allow(non_snake_case)]\nfn Ok(x: u32) -> Result<u32, String> {{\n    Err(x.to_string())\n}}\n",
+        lib_twin()
+    );
+    let shadowed_index = index(&[(LIB, &shadowed)]);
+    assert!(
+        error_probe(
+            &shadowed_index,
+            "check",
+            "return Err(String::from(\"big\"));"
+        )
+        .is_none()
+    );
+    // A `None =>` arm names the variant, not a binding (E0530), so an
+    // ordinary match elsewhere in the file keeps an early `Some` pin.
+    let matched = "pub fn lookup(k: u32) -> Option<u32> {\n    if k == 1 { return Some(k + 2); }\n    None\n}\n\npub fn describe(v: Option<u32>) -> u32 {\n    match v { Some(n) => n, None => 0 }\n}\n";
+    let matched_index = index(&[(LIB, matched)]);
+    assert!(establish(&matched_index, "lookup", "return Some(k + 2);").is_some());
+    // A comment that only mentions the attribute changes nothing.
+    let mentioned = format!("// no_implicit_prelude is not set here\n{matched}");
+    let mentioned_index = index(&[(LIB, &mentioned)]);
+    assert!(establish(&mentioned_index, "lookup", "return Some(k + 2);").is_some());
+    // Without the prelude, the same arm binds a fresh `None`.
+    let no_prelude = format!("#![no_implicit_prelude]\n{matched}");
+    let no_prelude_index = index(&[(LIB, &no_prelude)]);
+    assert!(establish(&no_prelude_index, "lookup", "return Some(k + 2);").is_none());
+    // An early `return None;` keeps its long-standing pin beside a glob the
+    // binding scan cannot see through: only the `Err` gate this change
+    // opened reads the other exits by spelling.
+    let glob = "use crate::prelude::*;\n\npub fn whole(x: u64) -> Option<u64> {\n    if x == 0 { return None; }\n    Some(x)\n}\n";
+    let glob_index = index(&[(LIB, glob)]);
+    assert!(establish(&glob_index, "whole", "return None;").is_some());
 }
 
 #[test]
@@ -1600,6 +1708,18 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+    // A bare `#[case]` that no `#[rstest]` consumes is an unknown attribute
+    // macro, which may emit a `tokio` or `serial_test` module.
+    for attributes in [
+        "use other::case;\n#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case::row]\nstruct Decoy;\n#[tokio::test]\n#[serial_test::serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
     // A sync `fn` under `#[tokio::test]` does not compile.
     let tests =
         "use demo::weight;\n#[tokio::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
@@ -1610,6 +1730,305 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         "the sync tokio test must be indexed"
     );
     assert!(weight_admitted(tests).is_empty(), "{tests}");
+}
+
+#[test]
+fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
+    let case_test = |prelude: &str, attributes: &str, parameters: &str, name: &str| {
+        format!(
+            "use demo::weight;\n{prelude}\n{attributes}\nfn {name}({parameters}) {{\n    assert_eq!(weight(x), expected);\n}}\n"
+        )
+    };
+    let cases = "#[case] x: u32, #[case] expected: u32";
+    for (prelude, attributes) in [
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]",
+        ),
+        (
+            "use rstest::{fixture, rstest};",
+            "#[rstest]\n#[case::four(4, 12)]",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]\n#[serial_test::serial]",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, cases, "weighs");
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    // A parameterless `#[rstest]` runs its body once, as `#[test]` does.
+    let tests = "use demo::weight;\nuse rstest::rstest;\n#[rstest]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(weight_admitted(tests).len(), 1, "{tests}");
+    for (prelude, attributes, parameters, name) in [
+        // A row value that is not a literal may compute the owner itself.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, weight(4))]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 3 * 4)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4)]",
+            cases,
+            "weighs",
+        ),
+        // A row above `#[rstest]` is not consumed by it.
+        (
+            "use rstest::rstest;",
+            "#[case(4, 12)]\n#[rstest]",
+            cases,
+            "weighs",
+        ),
+        // Arguments, value matrices and other attributes.
+        (
+            "use rstest::rstest;",
+            "#[rstest(foo)]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, \"12\")]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] ref x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        // A row must hold one value per `#[case]` parameter; the unmarked
+        // `expected` is a fixture, so this row has one value too many.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "#[values(4, 5)] x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        // Fixtures may not supply the expected value.
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[ignore]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[timeout(std::time::Duration::from_secs(1))]",
+            cases,
+            "weighs",
+        ),
+        // `rstest` is not the crate, or the bare name is another macro.
+        (
+            "use other::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::*;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;\nuse rstest::fixture as case;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "mod rstest { pub use other::rstest; }\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use other as rstest;\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        // A test named after a checked crate expands to a module that
+        // shadows it.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "rstest",
+        ),
+        (
+            "use rstest::rstest;\nuse serial_test::serial;",
+            "#[rstest]\n#[case(4, 12)]\n#[serial]",
+            cases,
+            "serial_test",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, parameters, name);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+/// #6578: an unmarked `#[rstest]` parameter is a fixture, filled once by
+/// the same-named `#[fixture]` before the body runs. It may be the owner's
+/// argument or receiver (typed by its annotation), never the expected value:
+/// the fixture body sits outside the test and may call the owner itself.
+#[test]
+fn an_rstest_fixture_feeds_the_call_but_never_the_expected_value() {
+    let fixture_test = |fixtures: &str, parameters: &str, body: &str| {
+        format!(
+            "use demo::weight;\nuse rstest::{{fixture, rstest}};\n{fixtures}\n#[rstest]\nfn weighs({parameters}) {{\n    {body}\n}}\n"
+        )
+    };
+    let four = "#[fixture]\nfn x() -> u32 {\n    4\n}";
+    let want = "#[fixture]\nfn want() -> u32 {\n    weight(4)\n}";
+    for (rows, parameters, body) in [
+        ("", "x: u32", "assert_eq!(weight(x), 12);"),
+        ("", "mut x: u32", "assert_eq!(weight(x), 12);"),
+        // A fixture beside `#[case]` parameters: rows bind only the cases.
+        (
+            "#[case(12)]\n",
+            "#[case] expected: u32, x: u32",
+            "assert_eq!(weight(x), expected);",
+        ),
+    ] {
+        let tests = fixture_test(four, parameters, body)
+            .replace("#[rstest]\n", &format!("#[rstest]\n{rows}"));
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for (parameters, body) in [
+        // The expected value is a fixture, directly or through a `let`.
+        ("want: u32", "assert_eq!(weight(4), want);"),
+        ("want: u32", "let w = want;\n    assert_eq!(weight(4), w);"),
+        ("want: u32", "assert_eq!(want, weight(4));"),
+        // Any body binding of an expected word fails closed beside a
+        // fixture: an assignment, a mutation, a loop or a rebound `#[case]`.
+        (
+            "want: u32",
+            "let mut w = 0;\n    w = want;\n    assert_eq!(weight(4), w);",
+        ),
+        (
+            "want: u32",
+            "let mut v = Vec::new();\n    v.push(want);\n    assert_eq!(weight(4), v[0]);",
+        ),
+        (
+            "want: u32",
+            "for w in [want] {\n        assert_eq!(weight(4), w);\n    }",
+        ),
+        ("x: u32", "let w = 12;\n    assert_eq!(weight(x), w);"),
+        // Parameter attributes that change what or how often the body runs.
+        ("#[from(want)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[with(4)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[future] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[values(4)] x: u32", "assert_eq!(weight(x), 12);"),
+        ("#[by_ref] x: &u32", "assert_eq!(weight(x), 12);"),
+        // An anonymous type parameter rstest may infer from the fixture.
+        ("x: impl Into<u32>", "assert_eq!(weight(x.into()), 12);"),
+        // Patterns other than a plain binding.
+        ("ref x: u32", "assert_eq!(weight(x), 12);"),
+        ("(x, _y): (u32, u32)", "assert_eq!(weight(x), 12);"),
+    ] {
+        let tests = fixture_test(&format!("{four}\n{want}"), parameters, body);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A `mut` `#[case]` parameter the body reassigns from a fixture or the
+    // owner: an assignment binds nothing (#6578 review).
+    for (fixtures, parameters, body) in [
+        (
+            want,
+            "#[case] mut expected: u32, want: u32",
+            "expected = want;\n    assert_eq!(weight(4), expected);",
+        ),
+        (
+            "",
+            "#[case] mut expected: u32",
+            "expected = weight(4);\n    assert_eq!(weight(4), expected);",
+        ),
+    ] {
+        let tests = fixture_test(fixtures, parameters, body)
+            .replace("#[rstest]\n", "#[rstest]\n#[case(0)]\n");
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A `#[case]` parameter the body rebinds from a fixture.
+    let tests = fixture_test(
+        want,
+        "#[case] expected: u32, want: u32",
+        "let expected = want;\n    assert_eq!(weight(4), expected);",
+    )
+    .replace("#[rstest]\n", "#[rstest]\n#[case(0)]\n");
+    assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    // A generic test may infer the annotated type from the fixture.
+    for generics in ["<T: Copy>", ""] {
+        let tests = fixture_test(four, "x: u32", "assert_eq!(weight(x), 12);")
+            .replace("fn weighs(", &format!("fn weighs{generics}("));
+        let tests = if generics.is_empty() {
+            tests.replace(") {\n    assert", ") where u32: Copy {\n    assert")
+        } else {
+            tests
+        };
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+
+    // A fixture receiver is typed by its annotation, as
+    // `let c: Counter = ..;` is.
+    let counter = |parameters: &str, body: &str| {
+        let tests = format!(
+            "use demo::Counter;\nuse rstest::{{fixture, rstest}};\n#[fixture]\nfn c() -> Counter {{\n    Counter::new()\n}}\n#[rstest]\nfn counts({parameters}) {{\n    {body}\n}}\n"
+        );
+        let index = index(&[(LIB, COUNTER_LIB), (TESTS, &tests)]);
+        let pin = establish(&index, "tally", "self.n + 1");
+        assert!(pin.is_some(), "tally must establish a pin");
+        let Some(pin) = pin else { return 0 };
+        admitted_texts(&index, &pin).len()
+    };
+    assert_eq!(counter("c: Counter", "assert_eq!(c.tally(), 1);"), 1);
+    assert_eq!(counter("mut c: Counter", "assert_eq!(c.tally(), 1);"), 1);
+    // A borrowed or rebound receiver is not typed by the annotation.
+    assert_eq!(counter("c: &Counter", "assert_eq!(c.tally(), 1);"), 0);
+    // The annotation, not the fixture or the method name, types the call.
+    assert_eq!(counter("c: Other", "assert_eq!(c.tally(), 1);"), 0);
+    assert_eq!(counter("c: Counter", "assert_eq!(c.tally(), c.n + 1);"), 0);
+    assert_eq!(
+        counter(
+            "c: Counter",
+            "let c = Other::new();\n    assert_eq!(c.tally(), 1);"
+        ),
+        0
+    );
+    assert_eq!(
+        counter(
+            "c: Counter",
+            "if let Some(c) = None::<Other> {}\n    assert_eq!(c.tally(), 1);"
+        ),
+        0
+    );
 }
 
 #[test]
@@ -2700,6 +3119,200 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
     }
 }
 
+/// #7857: a `std::`/`core::`-qualified `assert_eq!` runs as the standard
+/// macro unless its root may be rebound, so it is admitted like the bare
+/// form. The proof needs the package manifests (a Cargo rename of `std`),
+/// the test's own file (a rebinding module, import or `extern crate`
+/// rename, a glob from another file, `no_implicit_prelude`, the invocation
+/// of a macro that generates the test) and the usual execution path.
+#[test]
+fn a_std_qualified_assertion_is_admitted_unless_its_root_may_be_rebound() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-plain",
+        &[("Cargo.toml", &manifest(""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest(
+                "std = { package = \"fake-std\", version = \"1\" }\ncore = { package = \"fake-core\", version = \"1\" }\n",
+            ),
+        )],
+    )?;
+    let test = |assertion: &str| format!("#[test]\nfn weighs() {{\n    {assertion}\n}}\n");
+    let opaque = |path: &str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::OpaqueMacro(path.to_string()),
+        ))
+    };
+    for (tests, path) in [
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("::core::assert_eq!(weight(4), 12);")
+            ),
+            "::core::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("core::assert_eq!(weight(4), 12);")
+            ),
+            "core::assert_eq",
+        ),
+        // The parser keeps the spacing of the path.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("std :: assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+        (
+            format!(
+                "use demo::weight;\nmod tests {{\n    use super::*;\n{}}}\n",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            "std::assert_eq",
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            None,
+            "{tests}"
+        );
+        // Without a manifest, or with `std`/`core` bound to another package,
+        // the root is unproved.
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&aliased)),
+            opaque(path),
+            "{tests}"
+        );
+        assert_eq!(weight_refusal(&tests, &[]), opaque(path), "{tests}");
+    }
+    // The fact reader already drops a call whose root the file rebinds.
+    for prefix in [
+        "mod std {}\n",
+        "use demo as std;\n",
+        "extern crate demo as std;\n",
+    ] {
+        let tests = format!(
+            "{prefix}use demo::weight;\n{}",
+            test("std::assert_eq!(weight(4), 12);")
+        );
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert!(index.tests().at(0).assertions.is_empty(), "{tests}");
+    }
+    for (tests, refusal) in [
+        // A glob from another file may bring a `std` item.
+        (
+            format!("use demo::*;\n{}", test("std::assert_eq!(weight(4), 12);")),
+            opaque("std::assert_eq"),
+        ),
+        (
+            format!(
+                "#![no_implicit_prelude]\nuse demo::weight;\n{}",
+                test("::std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("::std::assert_eq"),
+        ),
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("if weight(1) > 9 { std::assert_eq!(weight(4), 12); }")
+            ),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ConditionalPath("an `if` branch"),
+            )),
+        ),
+        // `#![no_std]` without `extern crate std` leaves no `std` root.
+        (
+            format!(
+                "#![no_std]\nuse demo::weight;\n{}",
+                test("std::assert_eq!(weight(4), 12);")
+            ),
+            opaque("std::assert_eq"),
+        ),
+        // Other drop-in roots need their own manifest check, which this
+        // gate does not make.
+        (
+            format!(
+                "use demo::weight;\n{}",
+                test("pretty_assertions::assert_eq!(weight(4), 12);")
+            ),
+            opaque("pretty_assertions::assert_eq"),
+        ),
+    ] {
+        assert_eq!(
+            weight_refusal_under(&tests, &[], Some(&plain)),
+            refusal,
+            "{tests}"
+        );
+    }
+    // An unproved qualified call anywhere in the file may expand to an early
+    // return, so a later bare assertion is refused too (#7938 review).
+    let bare_after = |root: &Path| {
+        let tests = format!(
+            "use demo::weight;\n{}",
+            test("std::assert_eq!(1, 1);\n    assert_eq!(weight(4), 12);")
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| {
+            test.assertions
+                .iter()
+                .find(|assertion| assertion.text.starts_with("assert_eq!(weight"))
+        });
+        assert!(assertion.is_some(), "{tests}");
+        OwnerPinSyntax::default().refusal(test?, assertion?, &index)
+    };
+    assert_eq!(bare_after(&plain), None);
+    assert_eq!(bare_after(&aliased), opaque("std::assert_eq"));
+    // A generated test is checked against its expansion, which shows
+    // neither the file's glob nor the generating invocation; the real file
+    // shows both. The bare form is the control: the same generated test is
+    // admitted, so the refusal is the qualified root's.
+    let generated = |assertion: &str| {
+        let tests = format!(
+            "use demo::*;\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            {assertion}\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        assert!(
+            test.is_some_and(|test| !test.assertions.is_empty()),
+            "{tests}"
+        );
+        let test = test?;
+        OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    };
+    assert_eq!(generated("assert_eq!(weight(4), 12);"), None);
+    assert_eq!(
+        generated("std::assert_eq!(weight(4), 12);"),
+        opaque("std::assert_eq")
+    );
+    Ok(())
+}
+
 #[test]
 fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
     for module in [
@@ -3371,6 +3984,39 @@ fn each_refusal_names_the_gate_that_failed() {
             AssertionContextRefusal::OpaqueMacro("t".to_string())
         ))
     );
+    // trap-shine-debug-exact-control: a plain nested `format!` expands
+    // to a call over its own operands, which the scan reads for exits.
+    assert_eq!(
+        refusal("assert_eq!(format!(\"{}\", weight(4)), \"12\");", ""),
+        None
+    );
+    for body in [
+        "assert_eq!(format!(\"{}\", weight({ return; 4 })), \"12\");",
+        "assert_eq!(std::format!(\"{}\", weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", dbg!(weight(4))), \"12\");",
+        // `::` inside a token tree lexes as two `:` tokens.
+        "assert_eq!(std::matches!(weight(4), 12), true);",
+    ] {
+        assert_eq!(
+            refusal(body, ""),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroOperandExit("assert_eq".to_string())
+            )),
+            "{body}"
+        );
+    }
+    assert!(matches!(
+        weight_refusal(
+            "use demo::weight;\n#[test]\nfn weighs() {\nassert_eq!(format!(\"{}\", weight(4)), \"12\");\n}\n",
+            &[(
+                "src/other.rs",
+                "macro_rules! format { ($($t:tt)*) => { String::new() } }"
+            )],
+        ),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
     assert_eq!(
         refusal("assert_eq!(weight({ return; 4 }), 12);", ""),
         Some(AssertionRefusal::Syntax(
@@ -3534,7 +4180,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
                 trusted_macro_binding_sites(
                     &facts.data().source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &assertion_context_macros(),
                     &|_, _| false,
                     &|_| false,
                 )
@@ -3574,7 +4220,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
-            ambiguous.len() == NON_RETURNING_MACROS.len(),
+            ambiguous.len() == assertion_context_macros().len(),
             saturated,
             "{files:?}"
         );
@@ -3588,6 +4234,9 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
 
 #[test]
 fn trusted_macro_names_are_distinct_so_a_full_set_means_saturated() {
+    assert!(!NON_RETURNING_MACROS.contains(&"json"));
+    let context = assertion_context_macros();
+    assert_eq!(context.iter().collect::<BTreeSet<_>>().len(), context.len());
     let distinct = NON_RETURNING_MACROS.iter().collect::<BTreeSet<_>>();
     assert_eq!(distinct.len(), NON_RETURNING_MACROS.len());
 }
@@ -3986,6 +4635,99 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+}
+
+/// Only a `use` or `extern crate` item, a macro's arguments or an attribute
+/// renames. A cast to the field's type (`letters as u32`) elsewhere in the
+/// workspace binds no name, so it leaves `u32` the standard type, and a
+/// qualified path (`<Window as Clone>`) leaves `Clone` the standard trait.
+/// The same name renamed in a `use` group, a function-local `use`, a macro
+/// body, a macro invocation's arguments or an attribute still refuses
+/// (spot-window-clone-field-whole-equality, #7926 review).
+#[test]
+fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
+    let glob_tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let with = |extra: &str| format!("{WINDOW_LIB}{glob_tests}{extra}");
+    for (lib, credits) in [
+        (with(""), true),
+        (
+            with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Both used to read as renames of `Clone` and `PartialEq`.
+        (
+            with("pub fn dup(w: &Window) -> Window {\n    <Window as Clone>::clone(w)\n}\n"),
+            true,
+        ),
+        (
+            with(
+                "pub fn same(a: &Window, b: &Window) -> bool {\n    <Window as PartialEq>::eq(a, b)\n}\n",
+            ),
+            true,
+        ),
+        // Precise capturing is not an import, so the cast after it stays a cast.
+        (
+            with("pub fn width(letters: usize) -> impl Sized + use<> {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Rooted in `std`, so the use-statement scan admits the path and
+        // only the rename itself refuses.
+        (with("use std::{num::Wrapping as u32};\n"), false),
+        (
+            with("pub fn f() {\n    use std::num::Wrapping as u32;\n}\n"),
+            false,
+        ),
+        (
+            with(
+                "macro_rules! bind {\n    () => {\n        use std::num::Wrapping as u32;\n    };\n}\n",
+            ),
+            false,
+        ),
+        (with("extern crate other as u32;\n"), false),
+        // A macro may expand its arguments into a `use`.
+        (
+            with(
+                "macro_rules! import {\n    ($p:path as $n:ident) => {\n        use $p as $n;\n    };\n}\nimport!(std::num::Wrapping as u32);\n",
+            ),
+            false,
+        ),
+        (with("reexport! { std::num::Wrapping as u32 }\n"), false),
+        (
+            with("#[import(std::num::Wrapping as u32)]\npub fn f() {}\n"),
+            false,
+        ),
+        // A Unicode macro name expands its arguments too.
+        (with("δ!(std::num::Wrapping as u32);\n"), false),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+    // A non-ASCII identifier before a macro `!` must not split a character.
+    let (_, pin) = clone_field_pin(
+        &with(
+            "pub fn größe() -> u32 {\n    let maß = 3;\n    maß as u32\n}\nmacro_rules! größe_m { () => {} }\npub fn g() { größe_m!(); }\n",
+        ),
+        WINDOW_TESTS,
+    );
+    assert!(pin.is_some());
+    // Another workspace file: `use super::*;` reaches the workspace-wide
+    // re-export scan, which reads every file's renames but not its casts.
+    let lib = format!("{WINDOW_LIB}{glob_tests}");
+    for (other, credits) in [
+        (
+            "pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n",
+            true,
+        ),
+        ("extern crate other as u32;\n", false),
+    ] {
+        let index = index(&[
+            (LIB, lib.as_str()),
+            ("src/score.rs", other),
+            (TESTS, WINDOW_TESTS),
+        ]);
+        let pin = field_pin(&index, &lib, "start: self.start,", "start: self.start,");
+        assert_eq!(pin.is_some(), credits, "{other}");
     }
 }
 
@@ -5301,7 +6043,409 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
-/// RIPR-SPEC-0225 acceptance examples 1, 3 and 4: a whole-value literal
+/// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
+/// tail, an early `return Err(..)` exits as `?` does, and the test may
+/// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
+/// Any other early return, an unwrapped bare-tail owner, `unwrap_or_default`
+/// or a computed `expect` message does not pin.
+#[test]
+fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
+    let question = "    let n: u32 = s.parse().map_err(|_| String::from(\"bad\"))?;\n";
+    let with_exit = |exit: &str| {
+        CONFIG_LIB.replace(
+            question,
+            &format!("{question}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let guarded = with_exit("return Err(String::from(\"zero\"));");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for (body, pins) in [
+        (format!("assert_eq!(parse(\"3\"), Ok({literal}));"), true),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!({literal}, parse(\"3\").unwrap());"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(\"parses\"), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), Ok({literal}));"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap_or_default(), {literal});"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(&msg), {literal});"),
+            false,
+        ),
+        (format!("assert_eq!(parse(\"3\"), {literal});"), false),
+        (
+            format!("let mut c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+    ] {
+        assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
+    }
+    // #7940 review: an async owner's unwrap reads through `.await`, inline
+    // and once-bound alike; the un-awaited future does not.
+    let awaited = guarded.replace("pub fn parse", "pub async fn parse");
+    assert_ne!(awaited, guarded);
+    for (body, pins) in [
+        (
+            format!("assert_eq!(parse(\"3\").await, Ok({literal}));"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").await.unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").await.unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+        (
+            format!("let c = parse(\"3\");\nassert_eq!(c, Ok({literal}));"),
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use demo::{{parse, Config, Count}};\n#[tokio::test]\nasync fn pins() {{\n{body}\n}}\n"
+        );
+        let (index, pin) = whole_value_pin(&awaited, "parse", &tests);
+        assert!(
+            pin.is_some(),
+            "the async whole-value field pin must establish"
+        );
+        let admits = pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty());
+        assert_eq!(admits, pins, "{body}");
+    }
+    // A bare-tail owner has no wrapped value to unwrap.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3).unwrap(), {literal});")
+    ));
+    // An early exit that may hand back another `Ok` refuses the pin.
+    let tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(parse(\"3\"), Ok({literal}));\n}}\n"
+    );
+    for exit in [
+        "return Ok(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return parse(\"1\");",
+        "return Err(String::new()).or(parse(\"1\"));",
+    ] {
+        let lib = with_exit(exit);
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // A `Some(..)` tail admits an early `return None` and nothing else.
+    let maybe_tail = "pub fn maybe(n: u32) -> Option<Config> {\n";
+    let maybe_with = |exit: &str| {
+        format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}").replace(
+            maybe_tail,
+            &format!("{maybe_tail}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let unwrap_maybe = format!("assert_eq!(maybe(3).unwrap(), {literal});");
+    assert!(whole_value_admits(
+        &maybe_with("return None;"),
+        "maybe",
+        &unwrap_maybe
+    ));
+    let maybe_tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{unwrap_maybe}\n}}\n");
+    for exit in [
+        "return Some(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return maybe(1);",
+        "return FALLBACK;",
+    ] {
+        let lib = maybe_with(exit);
+        let (_, pin) = whole_value_pin(&lib, "maybe", &maybe_tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Review: an `Err` the workspace rebinds may build an `Ok`, so the early
+    // exit is not the other variant.
+    let early_literal =
+        with_exit("return Err(Config { retries: 4, name: \"x\".into(), count: Count(n) });");
+    assert!(whole_value_pin(&early_literal, "parse", &tests).1.is_some());
+    for rebinding in [
+        "#[allow(non_snake_case)]\npub fn Err(c: Config) -> Result<Config, String> {\n    Ok(c)\n}\n",
+        "use std::result::Result::Ok as Err;\n",
+    ] {
+        let lib = format!("{rebinding}{early_literal}");
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // #7940 review: a std-rooted alias inside the owner itself also rebinds.
+    let signature = "pub fn parse(s: &str) -> Result<Config, String> {\n";
+    let local = early_literal.replace(
+        signature,
+        &format!("{signature}    use std::result::Result::Ok as Err;\n"),
+    );
+    assert_ne!(local, early_literal);
+    let (_, pin) = whole_value_pin(&local, "parse", &tests);
+    assert!(pin.is_none(), "{local}");
+    // So does a rebound `None` beside a `Some` tail.
+    let none_const = format!(
+        "#[allow(non_upper_case_globals)]\npub const None: Option<u32> = Some(1);\n{}",
+        maybe_with("return None;")
+    );
+    let (_, pin) = whole_value_pin(&none_const, "maybe", &maybe_tests);
+    assert!(pin.is_none(), "{none_const}");
+}
+
+/// RIPR-SPEC-0225 decision 7, acceptance examples 6 and 7: a zero-argument
+/// helper returning a bare literal, and a functional update whose base is
+/// the one manual `Default` returning a bare literal, read as that literal.
+#[test]
+fn an_expected_helper_or_default_base_reads_as_its_literal() {
+    let admits = |lib: &str, items: &str, body: &str| {
+        let tests = format!("use demo::*;\n{items}#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(lib, "build", &tests);
+        assert!(
+            pin.is_some(),
+            "the whole-value field pin must establish: {lib}"
+        );
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let helper = |body: &str| format!("fn expected() -> Config {{\n    {body}\n}}\n");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let call = "assert_eq!(build(3), expected());";
+    assert!(admits(CONFIG_LIB, &helper(literal), call));
+    assert!(admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert_eq!(expected(), build(3));"
+    ));
+    // A helper that computes, takes an argument, or is not the only `fn
+    // expected` (or not a plain item) gives no credit.
+    for (items, body) in [
+        (
+            helper(&format!("let c = {literal};\n    c")),
+            call.to_string(),
+        ),
+        (
+            helper(r#"Config { retries: build(3).retries, name: "x".into(), count: Count(3) }"#),
+            call.to_string(),
+        ),
+        (helper("build(3)"), call.to_string()),
+        (
+            helper(&format!("let _ = build(3);\n    {literal}")),
+            call.to_string(),
+        ),
+        (
+            format!("fn expected(n: u32) -> Config {{\n    {literal}\n}}\n"),
+            "assert_eq!(build(3), expected(4));".to_string(),
+        ),
+        (
+            format!(
+                "{}mod more {{\n    {}}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            format!(
+                "{}macro_rules! make {{\n    () => {{ {} }};\n}}\nmod hidden {{\n    make!();\n}}\n",
+                helper(literal),
+                helper(literal)
+            ),
+            call.to_string(),
+        ),
+        (
+            helper(literal),
+            format!("let expected = || build(3);\n{call}"),
+        ),
+        (format!("#[inline]\n{}", helper(literal)), call.to_string()),
+        (format!("async {}", helper(literal)), call.to_string()),
+        (
+            helper(literal),
+            "assert_eq!(build(3), more::expected());".to_string(),
+        ),
+    ] {
+        assert!(!admits(CONFIG_LIB, &items, &body), "{items}{body}");
+    }
+    // The helper's own literal must name `retries` independently.
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(r#"Config { name: "x".into(), count: Count(3), retries: four() }"#),
+        call
+    ));
+
+    let default_of = |body: &str| {
+        format!(
+            "{CONFIG_LIB}impl Default for Config {{\n    fn default() -> Self {{\n        {body}\n    }}\n}}\n"
+        )
+    };
+    let defaulted = default_of(r#"Config { retries: 4, name: String::new(), count: Count(3) }"#);
+    let update = r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#;
+    assert!(admits(&defaulted, "", update));
+    assert!(admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+    ));
+    assert!(admits(
+        &default_of(r#"Self { retries: 4, name: String::new(), count: Count(3) }"#),
+        "",
+        update
+    ));
+    // The test's explicit field wins over the default's.
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { retries: four(), ..Config::default() });"#
+    ));
+    for lib in [
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#),
+        default_of("build(3)"),
+        default_of(
+            r#"let c = Config { retries: 4, name: String::new(), count: Count(3) };
+        c"#,
+        ),
+        default_of(r#"Config { retries: 4, ..base() }"#),
+        format!(
+            "{defaulted}impl Config {{\n    pub fn default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        format!("{defaulted}pub trait Default {{\n    fn default() -> Self;\n}}\n"),
+        CONFIG_LIB.replace(
+            "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+            "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+        ),
+    ] {
+        assert!(!admits(&lib, "", update), "{lib}");
+    }
+    assert!(!admits(
+        &defaulted,
+        "",
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..base() });"#
+    ));
+    // Review (#7954): a glob from outside the workspace, in the test or
+    // reaching it through another workspace file, may bind `expected` or
+    // `Default` to an item the index cannot read.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("use other::*;\n{}", helper(literal)),
+        call
+    ));
+    // `None` when the pin itself refuses: a foreign glob the library
+    // re-exports already withholds the type name's reach.
+    let through = |lib: &str, helpers: &str, body: &str| {
+        let lib = format!("{lib}pub mod helpers;\npub use crate::helpers::*;\n");
+        let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, &lib), (HELPERS, helpers), (TESTS, &tests)]);
+        field_pin_of(&index, &lib, "build", "retries: n + 1,", "retries: n + 1,")
+            .map(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let fixtures = format!("{CONFIG_LIB}mod fixtures {{\n    {}}}\n", helper(literal));
+    for (lib, body) in [(fixtures.as_str(), call), (defaulted.as_str(), update)] {
+        assert_eq!(through(lib, "", body), Some(true), "{lib}");
+        assert_ne!(
+            through(lib, "pub use other::*;\n", body),
+            Some(true),
+            "{lib}"
+        );
+        // A standard-library glob leaves the pin standing; decision 7
+        // still refuses to read through a glob it cannot list, and so
+        // through a workspace path whose segment an import binds.
+        for helpers in [
+            "pub use std::fmt::*;\n",
+            "extern crate other as ext;\npub use self::ext::*;\n",
+            "pub use other::prelude;\npub use self::prelude::*;\n",
+        ] {
+            assert_eq!(through(lib, helpers, body), Some(false), "{helpers}{lib}");
+        }
+        assert_eq!(
+            through(lib, "pub mod inner {}\npub use self::inner::*;\n", body),
+            Some(true),
+            "{lib}"
+        );
+    }
+    // Review (#7954): `fn r#default` is `default`; an inherent one wins
+    // `Config::default()` over the trait's literal.
+    assert!(!admits(
+        &format!(
+            "{defaulted}impl Config {{\n    pub fn r#default() -> Self {{\n        build(0)\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
+    // Review: a `#[cfg]`-disabled explicit field leaves the default's
+    // computed value in force, so it may not override it in the merge.
+    let computed =
+        default_of(r#"Config { retries: build(3).retries, name: String::new(), count: Count(3) }"#);
+    assert!(admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    assert!(!admits(
+        &computed,
+        "",
+        r#"assert_eq!(build(3), Config { #[cfg(any())] retries: 4, name: "x".into(), ..Config::default() });"#
+    ));
+    // A raw-identifier helper, an attributed `impl Default`, or a derived
+    // `Default` beside an inherent `default` gives no credit.
+    assert!(!admits(
+        CONFIG_LIB,
+        &format!("fn r#expected() -> Config {{\n    {literal}\n}}\n"),
+        "assert_eq!(build(3), r#expected());"
+    ));
+    // The one `impl Default` is another type's, and an `==` assertion or a
+    // borrowed check helper is not decision 7's `assert_eq!` shape.
+    assert!(!admits(
+        &format!(
+            "{CONFIG_LIB}pub struct Other {{\n    pub retries: u32,\n}}\nimpl Default for Other {{\n    fn default() -> Self {{\n        Self {{ retries: 4 }}\n    }}\n}}\n"
+        ),
+        "",
+        update
+    ));
+    assert!(!admits(
+        CONFIG_LIB,
+        &helper(literal),
+        "assert!(build(3) == expected());"
+    ));
+    let derived = CONFIG_LIB.replace(
+        "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+        "#[derive(Debug, Clone, PartialEq, Default)]\npub struct Config",
+    );
+    for lib in [
+        defaulted.replace(
+            "impl Default for Config",
+            "#[cfg(any())]\nimpl Default for Config",
+        ),
+        format!(
+            "{derived}impl Config {{\n    pub fn default() -> Self {{\n        Config {{ retries: 4, name: String::new(), count: Count(3) }}\n    }}\n}}\n"
+        ),
+    ] {
+        assert_ne!(lib, defaulted);
+        assert!(
+            !admits(
+                &lib,
+                "",
+                r#"assert_eq!(build(3), Config { name: "x".into(), ..Default::default() });"#
+            ),
+            "{lib}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
 /// that names the changed field with an independent value pins it,
 /// directly, through `Ok(..)` and through a once-used `let` of the owner
 /// call. (Examples 9, 11, 14 and 16 are verdict-corpus rows.)
@@ -5313,6 +6457,7 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
         format!("assert_eq!({literal}, build(3));"),
         format!("let c = build(3);\nassert_eq!(c, {literal});"),
         format!("let c: Config = build(3);\nassert_eq!({literal}, c);"),
+        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
         r#"assert_eq!(build(3), Config { retries: (4), name: String::from("x"), count: Count(3) });"#
             .to_string(),
     ] {
@@ -5325,8 +6470,9 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
     ));
 }
 
-/// RIPR-SPEC-0225 "No credit" and acceptance examples 5-8, 10, 12, 13 and
-/// 15: a separate binding or helper, a functional update, another call,
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 8, 10, 12, 13 and
+/// 15: a dependent binding, an unresolvable helper or functional-update base
+/// (`CONFIG_LIB` declares neither `expected` nor a `Default`), another call,
 /// `assert_ne!`, a value copied from the result, a `let mut` or a second use
 /// of the binding, a mismatched wrapper, and a dependent expected value give
 /// no credit.
@@ -5334,7 +6480,7 @@ fn a_whole_value_literal_naming_the_field_pins_it() {
 fn a_whole_value_literal_without_an_independent_field_value_does_not_pin() {
     let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
     for body in [
-        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
+        format!("let c = build(3);\nlet e = {literal};\nlet _ = &e;\nassert_eq!(c, e);"),
         "assert_eq!(build(3), expected());".to_string(),
         r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#.to_string(),
         r#"assert_eq!(build(3), Config { retries: 4, ..base() });"#.to_string(),
@@ -5704,7 +6850,7 @@ fn a_path_that_may_leave_the_owners_crate_is_not_a_pin() {
         "assert_eq!(heavy::weight(4), 12);",
         "assert_eq!(::demo::weight(4), 12);",
         // Something after the call.
-        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(crate::weight(4) + 1, 13);",
         // A segment that is not a declared module.
         "assert_eq!(crate::fast::weight(4), 12);",
         // `super` only leads.
@@ -5800,6 +6946,16 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
 /// may call.
 const LET_BOUND_PRELUDE: &str = "const total: u32 = 12;\nfn touch(_: &u32) {}\nfn assert_eqx() {}\nfn touch_count() -> u32 {\n    1\n}\n";
 
+/// The same unit-test file with `weight` declaring `-> Wt`, an alias the
+/// pin does not read as a primitive scalar, so the #6974 shared-handle
+/// guards apply as they do to any non-scalar result.
+fn non_scalar_unit_tests(prelude: &str, body: &str) -> String {
+    let lib = unit_tests(&format!("pub type Wt = u32;\n{prelude}"), body)
+        .replace("-> u32 {\n    x * 3", "-> Wt {\n    x * 3");
+    assert!(lib.contains("-> Wt {"), "{lib}");
+    lib
+}
+
 #[test]
 fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
     for body in [
@@ -5807,7 +6963,7 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         "let total: u32 = super::weight(4);\n        assert_eq!(12, total);",
         "let total = weight(4);\n        assert_eq!(total, 12);\n        assert_eq!(total, 12);",
     ] {
-        let lib = unit_tests("", body);
+        let lib = non_scalar_unit_tests("", body);
         let lib = if body.contains("= weight(4)") {
             lib.replace("mod tests {\n", "mod tests {\n    use super::weight;\n")
         } else {
@@ -5849,16 +7005,148 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         // before the second (#7061 round 3).
         "let total = crate::weight(4);\n        assert_eq!(total, touch_count()); touch_count(); assert_eq!(total, 12);",
     ] {
-        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let lib = non_scalar_unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        // A scalar owner drops only the next-statement guard (cell-0094):
+        // every other guard still refuses, so the binding is never pinned.
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let scalar = path_admitted(&lib, "x * 3", None);
+        assert!(
+            !scalar
+                .iter()
+                .any(|text| text.starts_with("assert_eq!(total, 12)")),
+            "{body}: {scalar:?}"
+        );
     }
     // Control: the same prelude leaves the plain form pinned, so the cases
     // above are refused by their own guards.
     let body = "let total = crate::weight(4);\n        assert_eq!(total, 12);";
     assert_eq!(
-        path_admitted(&unit_tests(LET_BOUND_PRELUDE, body), "x * 3", None),
+        path_admitted(
+            &non_scalar_unit_tests(LET_BOUND_PRELUDE, body),
+            "x * 3",
+            None
+        ),
         ["assert_eq!(total, 12);"]
     );
+}
+
+#[test]
+fn a_scalar_result_read_by_other_assertions_still_pins() {
+    // cell-0094: `weight` returns `u32`, so `total` is `Copy` with no
+    // interior mutability. Another std assertion that reads it, or a
+    // statement between the `let` and the pin, cannot change it.
+    for (body, admitted) in [
+        (
+            "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_ne!(total, 7);\n        assert_eq!(12, total);",
+            vec!["assert_eq!(12, total);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_eq!(touch_count(), 1);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(touch_count(), 1);", "assert_eq!(total, 12);"],
+        ),
+        (
+            "let total = crate::weight(4);\n        assert_eq!(total, 12);\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);", "assert_eq!(total, 12);"],
+        ),
+        (
+            // A block between them that closes again keeps the depth.
+            "let total = crate::weight(4);\n        {\n            assert!(total > 3);\n        }\n        assert_eq!(total, 12);",
+            vec!["assert_eq!(total, 12);"],
+        ),
+    ] {
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let mut got = path_admitted(&lib, "x * 3", None);
+        got.retain(|text| text.contains("total"));
+        let want: Vec<_> = admitted
+            .into_iter()
+            .filter(|text| text.contains("total"))
+            .collect();
+        assert_eq!(got, want, "{body}");
+        // The non-scalar owner keeps the next-statement guard: only an
+        // assertion right after the `let` with no other use pins.
+        let lib = non_scalar_unit_tests(LET_BOUND_PRELUDE, body);
+        let mut got = path_admitted(&lib, "x * 3", None);
+        got.retain(|text| text.contains("total"));
+        assert!(got.len() <= 1, "{body}: {got:?}");
+        assert!(
+            !body.contains("total > 3") || got.is_empty(),
+            "{body}: {got:?}"
+        );
+    }
+    for body in [
+        // A use outside an assertion, or in a macro that is not a std
+        // assertion, may rebind or shadow the name.
+        "let total = crate::weight(4);\n        touch(&total);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        println!(\"{}\", total);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        {\n            const total: u32 = 12;\n            assert_eq!(total, 12);\n        }",
+        // Still bound once, immutably, before every use.
+        "let mut total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);",
+        "assert!(total > 3);\n        let total = crate::weight(4);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        assert!(total > 3);\n        let total = 12;\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        assert!([1].iter().all(|total| *total > 0));\n        assert_eq!(total, 12);",
+        // The pin compares the result with itself.
+        "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, total);",
+        // The `let` sits in a block the assertion is outside of, so
+        // `total` there names the module's `const` (cell-0094 review).
+        "{\n            let total = crate::weight(4);\n            assert!(total > 3);\n        }\n        assert_eq!(total, 12);",
+        "if false {\n            let total = crate::weight(4);\n        }\n        assert_eq!(total, 12);",
+        "let _f = || {\n            let total = crate::weight(4);\n        };\n        assert_eq!(total, 12);",
+        // A deeper block may import another `total` over the binding.
+        "let total = crate::weight(4);\n        {\n            use super::*;\n            assert_eq!(total, 12);\n        }",
+        "let total = crate::weight(4);\n        { use super::*;\n        assert_eq!(total, 12); }",
+        "let total = crate::weight(4);\n        assert!(total > 3); { use super::*; assert_eq!(total, 12); }",
+        // A path-qualified or crate-specific assertion macro.
+        "let total = crate::weight(4);\n        std::assert!(total > 3);\n        assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        prop_assert!(total > 3);\n        assert_eq!(total, 12);",
+    ] {
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
+        let got = path_admitted(&lib, "x * 3", None);
+        assert!(
+            !got.iter().any(|text| text.contains("assert_eq!(total")),
+            "{body}: {got:?}"
+        );
+    }
+}
+
+#[test]
+fn a_shadowed_primitive_return_is_not_a_scalar() {
+    // A same-named item or import makes `u32` name another type, which may
+    // hold interior mutability, so the shared-handle guard comes back.
+    let body = "let total = crate::weight(4);\n        assert!(total > 3);\n        assert_eq!(total, 12);";
+    for prelude in [
+        "#[allow(non_camel_case_types)]\npub struct u32(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type u32 = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as u32;\n",
+        // #7835 review: a raw identifier declares the same name.
+        "#[allow(non_camel_case_types)]\npub struct r#u32(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type r#u32 = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as r#u32;\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert!(lib.starts_with(prelude), "{lib}");
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{prelude}");
+    }
+    // Matched controls: the same items under another name, and a cast to
+    // the primitive, leave it a scalar.
+    for prelude in [
+        "#[allow(non_camel_case_types)]\npub struct gauge(std::cell::Cell<u64>);\n",
+        "#[allow(non_camel_case_types)]\npub type gauge = std::cell::Cell<u64>;\n",
+        "use std::cell::Cell as gauge;\n",
+        "#[allow(non_camel_case_types)]\npub type r#gauge = std::cell::Cell<u64>;\n",
+        "pub fn widen(x: u8) -> u64 {\n    x as u64 + 0 as u32 as u64\n}\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(
+            path_admitted(&lib, "x * 3", None),
+            ["assert_eq!(total, 12);"],
+            "{prelude}"
+        );
+    }
 }
 
 #[test]
@@ -5959,8 +7247,15 @@ fn review_holes_in_path_and_let_bound_pins_stay_closed() {
         "let same = crate::weight(4) * 1;\n        assert_eq!(crate::weight(4), same);",
         "let a = crate::weight(4);\n        let b = a;\n        assert_eq!(crate::weight(4), b);",
     ] {
-        let lib = unit_tests("fn tick() {}\n", body);
+        // `-> Wt`: a statement between a scalar's `let` and its assertion
+        // cannot change it (cell-0094), so the guard is read off a
+        // non-scalar owner.
+        let lib = non_scalar_unit_tests("fn tick() {}\n", body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        if !body.contains("tick();") {
+            let lib = unit_tests("fn tick() {}\n", body);
+            assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+        }
     }
 }
 
@@ -6137,9 +7432,15 @@ fn a_bound_method_result_pins_like_the_method_call() {
         admitted("let n = c.tally();\n    assert_eq!(n, 1);"),
         ["assert_eq!(n, 1);"]
     );
+    // `tally` returns `u32`: a statement between the `let` and the pin
+    // cannot change the copied result (cell-0094).
+    assert_eq!(
+        admitted("let n = c.tally();\n    drop(c);\n    assert_eq!(n, 1);"),
+        ["assert_eq!(n, 1);"]
+    );
     for body in [
         "let mut n = c.tally();\n    n += 0;\n    assert_eq!(n, 1);",
-        "let n = c.tally();\n    drop(c);\n    assert_eq!(n, 1);",
+        "let n = c.tally();\n    touch(n);\n    assert_eq!(n, 1);",
         "let n = c.tally() + 0;\n    assert_eq!(n, 1);",
     ] {
         assert!(admitted(body).is_empty(), "{body}");
@@ -6333,6 +7634,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod expect_test_pins;
 mod helper_pins;
 
 /// One `#[test]` over `weight`, with `body` as its statements.
@@ -6763,4 +8065,604 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
         admitted(&index, &pin),
         vec![("assert!(matches!(check(5), Ok(5)));".to_string(), false)]
     );
+}
+
+// --- #6617: associated-function owners pinned through `T::name(..)` ---
+
+/// An inherent associated `Gauge::reading` (the owner, first in the file)
+/// beside a module-level `reading` of the same name.
+const ASSOC_GAUGE_LIB: &str = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n\npub struct Other;\n\npub fn reading() -> u32 {\n    0\n}\n";
+
+fn gauge_test(prelude: &str, body: &str) -> String {
+    format!("{prelude}\n\n#[test]\nfn reads() {{\n    {body}\n}}\n")
+}
+
+/// The assertions of the one test that the `Gauge::reading` pin admits, or
+/// `None` when the pin is not established.
+fn gauge_admitted(files: &[(&str, &str)]) -> Option<Vec<String>> {
+    let index = index(files);
+    let owner = owner(&index, "reading");
+    assert_eq!(
+        (owner.item.container.clone(), owner.item.has_self_param),
+        (
+            FunctionContainer::Inherent {
+                self_ty: "Gauge".to_string()
+            },
+            false
+        ),
+        "the fixture's owner is the associated `Gauge::reading`"
+    );
+    let pin = establish(&index, "reading", "40 + 2")?;
+    Some(admitted_texts(&index, &pin))
+}
+
+#[test]
+fn associated_function_pins_through_a_directly_imported_owner_type() {
+    for body in [
+        "assert_eq!(Gauge::reading(), 42);",
+        "assert_eq!(42, Gauge::reading());",
+        "let value = Gauge::reading();\n    assert_eq!(value, 42);",
+    ] {
+        let tests = gauge_test("use demo::Gauge;", body);
+        let admitted = gauge_admitted(&[(LIB, ASSOC_GAUGE_LIB), (TESTS, &tests)]);
+        assert_eq!(admitted.map(|texts| texts.len()), Some(1), "{body}");
+    }
+}
+
+#[test]
+fn associated_function_pin_refuses_other_names_for_the_type() {
+    for (prelude, body) in [
+        // Aliased, glob, brace-list and missing imports.
+        (
+            "use demo::Gauge as Knob;",
+            "assert_eq!(Knob::reading(), 42);",
+        ),
+        (
+            "use demo::Other as Gauge;",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        ("use demo::*;", "assert_eq!(Gauge::reading(), 42);"),
+        ("use demo::{Gauge};", "assert_eq!(Gauge::reading(), 42);"),
+        ("", "assert_eq!(Gauge::reading(), 42);"),
+        // A crate that is not the owner's library (an unindexed dependency).
+        ("use spare::Gauge;", "assert_eq!(Gauge::reading(), 42);"),
+        // An import that does not reach the top-level test.
+        (
+            "mod inner {\n    use demo::Gauge;\n}",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        // The test's file or body rebinds the name.
+        (
+            "use demo::Gauge;",
+            "struct Gauge;\n    assert_eq!(Gauge::reading(), 42);",
+        ),
+        (
+            "use demo::Gauge;",
+            "use spare::Gauge;\n    assert_eq!(Gauge::reading(), 42);",
+        ),
+        (
+            "use demo::Gauge;\nmod nested {\n    pub use spare::Gauge;\n}",
+            "assert_eq!(Gauge::reading(), 42);",
+        ),
+        // Another type's associated function of the same name.
+        ("use demo::Other;", "assert_eq!(Other::reading(), 42);"),
+        ("use demo::Gauge;", "assert_eq!(Other::reading(), 42);"),
+        // A bare call names the module-level `reading`, never the owner.
+        ("use demo::reading;", "assert_eq!(reading(), 42);"),
+        // The owner compared with itself, a method-call shape, an
+        // inequality, and a call chained after the owner.
+        (
+            "use demo::Gauge;",
+            "assert_eq!(Gauge::reading(), Gauge::reading());",
+        ),
+        (
+            "use demo::Gauge;",
+            "let gauge = Gauge;\n    assert_eq!(gauge.reading(), 42);",
+        ),
+        ("use demo::Gauge;", "assert_ne!(Gauge::reading(), 41);"),
+        (
+            "use demo::Gauge;",
+            "assert_eq!(Gauge::reading().saturating_sub(1), 41);",
+        ),
+    ] {
+        let tests = gauge_test(prelude, body);
+        let admitted = gauge_admitted(&[(LIB, ASSOC_GAUGE_LIB), (TESTS, &tests)]);
+        // A test-local `struct Gauge` is a second workspace declaration, so
+        // that shape refuses already on the owner side; every other row is
+        // refused by the test-side gate on an established pin.
+        let expected = if body.starts_with("struct Gauge;") {
+            None
+        } else {
+            Some(Vec::new())
+        };
+        assert_eq!(admitted, expected, "{tests}");
+    }
+}
+
+#[test]
+fn associated_function_pin_refuses_a_cfg_gated_owner() {
+    // With the cfg off, `Gauge::reading()` reaches a trait default the
+    // index never sees (#7724), so a gate on the owner, its `impl` or an
+    // enclosing module refuses.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    for lib in [
+        "pub struct Gauge;\n\n#[cfg(feature = \"inherent\")]\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg(feature = \"inherent\")]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+        "pub struct Gauge;\n\nimpl Gauge {\n    #[cfg_attr(feature = \"inherent\", inline)]\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n",
+    ] {
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}");
+    }
+    // Control: the same owner without a cfg pins.
+    let lib = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+    assert_eq!(admitted.map(|texts| texts.len()), Some(1), "{lib}");
+}
+
+#[test]
+fn associated_function_pin_refuses_a_longer_import_path() {
+    // `demo::fs` re-exports another crate, whose own `Gauge` the test could
+    // be importing; the pin admits only `use <krate>::T;`.
+    let reexporting = format!("pub use spare as fs;\n{ASSOC_GAUGE_LIB}");
+    for (lib, prelude) in [
+        (reexporting.as_str(), "use demo::fs::Gauge;"),
+        (ASSOC_GAUGE_LIB, "use demo::self::Gauge;"),
+    ] {
+        let tests = gauge_test(prelude, "assert_eq!(Gauge::reading(), 42);");
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}\n{tests}");
+    }
+    // Control: the same library admits the direct import.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    let admitted = gauge_admitted(&[(LIB, &reexporting), (TESTS, &tests)]);
+    assert_eq!(
+        admitted.map(|texts| texts.len()),
+        Some(1),
+        "the direct import must still pin"
+    );
+}
+
+#[test]
+fn associated_function_pin_is_not_established_beside_a_competitor() {
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    for other in [
+        // Another type's associated function or a trait item of the name.
+        "pub struct Meter;\nimpl Meter {\n    pub fn reading() -> u32 {\n        1\n    }\n}\n",
+        "pub trait Read {\n    fn reading() -> u32 {\n        1\n    }\n}\n",
+        // A second `Gauge`, or a module, trait or alias of the name.
+        "pub mod spare {\n    pub struct Gauge;\n}\n",
+        "pub mod Gauge {\n    pub fn level() -> u32 {\n        1\n    }\n}\n",
+        "pub trait Gauge {}\n",
+        "pub type Gauge = u32;\n",
+    ] {
+        let admitted = gauge_admitted(&[
+            (LIB, ASSOC_GAUGE_LIB),
+            (TESTS, &tests),
+            ("src/other.rs", other),
+        ]);
+        assert_eq!(admitted, None, "{other}");
+    }
+    // The library re-exports a foreign `Gauge` beside its own: the pin is
+    // established but the import may name the foreign type.
+    let admitted = gauge_admitted(&[
+        (LIB, &format!("pub use external::Gauge;\n{ASSOC_GAUGE_LIB}")),
+        (TESTS, &tests),
+    ]);
+    assert_eq!(admitted, Some(Vec::new()));
+    // A generic self type is not a plain type name.
+    let generic = "pub struct Gauge<T>(T);\n\nimpl<T> Gauge<T> {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let index = index(&[(LIB, generic), (TESTS, &tests)]);
+    assert!(establish(&index, "reading", "40 + 2").is_none());
+}
+
+/// The `authored-old-deps` corpus shape (#6617): `panel`'s integration test
+/// imports `meter::Gauge`; `spare` holds a same-named free `reading`. The
+/// manifests decide which crate names reach the owner's library.
+#[test]
+fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> Result<(), String> {
+    let panel_manifest = "[package]\nname = \"panel\"\nversion = \"0.1.0\"\n\n[dependencies]\nmeter = { path = \"../meter\" }\nspare = { path = \"../spare\" }\ngadget = \"1\"\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-associated",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"meter\", \"spare\", \"panel\"]\n",
+            ),
+            (
+                "meter/Cargo.toml",
+                "[package]\nname = \"meter\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "spare/Cargo.toml",
+                "[package]\nname = \"spare\"\nversion = \"0.1.0\"\n",
+            ),
+            ("panel/Cargo.toml", panel_manifest),
+        ],
+    )?;
+    let meter = "pub struct Gauge;\n\nimpl Gauge {\n    pub fn reading() -> u32 {\n        40 + 2\n    }\n}\n";
+    let spare = "pub fn reading() -> u32 {\n    0\n}\n";
+    let admitted = |test_source: &str| {
+        let mut index = RustIndex::default();
+        for (path, text) in [
+            ("meter/src/lib.rs", meter),
+            ("spare/src/lib.rs", spare),
+            ("panel/src/lib.rs", "//! Panel.\n"),
+            ("panel/tests/direct.rs", test_source),
+        ] {
+            let facts = summarize_file(PathBuf::from(path), text.to_string());
+            index.extend_functions(facts.functions.iter().cloned());
+            index.extend_tests(facts.tests.iter().cloned());
+            index.insert_file_only(PathBuf::from(path), facts);
+        }
+        index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        let owner = index.functions().iter().find(|function| {
+            function.name == "reading" && function.file == Path::new("meter/src/lib.rs")
+        });
+        let owner = owner?;
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "40 + 2"), owner, &index)?;
+        let syntax = OwnerPinSyntax::default();
+        let test = index.tests().at(0);
+        Some(
+            test.assertions
+                .iter()
+                .filter(|assertion| pin.admits(test, assertion, &index, &|_, _| false, &syntax))
+                .count(),
+        )
+    };
+    let direct = admitted(&gauge_test(
+        "use meter::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let sibling = admitted(&gauge_test(
+        "use spare::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let registry = admitted(&gauge_test(
+        "use gadget::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let synthetic_name = admitted(&gauge_test(
+        "use demo::Gauge;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let aliased = admitted(&gauge_test(
+        "use meter::Gauge as Knob;",
+        "assert_eq!(Knob::reading(), 42);",
+    ));
+    let globbed = admitted(&gauge_test(
+        "use meter::*;",
+        "assert_eq!(Gauge::reading(), 42);",
+    ));
+    let bare = admitted(&gauge_test(
+        "use spare::reading;",
+        "assert_eq!(reading(), 42);",
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(direct, Some(1), "`use meter::Gauge;` must pin the owner");
+    for (label, refused) in [
+        ("sibling crate", sibling),
+        ("registry dependency", registry),
+        ("undeclared crate", synthetic_name),
+        ("alias", aliased),
+        ("glob", globbed),
+        ("bare free call", bare),
+    ] {
+        assert_eq!(refused, Some(0), "{label}");
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0265: an owner whose whole body is one closure in an iterator
+/// adaptor over a slice parameter, with one same-file test.
+fn adaptor_lib(tail: &str, test_items: &str) -> String {
+    format!(
+        "pub fn count_positive(xs: &[i32]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test_items}\n}}\n"
+    )
+}
+
+const FILTER_TAIL: &str = "xs.iter().filter(|&&x| x > 0).count()";
+
+fn adaptor_test(body: &str) -> String {
+    format!("    #[test]\n    fn counts() {{\n{body}\n    }}")
+}
+
+/// RIPR-SPEC-0265 rule 2: the pinned call must run the closure at least
+/// once on a literal sequence ripr reads.
+#[test]
+fn adaptor_tail_pins_only_a_non_empty_literal_sequence() {
+    let lib = adaptor_lib(
+        FILTER_TAIL,
+        &adaptor_test(
+            "        assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);\n        assert_eq!(count_positive(&[]), 0);\n        assert_eq!(count_positive(&[1, 2][..]), 2);\n        let v = [1, 2];\n        assert_eq!(count_positive(&v), 2);\n        assert_eq!(2, count_positive(&[5, 6]));",
+        ),
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count_positive", FILTER_TAIL);
+    assert!(pin.is_some(), "the adaptor tail must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(count_positive(&[-1, 0, 3, 7]), 2);".to_string(),
+            "assert_eq!(2, count_positive(&[5, 6]));".to_string(),
+        ]
+    );
+}
+
+/// RIPR-SPEC-0265 rule 2 through a constant-row table: some row must pass a
+/// non-empty sequence.
+#[test]
+fn adaptor_tail_pins_a_table_with_a_non_empty_row() {
+    for (rows, admitted) in [
+        ("[(&[], 0), (&[1, -1], 1)]", true),
+        ("[(&[], 0), (&[], 0)]", false),
+        // One row ripr cannot read as a literal sequence refuses the pin,
+        // even beside a non-empty literal row.
+        ("[(&[1, -1], 1), (&[0; 2], 0)]", false),
+        ("[(&[1, -1], 1), (&[3u32], 1)]", false),
+    ] {
+        let lib = adaptor_lib(
+            FILTER_TAIL,
+            &adaptor_test(&format!(
+                "        let cases: [(&[i32], usize); 2] = {rows};\n        for (xs, want) in cases {{\n            assert_eq!(count_positive(xs), want);\n        }}"
+            )),
+        );
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, "count_positive", FILTER_TAIL);
+        assert!(pin.is_some(), "the adaptor tail must establish a pin");
+        let Some(pin) = pin else { return };
+        assert_eq!(!admitted_texts(&index, &pin).is_empty(), admitted, "{rows}");
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2 owner side: only the admitted tail, changed as a
+/// whole, establishes the adaptor gate.
+#[test]
+fn adaptor_gate_refuses_tails_outside_the_rule() {
+    let test = adaptor_test("        assert_eq!(count_positive(&[1]), 1);");
+    for (tail, changed) in [
+        ("xs.iter().filter(|&&x| x > 0 && x < 9).count()", None),
+        (
+            "xs.iter().filter(|&&x| [1].iter().any(|&y| y == x)).count()",
+            None,
+        ),
+        (
+            "xs.iter().filter(|&&x| if x > 0 { true } else { false }).count()",
+            None,
+        ),
+        ("xs.iter().position(|&x| x > 0).unwrap_or(0)", None),
+        ("xs.iter().fold(0, |n, &x| n + usize::from(x > 0))", None),
+        ("xs.to_vec().iter().filter(|&&x| x > 0).count()", None),
+        // Consumers that drop closure values: `map` + `count` ignores
+        // them, `filter` + `sum` drops an additive identity unseen.
+        ("xs.iter().map(|&x| x > 0).count()", None),
+        ("xs.iter().filter(|&&x| x > 0).sum()", None),
+        // The predicate alone is not the owner's return value.
+        (FILTER_TAIL, Some("x > 0")),
+    ] {
+        let lib = adaptor_lib(tail, &test);
+        let index = index(&[(LIB, &lib)]);
+        assert!(
+            establish(&index, "count_positive", changed.unwrap_or(tail)).is_none(),
+            "{tail}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0265 rule 2: a `collect` into `Vec` pins only while the
+/// owner's file binds no other item to the name `Vec`.
+#[test]
+fn adaptor_gate_refuses_a_collect_into_a_rebound_vec() {
+    let tail = "xs.iter().map(|&x| x > 0).collect()";
+    let test = adaptor_test("        assert!(pos(&[0, 5]).len() > 0);");
+    for (items, admitted) in [
+        ("", true),
+        ("type Vec<T> = std::collections::BTreeSet<T>;\n", false),
+        ("use std::collections::BTreeSet as Vec;\n", false),
+        ("use other::Vec;\n", false),
+        ("pub struct Vec<T>(T);\n", false),
+        ("pub enum Vec { A }\n", false),
+    ] {
+        let lib = format!(
+            "pub fn pos(xs: &[i32]) -> Vec<bool> {{\n    {tail}\n}}\n{items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{test}\n}}\n"
+        );
+        let index = index(&[(LIB, &lib)]);
+        assert_eq!(
+            establish(&index, "pos", tail).is_some(),
+            admitted,
+            "{items}"
+        );
+    }
+}
+
+#[test]
+fn a_scalar_rendering_compared_with_exact_text_pins() {
+    // trap-shine-debug-exact-control: the std `Debug` or `Display` text of
+    // a primitive scalar names its value, so exact text pins it.
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(\"12\", format!(\"{}\", crate::weight(4)));",
+        "assert_eq!(format!(\"{}\", crate::weight(4),), \"12\");",
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\", \"rendered\");",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Flags, width, padding and extra text or arguments.
+        "assert_eq!(format!(\"{:x}\", crate::weight(4)), \"c\");",
+        "assert_eq!(format!(\"{:#?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{:>3}\", crate::weight(4)), \" 12\");",
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
+        "assert_eq!(format!(\"{}{}\", crate::weight(4), 1), \"121\");",
+        // The other side is not plain literal text.
+        "let want = String::from(\"12\");\n        assert_eq!(format!(\"{}\", crate::weight(4)), want);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), format!(\"{}\", 12));",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"1\\x32\");",
+        // A qualified or other nested macro, or a projection of the call.
+        "assert_eq!(std::format!(\"{}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
+        "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // #7905: every NaN payload renders as `NaN`, so that text pins no
+    // single float value; finite float text still does.
+    let float_tests = |body: &str| {
+        let lib = unit_tests("", body).replace("-> u32 {\n    x * 3", "-> f64 {\n    x * 3");
+        assert!(lib.contains("-> f64 {"), "{lib}");
+        lib
+    };
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
+        "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+    ] {
+        assert!(
+            path_admitted(&float_tests(body), "x * 3", None).is_empty(),
+            "{body}"
+        );
+    }
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12.0\");";
+    assert_eq!(path_admitted(&float_tests(body), "x * 3", None), [body]);
+    // A non-primitive return type may render many values the same way.
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+}
+
+#[test]
+fn an_integer_projection_that_keeps_the_value_pins() {
+    // trap-ceiling-wide-min-control / trap-muffle-times-one-control: a
+    // result below a `.min` bound (above a `.max` bound) is the call's own
+    // value, and `* 1` / `+ 0` keep every value.
+    for body in [
+        "assert_eq!(crate::weight(4).min(100), 12);",
+        "assert_eq!(12, crate::weight(4).min(1_000));",
+        "assert_eq!(crate::weight(4)\n            .min(100), 12);",
+        "assert_eq!(crate::weight(4).max(3), 12);",
+        "assert_eq!(crate::weight(4) * 1, 12);",
+        "assert_eq!(1 * crate::weight(4), 12);",
+        "assert_eq!(crate::weight(4) + 0, 12);",
+        "assert_eq!(0 + crate::weight(4), 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // The bound clamps, or the projection loses the value.
+        "assert_eq!(crate::weight(4).min(12), 12);",
+        "assert_eq!(crate::weight(4).min(1), 1);",
+        "assert_eq!(crate::weight(4).max(12), 12);",
+        "assert_eq!(crate::weight(4).max(20), 20);",
+        "assert_eq!(crate::weight(4) * 0, 0);",
+        "assert_eq!(crate::weight(4) * 10, 120);",
+        "assert_eq!(crate::weight(4) + 10, 22);",
+        "assert_eq!(crate::weight(4) - 0, 12);",
+        "assert_eq!(crate::weight(4) / 1, 12);",
+        // A bound or expected value ripr does not read as a literal.
+        "assert_eq!(crate::weight(4).min(LIMIT), 12);",
+        "assert_eq!(crate::weight(4).min(100), TWELVE);",
+        "assert_eq!(crate::weight(4).min(100u32), 12);",
+        "assert_eq!(crate::weight(4).min(0x64), 12);",
+        // A leading `_` names a const or binding, not a literal.
+        "assert_eq!(crate::weight(4).min(_100), 12);",
+        "assert_eq!(crate::weight(4).max(3), _12);",
+        // Something else around the call.
+        "assert_eq!(crate::weight(4).min(100).min(50), 12);",
+        "assert_eq!(crate::weight(4) / 2 * 1, 6);",
+        "assert_ne!(crate::weight(4).min(100), 13);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // Floats and other non-integer returns keep only the bare call.
+    let body = "assert_eq!(crate::weight(4).min(100), 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A float or bool owner is a scalar but not an integer.
+    for returned in ["f64", "bool"] {
+        let lib = unit_tests("", body).replace("-> u32", &format!("-> {returned}"));
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    }
+    // #7932 review: `.min`/`.max` are the prelude `Ord`'s only while nothing
+    // rebinds them. A local `trait Ord` shadows the prelude's, and an import
+    // of `Ord`, a foreign glob, or a workspace `fn min` may supply another.
+    let rebinding = [
+        "trait Ord {\n    fn min(self, k: u32) -> u32;\n}\nimpl Ord for u32 {\n    fn min(self, _k: u32) -> u32 {\n        12\n    }\n}\n\n",
+        "use other::Ord;\n\n",
+        "use other::{\n    Ord,\n};\n\n",
+        "pub struct Span;\nimpl Span {\n    pub fn min(&self) -> u32 {\n        0\n    }\n}\n\n",
+    ];
+    for prelude in rebinding {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+        // `* 1` keeps std's operator impl, which coherence fixes.
+        let lib = unit_tests(prelude, "assert_eq!(crate::weight(4) * 1, 12);");
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{lib}");
+    }
+    // A foreign glob may import an `Ord`; it already refuses every pin.
+    let lib = unit_tests("use other::*;\n\n", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    let max = "assert_eq!(crate::weight(4).max(3), 12);";
+    let lib = unit_tests("pub fn max(a: u32) -> u32 {\n    a\n}\n\n", max);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
+    // A longer name, or the other method, rebinds nothing.
+    for prelude in [
+        "pub fn minimum(a: u32) -> u32 {\n    a\n}\n\n",
+        "pub fn max(a: u32) -> u32 {\n    a\n}\n\n",
+        "use std::collections::BTreeMap;\n\n",
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{lib}");
+    }
+}
+
+#[test]
+fn a_one_element_vec_indexed_at_zero_pins_the_owner() {
+    // trap-pile-first-element-control: `vec![call][0]` is the call's value.
+    for body in [
+        "assert_eq!(vec![crate::weight(4)][0], 12);",
+        "assert_eq!(12, vec![crate::weight(4)][0]);",
+        "assert_eq!(vec![crate::weight(4),][0], 12);",
+        "assert_eq!(vec![\n            crate::weight(4),\n        ][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0], 12, \"first\");",
+        // A `;` inside a string argument is not the repeat separator.
+        "assert_eq!(vec![crate::weight(\"a;b\".len() as u32)][0], 9);",
+        // A `vec!` in the expected value or message leaves the bare call.
+        "assert_eq!(crate::weight(4), vec![12][0]);",
+        "assert_eq!(crate::weight(4), 12, \"{:?}\", vec![1]);",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Another element, index, repeat form or projection.
+        "assert_eq!(vec![crate::weight(4), 1][0], 12);",
+        "assert_eq!(vec![1, crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4)][1], 12);",
+        "assert_eq!(vec![crate::weight(4); 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4) ; 2][0], 12);",
+        "assert_eq!(vec![crate::weight(4)][0] + 1, 13);",
+        "assert_eq!(vec![crate::weight(4)].len(), 1);",
+        "assert_eq!(vec![crate::weight(4)], vec![12]);",
+        // A qualified `vec!`, another nested macro, or another assertion.
+        "assert_eq!(std::vec![crate::weight(4)][0], 12);",
+        "assert_eq!(vec![dbg!(crate::weight(4))][0], 12);",
+        "assert_eq!(vec![format!(\"{}\", crate::weight(4))][0], \"12\");",
+        "assert_ne!(vec![crate::weight(4)][0], 13);",
+        "assert!(vec![crate::weight(4)][0] == 12);",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // A non-scalar owner keeps only the bare call.
+    let body = "assert_eq!(vec![crate::weight(4)][0], 12);";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }
