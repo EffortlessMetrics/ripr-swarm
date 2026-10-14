@@ -117,6 +117,7 @@ pub(crate) struct GhPrStatusPullRequest {
     pub(crate) is_draft: bool,
     pub(crate) merge_state_status: String,
     pub(crate) head_ref_name: String,
+    pub(crate) head_ref_oid: String,
     pub(crate) base_ref_name: String,
     pub(crate) review_decision: String,
     pub(crate) checks: Vec<PrTriageCheck>,
@@ -127,6 +128,7 @@ pub(crate) struct GhPrStatusPullRequest {
 pub(crate) struct GhPrStatusReview {
     pub(crate) author: String,
     pub(crate) state: String,
+    pub(crate) commit_oid: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
