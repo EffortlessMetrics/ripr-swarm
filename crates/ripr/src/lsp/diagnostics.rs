@@ -4695,6 +4695,28 @@ mod diagnostic_policy_tests {
     }
 
     #[test]
+    fn an_unentered_guard_reads_as_a_missing_input_not_an_assertion() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = None;
+        finding.language_status = None;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "if x > 10".to_string(),
+            reason: format!(
+                "{} `if x > 10`; observed `x` values: `4`",
+                crate::domain::GUARD_UNENTERED_REASON_PREFIX
+            ),
+            flow_sink: None,
+        }];
+        let message = lsp_message(&finding);
+        assert!(
+            message.starts_with("No related test input enters `if x > 10`;"),
+            "{message}"
+        );
+        assert!(!message.contains("is not observed"), "{message}");
+    }
+
+    #[test]
     fn actionable_profile_keeps_a_producer_backed_fix_route() -> Result<(), String> {
         let mut finding = policy_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {

@@ -317,7 +317,21 @@ fn recursion_a_same_line_else_or_a_helper_names_no_guard() -> Result<(), String>
     // A helper passes 20, which enters the guard; only the direct call
     // passes 4.
     let helper_test = "use guarded_side_effect::add;\n\nfn add_large(v: &mut Vec<u32>) {\n    add(v, 20);\n}\n\n#[test]\nfn adds() {\n    let mut v = Vec::new();\n    add(&mut v, 4);\n    add_large(&mut v);\n    assert_eq!(v, vec![20]);\n}\n";
+    // The owner calls a helper that calls the owner back with 50, which
+    // enters the guard: only a transitive walk of the owner's calls sees it.
+    let mutual = |push: &str| {
+        format!(
+            "pub fn add(v: &mut Vec<u32>, x: u32) {{\n    if x > 10 {{\n        {push}\n    }}\n    fixup(v);\n}}\n\nfn fixup(v: &mut Vec<u32>) {{\n    if v.is_empty() {{\n        add(v, 50);\n    }}\n}}\n"
+        )
+    };
     let cases = [
+        (
+            "mutual recursion",
+            mutual("v.push(x);"),
+            mutual("v.push(x * 1);"),
+            3,
+            test_calling("    add(&mut v, 4);"),
+        ),
         (
             "recursion",
             recursive("v.push(depth);"),

@@ -72,7 +72,10 @@ counterpart for side effects.
    Telling a call argument from a pattern position needs a parser, so both
    refuse. The owner must not name itself past its signature, and no
    function it reaches through its calls may name it: a recursive call can
-   enter the guard with a value no test passes.
+   enter the guard with a value no test passes. The self-mention check is
+   textual, so a method that calls a same-named method on a field
+   (`self.items.push(x)` inside `fn push`) is refused too; that is a known
+   over-refusal, never a false reading.
 4. **Every test misses the guard.** For each related test, all of these
    must hold:
    - the test names the owner;
@@ -126,8 +129,8 @@ counterpart for side effects.
 3. Calls `add(&mut v, 4)` and `add(&mut v, 11)` in one test: no guard named.
 4. `let n = 4; add(&mut v, n);`: no guard named (fail closed).
 5. `if x > LIMIT`: no guard named (named bound).
-6. An owner that calls itself (`walk(v, depth + 1)`) after the guard: no
-   guard named (recursion).
+6. An owner that calls itself (`walk(v, depth + 1)`) after the guard, or
+   calls a helper that calls it back: no guard named (recursion).
 
 ## Test Mapping
 
