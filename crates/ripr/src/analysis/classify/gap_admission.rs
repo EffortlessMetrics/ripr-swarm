@@ -697,6 +697,190 @@ fn names(text: &str, ident: &str) -> bool {
     })
 }
 
+const PANIC_LIMIT: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
+const PANIC_FIRST_UNRESOLVED_EDGE: &str =
+    "whether the changed code decides the panic the `#[should_panic]` test expects";
+const PANIC_MACROS: [&str; 10] = [
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// RIPR-SPEC-0240: a `#[should_panic]` test with no assertion still has an
+/// oracle, the panic outcome. When such a test calls the owner directly and
+/// the owner can panic at or after the changed line, a changed guard may
+/// decide that panic, so "no assertion" is not established and the
+/// `reachable_unrevealed` gap is withheld under its own limit. A test with
+/// `expected = ".."` counts only when that text is in a string literal of
+/// the owner, since a different message means the panic comes from
+/// elsewhere. ripr does not credit the panic either: a bare
+/// `#[should_panic]` also passes on a panic from another callee. Returns
+/// `true` when the finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_should_panic_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some() || finding.class != ExposureClass::ReachableUnrevealed {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    let body = owner.body.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let tail_start: usize = body
+        .split_inclusive('\n')
+        .take(changed_line - owner.start_line)
+        .map(str::len)
+        .sum();
+    let invocations = panic_macro_arguments(&masked, tail_start);
+    if invocations.is_empty() {
+        return false;
+    }
+    // An `expected` message counts only when it is a literal argument of a
+    // panicking macro invoked on or after the changed line: a message raised
+    // before the change, or a literal the owner never panics with, does not
+    // depend on it.
+    let owner_literals: Vec<String> = invocations
+        .into_iter()
+        .filter_map(|arguments| body.get(arguments))
+        .flat_map(string_literal_contents)
+        .collect();
+    let panicking: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            related.relation_reason == Some(RelationReason::DirectOwnerCall)
+                && index.tests().iter().any(|test| {
+                    test.name == related.name
+                        && test.file == related.file
+                        && test.start_line == related.line
+                        && test.assertions.is_empty()
+                        && !is_ignored(test)
+                        && expects_owner_panic(test, &owner_literals)
+                })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if panicking.is_empty() {
+        return false;
+    }
+    let next_step = format!(
+        "{} calls this code and passes only if something panics, and ripr does not resolve whether the panic comes from the changed code or from an earlier call, so it does not report a gap. Check that the test's input reaches the changed check and that no earlier call can panic first; add a test only if either fails.",
+        panicking.join(", ")
+    );
+    withhold_gap(
+        finding,
+        PANIC_LIMIT,
+        PANIC_FIRST_UNRESOLVED_EDGE,
+        next_step,
+        &panicking,
+    );
+    true
+}
+
+/// The byte ranges of the bracketed arguments of every panicking macro
+/// invoked at or after byte `from` of the masked body: `name!(..)`,
+/// `name![..]` or `name!{..}` (`std::panic!` and `core::panic!` included;
+/// `debug_assert!` is not `assert!`, and `todo != 0` is a comparison). An
+/// invocation whose brackets do not close in the body is left out.
+fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize>> {
+    let boundary = |ch: char| !(ch.is_alphanumeric() || ch == '_');
+    let mut arguments = Vec::new();
+    for name in PANIC_MACROS {
+        for (at, _) in masked.match_indices(name).filter(|(at, _)| *at >= from) {
+            if !masked[..at].chars().next_back().is_none_or(boundary) {
+                continue;
+            }
+            let after_name = &masked[at + name.len()..];
+            let Some(after_bang) = after_name.trim_start().strip_prefix('!') else {
+                continue;
+            };
+            let open = masked.len() - after_bang.trim_start().len();
+            if !masked[open..].starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let mut depth = 0usize;
+            for (offset, ch) in masked[open..].char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            arguments.push(open..open + offset + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    arguments
+}
+
+/// Whether `test` carries `#[ignore]`, so a default run never executes it.
+fn is_ignored(test: &TestFact) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact == "#[ignore]" || compact.starts_with("#[ignore=")
+    })
+}
+
+/// Whether `test` is a `#[should_panic]` test whose expected panic the
+/// owner can raise: a bare attribute, `expected = ""` (which matches any
+/// message), or `expected = ".."` whose text is in one of the owner's panic
+/// message literals. An attribute ripr cannot read keeps the gap.
+fn expects_owner_panic(test: &TestFact, owner_literals: &[String]) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        if compact == "#[should_panic]" {
+            return true;
+        }
+        let Some(arguments) = compact
+            .strip_prefix("#[should_panic(expected=")
+            .and_then(|rest| rest.strip_suffix(")]"))
+        else {
+            return false;
+        };
+        // Read the literal from the original text so inner spaces survive.
+        if !(arguments.starts_with('"') && arguments.ends_with('"')) {
+            return false;
+        }
+        match string_literal_contents(attr).as_slice() {
+            [expected] => {
+                owner_literals
+                    .iter()
+                    .any(|literal| literal.contains(expected.as_str()))
+                    || expected.is_empty()
+            }
+            _ => false,
+        }
+    })
+}
+
 fn gap_rests_on_refusal(finding: &Finding) -> bool {
     // A producer that already named a limit owns the finding's explanation.
     finding.static_limit_kind.is_none()
@@ -1605,5 +1789,78 @@ mod tests {
             &index,
             Some("audit")
         ));
+    }
+
+    #[test]
+    fn a_panic_macro_is_read_by_its_own_name() {
+        let spans = |code: &str| {
+            panic_macro_arguments(code, 0)
+                .into_iter()
+                .map(|range| code[range].to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(spans("panic!(f(1));"), ["(f(1))"]);
+        assert_eq!(spans("std::panic! [x];"), ["[x]"]);
+        assert_eq!(spans("assert!(cols > 0);"), ["(cols > 0)"]);
+        assert_eq!(spans("debug_assert!(cols > 0);"), ["(cols > 0)"]);
+        for code in [
+            "let panic = 1;",
+            "my_panic!(x);",
+            "if todo != 0 {",
+            "let ok = !panic;",
+            "panic!(unclosed",
+        ] {
+            assert!(spans(code).is_empty(), "{code}");
+        }
+        // Only invocations at or after the start offset count.
+        assert!(panic_macro_arguments("panic!(a); x", 3).is_empty());
+    }
+
+    const PANIC_SOURCE: &str = r#"pub fn row(index: usize) -> usize {
+    if index >= 100 {
+        panic!("index past the end");
+    }
+    index / 4
+}
+
+#[test]
+#[should_panic]
+fn bare() { row(100); }
+
+#[test]
+#[should_panic(expected = "past the")]
+fn owned_message() { row(100); }
+
+#[test]
+#[should_panic(expected = "grid needs columns")]
+fn foreign_message() { row(100); }
+
+#[test]
+#[should_panic(expected = "")]
+fn empty_message() { row(100); }
+
+#[test]
+fn plain() { row(100); }
+"#;
+
+    #[test]
+    fn a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches() {
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            PANIC_SOURCE.to_string(),
+        );
+        let owner_literals = vec!["index past the end".to_string()];
+        let expects = |name: &str| {
+            facts
+                .tests
+                .iter()
+                .find(|test| test.name == name)
+                .map(|test| expects_owner_panic(test, &owner_literals))
+        };
+        assert_eq!(expects("bare"), Some(true));
+        assert_eq!(expects("owned_message"), Some(true));
+        assert_eq!(expects("foreign_message"), Some(false));
+        assert_eq!(expects("empty_message"), Some(true));
+        assert_eq!(expects("plain"), Some(false));
     }
 }
