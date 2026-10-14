@@ -8,13 +8,13 @@
   "hard_case": true,
   "truth": "discriminated",
   "ideal_verdict": "credited",
-  "observed_verdict": "gap",
+  "observed_verdict": "credited",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "reachable_unrevealed"
+    "exposed"
   ],
-  "outcome": "false_actionable",
+  "outcome": "ideal",
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
@@ -25,15 +25,15 @@
       "strength": "strong",
       "spec": "RIPR-SPEC-0231#30"
     },
-    "observed_kind": "unknown",
-    "observed_strength": "none",
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
     "observed_all": [
       {
         "test": "score_three_is_nine",
-        "kind": "unknown",
-        "strength": "none"
+        "kind": "exact_value",
+        "strength": "strong"
       }
     ],
-    "outcome": "underclaim"
+    "outcome": "match"
   }
 }

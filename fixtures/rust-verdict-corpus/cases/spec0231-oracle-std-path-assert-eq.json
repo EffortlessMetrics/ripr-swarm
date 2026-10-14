@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "path_qualified_assert_eq",
-  "hard_case": "Measured defect: the spec reads `std::assert_eq!` as `assert_eq!`, but ripr refuses it at the owner-return admission (rust_assertion_context_unestablished: \"could not establish that it runs as the standard macro\") and reads the oracle unknown / none. The same subject with bare `assert_eq!` is credited exact_value / strong. Truth is discriminated (#7857).",
+  "hard_case": "Path-qualified standard assertion: the spec reads `std::assert_eq!` as `assert_eq!`. Until #7857 ripr refused it at the owner-return admission (rust_assertion_context_unestablished) and read the oracle unknown / none; it is now admitted when nothing in the file can rebind the `std` root, and reads exact_value / strong like the bare form. Truth is discriminated.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

@@ -4,6 +4,10 @@ use super::arguments::{
     assertion_oracle_text, boolean_assertion_macro_condition, ensure_assertion_arguments,
     is_unguarded_wildcard_assertion, outer_assertion_condition,
 };
+use super::bool_operands::{
+    BoolOperandReading, bool_literal_comparison_reading, contains_unread_pattern_operand,
+    unread_pattern_conjunct_rest,
+};
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
@@ -54,6 +58,28 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Weak,
         };
     }
+    // RIPR-SPEC-0231 rule 1 (#7598): a comparison, disjunction or chain
+    // compared with a boolean literal reads as what it asserts, so
+    // `assert_eq!(r == Err(E::Bad), false)` is the inequality it states.
+    match bool_literal_comparison_reading(line) {
+        Some(BoolOperandReading::Capped) => {
+            return capped_at_inequality(classify_non_negated_assertion(
+                line,
+                scalar_integer_relation,
+            ));
+        }
+        Some(BoolOperandReading::Chain(chain)) => {
+            let whole = classify_non_negated_assertion(line, scalar_integer_relation);
+            let chain = classify_assertion(&chain);
+            // Rule 3 only lowers a reading, never raises it.
+            return if chain.strength.rank() < whole.strength.rank() {
+                chain
+            } else {
+                whole
+            };
+        }
+        None => {}
+    }
     // A negated pattern takes rule 1 before any pattern-reading step, so
     // `!matches!(r, Err(E::X))` never reads as the variant it excludes.
     if is_negated_pattern_assertion(line) {
@@ -63,6 +89,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     // other conjuncts decide (`!matches!(r, Err(E::X)) && score == 4` reads
     // as `score == 4`). A negation anywhere else caps the whole reading.
     if let Some(rest) = negated_pattern_conjunct_rest(line) {
+        return if rest.is_empty() {
+            INEQUALITY
+        } else {
+            classify_assertion(&rest)
+        };
+    }
+    // A conjunct whose `matches!` sits under an unread operator, call or
+    // `if` pins nothing, but the other conjuncts are still required, so
+    // they decide, as beside a negated pattern (#7598).
+    if let Some(rest) = unread_pattern_conjunct_rest(line) {
         return if rest.is_empty() {
             INEQUALITY
         } else {
@@ -86,7 +122,10 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     // pattern or cannot be resolved, so it caps the reading like a negated
     // condition (`!matches!(..)` anywhere, or `matches!(..).not()`).
     let polarity = pattern_comparison_polarity(line);
-    if contains_negated_pattern(line) || polarity == Some(PatternPolarity::NotPositive) {
+    if contains_negated_pattern(line)
+        || contains_unread_pattern_operand(line)
+        || polarity == Some(PatternPolarity::NotPositive)
+    {
         return capped_at_inequality(classify_non_negated_assertion(
             line,
             scalar_integer_relation,
@@ -127,14 +166,21 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
 /// `!matches!(..)` condition, a `matches!` comparison that is not positive
 /// polarity, a negated pattern that caps a compound condition, an
 /// inequality-named `assert_*` helper or macro that is not a mock or
-/// side-effect observer, or a boolean condition whose only comparison is
-/// `!=` and is not a positive pattern comparison). Reveal reads this so a probe-family override can never lift an
+/// side-effect observer, a boolean-valued operand that a boolean literal
+/// caps (#7598), a `matches!` under an unread operator, call or `if`, or a
+/// boolean condition whose only comparison is `!=` and is not a positive
+/// pattern comparison). Reveal reads this so a probe-family override can never lift an
 /// inequality above its classified strength.
 pub(crate) fn is_inequality_assertion(line: &str) -> bool {
     let oracle_text = assertion_oracle_text(line);
     let line = oracle_text.as_deref().unwrap_or(line);
     let polarity = pattern_comparison_polarity(line);
     is_inequality_macro_assertion(line)
+        || bool_literal_comparison_reading(line) == Some(BoolOperandReading::Capped)
+        || unread_pattern_conjunct_rest(line).map_or_else(
+            || contains_unread_pattern_operand(line),
+            |rest| rest.is_empty(),
+        )
         || is_negated_pattern_assertion(line)
         || polarity == Some(PatternPolarity::NotPositive)
         || (contains_negated_pattern(line)
@@ -1555,7 +1601,6 @@ fn ok_literal() {
     /// parser path; a binding a later assertion compares adds nothing.
     #[test]
     fn spec_0227_uncompared_unwrap_err_is_a_weak_broad_error_oracle() -> Result<(), String> {
-        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         use OracleKind::{BroadError, ExactErrorVariant};
         use OracleStrength::{Strong, Weak};
         let cases = [
@@ -1634,6 +1679,64 @@ fn ok_literal() {
                 "(find(3).ok_or(E::Missing)).unwrap_err();",
                 vec![],
             ),
+            // A grouping is looked through: around the call itself, or
+            // around Ok-preserving adapters, it still reads the call.
+            (
+                "grouped_call",
+                "(check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_error_mapped",
+                "let _e = (check(300).map_err(Wrap)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_then_mapped",
+                "((check(300))).map_err(Wrap).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "raw_identifier_call",
+                "r#check(300).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "grouped_mapped_then_fallback",
+                "(check(300).map_err(Wrap)).and(Err(E::Other)).unwrap_err();",
+                vec![],
+            ),
+            // A fallback inside the group is not hidden by an Ok-preserving
+            // adapter on either side of the closing paren.
+            (
+                "grouped_fallback_then_mapped",
+                "(check(300).and(Err(E::Other)).map_err(Wrap)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_fallback_mapped_outside",
+                "(check(300).and(Err(E::Other))).map_err(Wrap).unwrap_err();",
+                vec![],
+            ),
+            // A group around a comparison, jump, range or tuple is not a
+            // call.
+            (
+                "grouped_comparison",
+                "(a < check(300)).unwrap_err();",
+                vec![],
+            ),
+            (
+                "grouped_return",
+                "(return check(300)).unwrap_err();",
+                vec![],
+            ),
+            ("grouped_range", "(a..check(300)).unwrap_err();", vec![]),
+            ("grouped_tuple", "(x < y, check(300)).unwrap_err();", vec![]),
+            (
+                "turbofish_path",
+                "(Api::<A, B>::check(300)).unwrap_err();",
+                vec![(BroadError, Weak)],
+            ),
             ("negated_call", "let _e = !check(300).unwrap_err();", vec![]),
             (
                 "turbofish_call",
@@ -1651,8 +1754,120 @@ fn ok_literal() {
                 vec![(BroadError, Weak)],
             ),
         ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// RIPR-SPEC-0227 decision 2 lists `r.expect_err(..)` beside
+    /// `r.unwrap_err()`: whose value is never compared, it observes the `Err`
+    /// side and reads `broad_error` / weak, not a medium mock expectation
+    /// (#7604). A mock's own `expect_*` call still reads as one.
+    #[test]
+    fn spec_0227_uncompared_expect_err_reads_like_unwrap_err() -> Result<(), String> {
+        use OracleKind::{BroadError, ExactErrorVariant, MockExpectation};
+        use OracleStrength::{Medium, Strong, Weak};
+        let cases = [
+            (
+                "expect_err_underscore_binding",
+                "let _e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_discarded",
+                "check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_unused_binding",
+                "let e = check(300).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_formatted_message",
+                "check(300).expect_err(&format!(\"len {}\", 300));",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_grouped_call",
+                "(check(300)).expect_err(\"too long\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_compared_binding",
+                "let e = check(300).expect_err(\"too long\");\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
+                "expect_err_method_on_the_error",
+                "let k = check(300).expect_err(\"too long\").kind();",
+                vec![],
+            ),
+            (
+                "expect_err_fallback_error",
+                "check(300).and(Err(E::Other)).expect_err(\"too long\");",
+                vec![],
+            ),
+            (
+                "mock_expectation_still_reads_medium",
+                "mock.expect_publish().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expect_err_prefixed_name",
+                "mock.expect_err_report().times(1);",
+                vec![(MockExpectation, Medium)],
+            ),
+            // mockall's `expect_<method>` for a method named `err` takes no
+            // message: it stays a mock expectation.
+            (
+                "mock_expectation_for_err_method",
+                "mock.expect_err();",
+                vec![(MockExpectation, Medium)],
+            ),
+            (
+                "mock_expectation_for_err_method_configured",
+                "mock.expect_err().returning(|| ());",
+                vec![(MockExpectation, Medium)],
+            ),
+            // `expect_` text in the message is not a mock expectation name.
+            (
+                "expect_err_expect_word_message",
+                "check(300).expect_err(\"expect_error\");",
+                vec![(BroadError, Weak)],
+            ),
+            // An effect word in the message is not an effect observer.
+            (
+                "expect_err_effect_word_message",
+                "check(300).expect_err(\"state not sent\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_observer_and_expect_words_message",
+                "check(300).expect_err(\"state expect\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_mock_verification_message",
+                "check(300).expect_err(\"mock.verify() state\");",
+                vec![(BroadError, Weak)],
+            ),
+            (
+                "expect_err_nested_in_message",
+                "check(300).expect_err(&check(400).expect_err(\"x\").to_string());",
+                vec![(BroadError, Weak)],
+            ),
+        ];
+        assert_both_adapters_read(&cases)
+    }
+
+    /// A named test body and the oracle kinds both adapters must read.
+    type ParityCase<'a> = (&'a str, &'a str, Vec<(OracleKind, OracleStrength)>);
+
+    /// Each body read by the line scanner and, as its own test, by the
+    /// parser path, must yield exactly the expected oracle kinds.
+    fn assert_both_adapters_read(cases: &[ParityCase<'_>]) -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         let mut source = String::new();
-        for (name, body, expected) in &cases {
+        for (name, body, expected) in cases {
             let lexical = crate::analysis::extract::extract_assertions(body, 1)
                 .iter()
                 .map(|fact| (fact.kind.clone(), fact.strength.clone()))
@@ -1664,7 +1879,7 @@ fn ok_literal() {
         }
         let facts =
             RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), &source)?;
-        for (name, _, expected) in &cases {
+        for (name, _, expected) in cases {
             let test = facts
                 .tests
                 .iter()

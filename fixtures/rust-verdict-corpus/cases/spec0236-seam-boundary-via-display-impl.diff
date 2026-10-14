@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 35bb936..590a0c2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@ use std::fmt;
+ pub struct Plural(pub u64);
+ 
+ fn suffix(v: u64) -> &'static str {
+-    if v > 1 { "items" } else { "item" }
++    if 1 < v { "items" } else { "item" }
+ }
+ 
+ impl fmt::Display for Plural {

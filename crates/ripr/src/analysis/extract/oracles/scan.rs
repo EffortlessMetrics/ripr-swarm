@@ -9,7 +9,7 @@ use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
     is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_unwrap_err_bound_error_assertion,
+    is_unwrap_err_bound_error_assertion, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -57,11 +57,10 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             };
             guard_condition_tail = Some((condition_end_line, tail));
         }
-        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` whose value is never
-        // compared panics only when `r` is `Ok`, so it observes the `Err`
-        // side. `expect_err` lines keep their `expect_` admission below
-        // (#7604 tracks that reading).
-        if trimmed.ends_with("unwrap_err();")
+        // RIPR-SPEC-0227 decision 2: `r.unwrap_err()` or `r.expect_err(..)`
+        // whose value is never compared panics only when `r` is `Ok`, so it
+        // observes the `Err` side.
+        if (trimmed.ends_with("unwrap_err();") || trimmed.contains(".expect_err("))
             && !is_assertion_line(&trimmed)
             && starts_statement(body, offset)
         {
@@ -2439,7 +2438,9 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
     if masked.starts_with(['.', ')', ']', '}']) || !delimiters_balance(&masked) {
         return None;
     }
-    if !ends_with_unwrap_err(value) || !receiver_keeps_call_error(&masked) {
+    if !(ends_with_unwrap_err(value) || ends_with_expect_err(value))
+        || !receiver_keeps_call_error(&masked)
+    {
         return None;
     }
     let discarded =
@@ -2451,21 +2452,108 @@ pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<Strin
 /// `api::check` or `check::<u8>`, not an operator, reference or grouping.
 fn is_call_path(callee: &str) -> bool {
     let callee = callee.trim();
-    callee.bytes().next().is_some_and(is_ident_byte)
-        && callee
-            .bytes()
+    let bytes = callee.as_bytes();
+    // `#` only as the raw-identifier prefix `r#` at the start of a segment.
+    let raw_prefix_only = bytes.iter().enumerate().all(|(index, byte)| {
+        *byte != b'#'
+            || (index >= 1
+                && bytes[index - 1] == b'r'
+                && (index == 1 || !is_ident_byte(bytes[index - 2]))
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphabetic() || *next == b'_'))
+    });
+    // Outside a `::<..>` turbofish, a path has no spaces, commas, angle
+    // brackets or `..`: `(a < check(x))`, `(return check(x))`,
+    // `(a..check(x))` and `(x::<A> < y, check(x))` group a comparison, a
+    // jump, a range or a tuple, not a call.
+    let mut generic_depth = 0_usize;
+    let mut plain_path = !callee.contains("..");
+    let mut index = 0;
+    while plain_path && index < bytes.len() {
+        let byte = bytes[index];
+        if generic_depth == 0 {
+            if bytes[index..].starts_with(b"::<") {
+                generic_depth = 1;
+                index += 3;
+                continue;
+            }
+            plain_path = is_ident_byte(byte) || matches!(byte, b'.' | b':' | b'#');
+        } else {
+            match byte {
+                b'<' => generic_depth += 1,
+                b'>' => generic_depth -= 1,
+                _ => {
+                    plain_path =
+                        is_ident_byte(byte) || matches!(byte, b':' | b',' | b' ' | b'&' | b'\'');
+                }
+            }
+        }
+        index += 1;
+    }
+    let plain_path = plain_path && generic_depth == 0;
+    raw_prefix_only
+        && plain_path
+        && bytes.first().is_some_and(|b| is_ident_byte(*b))
+        && bytes
             .last()
-            .is_some_and(|b| is_ident_byte(b) || b == b'>')
-        && callee
-            .bytes()
-            .all(|b| is_ident_byte(b) || matches!(b, b'.' | b':' | b'<' | b'>' | b',' | b' '))
+            .is_some_and(|b| is_ident_byte(*b) || *b == b'>')
 }
 
 /// Whether `.unwrap_err()` reads the error side of the statement's first
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
-/// returns, and `x.ok_or(E).unwrap_err()` reads an `Option`.
+/// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 fn receiver_keeps_call_error(masked: &str) -> bool {
+    let masked = masked.trim_end();
+    let receiver = masked.strip_suffix(".unwrap_err()").or_else(|| {
+        // `.expect_err(<message>)` must be the last call: its argument
+        // group closes the expression. The first such call is the outer
+        // one, so an `expect_err` nested in the message is not mistaken
+        // for it.
+        masked
+            .match_indices(".expect_err(")
+            .map(|(start, call)| (start, start + call.len() - 1))
+            .find(|&(_, open)| balanced_group_end(masked, open) == Some(masked.len() - 1))
+            .map(|(start, _)| &masked[..start])
+    });
+    receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
+}
+
+/// Whether `expr` is a call followed only by Ok-preserving adapters. A
+/// grouping `( .. )` is looked through, never skipped: its contents must
+/// pass the same test, so `(check(x)).unwrap_err()` reads the call while
+/// `(check(x).and(Err(..))).unwrap_err()` still reads nothing.
+fn keeps_call_result(expr: &str, depth: usize) -> bool {
+    const MAX_GROUPING_DEPTH: usize = 8;
+    let expr = expr.trim();
+    let close = if expr.starts_with('(') {
+        let Some(close) = balanced_group_end(expr, 0) else {
+            return false;
+        };
+        if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
+            return false;
+        }
+        close
+    } else {
+        // The first group must be a call on a plain path, not an operand
+        // of `!`, `&` or an operator.
+        let Some(open) = expr.find('(') else {
+            return false;
+        };
+        if !is_call_path(&expr[..open]) {
+            return false;
+        }
+        let Some(close) = balanced_group_end(expr, open) else {
+            return false;
+        };
+        close
+    };
+    adapters_keep_ok(&expr[close + 1..])
+}
+
+/// Whether `rest` is only `.await` and Ok-preserving adapter calls.
+fn adapters_keep_ok(mut rest: &str) -> bool {
     const KEEPS_OK: &[&str] = &[
         "as_deref",
         "as_mut",
@@ -2477,22 +2565,6 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
         "map",
         "map_err",
     ];
-    let Some(receiver) = masked.trim_end().strip_suffix(".unwrap_err()") else {
-        return false;
-    };
-    let Some(open) = receiver.find('(') else {
-        return false;
-    };
-    // The first group must be a call: a leading `(..)` is a grouping
-    // expression that would hide `(check(x).and(Err(..))).unwrap_err()`'s
-    // adapter from the whitelist below.
-    if !is_call_path(&receiver[..open]) {
-        return false;
-    }
-    let Some(mut rest) = balanced_group_end(receiver, open).map(|close| &receiver[close + 1..])
-    else {
-        return false;
-    };
     loop {
         let rest_trimmed = rest.trim_start();
         if rest_trimmed.is_empty() {
@@ -2520,7 +2592,7 @@ fn receiver_keeps_call_error(masked: &str) -> bool {
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
-fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
+pub(super) fn balanced_group_end(text: &str, open: usize) -> Option<usize> {
     let mut depth = 0_i64;
     for (index, byte) in text.bytes().enumerate().skip(open) {
         match byte {
@@ -2557,9 +2629,11 @@ fn ends_with_unwrap_err(expr: &str) -> bool {
 }
 
 fn ends_with_expect_err(expr: &str) -> bool {
-    // .expect_err("...") — ends with `)` after some `.expect_err(`
+    // .expect_err("...") — ends with `)` after some `.expect_err(`. A
+    // zero-argument `expect_err()` is a mock's expectation for a method
+    // named `err`, not `Result::expect_err`.
     let expr = expr.trim_end();
-    if !expr.ends_with(')') {
+    if !expr.ends_with(')') || expr.ends_with(".expect_err()") {
         return false;
     }
     // Find last `.expect_err(`
@@ -2705,7 +2779,7 @@ fn is_assertion_line(line: &str) -> bool {
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)
-        || line.contains("expect_")
+        || mask_comments_and_strings(&without_expect_err(line)).contains("expect_")
         || line.contains(".expect(")
         || line.contains(".unwrap(")
         || line.contains("should_panic")
@@ -4887,5 +4961,49 @@ mod asserted_err_arm_tests {
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }
+    }
+}
+
+#[cfg(test)]
+mod call_path_tests {
+    use super::is_call_path;
+
+    #[test]
+    fn raw_identifier_prefix_must_name_a_segment() {
+        for callee in [
+            "r#check",
+            "svc.r#match",
+            "Api::<A, B>::check",
+            "check::<u8>",
+            "parse::<Vec<&'static str>>",
+        ] {
+            assert!(is_call_path(callee), "{callee}");
+        }
+        for callee in [
+            "r#",
+            "r#123",
+            "#check",
+            "r#.check",
+            "br#check",
+            "a < check",
+            "a..check",
+            "x::<A> < y, check",
+            "f::<A>> check",
+        ] {
+            assert!(!is_call_path(callee), "{callee}");
+        }
+    }
+
+    #[test]
+    fn grouping_is_read_through_eight_deep_and_refused_past_it() {
+        let grouped = |depth: usize| {
+            format!(
+                "{}check(300){}.unwrap_err()",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )
+        };
+        assert!(super::receiver_keeps_call_error(&grouped(8)));
+        assert!(!super::receiver_keeps_call_error(&grouped(9)));
     }
 }

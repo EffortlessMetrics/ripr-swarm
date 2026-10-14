@@ -1,0 +1,13 @@
+pub fn suffix(v: u64) -> &'static str {
+    if v > 1 { "items" } else { "item" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suffix_three_reads_items() {
+        assert_eq!(suffix(3), "items");
+    }
+}

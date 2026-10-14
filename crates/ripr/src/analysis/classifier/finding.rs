@@ -1,8 +1,8 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
-    stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
+    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -13,7 +13,7 @@ const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
     class: ExposureClass,
-    evidence: ClassifiedProbeEvidence,
+    mut evidence: ClassifiedProbeEvidence,
 ) -> Finding {
     let missing = missing_evidence(
         context.probe,
@@ -37,6 +37,38 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
+    let confidence = evidence.confidence(&class);
+    // Annotate the miss reasons BEFORE the next-step selection: the #7393
+    // exact-oracle step reads which rows actually establish reach to the
+    // owner and which assertion is exact, so it must see the same final
+    // rows the JSON/human projections render, not the pre-annotation list.
+    let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
+    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
+        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
+    {
+        Unconfirmed::AllRows
+    } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
+        && evidence.related_tests.len() >= evidence.related_tests_matched_total
+    {
+        // The strongest rank is read from the listed rows, so it is only
+        // reveal's strongest rank when the window dropped nothing; a
+        // truncated window could promote a confirming weaker row. Leave the
+        // rows unannotated rather than claim an unestablished miss.
+        Unconfirmed::StrongestRank
+    } else {
+        Unconfirmed::Confirmed
+    };
+    let mut related_tests = std::mem::take(&mut evidence.related_tests);
+    if !exact_oracle_covers_direct_sink {
+        annotate_related_test_misses(
+            &mut related_tests,
+            &class,
+            context.owner_fn.is_some(),
+            &context.probe.family,
+            &evidence.activation,
+            unconfirmed,
+        );
+    }
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
     let unentered_guard = (class == ExposureClass::WeaklyExposed)
@@ -99,6 +131,21 @@ pub(in crate::analysis) fn build_finding(
         Some(refused_assertion_next_step(
             evidence.assertion_refusal.as_ref(),
         ))
+    } else if class == ExposureClass::WeaklyExposed
+        && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
+        && exact_error_variant(&context.probe.expression).is_none()
+        && let Some(step) = exact_oracle_gap_next_step(
+            context.probe,
+            &class,
+            &related_tests,
+            &evidence.activation.missing_discriminators,
+            context.owner_fn.is_some(),
+        )
+    {
+        // #7393: the family template presumes an assertion shape the
+        // related test does not have; the strongest related oracle is
+        // already exact, so name the input that is actually missing.
+        Some(step)
     } else {
         recommended_next_step(
             context.probe,
@@ -107,7 +154,6 @@ pub(in crate::analysis) fn build_finding(
             &stop_reasons,
         )
     };
-    let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
     });
@@ -137,36 +183,6 @@ pub(in crate::analysis) fn build_finding(
             "owner_shape: assertion_shaped ({})",
             crate::domain::ASSERTION_SHAPED_OWNER_REASON
         ));
-    }
-
-    // `reveal` names these downgrades in the stage summary; the same tokens
-    // are how `ClassifiedProbeEvidence` recognizes them.
-    let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
-    let unconfirmed = if discriminate_summary.contains("(observation_unverified)")
-        || discriminate_summary.contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
-    {
-        Unconfirmed::AllRows
-    } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
-        && evidence.related_tests.len() >= evidence.related_tests_matched_total
-    {
-        // The strongest rank is read from the listed rows, so it is only
-        // reveal's strongest rank when the window dropped nothing; a
-        // truncated window could promote a confirming weaker row. Leave the
-        // rows unannotated rather than claim an unestablished miss.
-        Unconfirmed::StrongestRank
-    } else {
-        Unconfirmed::Confirmed
-    };
-    let mut related_tests = evidence.related_tests;
-    if !exact_oracle_covers_direct_sink {
-        annotate_related_test_misses(
-            &mut related_tests,
-            &class,
-            context.owner_fn.is_some(),
-            &context.probe.family,
-            &evidence.activation,
-            unconfirmed,
-        );
     }
 
     Finding {

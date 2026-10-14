@@ -372,7 +372,10 @@ fn dropped_term_does_not_bind_a_rebound_parameter() -> Result<(), String> {
 }
 
 /// Rule 1 reads value seams only: an error message the test pins with
-/// `toThrow` keeps its ladder reading.
+/// `toThrow` keeps its error-path reading. `toThrow("limit ")` is a
+/// substring match that both `"limit " + max` and `"limit "` satisfy, so
+/// RIPR-SPEC-0243 rule 4 leaves it weak (corpus case
+/// `jest-spec0248-throw-message-term`).
 #[test]
 fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
     let root = ts_unique_tempdir("dropped-term-error-seam")?;
@@ -417,7 +420,7 @@ fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
     );
     assert_eq!(
         finding.class,
-        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
         "{:?}",
         finding.missing
     );

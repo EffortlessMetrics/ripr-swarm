@@ -1,13 +1,14 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED,
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
-    body_contains_owner_call, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, fallible_check_receipt, fallible_literal_witness,
-    getter_plainly_reads, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
-    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
+    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
+    activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, contains_as_whole_word, current_path_witness, direct_call_name,
+    fallible_check_receipt, fallible_literal_witness, getter_plainly_reads,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
 };
@@ -654,6 +655,7 @@ impl ClassifiedProbeEvidence {
                         chain,
                         test_activation: &one_test_activation,
                     }),
+                context.index,
             ) {
             StageEvidence::new(
                 StageState::Weak,
@@ -754,6 +756,13 @@ impl ClassifiedProbeEvidence {
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
+        // A value guard is a limit only when the call it reads is the owner's.
+        let is_limit = |refusal: &AssertionRefusal| {
+            refusal.is_analyzer_limit()
+                && refusal
+                    .value_guard_subject()
+                    .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
+        };
         let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
             || discriminate.state != StageState::Yes)
             .then(|| {
@@ -778,7 +787,7 @@ impl ClassifiedProbeEvidence {
                             ),
                             reason: refusal.describe(),
                             calls_owner,
-                            is_analyzer_limit: refusal.is_analyzer_limit(),
+                            is_analyzer_limit: is_limit(&refusal),
                         };
                         notes.push(note);
                     }
@@ -811,10 +820,8 @@ impl ClassifiedProbeEvidence {
                         )
                     })
                 });
-            refusals
-                .next()
-                .is_some_and(|first| first.is_analyzer_limit())
-                && refusals.all(|refusal| refusal.is_analyzer_limit())
+            refusals.next().is_some_and(|first| is_limit(&first))
+                && refusals.all(|refusal| is_limit(&refusal))
         };
 
         Self {

@@ -1,0 +1,19 @@
+/// Records `x` only when it is large.
+pub fn add(v: &mut Vec<u32>, x: u32) {
+    if x > 10 {
+        v.push(x);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn records_only_the_large_value() {
+        let mut v = Vec::new();
+        add(&mut v, 4);
+        add(&mut v, 11);
+        assert_eq!(v, vec![11]);
+    }
+}

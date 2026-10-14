@@ -1,0 +1,25 @@
+/// Records `x` only when it is large, then retries it ten higher while below 20.
+pub fn add(v: &mut Vec<u32>, x: u32) {
+    if x > 10 {
+        v.push(x);
+    }
+    again(v, x);
+}
+
+fn again(v: &mut Vec<u32>, x: u32) {
+    if x < 20 {
+        add(v, x + 10);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_values_come_back_large() {
+        let mut v = Vec::new();
+        add(&mut v, 4);
+        assert_eq!(v, vec![14, 24]);
+    }
+}
