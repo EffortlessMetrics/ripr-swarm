@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 106
+floor = 112
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -21,7 +21,7 @@ floor = 106
 # improves, `check` prints the new numbers: raise the floor and lower the
 # ceiling to them. Loosening either is a reviewed edit with a reason.
 [oracle]
-match_floor = 34
+match_floor = 40
 overclaim_ceiling = 0
 
 # LSP Repair Packet Command
@@ -562,6 +562,12 @@ reason = "non-Rust language or packaging surface"
 # TypeScript committed snapshot entry
 [[spec]]
 id = "RIPR-SPEC-0258"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# TypeScript strict custom matcher
+[[spec]]
+id = "RIPR-SPEC-0262"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 

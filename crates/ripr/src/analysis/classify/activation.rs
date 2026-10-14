@@ -1,5 +1,5 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
-use super::arm_selection::may_name_constant;
+use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -3020,9 +3020,15 @@ fn boundary_local_operand_parameter(
             || body_contains_direct_local_alias(&function.body, operand, parameter)
             // A bare pattern name may resolve to a constant in scope
             // (`const p: i64 = 0;`), which the guard then compares instead
-            // of the scrutinee; without the owner file that stays unread.
-            || (owner_source.is_some_and(|source| !may_name_constant(source, operand))
-                && body_contains_guard_binding_alias(&function.body, operand, parameter))
+            // of the scrutinee; without the owner file that stays unread,
+            // and so does a file whose items a macro may declare.
+            // The cheap body read runs first, so only a real guard alias
+            // pays for the owner file's parse.
+            || (body_contains_guard_binding_alias(&function.body, operand, parameter)
+                && owner_source.is_some_and(|source| {
+                    !may_name_constant(source, operand)
+                        && !may_declare_items_in_owner_scope(source, &function.name)
+                }))
         {
             return Some(parameter.clone());
         }
@@ -3104,9 +3110,16 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
+    // The keyword as a token, so `match(other) {` and a `match` ending
+    // its line count too; a raw identifier `r#match` is a name, not one.
     let matches = code
         .iter()
-        .map(|line| line.matches("match ").count())
+        .map(|line| {
+            line.replace("r#", "r_")
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .filter(|word| *word == "match")
+                .count()
+        })
         .sum::<usize>();
     let guard = format!("{operand} if ");
     matches == 1
@@ -3153,8 +3166,9 @@ fn body_contains_guard_binding_alias(body: &str, operand: &str, parameter: &str)
 }
 
 /// `line` is a one-line guarded arm (`p if 100 <= p => ...`) whose
-/// binding `operand` appears only in the guard: never after the `=>` and
-/// never beside a closure parameter list in the guard.
+/// binding `operand` appears only in the guard, never after the `=>`, and
+/// whose guard is a plain expression: no block, statement or closure
+/// (`{ let p = other; 100 < p }`, `|p: i64|`) that could rebind it.
 fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool {
     let Some(rest) = line.strip_prefix(guard) else {
         return false;
@@ -3162,7 +3176,14 @@ fn guard_reads_only_the_binding(line: &str, guard: &str, operand: &str) -> bool 
     let Some((condition, body)) = rest.split_once("=>") else {
         return false;
     };
-    !mentions_identifier(body, operand) && !condition.replace("||", "").contains('|')
+    // `|` covers `||` too: an or-guard is one predicate shape whose
+    // boundary has no single test value (`p == -1000 || 100 < p`), so the
+    // binding is left unread there as well.
+    let rebinds = condition.contains(['{', '}', ';', '|'])
+        || ["let", "for", "match", "while", "loop"]
+            .iter()
+            .any(|keyword| mentions_identifier(condition, keyword));
+    !mentions_identifier(body, operand) && !rebinds
 }
 
 fn mentions_identifier(line: &str, name: &str) -> bool {

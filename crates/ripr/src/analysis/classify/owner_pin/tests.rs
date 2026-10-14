@@ -1,3 +1,5 @@
+mod json_construction;
+
 use super::*;
 use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
 use crate::analysis::rust_index::summarize_file;
@@ -3788,6 +3790,39 @@ fn each_refusal_names_the_gate_that_failed() {
             AssertionContextRefusal::OpaqueMacro("t".to_string())
         ))
     );
+    // trap-shine-debug-exact-control: a plain nested `format!` expands
+    // to a call over its own operands, which the scan reads for exits.
+    assert_eq!(
+        refusal("assert_eq!(format!(\"{}\", weight(4)), \"12\");", ""),
+        None
+    );
+    for body in [
+        "assert_eq!(format!(\"{}\", weight({ return; 4 })), \"12\");",
+        "assert_eq!(std::format!(\"{}\", weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", dbg!(weight(4))), \"12\");",
+        // `::` inside a token tree lexes as two `:` tokens.
+        "assert_eq!(std::matches!(weight(4), 12), true);",
+    ] {
+        assert_eq!(
+            refusal(body, ""),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroOperandExit("assert_eq".to_string())
+            )),
+            "{body}"
+        );
+    }
+    assert!(matches!(
+        weight_refusal(
+            "use demo::weight;\n#[test]\nfn weighs() {\nassert_eq!(format!(\"{}\", weight(4)), \"12\");\n}\n",
+            &[(
+                "src/other.rs",
+                "macro_rules! format { ($($t:tt)*) => { String::new() } }"
+            )],
+        ),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
     assert_eq!(
         refusal("assert_eq!(weight({ return; 4 }), 12);", ""),
         Some(AssertionRefusal::Syntax(
@@ -3951,7 +3986,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
                 trusted_macro_binding_sites(
                     &facts.data().source,
                     index.macro_scope_crates(),
-                    NON_RETURNING_MACROS,
+                    &assertion_context_macros(),
                     &|_, _| false,
                     &|_| false,
                 )
@@ -3991,7 +4026,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
             trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
-            ambiguous.len() == NON_RETURNING_MACROS.len(),
+            ambiguous.len() == assertion_context_macros().len(),
             saturated,
             "{files:?}"
         );
@@ -4005,6 +4040,9 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
 
 #[test]
 fn trusted_macro_names_are_distinct_so_a_full_set_means_saturated() {
+    assert!(!NON_RETURNING_MACROS.contains(&"json"));
+    let context = assertion_context_macros();
+    assert_eq!(context.iter().collect::<BTreeSet<_>>().len(), context.len());
     let distinct = NON_RETURNING_MACROS.iter().collect::<BTreeSet<_>>();
     assert_eq!(distinct.len(), NON_RETURNING_MACROS.len());
 }
@@ -4403,6 +4441,99 @@ fn a_clone_field_pin_needs_a_field_type_that_compares_by_value() {
     ] {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+}
+
+/// Only a `use` or `extern crate` item, a macro's arguments or an attribute
+/// renames. A cast to the field's type (`letters as u32`) elsewhere in the
+/// workspace binds no name, so it leaves `u32` the standard type, and a
+/// qualified path (`<Window as Clone>`) leaves `Clone` the standard trait.
+/// The same name renamed in a `use` group, a function-local `use`, a macro
+/// body, a macro invocation's arguments or an attribute still refuses
+/// (spot-window-clone-field-whole-equality, #7926 review).
+#[test]
+fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
+    let glob_tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let with = |extra: &str| format!("{WINDOW_LIB}{glob_tests}{extra}");
+    for (lib, credits) in [
+        (with(""), true),
+        (
+            with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Both used to read as renames of `Clone` and `PartialEq`.
+        (
+            with("pub fn dup(w: &Window) -> Window {\n    <Window as Clone>::clone(w)\n}\n"),
+            true,
+        ),
+        (
+            with(
+                "pub fn same(a: &Window, b: &Window) -> bool {\n    <Window as PartialEq>::eq(a, b)\n}\n",
+            ),
+            true,
+        ),
+        // Precise capturing is not an import, so the cast after it stays a cast.
+        (
+            with("pub fn width(letters: usize) -> impl Sized + use<> {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // Rooted in `std`, so the use-statement scan admits the path and
+        // only the rename itself refuses.
+        (with("use std::{num::Wrapping as u32};\n"), false),
+        (
+            with("pub fn f() {\n    use std::num::Wrapping as u32;\n}\n"),
+            false,
+        ),
+        (
+            with(
+                "macro_rules! bind {\n    () => {\n        use std::num::Wrapping as u32;\n    };\n}\n",
+            ),
+            false,
+        ),
+        (with("extern crate other as u32;\n"), false),
+        // A macro may expand its arguments into a `use`.
+        (
+            with(
+                "macro_rules! import {\n    ($p:path as $n:ident) => {\n        use $p as $n;\n    };\n}\nimport!(std::num::Wrapping as u32);\n",
+            ),
+            false,
+        ),
+        (with("reexport! { std::num::Wrapping as u32 }\n"), false),
+        (
+            with("#[import(std::num::Wrapping as u32)]\npub fn f() {}\n"),
+            false,
+        ),
+        // A Unicode macro name expands its arguments too.
+        (with("δ!(std::num::Wrapping as u32);\n"), false),
+    ] {
+        let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
+        assert_eq!(pin.is_some(), credits, "{lib}");
+    }
+    // A non-ASCII identifier before a macro `!` must not split a character.
+    let (_, pin) = clone_field_pin(
+        &with(
+            "pub fn größe() -> u32 {\n    let maß = 3;\n    maß as u32\n}\nmacro_rules! größe_m { () => {} }\npub fn g() { größe_m!(); }\n",
+        ),
+        WINDOW_TESTS,
+    );
+    assert!(pin.is_some());
+    // Another workspace file: `use super::*;` reaches the workspace-wide
+    // re-export scan, which reads every file's renames but not its casts.
+    let lib = format!("{WINDOW_LIB}{glob_tests}");
+    for (other, credits) in [
+        (
+            "pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n",
+            true,
+        ),
+        ("extern crate other as u32;\n", false),
+    ] {
+        let index = index(&[
+            (LIB, lib.as_str()),
+            ("src/score.rs", other),
+            (TESTS, WINDOW_TESTS),
+        ]);
+        let pin = field_pin(&index, &lib, "start: self.start,", "start: self.start,");
+        assert_eq!(pin.is_some(), credits, "{other}");
     }
 }
 
@@ -5716,6 +5847,134 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     ] {
         assert!(!whole_value_admits(&lib, "maybe", &body), "{body}");
     }
+}
+
+/// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
+/// tail, an early `return Err(..)` exits as `?` does, and the test may
+/// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
+/// Any other early return, an unwrapped bare-tail owner, `unwrap_or_default`
+/// or a computed `expect` message does not pin.
+#[test]
+fn an_unwrapped_ok_tail_with_early_err_returns_pins_its_field() {
+    let question = "    let n: u32 = s.parse().map_err(|_| String::from(\"bad\"))?;\n";
+    let with_exit = |exit: &str| {
+        CONFIG_LIB.replace(
+            question,
+            &format!("{question}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let guarded = with_exit("return Err(String::from(\"zero\"));");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for (body, pins) in [
+        (format!("assert_eq!(parse(\"3\"), Ok({literal}));"), true),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!({literal}, parse(\"3\").unwrap());"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(\"parses\"), {literal});"),
+            true,
+        ),
+        (
+            format!("let c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            true,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap(), Ok({literal}));"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").unwrap_or_default(), {literal});"),
+            false,
+        ),
+        (
+            format!("assert_eq!(parse(\"3\").expect(&msg), {literal});"),
+            false,
+        ),
+        (format!("assert_eq!(parse(\"3\"), {literal});"), false),
+        (
+            format!("let mut c = parse(\"3\").unwrap();\nassert_eq!(c, {literal});"),
+            false,
+        ),
+    ] {
+        assert_eq!(whole_value_admits(&guarded, "parse", &body), pins, "{body}");
+    }
+    // A bare-tail owner has no wrapped value to unwrap.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3).unwrap(), {literal});")
+    ));
+    // An early exit that may hand back another `Ok` refuses the pin.
+    let tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(parse(\"3\"), Ok({literal}));\n}}\n"
+    );
+    for exit in [
+        "return Ok(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return parse(\"1\");",
+        "return Err(String::new()).or(parse(\"1\"));",
+    ] {
+        let lib = with_exit(exit);
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // A `Some(..)` tail admits an early `return None` and nothing else.
+    let maybe_tail = "pub fn maybe(n: u32) -> Option<Config> {\n";
+    let maybe_with = |exit: &str| {
+        format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}").replace(
+            maybe_tail,
+            &format!("{maybe_tail}    if n == 0 {{\n        {exit}\n    }}\n"),
+        )
+    };
+    let unwrap_maybe = format!("assert_eq!(maybe(3).unwrap(), {literal});");
+    assert!(whole_value_admits(
+        &maybe_with("return None;"),
+        "maybe",
+        &unwrap_maybe
+    ));
+    let maybe_tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{unwrap_maybe}\n}}\n");
+    for exit in [
+        "return Some(Config { retries: 9, name: \"x\".into(), count: Count(n) });",
+        "return maybe(1);",
+        "return FALLBACK;",
+    ] {
+        let lib = maybe_with(exit);
+        let (_, pin) = whole_value_pin(&lib, "maybe", &maybe_tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // Review: an `Err` the workspace rebinds may build an `Ok`, so the early
+    // exit is not the other variant.
+    let early_literal =
+        with_exit("return Err(Config { retries: 4, name: \"x\".into(), count: Count(n) });");
+    assert!(whole_value_pin(&early_literal, "parse", &tests).1.is_some());
+    for rebinding in [
+        "#[allow(non_snake_case)]\npub fn Err(c: Config) -> Result<Config, String> {\n    Ok(c)\n}\n",
+        "use std::result::Result::Ok as Err;\n",
+    ] {
+        let lib = format!("{rebinding}{early_literal}");
+        let (_, pin) = whole_value_pin(&lib, "parse", &tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    // #7940 review: a std-rooted alias inside the owner itself also rebinds.
+    let signature = "pub fn parse(s: &str) -> Result<Config, String> {\n";
+    let local = early_literal.replace(
+        signature,
+        &format!("{signature}    use std::result::Result::Ok as Err;\n"),
+    );
+    assert_ne!(local, early_literal);
+    let (_, pin) = whole_value_pin(&local, "parse", &tests);
+    assert!(pin.is_none(), "{local}");
+    // So does a rebound `None` beside a `Some` tail.
+    let none_const = format!(
+        "#[allow(non_upper_case_globals)]\npub const None: Option<u32> = Some(1);\n{}",
+        maybe_with("return None;")
+    );
+    let (_, pin) = whole_value_pin(&none_const, "maybe", &maybe_tests);
+    assert!(pin.is_none(), "{none_const}");
 }
 
 /// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 5: a whole-value literal
@@ -7622,4 +7881,65 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
         assert_eq!(refused, Some(0), "{label}");
     }
     Ok(())
+}
+
+#[test]
+fn a_scalar_rendering_compared_with_exact_text_pins() {
+    // trap-shine-debug-exact-control: the std `Debug` or `Display` text of
+    // a primitive scalar names its value, so exact text pins it.
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(\"12\", format!(\"{}\", crate::weight(4)));",
+        "assert_eq!(format!(\"{}\", crate::weight(4),), \"12\");",
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\", \"rendered\");",
+    ] {
+        let lib = unit_tests("", body);
+        assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
+    }
+    for body in [
+        // Flags, width, padding and extra text or arguments.
+        "assert_eq!(format!(\"{:x}\", crate::weight(4)), \"c\");",
+        "assert_eq!(format!(\"{:#?}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{:>3}\", crate::weight(4)), \" 12\");",
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
+        "assert_eq!(format!(\"{}{}\", crate::weight(4), 1), \"121\");",
+        // The other side is not plain literal text.
+        "let want = String::from(\"12\");\n        assert_eq!(format!(\"{}\", crate::weight(4)), want);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), format!(\"{}\", 12));",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"1\\x32\");",
+        // A qualified or other nested macro, or a projection of the call.
+        "assert_eq!(std::format!(\"{}\", crate::weight(4)), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
+        "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
+    ] {
+        let lib = unit_tests("", body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // #7905: every NaN payload renders as `NaN`, so that text pins no
+    // single float value; finite float text still does.
+    let float_tests = |body: &str| {
+        let lib = unit_tests("", body).replace("-> u32 {\n    x * 3", "-> f64 {\n    x * 3");
+        assert!(lib.contains("-> f64 {"), "{lib}");
+        lib
+    };
+    for body in [
+        "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
+        "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
+        "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+    ] {
+        assert!(
+            path_admitted(&float_tests(body), "x * 3", None).is_empty(),
+            "{body}"
+        );
+    }
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12.0\");";
+    assert_eq!(path_admitted(&float_tests(body), "x * 3", None), [body]);
+    // A non-primitive return type may render many values the same way.
+    let body = "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\");";
+    let lib = non_scalar_unit_tests("", body);
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{lib}");
 }

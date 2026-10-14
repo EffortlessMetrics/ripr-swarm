@@ -504,7 +504,7 @@ gate-specific artifacts.
 |---|---|---|
 | rust_strong_error_oracle_control | rust | strong_error_oracle |
 | rust_unwrap_err_variant_positive_control | rust | unwrap_err_variant_positive |
-| rust_same_method_owner_type_positive_control | rust | rust_same_method_owner_type_positive (`must_promote`; the after-expression return_value finding stays `exposed`, the before-expression sibling stays below `exposed`, no repair packet or receipt command) |
+| rust_same_method_owner_type_positive_control | rust | rust_same_method_owner_type_positive (`must_promote`; the current after-expression return_value finding stays `exposed`; the faithfully represented before-expression duplicate is reconciled by RIPR-SPEC-0001, no repair packet or receipt command) |
 | rust_split_test_boundary_oracle_return_value_pin | rust | fixtures/split_test_boundary_oracle (`probe_family=return_value`, `must_promote`, `maximum_class=exposed`; the return_value finding reads `exposed` through the RIPR-SPEC-0197 owner-return pin on `assert_eq!(gate(100), true)`, while the same fixture's `predicate` case keeps `same_test_pairing_missing` below `exposed`) |
 | rust_owner_pin_direct / rust_owner_pin_called_closure | rust | matched RIPR-SPEC-0197 effective-test controls: exactly one return-value finding, `must_promote`, `expected_class=exposed` |
 | rust_owner_pin_err_return_guard / rust_owner_pin_err_return_guard_not_equality | rust | matched RIPR-SPEC-0197 lone-equality controls: the twin of `if weight(4) != 12 { return Err(..) }` reads `exposed` (`must_promote`); an `==` guard, `assert!(weight(4) >= 12)` and an equality or-ed with a flag stay `weakly_exposed` (`must_not_promote`, `maximum_class=weakly_exposed`) |

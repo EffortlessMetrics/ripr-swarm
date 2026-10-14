@@ -1,0 +1,58 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/parser_formatted_input_provenance/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+WARNING ./src/lib.rs:44
+  id: probe:src_lib.rs:predicate:7ed3887e
+
+Changed
+  before: reason == "old_unresolved_target"
+  after:  reason == "rust_module_unresolved_target"
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::parse_note
+  canonical gap: gap:rust:src/lib.rs:parse_note:predicate_boundary:predicate:reason==lit727573745f6d6f64756c655f756e7265736f6c7665645f746172676574
+
+Static exposure
+  infection_unknown (warning, confidence 0.51)
+
+Evidence
+  - reach yes: Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive, unrelated_plan_and_gate_oracles
+  - infection unknown: Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown
+  - propagation yes: Changed behavior appears to influence returned value: None
+  - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - local flow reaches returned value: None (line 47)
+  - related test src/lib.rs:62 unresolved_target_location_is_required_and_positive uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses strong exact value oracle: assert_eq!(plan_reason, "rust_module_unresolved_target"); misses: no call to the changed code found; linked by file location only
+  - related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses weak relational check oracle: assert!(gate_passed); misses: no call to the changed code found; linked by file location only
+  - related test src/lib.rs:85 other_parser_condition misses: asserts, but not on the changed value; checked `assert!(parse_note("ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.").is_some())`
+  - source assertion argument value "rust_module_unresolved_target" at line 66
+  - source assertion argument value "src/a.rs:12" at line 66
+  - source function argument value line = "src/a.rs:12" at line 67
+  - source assertion argument value "{context}" at line 79
+  - source function argument value line = "ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed." at line 86
+  - source function argument value line = "ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed." at line 87
+  - source assertion argument value "rust_module_unresolved_target" at line 94
+
+Weakness
+  - Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown
+  - No detected boundary input for the changed predicate
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+
+Stop reasons:
+  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+
+Next step
+  Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
+Drill in:
+  ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
+  ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e

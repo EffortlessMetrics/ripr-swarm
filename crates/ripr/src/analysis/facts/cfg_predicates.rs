@@ -179,6 +179,362 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
+/// A flat inactive `cfg_attr` with bare prelude flags and supported lint metadata.
+/// Unknown, malformed and nested introductions retain the existing boundary.
+pub(crate) fn attribute_is_known_inactive_prelude_flags(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    let body = match tokens.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ]
+        | [
+            Token::Punct('#'),
+            Token::Punct('!'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => body,
+        _ => return false,
+    };
+    let [
+        Token::Word(name),
+        Token::Punct('('),
+        inner @ ..,
+        Token::Punct(')'),
+    ] = body
+    else {
+        return false;
+    };
+    if name != "cfg_attr" || !body_is_balanced(inner) {
+        return false;
+    }
+    let Ok(parts) = availability_arguments(inner) else {
+        return false;
+    };
+    let Some((condition, introduced)) = parts.split_first() else {
+        return false;
+    };
+    let bare_flag = |part: &[Token]| matches!(part, [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_implicit_prelude"));
+    if !introduced.iter().any(|part| bare_flag(part))
+        || !matches!(availability_predicate(condition, 0), Ok(Some(false)))
+    {
+        return false;
+    }
+    use ra_ap_syntax::{AstNode, ast};
+    let source = format!("{attr_text}\nfn __ripr_prelude_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(attribute) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CfgAttrMeta::cast)
+    else {
+        return false;
+    };
+    let metas: Vec<_> = attribute.metas().collect();
+    metas.len() == introduced.len()
+        && metas
+            .iter()
+            .zip(introduced)
+            .all(|(meta, tokens)| bare_flag(tokens) || inactive_prelude_lint_sibling(meta))
+}
+
+/// Lint lists are inert built-ins, but their token trees need metadata parsing.
+fn inactive_prelude_lint_sibling(meta: &ra_ap_syntax::ast::Meta) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let ast::Meta::TokenTreeMeta(meta) = meta else {
+        return false;
+    };
+    let Some(path) = meta.path() else {
+        return false;
+    };
+    if !matches!(
+        path.syntax().text().to_string().as_str(),
+        "allow" | "warn" | "deny" | "forbid" | "expect"
+    ) {
+        return false;
+    }
+    let Some(tree) = meta.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|text| text.strip_suffix(')'))
+    else {
+        return false;
+    };
+    // cfg_attr's existing metadata grammar checks lint paths and value syntax.
+    let source = format!("#[cfg_attr(test, {inner})] fn __ripr_lint_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(list) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CfgAttrMeta::cast)
+    else {
+        return false;
+    };
+    let members: Vec<_> = list.metas().collect();
+    let mut lint_count = 0;
+    for (index, member) in members.iter().enumerate() {
+        match member {
+            ast::Meta::PathMeta(_) => lint_count += 1,
+            ast::Meta::KeyValueMeta(value) if index + 1 == members.len() && lint_count > 0 => {
+                if !value
+                    .path()
+                    .is_some_and(|path| path.syntax().text() == "reason")
+                {
+                    return false;
+                }
+                let Some(ast::Expr::Literal(literal)) = value.expr() else {
+                    return false;
+                };
+                let ast::LiteralKind::String(string) = literal.kind() else {
+                    return false;
+                };
+                if string.value().is_err() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    lint_count > 0
+}
+
+/// Whether an attribute can only preserve the source items it annotates.
+/// This is narrower than configuration availability: a proc attribute may be
+/// configuration-inert while replacing a module and its bindings entirely.
+/// Only known built-ins and recursively inert cfg_attr introductions qualify.
+pub(crate) fn attribute_preserves_source_items(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    // Literal shape belongs only to preservation. CFG literals stay opaque.
+    let strings: Vec<_> = positioned
+        .iter()
+        .map(|token| match token.token {
+            Token::Literal => preservation_string_literal(attr_text, token.offset),
+            _ => None,
+        })
+        .collect();
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    let (body, strings, inner_attribute) = match tokens.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => (body, &strings[2..strings.len() - 1], false),
+        [
+            Token::Punct('#'),
+            Token::Punct('!'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => (body, &strings[3..strings.len() - 1], true),
+        _ => return false,
+    };
+    preserving_attribute(body, strings, inner_attribute, 0)
+}
+
+fn preserving_attribute(
+    tokens: &[Token],
+    strings: &[Option<&str>],
+    inner_attribute: bool,
+    depth: usize,
+) -> bool {
+    if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
+        return false;
+    }
+    match tokens {
+        // These crate built-ins change preludes, entry-point generation or
+        // compiler limits/features, rather than replacing source items.
+        // Keep their declared forms closed; this is not compiler admission
+        // or proof that a libtest harness can run under an active feature.
+        [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_main") => true,
+        // Independent macro binding still refuses no_implicit_prelude.
+        [Token::Word(name)] if name == "no_implicit_prelude" => true,
+        [Token::Word(name)] if inner_attribute && name == "no_builtins" => true,
+        [Token::Word(name), Token::Punct('='), Token::Literal]
+            if matches!(name.as_str(), "recursion_limit" | "type_length_limit") =>
+        {
+            true
+        }
+        [Token::Word(name), Token::Punct('='), Token::Literal]
+            if inner_attribute
+                && matches!(
+                    name.as_str(),
+                    "crate_name" | "crate_type" | "windows_subsystem"
+                ) =>
+        {
+            let Some(value) = strings[2].and_then(preservation_string_value) else {
+                return false;
+            };
+            match name.as_str() {
+                "crate_name" => {
+                    !value.is_empty() && value.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+                }
+                "crate_type" => matches!(
+                    value.as_str(),
+                    "bin" | "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
+                ),
+                "windows_subsystem" => matches!(value.as_str(), "console" | "windows"),
+                _ => false,
+            }
+        }
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "debugger_visualizer" => {
+            let Ok(parts) = preservation_arguments(inner, &strings[2..2 + inner.len()]) else {
+                return false;
+            };
+            matches!(parts.as_slice(), [([Token::Word(key), Token::Punct('='), Token::Literal], values)]
+                if matches!(key.as_str(), "natvis_file" | "gdb_script_file")
+                    && values[2].and_then(preservation_string_value).is_some_and(|value| !value.is_empty()))
+        }
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "feature" => availability_arguments(inner)
+            .is_ok_and(|parts| parts.iter().all(|part| matches!(part, [Token::Word(_)]))),
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg" => {
+            matches!(availability_predicate(inner, depth + 1), Ok(Some(true)))
+        }
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg_attr" => {
+            let Ok(parts) = preservation_arguments(inner, &strings[2..2 + inner.len()]) else {
+                return false;
+            };
+            let Some(((condition, _), introduced)) = parts.split_first() else {
+                return false;
+            };
+            if introduced.is_empty() {
+                return false;
+            }
+            // Forbidden even in inactive or nested cfg_attr introductions.
+            if introduced
+                .iter()
+                .any(|(tokens, _)| introduces_crate_identity(tokens, 0))
+            {
+                return false;
+            }
+            match availability_predicate(condition, depth + 1) {
+                Ok(Some(false)) => true,
+                Ok(_) => introduced.iter().all(|(attribute, strings)| {
+                    preserving_attribute(attribute, strings, inner_attribute, depth + 1)
+                }),
+                Err(()) => false,
+            }
+        }
+        [Token::Word(name)]
+        | [Token::Word(name), Token::Punct('='), ..]
+        | [Token::Word(name), Token::Punct('('), .., Token::Punct(')')] => matches!(
+            name.as_str(),
+            "allow"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "expect"
+                | "doc"
+                | "path"
+                | "macro_use"
+                | "deprecated"
+        ),
+        _ => false,
+    }
+}
+
+type PreservationArgument<'a, 's> = (&'a [Token], &'a [Option<&'s str>]);
+
+// Align the preservation-only string projection with existing comma slices.
+fn preservation_arguments<'a, 's>(
+    tokens: &'a [Token],
+    strings: &'a [Option<&'s str>],
+) -> Result<Vec<PreservationArgument<'a, 's>>, ()> {
+    let mut offset = 0;
+    availability_arguments(tokens)?
+        .into_iter()
+        .map(|part| {
+            let values = &strings[offset..offset + part.len()];
+            offset += part.len() + 1;
+            Ok((part, values))
+        })
+        .collect()
+}
+
+fn introduces_crate_identity(tokens: &[Token], depth: usize) -> bool {
+    if depth > MAX_PREDICATE_NESTING {
+        return true;
+    }
+    match tokens {
+        [Token::Word(name), ..] if matches!(name.as_str(), "crate_name" | "crate_type") => true,
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg_attr" => availability_arguments(inner).map_or(true, |parts| {
+            parts
+                .iter()
+                .skip(1)
+                .any(|part| introduces_crate_identity(part, depth + 1))
+        }),
+        _ => false,
+    }
+}
+
+fn preservation_string_literal(text: &str, offset: usize) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let end = match bytes.get(offset) {
+        Some(b'"') => skip_regular_string(bytes, offset)?,
+        Some(b'r') => {
+            let (quote, hashes) = raw_string_start(bytes, offset)?;
+            skip_raw_string(bytes, quote, hashes)?
+        }
+        _ => return None,
+    };
+    text.get(offset..end)
+}
+
+fn preservation_string_value(literal: &str) -> Option<String> {
+    use ra_ap_syntax::{AstNode, AstToken, ast};
+    let source = format!("const _: &str = {literal};");
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let string = parsed
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .find_map(ast::String::cast)?;
+    string.value().ok().map(|value| value.into_owned())
+}
+
 fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());

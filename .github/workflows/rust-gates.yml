@@ -170,7 +170,7 @@ jobs:
           sccache --start-server || true
 
       # The two extracted policy checks fail before allocating the product build.
-      # Precommit verifies their source/toolchain/input-bound receipt and retains
+      # ci-policy verifies their source/toolchain/input-bound receipt and retains
       # every other policy obligation without executing workflow checks twice.
       - name: Agent skill contracts
         id: agent_skills
@@ -183,7 +183,7 @@ jobs:
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
-        run: cargo xtask precommit
+        run: cargo xtask ci-policy
 
       - name: Evidence promotion honesty
         id: promotion_honesty

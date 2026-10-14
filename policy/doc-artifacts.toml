@@ -1349,6 +1349,14 @@ owner = "product-output"
 standalone_reason = "Agent brief error_variant assertion examples generate from typed parts so they compile (owned string payloads bind by value), non-pattern payloads downgrade to unresolved, and suggested_test_command is null for not_applicable targets (#7391)."
 
 [[artifact]]
+id = "RIPR-SPEC-0262"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0262-typescript-strict-custom-matcher.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a same-file expect.extend matcher that passes only on strict equality as exact_value / strong, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0254"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"

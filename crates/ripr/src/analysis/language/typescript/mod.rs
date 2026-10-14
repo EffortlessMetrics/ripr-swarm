@@ -62,6 +62,7 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod committed_snapshot;
+mod custom_matcher_guard;
 mod deleted_lines;
 #[cfg(test)]
 mod deleted_lines_tests;
@@ -120,6 +121,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
+pub(crate) use custom_matcher_guard::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;

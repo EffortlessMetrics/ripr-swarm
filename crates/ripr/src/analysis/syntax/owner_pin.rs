@@ -7,6 +7,10 @@
 //! calls eagerly (#6482); see [`local_helper_assertions`].
 
 mod fallible_check;
+mod literal_json;
+use literal_json::{
+    json_namespace_rebound, literal_json_import_visible, literal_json_tokens, literal_json_tree,
+};
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
@@ -32,7 +36,13 @@ type FunctionKey = (usize, usize, String);
 pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
-    module_declarations: BTreeMap<(usize, String), bool>,
+    module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ModuleDeclarationAdmission {
+    context: bool,
+    source_preserved: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,8 +138,17 @@ impl OwnerPinAssertions {
     pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
         self.module_declarations
             .get(&(line, declaration.to_string()))
-            .copied()
-            .unwrap_or(false)
+            .is_some_and(|admission| admission.context)
+    }
+
+    pub(crate) fn admits_targeted_module_declaration(
+        &self,
+        line: usize,
+        declaration: &str,
+    ) -> bool {
+        self.module_declarations
+            .get(&(line, declaration.to_string()))
+            .is_some_and(|admission| admission.context && admission.source_preserved)
     }
 
     /// The first gate that refuses this assertion, or `None` when it is
@@ -424,9 +443,7 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        TRUSTED_MACRO_NAMES
-            .contains(&name)
-            .then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -436,6 +453,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     };
     let mut names = BTreeSet::new();
     for node in source.syntax().descendants() {
+        if json_namespace_rebound(&node) {
+            names.insert("json".to_string());
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -511,10 +531,11 @@ fn macro_binding_ambiguities(
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
-    if !source.contains("macro")
-        && !source.contains("use")
-        && !source.contains("no_implicit_prelude")
-        && !source.contains('!')
+    if !(trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!'))
     {
         return ambiguous;
     }
@@ -574,6 +595,19 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // An extern-crate alias or module in another file can defeat this
+        // import's root even when that file never mentions `json` itself.
+        if trusted.contains(&"json") && json_namespace_rebound(&node) {
+            ambiguous.push((
+                "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(&node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    crate_local: false,
+                },
+            ));
+        }
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()));
@@ -799,6 +833,7 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let crates = match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" => EXPECT_TEST_CRATES,
+        "json" => &["serde_json"],
         _ => return false,
     };
     // Ancestor trees run inner to outer; reverse each path, then the whole.
@@ -1051,7 +1086,7 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 /// Discarded call-argument spans from the same bounded local resolver used by
 /// execution admission. This only removes evidence; workspace macro ambiguity
 /// still independently refuses positive assertion admission.
-pub(super) fn empty_local_macro_invocation_ranges(
+pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
     let empty = local_empty_macros(root);
@@ -1097,11 +1132,14 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
-        let admitted = supported_item_context(module.syntax());
+        let admitted = ModuleDeclarationAdmission {
+            context: supported_item_context(module.syntax()),
+            source_preserved: supported_targeted_item_context(module.syntax()),
+        };
         result
             .module_declarations
             .entry(key)
-            .and_modify(|previous| *previous = false)
+            .and_modify(|previous| *previous = ModuleDeclarationAdmission::default())
             .or_insert(admitted);
     }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
@@ -1778,6 +1816,20 @@ fn insert_function(
 /// attributes include inner attributes on ItemList, not only outer attrs.
 pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
+}
+
+/// Targeted call syntax also needs container attributes to preserve source
+/// items. The selected function's own harness attributes are outside this
+/// check; its parent and the resolved module declarations supply the context.
+pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
+    supported_item_context(item)
+        && item.ancestors().all(|node| {
+            node.children().filter_map(ast::Attr::cast).all(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                    &attr.syntax().text().to_string(),
+                )
+            })
+        })
 }
 
 /// Why `item` is not a plain item reachable from the file root under test
@@ -2588,15 +2640,23 @@ fn has_escape(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
-            if !is_trusted_macro(&path, trusted) {
+            if !is_trusted_macro(&path, trusted)
+                || path == "json"
+                    && (!literal_json_import_visible(call.syntax())
+                        || !call
+                            .token_tree()
+                            .is_some_and(|tree| literal_json_tree(&tree)))
+            {
                 return Some(AssertionContextRefusal::OpaqueMacro(path));
             }
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
-            if call
-                .token_tree()
-                .is_some_and(|tree| opaque_macro_operand(&tree))
-            {
+            if call.token_tree().is_some_and(|tree| {
+                opaque_macro_operand_with_json(
+                    &tree,
+                    trusted.contains(&"json") && literal_json_import_visible(call.syntax()),
+                )
+            }) {
                 return Some(AssertionContextRefusal::MacroOperandExit(path));
             }
         }
@@ -2622,19 +2682,30 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
+    opaque_macro_operand_with_json(tree, false)
+}
+
+fn opaque_macro_operand_with_json(tree: &ast::TokenTree, literal_json: bool) -> bool {
     let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || nested_invocations(&tokens).any(|(name, plain)| !(plain && name == NESTED_MATCHES))
+    }) || nested_invocations(&tokens).any(|(name, plain)| {
+        !(plain && (NESTED_EXPANSIONS.contains(&name) || name == "json" && literal_json))
+    }) || tokens.windows(3).enumerate().any(|(at, window)| {
+        window[0].text() == "json"
+            && window[1].text() == "!"
+            && !literal_json_tokens(&tokens[at + 2..])
+    })
 }
 
-/// A bare `matches!` in a macro operand expands to one `match` over its own
-/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
-/// reads for exits; its binding is checked with the invoking macros'.
-const NESTED_MATCHES: &str = "matches";
+/// A bare `matches!` or `format!` in a macro operand expands to one `match`
+/// or call over its own operands (RIPR-SPEC-0197 literal `matches!` and
+/// rendered scalar pins), which the token scan above already reads for
+/// exits; its binding is checked with the invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format"];
 
 fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
     tree.syntax()
@@ -2662,16 +2733,21 @@ fn nested_invocations(
             {
                 return None;
             }
-            let qualified = at
-                .checked_sub(1)
-                .and_then(|before| tokens.get(before))
-                .is_some_and(|token| token.text() == "::");
+            // Inside a token tree `::` lexes as two `:` tokens; a single
+            // `:` is a field or type annotation, not a path.
+            let before = |back: usize| {
+                at.checked_sub(back)
+                    .and_then(|index| tokens.get(index))
+                    .map(|token| token.text())
+            };
+            let qualified =
+                before(1) == Some("::") || (before(1) == Some(":") && before(2) == Some(":"));
             Some((name.text(), !qualified))
         })
 }
 
-/// The macros `node` invokes: every macro call's path, plus a `matches!`
-/// nested in a macro operand, so the binding check covers it too.
+/// The macros `node` invokes: every macro call's path, plus every name
+/// invoked inside a macro operand, so the binding check covers it too.
 fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
     node.descendants()
         .filter_map(ast::MacroCall::cast)

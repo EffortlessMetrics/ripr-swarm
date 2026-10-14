@@ -92,6 +92,33 @@ repository-relative test file or an unambiguous `path::test_node` selector
 within that file. An unknown or ambiguous node is a named limitation
 (`changed_test_unresolved`, `changed_test_owner_unresolved`, or
 `changed_test_owner_ambiguous`).
+Exact occurrence admission shares the existing file-composition authority: included, unresolved or unadmitted module provenance remains refused; supported `#[cfg(test)]` module declarations remain admitted. Container attributes must also preserve source items: known built-in metadata/lints and structurally inert or inactive `cfg_attr` are supported, while opaque or qualified lookalike attributes are refused. The closed preserving forms include crate `no_std`/`no_main` flags, `feature` identifier lists and `recursion_limit`/`type_length_limit` literal values, including recursively preserving `cfg_attr` wrappers. Unknown conditions cannot admit a possible `cfg` exclusion or opaque introduction. Root attributes remain checked; source preservation does not prove compiler feature availability, prelude identity or libtest invocation. Existing owner-binding eligibility remains independently required, including its conservative nested `cfg_attr` owner-file refusal. This does not extend arbitrary function-harness provenance.
+
+The finite stable crate metadata category additionally admits `no_builtins` and source-preserving `no_implicit_prelude`, string `crate_name`/`crate_type`/`windows_subsystem`, and a single string `debugger_visualizer(natvis_file = ...)` or `gdb_script_file` entry. String shape and value decoding are separate from the opaque CFG token authority. Crate names retain the Reference character restriction; crate types use the seven documented values and subsystem values are `console`/`windows`. Crate-only metadata uses inner attribute form; debugger metadata also applies to module declarations. Qualified, raw-head, numeric, byte, computed or malformed introductions remain unsupported. Rust forbids `crate_name`/`crate_type` inside `cfg_attr`, including inactive and nested introductions, so these wrappers refuse rather than borrowing inactivity as crate identity. The indexed Cargo target and binding authority remain unchanged; metadata does not prove target linkage, proc-macro execution, Windows behavior, debugger invocation or external-file trust. The independent no-implicit-prelude macro-binding refusal remains in force: a direct qualified body call may retain static owner selection while an unproven assertion operand refuses.
+
+Qualified-root availability ignores prelude-suppression tokens only inside one flat `cfg_attr` introducing bare `no_std`/`no_implicit_prelude` flags and supported inert lint metadata that the closed CFG authority establishes as inactive for a test build. Known-active and unknown predicates, malformed input, unsupported siblings and nested introductions retain the existing refusal boundary. Lint siblings have unqualified `allow`/`warn`/`deny`/`forbid`/`expect` heads, nonempty parser-validated lint paths and an optional final string `reason`; opaque/computed members, empty lists and other siblings refuse. This does not infer Cargo feature activation or change explicit `std` declaration checks. The no-implicit-prelude availability guard applies to examined source roots and recorded out-of-line declarations. Inline-module local no-implicit-prelude availability remains an inherited unmodeled boundary; its existing selections do not establish a universal prelude-refusal guarantee.
+
+The category follows the Rust Reference [built-in attribute index](https://doc.rust-lang.org/reference/attributes.html#built-in-attributes-index), [crate identity](https://doc.rust-lang.org/reference/crates-and-source-files.html#the-crate_name-attribute), [linkage](https://doc.rust-lang.org/reference/linkage.html), [conditional-attribute restrictions](https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute), [code generation](https://doc.rust-lang.org/reference/attributes/codegen.html#the-no_builtins-attribute), [preludes](https://doc.rust-lang.org/reference/names/preludes.html#the-no_implicit_prelude-attribute), [runtime metadata](https://doc.rust-lang.org/reference/runtime.html#the-windows_subsystem-attribute) and [debugger metadata](https://doc.rust-lang.org/reference/attributes/debugger.html#the-debugger_visualizer-attribute).
+
+Selected owner admission uses individual parser-backed source occurrences,
+including byte-mapped expression operands of unambiguously bound `assert!`,
+`assert_eq!` and `assert_ne!`, and already-captured execution-bearing parameter
+attribute expressions documented by RIPR-SPEC-0115. Parameter inputs use the
+same existing owner-binding checks; this preserves capture behavior without
+proving arbitrary proc-macro harness execution. Supported local/free call qualifiers retain their
+identity across lines. Terminal function type arguments preserve that existing
+callable binding; generic qualifiers retain their unsupported authority boundary.
+Operand mapping preserves original bytes, including comments after a trailing
+comma; synthetic delimiters cannot be swallowed by a final line comment.
+Same-line occurrences cannot lend each other authority;
+opaque macros, diagnostic formatting operands and unmodeled captures cannot
+authorize a workspace owner. Parsing is cached only within one immutable index
+run. A parsed method occurrence supplies no receiver type proof: receiver,
+return declaration and field identity remain a separate admission boundary.
+This selection prerequisite does not establish complete field repair readiness.
+
+Qualified std/core forms of these assertions and verified pretty_assertions/similar_asserts equality forms retain their full parser path until source-root, availability and manifest binding checks pass. Leading `::` and trivia do not change mapped operand bytes. Qualified roots cannot borrow bare-leaf identity: source imports, modules, extern renames, globs, unknown binding-capable statements and declared dependency/package aliases retain refusals. Standard roots use a separate closed no-binding declaration verdict, not a registry-package verdict. `no_std` needs an explicit unrenamed std declaration for a std path; core remains distinct. No-implicit-prelude assertion contexts remain outside this admission. Captured operands still pass the established free/inherent owner binding; this grants no receiver, oracle-strength or field readiness authority.
+
 An absent, out-of-root, or stale selector is a named limitation, not a broad
 silent fallback. An anchorless or stale record in an otherwise usable canonical
 group is a named per-scope limitation, not a reason to discard the group's

@@ -567,3 +567,127 @@ fn ok_or_of_a_same_named_enum_in_another_module_does_not_read_exposed() -> Resul
         "E, parse",
     )
 }
+
+// ---- RIPR-SPEC-0231 examples 19 and 20: an inequality excluding a sibling --
+//
+// `assert_ne!(withdraw(..), Err(PayError::Limit))` names the changed
+// `PayError::Insufficient` only through a sibling, but it excludes that
+// sibling from the owner's own result: a change that returned `Limit` would
+// fail it. It observes the result as `relational_check` / weak (rule 1), so
+// the finding is `weakly_exposed` with that oracle, never `exposed`. An
+// inequality on anything but the owner call shares only the enum qualifier
+// and stays refused.
+
+fn pay_assertion_test(assertion: &str) -> String {
+    format!(
+        "use error_path_sibling_variant::{{PayError, withdraw}};\n\n#[test]\nfn overdraw_is_not_the_limit() {{\n    let other: Result<u64, PayError> = Ok(1);\n    let _ = &other;\n    {assertion};\n}}\n"
+    )
+}
+
+/// The error-path finding's class and the oracle its one related test
+/// carries, as `kind/strength`.
+fn sibling_exclusion_reading(assertion: &str) -> Result<(ExposureClass, Vec<String>), String> {
+    let diff = single_line_diff(PAY_SOURCE, PAY_CHANGED_LINE, PAY_OLD_LINE);
+    let repo = TempRepo::create(PAY_SOURCE, &pay_assertion_test(assertion), &diff)?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, PAY_CHANGED_LINE, "PayError::Insufficient")?;
+    let oracles = finding
+        .related_tests
+        .iter()
+        .map(|test| {
+            format!(
+                "{}/{}",
+                test.oracle_kind.as_str(),
+                test.oracle_strength.as_str()
+            )
+        })
+        .collect();
+    let exposed = exposed_on_line(&output, PAY_CHANGED_LINE);
+    if !exposed.is_empty() {
+        return Err(format!(
+            "an inequality exposed the changed line: {exposed:?}"
+        ));
+    }
+    Ok((finding.class.clone(), oracles))
+}
+
+#[test]
+fn spec_0231_inequality_excluding_a_sibling_reads_relational_weak() -> Result<(), String> {
+    for assertion in [
+        "assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
+        "assert_ne!(withdraw(10, 20), Err(PayError::Limit), \"not the limit\")",
+    ] {
+        let (class, oracles) = sibling_exclusion_reading(assertion)?;
+        assert_eq!(
+            class,
+            ExposureClass::WeaklyExposed,
+            "{assertion}: {oracles:?}"
+        );
+        assert_eq!(oracles, vec!["relational_check/weak"], "{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
+fn spec_0231_sibling_inequality_off_the_owner_call_stays_refused() -> Result<(), String> {
+    // Each test also calls the owner, so it stays related; only the
+    // inequality's reading is under test.
+    for assertion in [
+        // Not the owner's result: only the enum qualifier is shared.
+        "let _ = withdraw(1, 0);\n    assert_ne!(other, Err(PayError::Limit))",
+        // The owner call is a nested argument, not the compared operand.
+        "assert_ne!(other.or(withdraw(10, 20)), Err(PayError::Limit))",
+        // The owner call sits only in the message arguments.
+        "assert_ne!(other, Err(PayError::Limit), \"{:?}\", withdraw(10, 20))",
+        // A negated `matches!` that is only part of the condition.
+        "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)) || other.is_ok())",
+        "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)) ^ other.is_ok())",
+        // A guarded pattern excludes the sibling only when the guard holds.
+        "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit) if other.is_ok()))",
+        // A local closure shadows the owner's name.
+        "let _ = withdraw(1, 0);\n    let withdraw = |_: u64, _: u64| other;\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        // So does a nested function.
+        "let _ = withdraw(1, 0);\n    fn withdraw(_: u64, _: u64) -> Result<u64, PayError> { Ok(0) }\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        // A test-visible macro rebinding the assertion may check nothing.
+        "macro_rules! assert_ne { ($l:expr, $r:expr) => { let _ = ($l, $r); }; }\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        "macro_rules! assert { ($c:expr) => { let _ = $c; }; }\n    assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
+        "macro_rules! matches { ($v:expr, $p:pat) => { false }; }\n    assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
+    ] {
+        let (class, oracles) = sibling_exclusion_reading(assertion)?;
+        assert_ne!(class, ExposureClass::WeaklyExposed, "{assertion}");
+        assert_eq!(oracles.len(), 1, "{assertion}: {oracles:?}");
+        assert_ne!(oracles, vec!["relational_check/weak"], "{assertion}");
+    }
+    Ok(())
+}
+
+// RIPR-SPEC-0227 decision 2 end to end: an uncompared `unwrap_err()` read
+// directly off the owner call observes the error side as `broad_error` /
+// weak. An adapter that replaces the call's result, written plainly or
+// inside a grouping, passes whatever the owner returns and reads no
+// error-side oracle (#7872).
+
+#[test]
+fn spec_0227_uncompared_unwrap_err_reads_broad_error_only_off_the_owner_call() -> Result<(), String>
+{
+    let (class, oracles) = sibling_exclusion_reading("withdraw(10, 20).unwrap_err()")?;
+    assert_eq!(class, ExposureClass::WeaklyExposed, "{oracles:?}");
+    assert_eq!(oracles, vec!["broad_error/weak"]);
+    for assertion in [
+        "withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient)).unwrap_err()",
+        "(withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient))).unwrap_err()",
+        "((withdraw(10, 20).and(Err::<u64, _>(PayError::Insufficient)))).unwrap_err()",
+        "(withdraw(10, 20).or(Err::<u64, PayError>(PayError::Insufficient))).unwrap_err()",
+    ] {
+        let (class, oracles) = sibling_exclusion_reading(assertion)?;
+        assert_ne!(
+            class,
+            ExposureClass::WeaklyExposed,
+            "{assertion}: {oracles:?}"
+        );
+        assert_eq!(oracles.len(), 1, "{assertion}: {oracles:?}");
+        assert_ne!(oracles, vec!["broad_error/weak"], "{assertion}");
+    }
+    Ok(())
+}
