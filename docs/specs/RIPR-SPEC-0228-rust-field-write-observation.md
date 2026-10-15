@@ -389,7 +389,9 @@ changes `self.count += 2` to `self.count += 1`.
   followed only when every argument it receives is a parameter or a literal;
   the method and its helpers write the field at most once, and no body
   holds a macro call, loop or closure (`method_cannot_store` in
-  `builder_override.rs`). A constant, another
+  `builder_override.rs`). An accumulating call (`+=`) must be the only
+  earlier call that writes the field, since it adds to whatever another
+  call stored (`s.add("K", 2); s.add("K", 3)` reaches 5). A constant, another
   field or a function result in value position (`SEED`, `self.base`,
   `five()`, `self.<path> = Self::defaults()`, `let qty = SEED;`,
   `self.put(k, SEED)`) or a nonzero `or_insert` start fails closed: `s.set("K", 5)`,
@@ -402,10 +404,12 @@ changes `self.count += 2` to `self.count += 1`.
   in `builder_override.rs`); a second insert, an `entry(..)` update, a
   bare `self` or an unresolved helper fails closed. The key parameter must
   not be rebound in the owner body, and a `#[should_panic]` test never
-  confirms. Not detected: an earlier call that stores a value computed
-  from other literals (`s.add("K", 3, 4)` storing 7, or two `+=` receipts
-  summing to it) equal to the expected value, and a field whose declared
-  type is a local type named like a std collection (#7988).
+  confirms. A field's collection type counts as std only when spelled
+  `std::collections::X`, or imported bare from `std::collections` without
+  `as` while no item, alias or generic parameter in the file reuses the
+  name (a local `BTreeMap` with a seeded `Default` fails closed). A
+  stored value computed from several parameters (`insert(k, a + b)`) is
+  not a parameter and fails closed (#7988).
 - Not yet implemented for argument-free field reads: rule 3 (no
   intervening write between the owner call and the read). This one does not
   fail closed: a later write through the binding can still read `exposed`

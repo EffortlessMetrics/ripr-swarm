@@ -29,7 +29,7 @@
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
@@ -1023,11 +1023,73 @@ fn struct_declares_std_collection(item: &ast::Struct, field: &str) -> bool {
     fields.fields().any(|entry| {
         entry.name().is_some_and(|name| name.text() == field)
             && entry.ty().is_some_and(|ty| {
-                let ty = ty.syntax().text().to_string();
-                let name = ty.split('<').next().unwrap_or_default().trim();
-                EMPTY_COLLECTIONS.contains(&name.rsplit("::").next().unwrap_or_default())
+                let ty: String = ty
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect();
+                let path = ty.split('<').next().unwrap_or_default();
+                let path = path.strip_prefix("::").unwrap_or(path);
+                if let Some(name) = path.strip_prefix("std::collections::") {
+                    return EMPTY_COLLECTIONS.contains(&name);
+                }
+                EMPTY_COLLECTIONS.contains(&path) && bare_name_is_std(item, path)
             })
     })
+}
+
+/// Whether the bare collection name `name` in `item`'s file is the std
+/// type: the file imports it from `std::collections` without renaming,
+/// and neither the struct's generics nor any item in the file reuse the
+/// name (`mod seeded { pub struct BTreeMap .. }` with `use
+/// seeded::BTreeMap`, `type HashMap = ..`, `struct Bin<BTreeMap>`).
+fn bare_name_is_std(item: &ast::Struct, name: &str) -> bool {
+    let Some(file) = item.syntax().ancestors().find_map(ast::SourceFile::cast) else {
+        return false;
+    };
+    let names_it = |node: &SyntaxNode| {
+        node.descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == name)
+    };
+    if item
+        .generic_param_list()
+        .is_some_and(|generics| names_it(generics.syntax()))
+    {
+        return false;
+    }
+    let mut imported = false;
+    for node in file.syntax().descendants() {
+        if let Some(import) = ast::Use::cast(node.clone()) {
+            if !names_it(import.syntax()) {
+                continue;
+            }
+            let text: String = import
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let renames = import
+                .syntax()
+                .descendants()
+                .any(|node| node.kind() == SyntaxKind::RENAME);
+            let from_std = text.starts_with("usestd::collections::")
+                || text.starts_with("use::std::collections::");
+            if renames || !from_std {
+                return false;
+            }
+            imported = true;
+        } else if let Some(declared) = ast::Name::cast(node)
+            && declared.text() == name
+        {
+            return false;
+        }
+    }
+    imported
 }
 
 /// Std maps and sets, whose `new()` and `default()` are empty. Matched by
@@ -1164,7 +1226,7 @@ fn method_touches_field_read_only(
 /// and `assert_eq!(.., 5)`), must not hand `self` or `&mut self.f` to
 /// other code, and may write `self.<field>` only as
 /// `self.<field>.insert(k, v)` or `*self.<field>.entry(k).or_insert(0)
-/// += v` with `v` a parameter (optionally `.clone()`d, `.to_owned()`,
+/// += v` (or `.or_default()`) with `v` a parameter (optionally `.clone()`d, `.to_owned()`,
 /// `.to_string()` or `.into()`): a constant, another field, or a function
 /// result (`SEED`, `self.base`, `five()`, `self.m = Self::defaults()`)
 /// may hold the expected value under another name. A `mut` or shadowed
@@ -1172,26 +1234,46 @@ fn method_touches_field_read_only(
 /// only when every argument is a parameter or a literal. The method and its
 /// helpers may write the field at most once, with no macro, loop or closure
 /// in any body. The test passes each parameter a literal other than
-/// `expected`. An unresolved or ambiguous
-/// method fails closed. A value summed from several such calls is not
-/// detected (#7988).
+/// `expected`. `Some` says how the method writes the field; an unresolved
+/// or ambiguous method gives `None`.
 pub(in crate::analysis) fn method_cannot_store(
     index: &RustIndex,
     impl_type: &str,
     method: &str,
     field: &str,
     expected: &str,
-) -> bool {
+) -> Option<EarlierWrite> {
     let writes = std::cell::Cell::new(0);
+    let accumulates = std::cell::Cell::new(false);
     cannot_store_within(
         index,
         impl_type,
         method,
         field,
         expected,
-        &writes,
+        (&writes, &accumulates),
         MAX_KEYED_HOPS,
     )
+    .then(|| match (writes.get(), accumulates.get()) {
+        (0, _) => EarlierWrite::Reads,
+        (_, false) => EarlierWrite::Overwrites,
+        (_, true) => EarlierWrite::Accumulates,
+    })
+}
+
+/// How a test's earlier call that [`method_cannot_store`] admits writes the
+/// map field. Each call alone leaves the key at a value other than the
+/// expected one, but an accumulating write adds to what an earlier call
+/// stored (`add("K", 2); add("K", 3)` reaches 5), so the test may make it
+/// only when no other earlier call writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum EarlierWrite {
+    /// The method only reads the field.
+    Reads,
+    /// The method overwrites one entry with a parameter (`insert(k, v)`).
+    Overwrites,
+    /// The method adds a parameter to an entry (`entry(k).or_insert(0) += v`).
+    Accumulates,
 }
 
 /// `writes` counts the field writes seen across the method and its helpers:
@@ -1203,7 +1285,7 @@ fn cannot_store_within(
     method: &str,
     field: &str,
     expected: &str,
-    writes: &std::cell::Cell<usize>,
+    (writes, accumulates): (&std::cell::Cell<usize>, &std::cell::Cell<bool>),
     hops: usize,
 ) -> bool {
     let Some(hops) = hops.checked_sub(1) else {
@@ -1303,6 +1385,7 @@ fn cannot_store_within(
                 .iter()
                 .any(|write| after.starts_with(write))
             {
+                accumulates.set(accumulates.get() || after.starts_with(".entry"));
                 writes.set(writes.get() + 1);
                 if writes.get() > 1 {
                     return false;
@@ -1321,7 +1404,15 @@ fn cannot_store_within(
                 let argument = argument.trim().trim_start_matches('&');
                 literal_value(argument).is_some() || parameter_value(argument, &parameters)
             })
-        }) && cannot_store_within(index, impl_type, name, field, expected, writes, hops)
+        }) && cannot_store_within(
+            index,
+            impl_type,
+            name,
+            field,
+            expected,
+            (writes, accumulates),
+            hops,
+        )
     })
 }
 
@@ -1330,7 +1421,8 @@ fn cannot_store_within(
 /// `.len()`, `.is_empty()`, `.insert(k, v)`, or `.entry(k).or_insert(0)
 /// += v` (`.or_default()` too), `v` a parameter as [`method_cannot_store`]
 /// describes. A nonzero `or_insert` start could sum with `v` to the expected
-/// value in one call.
+/// value in one call; [`EarlierWrite::Accumulates`] keeps two such calls
+/// from summing to it.
 fn field_write_takes_parameter(after: &str, parameters: &[String]) -> bool {
     let parameter_value = |value: &str| parameter_value(value, parameters);
     if [".get(", ".contains_key(", ".len()", ".is_empty()"]
@@ -2023,13 +2115,33 @@ mod tests {
             ));
             method_cannot_store(&index, "Shelf", "prime", "stock", expected)
         };
-        for methods in [
-            "pub fn prime(&mut self, sku: &str, qty: u32) { *self.stock.entry(sku.to_string()).or_insert(0) += qty; self.log.push(qty); }",
-            "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
-            "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
-            "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+        for (methods, write) in [
+            (
+                "pub fn prime(&mut self, sku: &str, qty: u32) { if self.stock.contains_key(sku) { return; } self.stock.insert(sku.to_string(), qty); self.log.push(qty); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, qty: u32) { self.stock.insert(\"K\".into(), qty.clone()); self.note(); }\nfn note(&mut self) { self.log.push(1); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { self.put(k, q); }\nfn put(&mut self, k: &str, v: u32) { self.stock.insert(k.into(), v); }",
+                EarlierWrite::Overwrites,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_insert(0) += q; self.log.push(q); }",
+                EarlierWrite::Accumulates,
+            ),
+            (
+                "pub fn prime(&mut self, k: &str, q: u32) { *self.stock.entry(k.into()).or_default() += q; }",
+                EarlierWrite::Accumulates,
+            ),
+            (
+                "pub fn prime(&self, k: &str) -> bool { self.stock.contains_key(k) }",
+                EarlierWrite::Reads,
+            ),
         ] {
-            assert!(cannot_store(methods, "7"), "{methods}");
+            assert_eq!(cannot_store(methods, "7"), Some(write), "{methods}");
         }
         for (methods, expected) in [
             (
@@ -2089,6 +2201,11 @@ mod tests {
                 "pub fn prime(&mut self, k: &str) { *self.stock.entry(k.into()).or_default() += self.stock.len() as u32; }",
                 "7",
             ),
+            // A value computed from parameters (#7988).
+            (
+                "pub fn prime(&mut self, k: &str, a: u32, b: u32) { self.stock.insert(k.into(), a + b); }",
+                "7",
+            ),
             // A shadowed or `mut` parameter, a helper handed a constant, and
             // a nonzero `or_insert` start summing to the expected value.
             (
@@ -2143,7 +2260,11 @@ mod tests {
             ),
             ("", "7"),
         ] {
-            assert!(!cannot_store(methods, expected), "{methods} / {expected}");
+            assert_eq!(
+                cannot_store(methods, expected),
+                None,
+                "{methods} / {expected}"
+            );
         }
     }
 
@@ -2161,6 +2282,58 @@ mod tests {
     }
 
     /// RIPR-SPEC-0228 keyed reads: two modules declaring the same type name
+    /// A bare collection name counts as std only when imported from
+    /// `std::collections` and not reused by a local item, alias or generic.
+    #[test]
+    fn constructor_starts_empty_requires_a_std_collection_type() {
+        let starts_empty = |prelude: &str, generics: &str, ty: &str| {
+            let index = source_index(&format!(
+                "{prelude}\n#[derive(Default)]\npub struct Shelf{generics} {{ stock: {ty} }}\n"
+            ));
+            constructor_starts_empty(&index, "Shelf", "default", "stock")
+        };
+        let map = "BTreeMap<String, u32>";
+        assert!(starts_empty("use std::collections::BTreeMap;", "", map));
+        assert!(starts_empty(
+            "use std::collections::{BTreeMap, HashSet};",
+            "",
+            map
+        ));
+        assert!(starts_empty(
+            "",
+            "",
+            "std::collections::BTreeMap<String, u32>"
+        ));
+        assert!(starts_empty(
+            "",
+            "",
+            "::std::collections::HashMap<String, u32>"
+        ));
+        for (prelude, generics) in [
+            ("", ""),
+            (
+                "use seeded::BTreeMap;\nmod seeded { pub struct BTreeMap<K, V>(K, V); }",
+                "",
+            ),
+            (
+                "use std::collections::BTreeMap;\nmod seeded { pub struct BTreeMap; }",
+                "",
+            ),
+            ("use std::collections::HashMap as BTreeMap;", ""),
+            (
+                "use std::collections::BTreeMap;\ntype BTreeMap<K, V> = Vec<(K, V)>;",
+                "",
+            ),
+            ("use std::collections::BTreeMap;", "<BTreeMap>"),
+            ("use std::collections::*;", ""),
+        ] {
+            assert!(
+                !starts_empty(prelude, generics, map),
+                "{prelude} / {generics}"
+            );
+        }
+    }
+
     /// make bare-name method resolution unsafe.
     #[test]
     fn constructor_starts_empty_refuses_a_type_name_declared_twice() {
