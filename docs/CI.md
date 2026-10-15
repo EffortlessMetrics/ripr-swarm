@@ -631,7 +631,7 @@ What this means for authors and agents:
 UB retains early review on `opened`, `synchronize`, and `reopened`, including
 Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
 cancels active UB review nor repeats completed advisory work. Its existing
-trust/title/release guards and concurrency remain unchanged. Automatic Droid PR
+same-repository guard and concurrency remain unchanged. Automatic Droid PR
 review is retired under #5086; manual `@droid` commands and scheduled security
 scans retain their separate triggers and safeguards. UB explicitly lists all
 three early passes in
