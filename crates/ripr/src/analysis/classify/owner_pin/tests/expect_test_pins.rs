@@ -1,7 +1,9 @@
 //! #6578: an inline expect-test comparison,
 //! `expect![["text"]].assert_eq(&owner(..))`, pins the owner's return as
 //! `assert_eq!(owner(..), "text")` does, behind a manifest-verified
-//! `use expect_test::expect;`. Every other expect-test spelling stays a
+//! `use expect_test::expect;`; a golden-file
+//! `expect_file!["path"].assert_eq(&owner(..))` pins behind a verified
+//! `use expect_test::expect_file;`. Every other expect-test spelling stays a
 //! `snapshot` / medium oracle (RIPR-SPEC-0231 step 6).
 
 use super::*;
@@ -54,10 +56,15 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
         "expect![[\"w12\"]].assert_eq(&render(4));",
     );
     let grouped = render_admitted(&grouped, Some(&plain)).len();
-    for body in [
-        "expect![[\"w12\"]].assert_eq(&render(4));",
-        "expect![\"w12\"].assert_eq(&render(4));",
-        "expect![[\"w12\"]].assert_eq(render(4).as_ref());",
+    for (import, body) in [
+        (import, "expect![[\"w12\"]].assert_eq(&render(4));"),
+        (import, "expect![\"w12\"].assert_eq(&render(4));"),
+        (import, "expect![[\"w12\"]].assert_eq(render(4).as_ref());"),
+        // #6578: the golden-file comparison pins the same way.
+        (
+            "use expect_test::expect_file;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
     ] {
         let tests = render_test(import, body);
         outcomes.push((
@@ -73,9 +80,24 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
         (import, "expect![[\"w12\"]].assert_debug_eq(&render(4));"),
         (
             "use expect_test::expect_file;",
-            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
         ),
         ("", "expect_test::expect![[\"w12\"]].assert_eq(&render(4));"),
+        ("", "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));"),
+        // A computed or non-literal file path.
+        (
+            "use expect_test::expect_file;",
+            "expect_file![concat!(\"w\", \".txt\")].assert_eq(&render(4));",
+        ),
+        (
+            "use expect_test::expect_file;",
+            "expect_file![[\"w.txt\"]].assert_eq(&render(4));",
+        ),
+        // `expect_file!` imported from somewhere else.
+        (
+            "use other::expect_file;",
+            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
         // A computed expectation, or none of the owner's value.
         (
             import,
@@ -143,11 +165,21 @@ fn inline_expect_operands_reads_one_literal_and_one_argument() {
         operands("expect![[]].assert_eq(&render(4));"),
         pair("render(4)", "\"\"")
     );
+    // A golden file's operand is its path literal, standing in for the
+    // committed text.
+    assert_eq!(
+        operands("expect_file![\"w.txt\"].assert_eq(&render(4));"),
+        pair("render(4)", "\"w.txt\"")
+    );
     for text in [
         "expect![[\"w12\"]].assert_debug_eq(&render(4));",
         "expect![[\"w12\"]].assert_eq::<str>(&render(4));",
         "expect_test::expect![[\"w12\"]].assert_eq(&render(4));",
-        "expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
+        "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
+        "expect_file![[\"w.txt\"]].assert_eq(&render(4));",
+        "expect_file![w_txt].assert_eq(&render(4));",
+        "expect_file![\"w\", \"txt\"].assert_eq(&render(4));",
         "expect![[w12]].assert_eq(&render(4));",
         "expect![[\"w\", \"12\"]].assert_eq(&render(4));",
         "expect![[\"w12\"]].assert_eq(&mut render(4));",

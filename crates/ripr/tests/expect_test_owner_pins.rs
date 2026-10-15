@@ -1,8 +1,10 @@
-//! Public-API controls for inline expect-test owner pins (#6578, #7856
-//! review): an `expect![..].assert_eq(&owner(..))` comparison behind a
+//! Public-API controls for expect-test owner pins (#6578, #7856 review):
+//! an `expect![..].assert_eq(&owner(..))` comparison behind a
 //! manifest-verified `use expect_test::expect;` pins the owner's return in
-//! every spelling the parser accepts, and every other expect-test or
-//! snapshot shape keeps its medium snapshot grade. Each case writes a small
+//! every spelling the parser accepts, as does a golden-file
+//! `expect_file!["path"].assert_eq(&owner(..))` behind a verified
+//! `use expect_test::expect_file;`, and every other expect-test or snapshot
+//! shape keeps its medium snapshot grade. Each case writes a small
 //! crate, changes the owner's `format!` tail, and reads the return-value
 //! finding through `check_workspace`.
 
@@ -150,7 +152,7 @@ fn other_expect_test_and_snapshot_shapes_keep_their_medium_grade() -> Result<(),
             "",
             "let _ok = render(1).is_empty() || { expect![[\"w12\"]].assert_eq(&render(4)); true };",
         ),
-        // The Debug comparison, a file expectation and an insta snapshot.
+        // The Debug comparisons and an insta snapshot.
         (
             EXPECT_TEST,
             IMPORT,
@@ -159,9 +161,9 @@ fn other_expect_test_and_snapshot_shapes_keep_their_medium_grade() -> Result<(),
         ),
         (
             EXPECT_TEST,
-            "use expect_test::expect_file;",
+            FILE_IMPORT,
             "",
-            "expect_file![\"w.txt\"].assert_eq(&render(4));",
+            "expect_file![\"w.txt\"].assert_debug_eq(&render(4));",
         ),
         (
             INSTA,
@@ -180,6 +182,73 @@ fn other_expect_test_and_snapshot_shapes_keep_their_medium_grade() -> Result<(),
         };
         assert_eq!(
             finding["classification"], expected,
+            "{imports} {attributes}{test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+const FILE_IMPORT: &str = "use expect_test::expect_file;";
+const GOLDEN: &str = "expect_file![\"w.txt\"].assert_eq(&render(4));";
+
+/// #6578: `ExpectFile::assert_eq` compares the actual text with the whole
+/// committed file and panics on a mismatch, so a verified golden-file
+/// comparison pins the owner's return as the inline one does. The file is
+/// never read; whatever it holds, a changed return fails the comparison.
+#[test]
+fn a_verified_golden_file_comparison_pins_the_owner() -> Result<(), String> {
+    for (imports, test) in [
+        (FILE_IMPORT, GOLDEN),
+        ("use expect_test::{expect, expect_file};", GOLDEN),
+        (FILE_IMPORT, "expect_file![\"w.txt\"]\n        .assert_eq(&render(4));"),
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(finding["classification"], "exposed", "{imports} {test}: {finding}");
+    }
+    for (dev, imports, attributes, test) in [
+        // No manifest dependency verifies the import.
+        ("", FILE_IMPORT, "", GOLDEN),
+        // A renamed package behind the `expect_test` name.
+        (
+            "[dev-dependencies]\nexpect-test = { package = \"fake-expect\", version = \"1\" }\n",
+            FILE_IMPORT,
+            "",
+            GOLDEN,
+        ),
+        // Some other crate's `expect_file!`.
+        (
+            "[dev-dependencies]\nexpect-test = \"1\"\nother = \"1\"\n",
+            "use other::expect_file;",
+            "",
+            GOLDEN,
+        ),
+        // A path-qualified macro without the verified import.
+        (
+            EXPECT_TEST,
+            "",
+            "",
+            "expect_test::expect_file![\"w.txt\"].assert_eq(&render(4));",
+        ),
+        // A test-file macro shadows the import.
+        (
+            EXPECT_TEST,
+            "use expect_test::expect_file;\nmacro_rules! expect_file { ($($t:tt)*) => { expect_test::expect_file!($($t)*) }; }",
+            "",
+            GOLDEN,
+        ),
+        // A test that passes by panicking.
+        (EXPECT_TEST, FILE_IMPORT, "#[should_panic]\n", GOLDEN),
+        // A computed path.
+        (
+            EXPECT_TEST,
+            FILE_IMPORT,
+            "",
+            "expect_file![concat!(\"w\", \".txt\")].assert_eq(&render(4));",
+        ),
+    ] {
+        let finding = render_finding(OLD, NEW, dev, imports, attributes, test)?;
+        assert_eq!(
+            finding["classification"], "weakly_exposed",
             "{imports} {attributes}{test}: {finding}"
         );
     }

@@ -381,9 +381,11 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "debug_assert_ne",
     "eprint",
     "eprintln",
-    // expect-test's `expect!` builds a value and cannot return; only its
-    // manifest-verified `use expect_test::expect` import keeps it trusted.
+    // expect-test's `expect!` and `expect_file!` build a value and cannot
+    // return; only a manifest-verified `use expect_test::{expect,
+    // expect_file}` import keeps either trusted.
     "expect",
+    "expect_file",
     "file",
     "format",
     "format_args",
@@ -829,15 +831,15 @@ fn macro_binding_ambiguities(
 /// the assertion's meaning. Renaming one onto another trusted name does not.
 const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 
-/// #6578: `expect_test` exports `expect!`, which only builds an `Expect`
-/// value; importing it under its own name is the one binding that makes a
-/// bare `expect!` expect-test's.
+/// #6578: `expect_test` exports `expect!` and `expect_file!`, which only
+/// build an `Expect` / `ExpectFile` value; importing one under its own name
+/// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     let crates = match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
-        "expect" => EXPECT_TEST_CRATES,
+        "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
         _ => return false,
     };
@@ -1253,16 +1255,20 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 .push(call.syntax().clone());
         }
         // #6578: an inline expect-test comparison
-        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) is
-        // a method call on the bare `expect!` value; the classify side
-        // decides which spelling pins.
+        // (`expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`) or
+        // golden-file one (`expect_file!["out.txt"].assert_eq(..)`) is a
+        // method call on the bare macro's value; the classify side decides
+        // which spelling pins.
         for call in function
             .syntax()
             .descendants()
             .filter_map(ast::MethodCallExpr::cast)
         {
             if !is_expect_test_comparison(&call)
-                || expect_test_receiver(&call).as_deref() != Some("expect")
+                || !matches!(
+                    expect_test_receiver(&call).as_deref(),
+                    Some("expect" | "expect_file")
+                )
                 || call
                     .name_ref()
                     .is_none_or(|name| name.text() != "assert_eq")

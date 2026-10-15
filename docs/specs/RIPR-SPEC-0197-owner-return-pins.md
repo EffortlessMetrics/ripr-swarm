@@ -1400,9 +1400,38 @@ call grades as the canonical spelling does. A weaker reading of the compared
 value (a tautology, a broad `is_err()`) is kept.
 The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
 bool-owner pin, only its probe-relative strength rises once the pin admits
-it. `assert_debug_eq` (which compares the `Debug` text), `expect_file!`, a
-qualified `expect_test::expect!`, and every `insta` macro stay
-`snapshot` / medium.
+it. `assert_debug_eq` (which compares the `Debug` text), a qualified
+`expect_test::expect!` or `expect_test::expect_file!`, and every `insta`
+macro stay `snapshot` / medium.
+
+### Golden-file expect-test comparisons (#6578)
+
+`expect_file!["path"].assert_eq(&owner(..))` pins as the inline comparison
+does. `ExpectFile::assert_eq` reads the committed file (CRLF as LF; a missing
+file as the empty text), compares it with the actual text, and panics on a
+mismatch unless `UPDATE_EXPECT` is set, the same escape the inline form has.
+The rules above apply with three differences:
+
+1. The macro's one argument is a single string literal naming the file. A
+   computed path (`concat!(..)`, a binding) or the inline form's double
+   brackets refuses.
+2. The bare `expect_file!` must be expect-test's under rule 2: its file
+   imports `use expect_test::expect_file;` (alone or grouped) under its own
+   name, verified against the manifest, and nothing else binds
+   `expect_file`. In an owner body it stays an unknown macro.
+3. The file is never read. The pin needs only that the compared text is
+   fixed by the commit; its content does not decide whether a changed
+   return fails. So the expected side is a stand-in that only a return-path
+   gate admitting any value of the owner's type accepts; a gate that checks
+   the expected value (an exact bool, a constructor head, a whole-value
+   field literal) refuses it.
+
+Rejected: reading the golden file into the expected literal. The seam cache
+keys on Rust sources, so a golden edit would not invalidate the reading, and
+no gate the stand-in passes depends on the text. Rejected: keeping
+`expect_file!` at `snapshot` / medium. It compares the whole value exactly,
+as the inline form does; the corpus row
+`lib-expect-test-expect-file-golden` kills both mutants at runtime.
 
 ### Short-circuit tails (#7969)
 

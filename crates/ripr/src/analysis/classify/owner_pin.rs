@@ -4173,11 +4173,11 @@ fn assertion_context_macros() -> Vec<&'static str> {
 }
 
 /// Trusted names whose trust is the test-side binding scan's alone (#6578).
-/// `expect!` is no `std` macro: outside a test that verifies
-/// `use expect_test::expect;`, a bare `expect!` is a crate's own (a try-style
-/// `expect!(x)` may hide a `return`), so owner bodies and binding reads never
-/// count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect"];
+/// `expect!` and `expect_file!` are no `std` macros: outside a test that
+/// verifies `use expect_test::{expect, expect_file};`, a bare one is a
+/// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
+/// bodies and binding reads never count it as bounded.
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -5887,8 +5887,16 @@ fn is_admission_gated_assert_eq(text: &str) -> bool {
 /// lines) and panics on a mismatch unless `UPDATE_EXPECT` is set. Only the
 /// bare `expect!` with one string literal (or none, the empty expectation)
 /// and one argument; a single leading `&` borrows the actual value and is
-/// dropped. `assert_debug_eq`, `expect_file!` and a qualified
-/// `expect_test::expect!` stay `snapshot` / medium (RIPR-SPEC-0231 step 6).
+/// dropped. `assert_debug_eq` and a qualified `expect_test::expect!` stay
+/// `snapshot` / medium (RIPR-SPEC-0231 step 6).
+///
+/// `expect_file!["path"].assert_eq(actual)` compares `actual` with the
+/// committed file's whole text (CRLF read as LF; a missing file reads as
+/// "") and panics on a mismatch the same way, so it pins too. Its file is
+/// not read: the second operand is the path literal, standing in for a
+/// fixed text the analyzer does not inspect. Only a path gate that admits
+/// any value of the owner's type (`ReturnPathGate::Any` and the like)
+/// accepts that stand-in; a gate that checks the expected value refuses it.
 pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String; 2]> {
     let statement = text.trim().trim_end_matches(';').trim_end();
     let parse = parse_clean_source_file(&format!("fn ripr_expect() {{ {statement}; }}"))?;
@@ -5915,9 +5923,14 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         return None;
     };
     let receiver = receiver.macro_call()?;
-    if receiver.excl_token().is_none() || receiver.path()?.syntax().text() != "expect" {
+    if receiver.excl_token().is_none() {
         return None;
     }
+    let golden_file = match receiver.path()?.syntax().text().to_string().as_str() {
+        "expect" => false,
+        "expect_file" => true,
+        _ => return None,
+    };
     let tokens: Vec<_> = receiver
         .token_tree()?
         .syntax()
@@ -5928,6 +5941,14 @@ pub(in crate::analysis) fn inline_expect_operands(text: &str) -> Option<[String;
         .collect();
     let texts: Vec<&str> = tokens.iter().map(|(_, text)| text.as_str()).collect();
     let literal = match texts.as_slice() {
+        // `expect_file!["path"]`: one string literal naming the file.
+        ["[", path, "]"] if golden_file => {
+            if tokens[1].0 != ra_ap_syntax::SyntaxKind::STRING {
+                return None;
+            }
+            (*path).to_string()
+        }
+        _ if golden_file => return None,
         ["[", "[", _, "]", "]"] | ["[", _, "]"] => {
             let (kind, text) = &tokens[tokens.len() / 2];
             // expect-test trims a multi-line literal's indentation before
