@@ -798,8 +798,10 @@ fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
 /// - exactly one arm stays quiet: an unguarded `Err(<unit variant path>)`
 ///   whose body is trivial (`{}`), so the pin is the arm's selection
 ///   itself;
-/// - every other arm (Ok, Err and catch-all alike) terminates under
-///   [`arm_terminates`], so no second result can end the test quietly;
+/// - every other arm (Ok, Err and catch-all alike) fails on every value it
+///   matches ([`arm_fails_unconditionally`]: the [`arm_terminates`] grammar
+///   without the body-predicate `if` form, whose pin-hit path is quiet),
+///   so no second result can end the test quietly;
 /// - at least one Ok or catch-all arm exists, as for every guarded match.
 ///
 /// A second quiet arm, a guard on the accept arm, a binding or wildcard
@@ -811,7 +813,7 @@ fn accepted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
         .err_patterns
         .iter()
         .zip(shape.err_bodies.iter())
-        .filter(|(_, body)| !arm_terminates(body));
+        .filter(|(_, body)| !arm_fails_unconditionally(body));
     let (pattern, body) = quiet_err.next()?;
     if quiet_err.next().is_some() || !arm_body_is_trivial(body) {
         return None;
@@ -832,7 +834,7 @@ fn accepted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
         .ok_bodies
         .iter()
         .chain(shape.catch_all_bodies.iter())
-        .all(|body| arm_terminates(body));
+        .all(|body| arm_fails_unconditionally(body));
     others_terminate.then(|| pin.to_string())
 }
 
@@ -1107,6 +1109,15 @@ fn arm_terminates(body: &str) -> bool {
     first_control_transfer_diverges(body) == Some(true)
 }
 
+/// Whether an arm fails on every value it matches: [`arm_terminates`]
+/// without the body-predicate `if` form, whose pin-hit path ends the arm
+/// quietly. The accepted-Err form needs this of every other arm, because
+/// only the accept arm's own pattern may let the test pass.
+fn arm_fails_unconditionally(body: &str) -> bool {
+    first_control_transfer_statement(body)
+        .is_some_and(|statement| statement_diverges_with(statement, false))
+}
+
 /// The in-order walk behind [`arm_terminates`]: `Some(diverges)` is the
 /// disposition of the body's FIRST control transfer; `None` when control
 /// can reach the arm's end (no transfer at all — non-terminal).
@@ -1198,6 +1209,13 @@ fn top_level_statements(body: &str) -> Vec<&str> {
 /// Whether one (masked) top-level statement is UNCONDITIONALLY diverging
 /// under the bounded grammar documented on [`arm_terminates`].
 fn statement_diverges(statement: &str) -> bool {
+    statement_diverges_with(statement, true)
+}
+
+/// [`statement_diverges`] with the body-predicate `if` form admitted only
+/// when `admit_pinned_if` holds. That form fails only when its pin misses,
+/// so it is loud for the arm its pin describes and quiet otherwise.
+fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
     let statement = statement.trim();
     // A segment wrapped in one balanced brace pair — the brace-wrapped arm
     // body block, or a bare nested block statement — diverges exactly when
@@ -1211,7 +1229,7 @@ fn statement_diverges(statement: &str) -> bool {
     {
         return top_level_statements(inner)
             .iter()
-            .any(|nested| statement_diverges(nested));
+            .any(|nested| statement_diverges_with(nested, admit_pinned_if));
     }
     let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
     if statement.is_empty() {
@@ -1252,7 +1270,7 @@ fn statement_diverges(statement: &str) -> bool {
     }
     // The body-predicate failure form: the if statement IS the
     // discriminator (diverge exactly when the error misses the pin).
-    if_statement_diverges(statement)
+    admit_pinned_if && if_statement_diverges(statement)
 }
 
 /// Whether `statement` is exactly `<name>(<nonzero integer literal>)` —
@@ -5069,6 +5087,11 @@ mod accepted_err_arm_tests {
             "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => log(\"fine\"),\n        Err(other) => panic!(\"{other:?}\"),",
             // A catch-all whose failure is conditional can return quietly.
             "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => { if strict { panic!(\"{other:?}\"); } }",
+            // A pinned-predicate arm is quiet when its own pin hits: a
+            // `Limit` error or an `Ok(Balance::Empty)` would pass the test.
+            "        Ok(_) => panic!(\"ok\"),\n        Err(PayError::Insufficient) => {}\n        Err(other) => if !matches!(other, PayError::Limit) { panic!(\"{other:?}\") },",
+            "        Ok(state) => { if state != Balance::Empty { panic!(\"ok\"); } }\n        Err(PayError::Insufficient) => {}\n        Err(other) => panic!(\"{other:?}\"),",
+            "        Err(PayError::Insufficient) => {}\n        other => { if !matches!(other, Err(PayError::Limit)) { panic!(\"{other:?}\"); } }",
         ] {
             assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
         }

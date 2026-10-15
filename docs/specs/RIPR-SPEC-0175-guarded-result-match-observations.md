@@ -239,9 +239,14 @@ the #13162 `expect_response` comparison shape.
   ```
 
   Every condition is required. Exactly one arm stays quiet: an unguarded
-  `Err(<unit variant path>)` arm whose body is trivial (`{}`). Every other
-  arm, whether Ok, Err or catch-all, terminates under the divergence
-  grammar above. Because the compiler's exhaustiveness check routes every
+  `Err(<unit variant path>)` arm whose body is trivial (`{}`). The variant
+  path must be qualified (`Type::Variant`); a bare imported
+  `Err(Insufficient)` could be a binding and is refused. Every other arm,
+  whether Ok, Err or catch-all, fails on every value it matches: it
+  terminates under the divergence grammar above, but the body-predicate
+  `if` form does not count, because that form ends quietly whenever its own
+  pin hits (`Err(other) => if !matches!(other, PayError::Limit) { panic!(..) }`
+  lets a `Limit` error pass). Because the compiler's exhaustiveness check routes every
   other result to one of those loud arms, the test passes exactly when the
   owner returns that error. A second quiet arm, a quiet Ok or catch-all
   arm, a guard on the accept arm (that belongs to the routing form), a
@@ -548,17 +553,20 @@ the #13162 `expect_response` comparison shape.
   line.
 - Reject (accepted-Err form): the same match with a quiet Ok arm, a second
   quiet `Err(PayError::Limit) => {}` arm, a quiet catch-all, a guarded or
-  payload accept arm, or a conditional `panic!` in the `Err(other)` arm. The
-  same match whose quiet arm pins the sibling `Err(PayError::Frozen)` does not
-  credit the changed `Insufficient` line.
+  payload accept arm, a conditional `panic!` in the `Err(other)` arm, or a
+  pinned-predicate `if` in any other arm. The same match whose quiet arm pins
+  the sibling `Err(PayError::Frozen)` does not credit the changed
+  `Insufficient` line: its fact text has the same shape as every other
+  guarded-match pin, so the sibling refusal that
+  `fixtures/guarded_result_match_sibling_variant` pins applies unchanged.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests`
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::accepted_err_arm_tests`
   (accepted-Err form positives, and the quiet-Ok, second-quiet-arm,
-  quiet catch-all, binding, wildcard, guard, payload, acting-body and
-  conditional-failure negatives)
+  quiet catch-all, binding, wildcard, guard, payload, acting-body,
+  conditional-failure and pinned-predicate negatives)
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests`
   (#6673 asserted-Err form, positives and the quiet-Ok, catch-all, guard,
   other-value, `assert_ne!`, multi-statement, alternation and payload
