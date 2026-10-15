@@ -27,14 +27,19 @@ mod transitive_reach;
 mod value_transfer;
 
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, comparison_operands,
-    computed_input_parameters, literal_operand_value, local_boundary, signature_parameters,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
-pub(in crate::analysis) use builder_override::{getter_plainly_reads, setter_plainly_writes};
+pub(in crate::analysis) use builder_override::{
+    constructor_starts_empty, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, method_cannot_store, owner_touches_field_only_at, parameter_rebound,
+    setter_plainly_writes,
+};
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
@@ -85,6 +90,7 @@ pub(in crate::analysis) use related_tests::{
     owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
+pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,

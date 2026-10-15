@@ -168,3 +168,5 @@ tools/repo-policy/tests/native_admission.rs|Command::new|1|native-admission-proo
 
 tools/repo-policy/tests/printed_command_admission.rs|use std::process::Command|1|printed-command-admission-proof|#4987: test-only bounded Bash replay of the literal workflow source guard and payload with Git/Cargo functions; no product execution or network.
 tools/repo-policy/tests/printed_command_admission.rs|Command::new|1|printed-command-admission-proof|#4987: GNU timeout limits each isolated Bash replay to ten seconds; stub immutable Git reads and native Cargo exit status exercise event, identity and failure controls.
+
+tools/repo-policy/tests/ci_leaf_contract.rs|Command::new|1|ci-leaf-contract|#4987: GNU timeout bounds literal workflow Bash predicates, source/result guards and stubbed payload commands; no product build, network, publication or production spawn.

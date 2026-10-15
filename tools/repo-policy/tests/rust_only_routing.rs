@@ -349,12 +349,14 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
             .lines()
             .any(|line| line == "          fetch-depth: 0")
     );
-    assert!(detector.lines().any(|line| line == "    if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)"));
     assert!(
-        !detector
-            .lines()
-            .any(|line| line.trim_start().starts_with("ref:")),
-        "checkout retains the synthetic integration commit"
+        detector
+            .contains("    needs: source-identity\n    if: >-\n      always() && !cancelled() &&")
+    );
+    assert!(detector.contains("(!contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)))"));
+    assert!(
+        detector.contains("          ref: ${{ inputs.subject_sha || github.sha }}"),
+        "legacy checkout retains the event integration commit; calls use the admitted subject"
     );
     verify_guarded_rust_only_steps(detector)?;
     Ok(())
