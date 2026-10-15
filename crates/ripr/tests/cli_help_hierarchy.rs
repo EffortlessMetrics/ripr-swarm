@@ -8,10 +8,170 @@ mod help_contract;
 use help_contract::{assert_contains, normalized, undocumented_doc_flags};
 
 fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(args)
+    run_ripr_in(args, None)
+}
+
+fn run_ripr_in(
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.args(args);
+    if let Some(root) = root {
+        command.current_dir(root);
+    }
+    command
         .output()
         .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+const BARE_HELP_GROUPS: &[&str] = &[
+    "cache",
+    "baseline",
+    "policy",
+    "reports",
+    "calibrate",
+    "zero",
+    "assistant-loop",
+    "config",
+    "pr-ledger",
+    "pr-review",
+    "coverage-grip",
+    "gate",
+];
+
+fn in_help_workspace(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let parent = std::env::temp_dir();
+    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    let root = parent.join(format!("ripr-group-help-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    // Help must neither load configuration nor write reports, even in a
+    // workspace where an executing command would reject the configuration.
+    let config = "deliberately invalid TOML [";
+    std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
+    let result = test(&root).and_then(|()| {
+        let entries = std::fs::read_dir(&root).map_err(|error| error.to_string())?;
+        let entries = entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let actual =
+            std::fs::read_to_string(root.join("ripr.toml")).map_err(|error| error.to_string())?;
+        if entries.len() != 1 || actual != config {
+            return Err(format!("group help changed workspace contents: {root:?}"));
+        }
+        Ok(())
+    });
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
+}
+
+#[test]
+fn bare_groups_display_their_documented_help() -> Result<(), String> {
+    in_help_workspace(|root| {
+        let discovery = run_ripr_in(&["help", "--json"], Some(root))?;
+        if !discovery.status.success() || !discovery.stderr.is_empty() {
+            return Err(format!("machine discovery failed: {discovery:?}"));
+        }
+        let document: serde_json::Value =
+            serde_json::from_slice(&discovery.stdout).map_err(|error| error.to_string())?;
+        let rows = document["commands"]
+            .as_array()
+            .ok_or("missing command inventory")?;
+        let mut failures = Vec::new();
+        for &group in BARE_HELP_GROUPS {
+            let row = rows
+                .iter()
+                .find(|row| row["path"] == group)
+                .ok_or_else(|| format!("missing {group} discovery row"))?;
+            assert_eq!(row["example"], format!("ripr {group}"));
+            let help = run_ripr_in(&["help", group], Some(root))?;
+            if !help.status.success()
+                || !help.stderr.is_empty()
+                || !String::from_utf8_lossy(&help.stdout).contains("Usage:")
+            {
+                return Err(format!("invalid reference help for {group}: {help:?}"));
+            }
+            let bare = run_ripr_in(&[group], Some(root))?;
+            let flag = run_ripr_in(&[group, "--help"], Some(root))?;
+            for (spelling, output) in [("bare", bare), ("--help", flag)] {
+                if output.status.code() != Some(0)
+                    || !output.stderr.is_empty()
+                    || output.stdout != help.stdout
+                {
+                    failures.push(format!(
+                        "{group} ({spelling}) differs from group help: {output:?}"
+                    ));
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
+    })
+}
+
+#[test]
+fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), String> {
+    in_help_workspace(|root| {
+        for &group in BARE_HELP_GROUPS {
+            let output = run_ripr_in(&[group, "bogus"], Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{group}: {output:?}");
+            assert!(output.stdout.is_empty(), "{group}: {output:?}");
+            assert_contains(
+                group,
+                &String::from_utf8_lossy(&output.stderr),
+                &format!("unknown {group} subcommand"),
+            )?;
+        }
+        for (args, error) in [
+            (["zero", "status"], "zero status requires --delta"),
+            (
+                ["pr-ledger", "record"],
+                "pr-ledger record requires at least one",
+            ),
+            (
+                ["pr-review", "front-panel"],
+                "pr-review front-panel requires at least one",
+            ),
+            (
+                ["coverage-grip", "frontier"],
+                "coverage-grip frontier requires at least one",
+            ),
+            (["gate", "evaluate"], "gate evaluate requires at least one"),
+            (
+                ["calibrate", "cargo-mutants"],
+                "calibrate cargo-mutants requires --mutants-json",
+            ),
+            (
+                ["assistant-loop", "proof"],
+                "assistant-loop proof requires at least one",
+            ),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
+        }
+        let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
+        let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
+        assert_eq!(alias.status.code(), Some(2));
+        assert!(alias.stdout.is_empty());
+        assert_eq!(alias.stderr, explicit.stderr);
+        assert_contains(
+            "gate flag alias",
+            &String::from_utf8_lossy(&alias.stderr),
+            "missing value for --pr-guidance",
+        )?;
+        Ok(())
+    })
 }
 
 fn rendered_help(args: &[&str]) -> Result<String, String> {
