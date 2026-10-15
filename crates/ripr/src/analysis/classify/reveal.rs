@@ -85,6 +85,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// owner (`s.place("A", 0);`) may have returned before its insert, so
     /// only a call whose result is consumed confirms a keyed read.
     pub(in crate::analysis) owner_returns_value: bool,
+    /// #8051: whether the owner body before the changed line may leave
+    /// early (`if self.locked { return; }`, `?`, a panicking call). Only
+    /// then can a test that expects the written collection empty have
+    /// skipped the changed push.
+    pub(in crate::analysis) owner_may_exit_before_probe: bool,
     /// RIPR-SPEC-0228 keyed reads: whether `(type, ctor, field)`, the
     /// constructor a test builds its binding with, leaves that map field
     /// empty (`builder_override::constructor_starts_empty`).
@@ -124,6 +129,7 @@ fn reveal_evidence(
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
             owner_returns_value: true,
+            owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
         },
@@ -1788,17 +1794,21 @@ fn analyze_related_assertions(
                         (return_admission.expected_operand_value)(test, operand)
                     })
                 });
-            // #8051: a test that passes expecting the written collection
-            // empty never ran the owner's push on that path, so it cannot
-            // tell a deleted or changed push from a kept one either.
-            let self_computed = self_computed
-                || (matched
-                    && is_effect_family(&probe.family)
-                    && (field_write.is_some()
-                        || direct_collection_mutation_receiver(&probe.expression).is_some())
-                    && super::propagation_witness::assertion_expects_empty_collection(
-                        &assertion.text,
-                    ));
+            // #8051: when the owner may leave before its push, a test that
+            // passes expecting the written collection empty took that exit,
+            // so it cannot tell a deleted or changed push from a kept one.
+            // Without an earlier exit the push ran, and a test that empties
+            // the collection again (`add(1); remove(1)`) can still catch a
+            // changed argument, so the assertion keeps its strength. Like a
+            // self-computed expected value, it then neither confirms
+            // observation nor pins the owner.
+            let empty_after_skipped_push = matched
+                && return_admission.owner_may_exit_before_probe
+                && is_effect_family(&probe.family)
+                && (field_write.is_some()
+                    || direct_collection_mutation_receiver(&probe.expression).is_some())
+                && super::propagation_witness::assertion_expects_empty_collection(&assertion.text);
+            let self_computed = self_computed || empty_after_skipped_push;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -4581,6 +4591,7 @@ mod tests {
             },
             owner_argument_names: &[],
             owner_returns_value: true,
+            owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
         };
@@ -5214,6 +5225,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -5317,6 +5329,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -5677,6 +5690,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -5756,6 +5770,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7408,6 +7423,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7472,6 +7488,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7507,6 +7524,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7561,6 +7579,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7617,6 +7636,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7798,6 +7818,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -7836,6 +7857,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8233,6 +8255,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -8517,6 +8540,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -8616,6 +8640,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
                 },
@@ -8658,6 +8683,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -9018,6 +9044,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },
@@ -9336,6 +9363,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
             },

@@ -1352,9 +1352,7 @@ pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -
     if let Some(at) = text.find("assert_eq!") {
         let operands = super::reveal::macro_arguments(&text[at + "assert_eq!".len()..]);
         let empty = |operand: &str| {
-            let operand = operand.trim().trim_start_matches('&').trim();
-            matches!(operand, "vec![]" | "Vec::new()" | "[]")
-                || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+            is_empty_collection_literal(operand.trim().trim_start_matches('&').trim())
         };
         let zero_len =
             |pair: [&str; 2]| pair[0].trim().ends_with(".len()") && pair[1].trim() == "0";
@@ -1375,8 +1373,38 @@ pub(in crate::analysis) fn assertion_expects_empty_collection(assertion: &str) -
             !condition.starts_with('!')
                 && condition
                     .strip_suffix(".is_empty()")
-                    .is_some_and(|receiver| !receiver.contains(['&', '|', '!', '=', '<', '>']))
+                    .is_some_and(|receiver| !receiver.contains(['&', '|', '=', '<', '>']))
         })
+}
+
+/// An empty `Vec` or slice literal: `vec![]`, `Vec::new()`,
+/// `Vec::<T>::new()`, `[]`.
+fn is_empty_collection_literal(operand: &str) -> bool {
+    matches!(operand, "vec![]" | "Vec::new()" | "[]")
+        || (operand.starts_with("Vec::<") && operand.ends_with(">::new()"))
+}
+
+/// #8051: whether the owner whose source text `owner_body` starts at file
+/// line `owner_start_line` may leave before file line `line` (see
+/// [`may_exit_early`]).
+pub(in crate::analysis) fn owner_may_exit_before_line(
+    owner_body: &str,
+    owner_start_line: usize,
+    line: usize,
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(owner_body);
+    let Some(lines_before) = line.checked_sub(owner_start_line) else {
+        return false;
+    };
+    let line_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    masked
+        .find('{')
+        .filter(|open| *open < line_at)
+        .is_some_and(|open| may_exit_early(&masked[open..line_at]))
 }
 
 fn is_default_like(operand: &str) -> bool {
@@ -1388,10 +1416,9 @@ fn is_default_like(operand: &str) -> bool {
     if operand.ends_with("::MIN") || operand.ends_with("::ZERO") {
         return true;
     }
-    if matches!(
-        operand,
-        "false" | "None" | "\"\"" | "String::new()" | "Vec::new()" | "vec![]" | "[]"
-    ) || operand.ends_with("default()")
+    if matches!(operand, "false" | "None" | "\"\"" | "String::new()")
+        || is_empty_collection_literal(operand)
+        || operand.ends_with("default()")
     {
         return true;
     }
@@ -3251,6 +3278,7 @@ mod tests {
             "assert_eq!(p.count, 0);",
             "assert!(!p.log.is_empty());",
             "assert!(p.log.is_empty() || p.locked);",
+            "assert!(p.locked || p.log.is_empty());",
             "assert_ne!(p.log, vec![]);",
             "assert!(p.log == vec![Entry::Beat { n: 1 }]);",
         ] {
@@ -3259,6 +3287,20 @@ mod tests {
                 "{assertion}"
             );
         }
+    }
+
+    #[test]
+    fn owner_may_exit_before_line_reads_only_the_body_before_the_line() {
+        let owner = "fn beat(&mut self) {\n    if self.locked {\n        return;\n    }\n    self.log.push(1);\n}";
+        assert!(owner_may_exit_before_line(owner, 10, 14));
+        // The guard sits after line 11, so the first statement cannot skip.
+        assert!(!owner_may_exit_before_line(owner, 10, 11));
+        let plain = "fn add(&mut self, x: u32) {\n    self.items.push(x);\n}";
+        assert!(!owner_may_exit_before_line(plain, 10, 11));
+        let fallible = "fn ship(&mut self) -> Result<(), E> {\n    let n = self.next()?;\n    self.log.push(n);\n    Ok(())\n}";
+        assert!(owner_may_exit_before_line(fallible, 10, 12));
+        // A line before the owner starts reads nothing.
+        assert!(!owner_may_exit_before_line(plain, 10, 9));
     }
 
     #[test]

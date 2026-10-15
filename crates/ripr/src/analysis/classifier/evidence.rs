@@ -648,6 +648,13 @@ impl ClassifiedProbeEvidence {
                 owner_returns_value: context
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
+                owner_may_exit_before_probe: context.owner_fn.is_some_and(|function| {
+                    crate::analysis::classify::owner_may_exit_before_line(
+                        function.body.as_str(),
+                        function.start_line,
+                        context.probe.location.line,
+                    )
+                }),
                 constructor_starts_empty: &|impl_type, ctor, field| {
                     // Memoized per probe: the derived-`Default` check parses
                     // the files declaring the type, once per question.
