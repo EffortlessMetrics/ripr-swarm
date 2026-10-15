@@ -131,6 +131,12 @@ fn scalar_marker_preserves_cargo_uv_git_and_unmarked_root_boundaries() -> TestRe
         ("unmarked", None, false, "null"),
     ];
     for (label, marker, git, workspaces) in cases {
+        // A uv workspace marker is a Python project marker: a binary built
+        // without `lang-python` refuses the analysis instead of resolving a
+        // root (the Rust-only feature lane), so the case needs that feature.
+        if label == "uv" && !cfg!(feature = "lang-python") {
+            continue;
+        }
         let sandbox = unique_external_workspace(label)?;
         let repo = sandbox.join("repo");
         let member = repo.join("packages/member");
