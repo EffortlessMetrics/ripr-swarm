@@ -1078,6 +1078,9 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_location_and_fingerprints_ignore_root_spelling",
   "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results",
   "xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results",
   "xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result",
   "xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning",
@@ -10404,6 +10407,9 @@ tests = [
   "crates/ripr/src/output/gap_decision_ledger.rs::source_currentness_authority_tests::authority_projections_require_proven_candidate_currentness",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::actionable_profile_excludes_base_side_evidence",
   "crates/ripr/src/output/sarif.rs::tests::base_deleted_findings_emit_no_sarif_results",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results",
   "crates/ripr/src/output/github.rs::tests::base_deleted_findings_emit_no_github_annotations",
 ]
 fixtures = []
