@@ -310,7 +310,8 @@ fn cargo_hardlinked_root_entry_is_one_candidate_not_duplicate_ambiguity() -> Res
     let f = fixture()?;
     let id = [0x42; 20];
     write_executable(&f.0.join("debug/deps/one-abc123"), &elf_bytes(&id, true))?;
-    std::fs::hard_link(&f.0.join("debug/deps/one-abc123"), &f.0.join("debug/one"))?;
+    std::fs::hard_link(&f.0.join("debug/deps/one-abc123"), &f.0.join("debug/one"))
+        .map_err(|e| e.to_string())?;
     let report = associate_with_limits(&f.0, &ids(&id), LIMITS);
     assert_eq!(report["ids"][0]["status"], "matched");
     assert_eq!(report["ids"][0]["ambiguous"], false);
