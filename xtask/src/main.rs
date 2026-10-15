@@ -1549,6 +1549,27 @@ fn vscode_package() -> Result<(), String> {
     Ok(())
 }
 
+fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
+    let vsix_path = vscode_verify_vsix_path(args)?;
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    Ok(())
+}
+
+fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
+    let mut path = None;
+    for arg in args {
+        if arg == "--" {
+            continue;
+        }
+        if path.replace(PathBuf::from(arg)).is_some() {
+            return Err("vscode-verify-vsix accepts exactly one VSIX path".to_string());
+        }
+    }
+    path.filter(|value| !value.as_os_str().is_empty())
+        .ok_or_else(|| "vscode-verify-vsix requires a VSIX path".to_string())
+}
+
 fn package_and_verify_vsix(
     dist: &Path,
     version: &str,

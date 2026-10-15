@@ -31723,6 +31723,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"check-proof-packs"));
     assert!(commands.contains(&"vscode-compile"));
     assert!(commands.contains(&"vscode-package"));
+    assert!(commands.contains(&"vscode-verify-vsix -- <vsix>"));
     assert!(commands.contains(&"vscode-test"));
     assert!(commands.contains(&"vscode-test-e2e"));
 }
@@ -49231,6 +49232,53 @@ fn editors_vscode_license_carries_both_complete_canonical_license_texts() -> Res
         let root = super::repo_root()?;
         let notices = super::load_repository_license_notices(&root)?;
         super::verify_source_vscode_license(&root.join("editors/vscode/LICENSE"), &notices)
+    })
+}
+
+#[test]
+fn vscode_verify_vsix_path_requires_exactly_one_path() -> Result<(), String> {
+    let Err(missing) = super::vscode_verify_vsix_path(&[]) else {
+        return Err("vscode-verify-vsix must require a VSIX path".to_string());
+    };
+    assert!(missing.contains("requires a VSIX path"), "{missing}");
+    let Err(extra) = super::vscode_verify_vsix_path(&[
+        "--".to_string(),
+        "one.vsix".to_string(),
+        "two.vsix".to_string(),
+    ]) else {
+        return Err("vscode-verify-vsix must reject a second path".to_string());
+    };
+    assert!(extra.contains("exactly one VSIX path"), "{extra}");
+    assert_eq!(
+        super::vscode_verify_vsix_path(&["--".to_string(), "dist/ripr-0.11.0.vsix".to_string()])?,
+        PathBuf::from("dist/ripr-0.11.0.vsix")
+    );
+    Ok(())
+}
+
+#[test]
+fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .ok_or_else(|| "failed to resolve repo root from CARGO_MANIFEST_DIR".to_string())?;
+    let notices = super::load_repository_license_notices(repo_root)?;
+    let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
+    let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
+    with_temp_cwd("vscode-verify-vsix-reuse", |root| {
+        let good = root.join("good.vsix");
+        let license_txt = packaged_license_txt(&mit, &apache);
+        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
+
+        let pointer = root.join("pointer.vsix");
+        write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
+        let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
+        else {
+            return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
+        };
+        assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
     })
 }
 
