@@ -2744,7 +2744,8 @@ pub(crate) fn owner_namespace_receivers(
 /// [`owner_namespace_receivers`] without a static namespace import the test
 /// body rebinds (`const ns = { owner: () => ... }`): a call through that
 /// local reaches the shadow, not the owner module. A dynamic-import binding
-/// of the owner module is a body declaration by construction and stays.
+/// of the owner module is a body declaration by construction, so it stays
+/// only as a [`sole_const_namespace_binding`].
 pub(crate) fn unshadowed_owner_namespace_receivers(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -2763,6 +2764,7 @@ pub(crate) fn unshadowed_owner_namespace_receivers(
             import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
         })
         .map(|name| name.binding)
+        .filter(|name| sole_const_namespace_binding(&test.body_text, name))
         .collect();
     owner_namespace_receivers(test, owner, alias_map, workspace_root)
         .into_iter()
@@ -2771,6 +2773,36 @@ pub(crate) fn unshadowed_owner_namespace_receivers(
                 || !local_identifier_declared_in_test_body(&test.body_text, receiver)
         })
         .collect()
+}
+
+/// `true` when the body binds `name` once, as `const name`, and uses it
+/// otherwise only as a member receiver (`name.x`, `name?.x`). A `let` the
+/// body reassigns, a second declaration, a parameter, a destructuring or
+/// any bare use of the name leaves some occurrence not followed by `.`.
+fn sole_const_namespace_binding(body_text: &str, name: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(body_text);
+    if masked.len() != body_text.len() || name.is_empty() {
+        return false;
+    }
+    let part =
+        |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
+    let mut declarations = 0usize;
+    for (at, _) in masked.match_indices(name) {
+        let before = &masked[..at];
+        let after = &masked[at + name.len()..];
+        if part(before.chars().next_back()) || part(after.chars().next()) {
+            continue;
+        }
+        let declares = before.trim_end().strip_suffix("const").is_some_and(|rest| {
+            before.len() > before.trim_end().len() && !part(rest.chars().next_back())
+        });
+        if declares {
+            declarations += 1;
+        } else if !(after.starts_with('.') || after.starts_with("?.")) {
+            return false;
+        }
+    }
+    declarations == 1
 }
 
 /// A test-body dynamic import binding: the local name and the imported

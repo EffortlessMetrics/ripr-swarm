@@ -892,6 +892,20 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
             "  const ns = fakeErrors();\n  errorFor(403);\n  expect(ns.errorFor(404)).toBeInstanceOf(NotFound);",
             0,
         ),
+        // A dynamic import binds the namespace in the body; it stays the
+        // owner module only as a sole `const` used as a member receiver.
+        (
+            "dynamic-namespace-wrap",
+            IDENTITY_WRAP,
+            "  const ns = await import(\"../src/errors\");\n  expect(wrap(ns.errorFor(404))).toBeInstanceOf(NotFound);",
+            1,
+        ),
+        (
+            "reassigned-dynamic-namespace",
+            IDENTITY_WRAP,
+            "  let ns = await import(\"../src/errors\");\n  ns = fakeErrors();\n  errorFor(403);\n  expect(wrap(ns.errorFor(404))).toBeInstanceOf(NotFound);",
+            0,
+        ),
     ] {
         let test = errors_test_with(prelude, body);
         let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
@@ -911,6 +925,8 @@ fn instance_pin_looks_through_a_test_local_identity_helper() -> Result<(), Strin
                 | "namespace-wrap"
                 | "shadowed-namespace-wrap"
                 | "shadowed-namespace-direct"
+                | "dynamic-namespace-wrap"
+                | "reassigned-dynamic-namespace"
         );
         assert_eq!(
             tests[0].identity_helpers_in_file.is_empty(),
