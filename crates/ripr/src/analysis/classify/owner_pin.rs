@@ -8673,7 +8673,7 @@ impl UnitStructFacts {
 /// Items a derive or attribute proc macro emits stay invisible, as for
 /// every other pin rule, as do items an out-of-workspace `macro_rules!`
 /// invocation emits (#7160).
-fn unit_struct_value(
+pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
     index: &RustIndex,

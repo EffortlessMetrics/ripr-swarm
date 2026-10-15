@@ -104,6 +104,26 @@ invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
 current-input export keys agree on that identity. Raw configuration text remains
 an additional conservative invalidator; parser file facts remain oracle-policy-independent.
 
+### Bounded Inherent Helper Reach
+
+A helper-name graph proposes a route; it does not establish an inherent
+method's receiver identity. High helper credit requires a bounded executable
+same-file chain whose last hop passes the direct owner's receiver, module/type
+shadow and assertion-binding refusals. An inherent wrapper entry also requires
+its own receiver identity. Declaration spellings, including split-line function
+headers, do not supply self edges; genuine same-name local-receiver delegation
+remains supported. Verified unit-struct bindings retain their existing helper
+reach through the shared unit-struct authority.
+
+Only evaluated operands of unambiguously bound supported assertions supply
+receiver evidence. Module or imported macro shadows refuse that interpretation
+in both diff and repository consumers; a sibling module's private macro does
+not shadow a real assertion outside it. Foreign or unresolved helper last hops
+cannot make the private owner strongly gripped. General type resolution,
+parameter/field flow and cross-file helper receiver inference remain outside
+this bounded admission. The five retained corpus accuracy losses keep their
+runtime truth and false-actionable accounting.
+
 ### Stable Seam ID Rules
 
 Seam IDs must be stable across runs and across input file walk reorderings.
@@ -226,6 +246,35 @@ confidence, relation reason, oracle strength, activation-value overlap, file,
 name, and line. Relation confidence and reason decide whether a test is likely
 related; oracle strength and activation overlap only choose the best imitation
 target inside otherwise equivalent relationships.
+
+For parser-established inherent methods with a `self` parameter, a unique
+workspace-indexed method name alone is not direct owner-call evidence: a
+dependency type can have the same method. Diff and repository/compact consumers
+require a syntax-backed bounded nominal receiver plus a real call expression and
+the nearest still-visible simple local declaration. Comments on captured call
+lines and declarations in expired inner blocks cannot supply that evidence.
+An expired foreign shadow cannot hide a later call on a still-visible owner
+binding. The scope-unaware text matcher must not veto that AST evidence or a
+qualified unit variant such as `RenameRule::UpperCase`.
+Standard assertion macro operands are parsed as expressions using the original
+invocation's scope; diagnostic arguments do not supply receiver evidence.
+Operand-local items, including value constructors and type-name binders, withhold
+that outer-scope evidence. Only the parser's actual synthetic wrapper is exempt;
+a same-named nested function is still an item refusal.
+Unsupported binding/pattern scopes and unresolved receiver value flow withhold
+direct credit. Actual enum-variant receivers and public-library integration
+calls remain admissible. This is an admission narrowing, not exact Rust type or
+Cargo-target resolution: qualified types sharing a terminal name, constructor
+return-type conventions, aliases and general factory/value flow remain bounded
+limitations tracked by #7415. Trait dispatch and associated functions without
+`self` retain their existing rules.
+
+The verdict corpus keeps the accuracy cost of this boundary visible: arbitrary
+`ByteSize::gb`/`ByteSize::kib` factories, rstest parameter receivers and bare
+imported enum variants in table loops do not acquire identity from a unique
+method name. Their runtime-discriminated truth and acceptable verdict labels
+remain unchanged; a resulting `gap` is recorded as `false_actionable`, never
+relabeled as correct test advice.
 
 Related-test oracle semantics must explain what the oracle observes, what
 discriminator remains missing, and which assertion upgrade would improve the

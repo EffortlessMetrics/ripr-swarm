@@ -3181,3 +3181,17 @@ Durable rules:
 - Prefer proving a negative twice on two independent paths - e.g. the safe
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
+
+### Assertion operand items can replace an outer receiver (#8004)
+
+A token-tree assertion operand parsed in a synthetic function must not borrow
+its invocation's outer receiver through an operand-local item. A unit or tuple
+struct introduces a value constructor, so `struct value; value.as_object()` can
+dispatch a foreign blanket trait despite an outer `let value = JsonValue::Null`.
+Type aliases, enums and modules can similarly replace nominal type paths. Refuse
+operand items as a bounded class; exempt a synthetic wrapper by syntax identity,
+never its name. The production diff and full/compact receiver matrices retain
+real object/null calls and the genuine-helper relation. The
+`inherent_receiver_operand_item_shadow` honesty fixture pins a retained weak
+relation independently of its golden output. This establishes a refusal boundary,
+not general Rust type or value-flow resolution.

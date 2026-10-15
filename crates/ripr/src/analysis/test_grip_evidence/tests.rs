@@ -19436,6 +19436,172 @@ fn asserted_token_affinity_alone_does_not_reach_a_function_owner() -> Result<(),
     Ok(())
 }
 
+/// #7415: repository and compact evidence cannot promote unique inherent
+/// method names without a real, still-visible receiver declaration.
+#[test]
+fn unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence() -> Result<(), String>
+{
+    let owner = r#"use std::collections::BTreeMap;
+pub(crate) enum JsonValue { Object(BTreeMap<String, i32>), Null }
+impl JsonValue {
+    pub(crate) fn as_object(&self) -> Option<&BTreeMap<String, i32>> {
+        match self { Self::Object(value) => Some(value), _ => None }
+    }
+}
+trait ForeignView { fn as_object(&self) -> Option<()> { None } }
+impl<T> ForeignView for T {}
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn actual_object() {
+        let value = JsonValue::Object(BTreeMap::from([("key".to_owned(), 1)]));
+        assert_eq!(value.as_object().unwrap().len(), 1);
+    }
+    #[test] fn actual_null() {
+        let value = JsonValue::Null;
+        assert_eq!(value.as_object(), None);
+    }
+    #[test] fn actual_null_after_expired_shadow() {
+        let value = JsonValue::Null;
+        { let value = serde_json::Value::Null; let _ = value; }
+        assert_eq!(value.as_object(), None);
+    }
+    #[test] fn wrong_json_type() {
+        let value = serde_json::json!({"key": 1});
+        DECOY
+    }
+    fn actual_reader_as_object() -> usize {
+        let value = JsonValue::Object(BTreeMap::from([("key".to_owned(), 1)]));
+        value.as_object().unwrap().len()
+    }
+    #[test] fn mixed_valid_helper_and_wrong_direct() {
+        let serialized = serde_json::json!({"key": 1});
+        assert_eq!(serialized.as_object().unwrap().len(), 1);
+        assert_eq!(actual_reader_as_object(), 1);
+    }
+}
+"#;
+    let foreign = r#"fn main() {}
+#[cfg(test)] mod tests {
+    #[test] fn unrelated_main_json_object() {
+        let serialized = serde_json::json!({"key": 1});
+        assert_eq!(serialized.as_object().unwrap().len(), 1);
+    }
+}
+"#;
+    for decoy in [
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value(); value.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ enum JsonValue { Null } JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ type JsonValue = serde_json::Value; JsonValue::Null.as_object() }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ fn ripr_receiver_operand(value: serde_json::Value) -> Option<()> { value.as_object(); None } None::<()> }, None);",
+        "let value = JsonValue::Null;\n        assert_eq!({ struct value; impl value { fn as_object(&self) -> Option<()> { None } } value.as_object() }, None);",
+        "assert_eq!(value.as_object().unwrap().len(), 1);",
+        "assert_eq!(value.as_object().unwrap().len(), 1); // JsonValue::as_object()",
+        "{ let value = JsonValue::Null; assert!(matches!(value, JsonValue::Null)); }\n        assert_eq!(value.as_object().unwrap().len(), 1);",
+        "let value = JsonValue::Null;\n        let mut values = Some(serde_json::json!({\"key\": 1}));\n        while let Some(value) = values.take() { assert_eq!(value.as_object().unwrap().len(), 1); }",
+        "let value = JsonValue::Null;\n        { const value: serde_json::Value = serde_json::Value::Null; assert_eq!(value.as_object(), None); }",
+        "let value = JsonValue::Null;\n        mod foreign { pub static value: serde_json::Value = serde_json::Value::Null; }\n        { use foreign::value; assert_eq!(value.as_object(), None); }",
+        "let value = JsonValue::Null;\n        assert_eq!({ const value: serde_json::Value = serde_json::Value::Null; value.as_object() }, None);",
+    ] {
+        let source = owner.replace("DECOY", decoy);
+        let path = PathBuf::from("src/reader.rs");
+        let index = index_from_files(&[
+            (path.clone(), source.as_str()),
+            (PathBuf::from("src/main.rs"), foreign),
+            (
+                PathBuf::from("xtask/main.rs"),
+                "#[path = \"../src/reader.rs\"] mod reader; fn main() {}",
+            ),
+        ])?;
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/reader.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "private seams stay nonempty and complete");
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            assert!(seam.owner().ends_with("::as_object"));
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: BTreeMap<_, _> = full
+                .related_tests
+                .iter()
+                .map(|test| (test.test_name.as_str(), test.relation_reason))
+                .collect();
+            let compact_rows: BTreeMap<_, _> = compact
+                .iter()
+                .map(|(test, reason)| (test.test.name.as_str(), *reason))
+                .collect();
+            assert_eq!(full_rows, compact_rows, "full/compact relationship parity");
+            for actual in [
+                "actual_object",
+                "actual_null",
+                "actual_null_after_expired_shadow",
+            ] {
+                assert_eq!(
+                    full_rows.get(actual),
+                    Some(&RelationReason::DirectOwnerCall),
+                    "{decoy}: {full_rows:?}"
+                );
+            }
+            assert!(
+                full_rows.contains_key("wrong_json_type"),
+                "retain the operand decoy: {full_rows:?}"
+            );
+            for wrong in ["wrong_json_type", "unrelated_main_json_object"] {
+                assert!(
+                    !matches!(
+                        full_rows.get(wrong),
+                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                    ),
+                    "{decoy}: {full_rows:?}"
+                );
+            }
+            assert_eq!(
+                full_rows.get("mixed_valid_helper_and_wrong_direct"),
+                Some(&RelationReason::HelperOwnerCall),
+                "the genuine helper survives its caller's wrong direct receiver"
+            );
+            let compact_evidence = compact_evidence_for_seam(seam, &context);
+            assert_eq!(full.reach.state, compact_evidence.reach.state);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence() -> Result<(), String>
+{
+    let source = "pub struct PublicReader { pub size: u32 }\nimpl PublicReader {\n    pub fn object_size(&self) -> u32 { self.size + 1 }\n}\n";
+    let test = "use memory_fixture::PublicReader;\n#[test]\nfn public_inherent_owner_call() {\n    let value = PublicReader { size: 1 };\n    assert_eq!(value.object_size(), 2);\n}\n";
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[
+        (path.clone(), source),
+        (PathBuf::from("tests/public_library.rs"), test),
+    ])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.owner().ends_with("::object_size") && seam.kind() == SeamKind::ReturnValue
+        })
+        .ok_or("public inherent method return seam must exist")?;
+    let full = evidence_for_seam(seam, &index);
+    assert!(
+        full.related_tests
+            .iter()
+            .any(|test| test.test_name == "public_inherent_owner_call"
+                && test.relation_reason == RelationReason::DirectOwnerCall)
+    );
+    let context = CompactGripContext::new(&index);
+    let compact = find_related_tests_with_context(seam, &context);
+    assert!(compact.iter().any(
+        |(test, reason)| test.test.name == "public_inherent_owner_call"
+            && *reason == RelationReason::DirectOwnerCall
+    ));
+    Ok(())
+}
+
 /// #7966: the real fixture's manifest/source authority survives observation
 /// binding, and both detailed and compact producers keep the same decision.
 #[test]
@@ -19504,6 +19670,149 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
         assert_eq!(
             compact.discriminate.state, expected,
             "{case}: compact consumer"
+        );
+    }
+    Ok(())
+}
+
+/// Independent review #8004: each source is also a real native mutation control.
+#[test]
+fn inherent_receiver_review_last_hop_and_wrapper_controls() -> Result<(), String> {
+    for (source, name, expected) in [
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/local-helper.rs"
+            ),
+            "local_helper",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-entry.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/controls/foreign-last-hop.rs"
+            ),
+            "wrapper_route",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/controls/shadowed-owner-type.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/standard.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/controls/sibling-shadow.rs"
+            ),
+            "evaluated_operand",
+            Some(RelationReason::DirectOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs"
+            ),
+            "wrapper_route",
+            Some(RelationReason::HelperOwnerCall),
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs"
+            ),
+            "foreign_helper",
+            None,
+        ),
+        (
+            include_str!(
+                "../../../../../fixtures/inherent_receiver_macro_discard/input/src/lib.rs"
+            ),
+            "ignored_operand",
+            None,
+        ),
+    ] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams: Vec<_> = inventory_seams_from_index(&[path], &index)
+            .into_iter()
+            .filter(|seam| seam.owner() == "src/lib.rs::impl JsonValue::as_object")
+            .collect();
+        assert_eq!(seams.len(), 4, "all owner seams must exist");
+        let context = CompactGripContext::new(&index);
+        for seam in &seams {
+            let full = evidence_for_seam(seam, &index);
+            let compact = find_related_tests_with_context(seam, &context);
+            let full_rows: BTreeMap<_, _> = full
+                .related_tests
+                .iter()
+                .map(|t| (t.test_name.as_str(), t.relation_reason))
+                .collect();
+            let compact_rows: BTreeMap<_, _> = compact
+                .iter()
+                .map(|(t, r)| (t.test.name.as_str(), *r))
+                .collect();
+            assert_eq!(full_rows, compact_rows);
+            assert!(
+                full_rows.contains_key(name),
+                "retain the subject: {name}: {full_rows:?}"
+            );
+            if let Some(expected) = expected {
+                assert_eq!(
+                    full_rows.get(name),
+                    Some(&expected),
+                    "{name}: {full_rows:?}"
+                );
+            } else {
+                assert!(
+                    !matches!(
+                        full_rows.get(name),
+                        Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
+                    ),
+                    "{name}: {full_rows:?}"
+                );
+                assert_ne!(
+                    full.reach.state,
+                    StageState::Yes,
+                    "negative must not reach: {name}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), String> {
+    let declaration =
+        include_str!("../../../../../fixtures/inherent_receiver_foreign_helper/input/src/lib.rs")
+            .replace("fn as_object", "fn\nas_object");
+    let wrapper =
+        include_str!("../../../../../fixtures/inherent_receiver_local_wrapper/input/src/lib.rs");
+    for (source, expected) in [(declaration.as_str(), false), (wrapper, true)] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let shared = SharedIndexTables::build(&index);
+        let pairs = helper_owner_calls_by_file_with_fanout(&index, &shared, false);
+        let self_edge = pairs
+            .any_spelling
+            .get(&path)
+            .and_then(|helpers| helpers.get("as_object"))
+            .is_some_and(|calls| calls.contains("as_object"));
+        assert_eq!(
+            self_edge, expected,
+            "declarations and real delegation differ"
         );
     }
     Ok(())
